@@ -935,6 +935,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
                 id: masterId,
                 name: newName,
                 type: srcLayer.type,
+                slotId: srcLayer.slotId,
                 props: { ...newLayer } as ComponentProps,
             };
             delete (master.props as unknown as Record<string, unknown>).id;
@@ -1026,6 +1027,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
                 id: masterId,
                 name: newName,
                 type: srcLayer.type,
+                slotId: srcLayer.slotId,
                 props: { ...newLayer } as ComponentProps,
             };
             delete (master.props as unknown as Record<string, unknown>).id;
