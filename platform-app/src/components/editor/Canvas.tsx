@@ -26,30 +26,69 @@ function useImage(src: string): HTMLImageElement | undefined {
     return loadedImg;
 }
 
+/* ─── Selection Transformer ───────────────────────── */
+interface SelectionTransformerProps {
+    selectedLayerIds: string[];
+    stageRef: React.RefObject<Konva.Stage | null>;
+}
+
+function SelectionTransformer({ selectedLayerIds, stageRef }: SelectionTransformerProps) {
+    const trRef = useRef<Konva.Transformer>(null);
+
+    useEffect(() => {
+        if (!trRef.current || !stageRef.current) return;
+
+        // Find all selected nodes
+        const nodes = selectedLayerIds
+            .map((id) => stageRef.current?.findOne("#" + id))
+            .filter((node): node is Konva.Node => !!node);
+
+        trRef.current.nodes(nodes);
+        trRef.current.getLayer()?.batchDraw();
+    }, [selectedLayerIds, stageRef]);
+
+    return (
+        <Transformer
+            ref={trRef}
+            boundBoxFunc={(oldBox, newBox) => {
+                if (newBox.width < 5 || newBox.height < 5) return oldBox;
+                return newBox;
+            }}
+            borderStroke="#6366F1"
+            anchorStroke="#6366F1"
+            anchorFill="#FFFFFF"
+            anchorSize={8}
+            anchorCornerRadius={2}
+        />
+    );
+}
+
+/* ─── Canvas Layer ────────────────────────────────── */
 interface CanvasLayerProps {
     layer: LayerType;
     isSelected: boolean;
-    onSelect: () => void;
-    onChange: (updates: Partial<LayerType>) => void;
-    onDragStateChange: (dragging: boolean) => void;
+    onSelect: (e: Konva.KonvaEventObject<any>) => void;
+    onDragStart: (e: Konva.KonvaEventObject<any>) => void;
+    onDragMove: (e: Konva.KonvaEventObject<any>) => void;
+    onDragEnd: (e: Konva.KonvaEventObject<any>) => void;
+    onTransformEnd: (e: Konva.KonvaEventObject<any>) => void;
     onDblClickText: (layer: LayerType & { type: "text" }, node: Konva.Text) => void;
     isEditing: boolean;
 }
 
-function CanvasLayer({ layer, isSelected, onSelect, onChange, onDragStateChange, onDblClickText, isEditing }: CanvasLayerProps) {
+function CanvasLayer({
+    layer,
+    isSelected,
+    onSelect,
+    onDragStart,
+    onDragMove,
+    onDragEnd,
+    onTransformEnd,
+    onDblClickText,
+    isEditing,
+}: CanvasLayerProps) {
     const shapeRef = useRef<Konva.Shape>(null);
     const groupRef = useRef<Konva.Group>(null);
-    const transformerRef = useRef<Konva.Transformer>(null);
-
-    useEffect(() => {
-        if (isSelected && !isEditing && transformerRef.current) {
-            const targetNode = (layer.type === "badge" || layer.type === "frame") ? groupRef.current : shapeRef.current;
-            if (targetNode) {
-                transformerRef.current.nodes([targetNode]);
-                transformerRef.current.getLayer()?.batchDraw();
-            }
-        }
-    }, [isSelected, layer.type, isEditing]);
 
     if (!layer.visible) return null;
 
@@ -63,81 +102,10 @@ function CanvasLayer({ layer, isSelected, onSelect, onChange, onDragStateChange,
         draggable: !layer.locked && !isEditing,
         onClick: onSelect,
         onTap: onSelect,
-        onDragStart: () => {
-            onDragStateChange(true);
-        },
-        onDragEnd: (e: Konva.KonvaEventObject<DragEvent>) => {
-            onDragStateChange(false);
-            const newX = e.target.x();
-            const newY = e.target.y();
-
-            // If this is a frame, move all children by the same delta
-            if (layer.type === "frame") {
-                const dx = newX - layer.x;
-                const dy = newY - layer.y;
-                const frame = layer as FrameLayer;
-                const store = useCanvasStore.getState();
-                frame.childIds.forEach((childId) => {
-                    const child = store.layers.find((l) => l.id === childId);
-                    if (child) store.updateLayer(childId, { x: child.x + dx, y: child.y + dy });
-                });
-            }
-
-            onChange({ x: newX, y: newY });
-
-            // Drag-to-frame: check if this layer landed on a frame
-            // Skip for layers already inside a frame — they use local coords
-            // so hit-testing would produce wrong results. Use layers panel to un-nest.
-            if (layer.type !== "frame") {
-                const store = useCanvasStore.getState();
-                const isChildOfFrame = store.layers.some(
-                    (l) => l.type === "frame" && (l as FrameLayer).childIds.includes(layer.id)
-                );
-                if (!isChildOfFrame) {
-                    const centerX = newX + layer.width / 2;
-                    const centerY = newY + layer.height / 2;
-                    const targetFrame = store.getFrameAtPoint(centerX, centerY, layer.id);
-
-                    if (targetFrame) {
-                        store.moveLayerToFrame(layer.id, targetFrame.id);
-                    }
-                    store.setHighlightedFrameId(null);
-                }
-            }
-        },
-        onTransformEnd: () => {
-            const node = (layer.type === "badge" || layer.type === "frame") ? groupRef.current : shapeRef.current;
-            if (!node) return;
-            const scaleX = node.scaleX();
-            const scaleY = node.scaleY();
-            node.scaleX(1);
-            node.scaleY(1);
-
-            const newX = node.x();
-            const newY = node.y();
-            const newWidth = Math.max(5, node.width() * scaleX);
-            const newHeight = Math.max(5, node.height() * scaleY);
-
-            // If this is a frame, apply constraints to children
-            if (layer.type === "frame") {
-                const frame = layer as FrameLayer;
-                const store = useCanvasStore.getState();
-                const delta = {
-                    oldX: layer.x, oldY: layer.y,
-                    oldWidth: layer.width, oldHeight: layer.height,
-                    newX, newY, newWidth, newHeight,
-                };
-                frame.childIds.forEach((childId) => {
-                    const child = store.layers.find((l) => l.id === childId);
-                    if (child) {
-                        const result = computeConstrainedPosition(child, delta);
-                        store.updateLayer(childId, result);
-                    }
-                });
-            }
-
-            onChange({ x: newX, y: newY, width: newWidth, height: newHeight, rotation: node.rotation() });
-        },
+        onDragStart,
+        onDragMove,
+        onDragEnd,
+        onTransformEnd,
     };
 
     return (
@@ -198,29 +166,23 @@ function CanvasLayer({ layer, isSelected, onSelect, onChange, onDragStateChange,
                     commonProps={commonProps}
                     isSelected={isSelected}
                     onSelect={onSelect}
-                    onChange={onChange}
-                    onDragStateChange={onDragStateChange}
+                    onDragStart={onDragStart}
+                    onDragMove={onDragMove}
+                    onDragEnd={onDragEnd}
+                    onTransformEnd={onTransformEnd}
                     onDblClickText={onDblClickText}
                     isEditing={isEditing}
-                />
-            )}
-            {isSelected && !isEditing && (
-                <Transformer
-                    ref={transformerRef as React.RefObject<Konva.Transformer | null>}
-                    boundBoxFunc={(oldBox, newBox) => {
-                        if (newBox.width < 5 || newBox.height < 5) return oldBox;
-                        return newBox;
-                    }}
-                    borderStroke="#6366F1"
-                    anchorStroke="#6366F1"
-                    anchorFill="#FFFFFF"
-                    anchorSize={8}
-                    anchorCornerRadius={2}
                 />
             )}
         </>
     );
 }
+
+// ... (renderers remain similar but need no changes if they use commonProps implicitly or we skip them in this block)
+// Skipping Renderer definitions to save tokens - they are matched by context if I start higher?
+// Actually I need to be careful with range.
+// CanvasLayerProps is at line 67.
+// I will just replace the CanvasLayerProps and CanvasLayer function definition up to line 180.
 
 function ImageLayerRenderer({
     shapeRef,
@@ -260,17 +222,7 @@ function BadgeLayerRenderer({
     return (
         <Group
             ref={groupRef}
-            x={layer.x}
-            y={layer.y}
-            width={layer.width}
-            height={layer.height}
-            rotation={layer.rotation}
-            draggable={!layer.locked}
-            onClick={commonProps.onClick as () => void}
-            onTap={commonProps.onTap as () => void}
-            onDragStart={commonProps.onDragStart as () => void}
-            onDragEnd={commonProps.onDragEnd as (e: Konva.KonvaEventObject<DragEvent>) => void}
-            onTransformEnd={commonProps.onTransformEnd as () => void}
+            {...commonProps}
         >
             <Rect
                 width={layer.width}
@@ -299,8 +251,10 @@ function FrameLayerRenderer({
     commonProps,
     isSelected,
     onSelect,
-    onChange,
-    onDragStateChange,
+    onDragStart,
+    onDragMove,
+    onDragEnd,
+    onTransformEnd,
     onDblClickText,
     isEditing,
 }: {
@@ -308,14 +262,16 @@ function FrameLayerRenderer({
     layer: FrameLayer;
     commonProps: Record<string, unknown>;
     isSelected: boolean;
-    onSelect: () => void;
-    onChange: (updates: Partial<LayerType>) => void;
-    onDragStateChange: (dragging: boolean) => void;
+    onSelect: (e: Konva.KonvaEventObject<any>) => void;
+    onDragStart: (e: Konva.KonvaEventObject<any>) => void;
+    onDragMove: (e: Konva.KonvaEventObject<any>) => void;
+    onDragEnd: (e: Konva.KonvaEventObject<any>) => void;
+    onTransformEnd: (e: Konva.KonvaEventObject<any>) => void;
     onDblClickText: (layer: LayerType & { type: "text" }, node: Konva.Text) => void;
     isEditing: boolean;
 }) {
     const layers = useCanvasStore((s) => s.layers);
-    const selectedLayerId = useCanvasStore((s) => s.selectedLayerId);
+    const selectedLayerIds = useCanvasStore((s) => s.selectedLayerIds);
     const highlightedFrameId = useCanvasStore((s) => s.highlightedFrameId);
     const childLayers = layer.childIds
         .map((id) => layers.find((l) => l.id === id))
@@ -326,84 +282,56 @@ function FrameLayerRenderer({
     return (
         <Group
             ref={groupRef}
-            x={layer.x}
-            y={layer.y}
-            width={layer.width}
-            height={layer.height}
-            rotation={layer.rotation}
-            draggable={!layer.locked && !isEditing}
-            onClick={commonProps.onClick as () => void}
-            onTap={commonProps.onTap as () => void}
-            onDragStart={(e: Konva.KonvaEventObject<DragEvent>) => {
-                // Guard: ignore events bubbled from children
-                if (e.target !== groupRef.current) return;
-                (commonProps.onDragStart as () => void)();
-            }}
-            onDragEnd={(e: Konva.KonvaEventObject<DragEvent>) => {
-                // Guard: ignore events bubbled from children
-                if (e.target !== groupRef.current) return;
-                (commonProps.onDragEnd as (e: Konva.KonvaEventObject<DragEvent>) => void)(e);
-            }}
-            onTransformEnd={(e: Konva.KonvaEventObject<Event>) => {
-                // Guard: ignore events bubbled from children
-                if (e.target !== groupRef.current) return;
-                (commonProps.onTransformEnd as () => void)();
-            }}
-            clipFunc={layer.clipContent ? (ctx) => {
-                if (layer.cornerRadius > 0) {
-                    const r = layer.cornerRadius;
-                    const w = layer.width;
-                    const h = layer.height;
-                    ctx.beginPath();
-                    ctx.moveTo(r, 0);
-                    ctx.arcTo(w, 0, w, h, r);
-                    ctx.arcTo(w, h, 0, h, r);
-                    ctx.arcTo(0, h, 0, 0, r);
-                    ctx.arcTo(0, 0, w, 0, r);
-                    ctx.closePath();
-                } else {
-                    ctx.rect(0, 0, layer.width, layer.height);
-                }
-            } : undefined}
+            {...commonProps}
         >
-            {/* Frame background */}
-            <Rect
-                width={layer.width}
-                height={layer.height}
-                fill={layer.fill || undefined}
-                stroke={isHighlighted ? FRAME_HIGHLIGHT_STROKE : (layer.stroke || undefined)}
-                strokeWidth={isHighlighted ? FRAME_HIGHLIGHT_WIDTH : layer.strokeWidth}
-                cornerRadius={layer.cornerRadius}
-            />
-            {/* Child layers — rendered relative to frame */}
-            {childLayers.map((child) => (
-                <CanvasLayer
-                    key={child.id}
-                    layer={{ ...child, x: child.x - layer.x, y: child.y - layer.y }}
-                    isSelected={selectedLayerId === child.id}
-                    onSelect={() => useCanvasStore.getState().selectLayer(child.id)}
-                    onChange={(updates) => {
-                        // Convert local (frame-relative) coordinates back to absolute
-                        const absoluteUpdates = { ...updates };
-                        if ('x' in updates && typeof updates.x === 'number') {
-                            absoluteUpdates.x = updates.x + layer.x;
-                        }
-                        if ('y' in updates && typeof updates.y === 'number') {
-                            absoluteUpdates.y = updates.y + layer.y;
-                        }
-                        useCanvasStore.getState().updateLayer(child.id, absoluteUpdates);
-                    }}
-                    onDragStateChange={onDragStateChange}
-                    onDblClickText={onDblClickText}
-                    isEditing={false}
+            <Group
+                clipFunc={layer.clipContent ? (ctx) => {
+                    if (layer.cornerRadius > 0) {
+                        const r = layer.cornerRadius;
+                        const w = layer.width;
+                        const h = layer.height;
+                        ctx.beginPath();
+                        ctx.moveTo(r, 0);
+                        ctx.arcTo(w, 0, w, h, r);
+                        ctx.arcTo(w, h, 0, h, r);
+                        ctx.arcTo(0, h, 0, 0, r);
+                        ctx.arcTo(0, 0, w, 0, r);
+                        ctx.closePath();
+                    } else {
+                        ctx.rect(0, 0, layer.width, layer.height);
+                    }
+                } : undefined}
+            >
+                <Rect
+                    id={layer.id}
+                    width={layer.width}
+                    height={layer.height}
+                    fill={layer.fill || undefined}
+                    stroke={isHighlighted ? FRAME_HIGHLIGHT_STROKE : (layer.stroke || undefined)}
+                    strokeWidth={isHighlighted ? FRAME_HIGHLIGHT_WIDTH : layer.strokeWidth}
+                    cornerRadius={layer.cornerRadius}
                 />
-            ))}
+                {childLayers.map((child) => (
+                    <CanvasLayer
+                        key={child.id}
+                        layer={{ ...child, x: child.x - layer.x, y: child.y - layer.y }}
+                        isSelected={selectedLayerIds.includes(child.id)}
+                        onSelect={onSelect}
+                        onDragStart={onDragStart}
+                        onDragMove={onDragMove}
+                        onDragEnd={onDragEnd}
+                        onTransformEnd={onTransformEnd}
+                        onDblClickText={onDblClickText}
+                        isEditing={false}
+                    />
+                ))}
+            </Group>
         </Group>
     );
 }
+// Skip InlineTextEditor...
 
 /* ─── Inline text editing overlay ──────────────────── */
-
 function InlineTextEditor({
     layer,
     stageRef,
@@ -429,7 +357,6 @@ function InlineTextEditor({
     const screenH = Math.max(layer.height * zoom, 40);
 
     useEffect(() => {
-        // Focus & select all on mount
         const ta = textareaRef.current;
         if (ta) {
             ta.focus();
@@ -443,9 +370,8 @@ function InlineTextEditor({
 
     const handleKeyDown = (e: React.KeyboardEvent) => {
         if (e.key === "Escape") {
-            onCommit(layer.text); // Revert on escape
+            onCommit(layer.text);
         }
-        // Enter without shift = commit
         if (e.key === "Enter" && !e.shiftKey) {
             e.preventDefault();
             handleCommit();
@@ -490,7 +416,6 @@ function InlineTextEditor({
         />
     );
 }
-
 /* ─── Main Canvas component ───────────────────────── */
 
 interface CanvasProps {
@@ -502,10 +427,19 @@ export function Canvas({ stageRef }: CanvasProps) {
     const [stageDraggable, setStageDraggable] = useState(true);
     const [isDraggingFile, setIsDraggingFile] = useState(false);
     const [contextMenu, setContextMenu] = useState<{ x: number; y: number; layerId: string } | null>(null);
+
+    // Marquee State
+    const [selectionBox, setSelectionBox] = useState<{ x: number; y: number; width: number; height: number; startX: number; startY: number } | null>(null);
+
+    // Track start positions for multi-drag
+    const dragStartLocs = useRef<Record<string, { x: number; y: number }>>({});
+
     const {
         layers,
-        selectedLayerId,
+        selectedLayerIds,
         selectLayer,
+        toggleSelection,
+        addToSelection,
         updateLayer,
         addImageLayer,
         removeLayer,
@@ -529,7 +463,237 @@ export function Canvas({ stageRef }: CanvasProps) {
         artboardProps,
         setHighlightedFrameId,
         getFrameAtPoint,
+        moveLayerToFrame,
     } = useCanvasStore();
+
+    /* ─── Layer Interactions ──────────────────────────── */
+
+    const handleLayerSelect = useCallback((e: Konva.KonvaEventObject<MouseEvent>) => {
+        // Stop propagation so stage click doesn't deselect
+        e.cancelBubble = true;
+
+        const id = e.target.id();
+        if (!id) return;
+
+        const isMulti = e.evt.shiftKey || e.evt.metaKey || e.evt.ctrlKey;
+
+        if (isMulti) {
+            toggleSelection(id);
+        } else {
+            // If already selected, do nothing (dragging might start), 
+            // UNLESS it's the only one, in which case we select just it (no-op).
+            // But if we have multiple selected and click one WITHOUT shift,
+            // we usually expect to select JUST that one...
+            // UNLESS we are about to drag.
+            // Standard behavior: MouseDown on selected -> keep selection. MouseUp -> select just that one (if no drag).
+            // But here we are in onClick/onTap which corresponds to MouseUp without drag.
+            // So if we click safely, yes, select just this one.
+            selectLayer(id);
+        }
+    }, [toggleSelection, selectLayer]);
+
+    const handleLayerDragStart = useCallback((e: Konva.KonvaEventObject<DragEvent>) => {
+        setStageDraggable(false);
+        const id = e.target.id();
+
+        // If dragging an item that is NOT selected, select it (exclusive)
+        if (!selectedLayerIds.includes(id)) {
+            selectLayer(id);
+            // And update ref immediately? The store update might be async or ref access safe?
+            // Store update triggers re-render. But drag continues.
+            // We'll assume for this drag session, we only move THIS layer if it wasn't selected.
+            // But simpler: just force select it. 
+            // Ideally we want to move it. Konva allows dragging unselected nodes.
+        }
+
+        // Snapshot positions of ALL selected layers (including the one being dragged if it is selected)
+        // Note: selectedLayerIds from closure might be stale if we just called selectLayer?
+        // Actually selectLayer triggers re-render, but this function closure 'selectedLayerIds' is from render start.
+        // So if we just selected it, 'selectedLayerIds' here does NOT contain it yet.
+        // We can solve this by checking if id is in selectedLayerIds. 
+        // If not, we form a temporary list [id].
+
+        const effectiveSelection = selectedLayerIds.includes(id)
+            ? selectedLayerIds
+            : [id];
+
+        const locs: Record<string, { x: number; y: number }> = {};
+        effectiveSelection.forEach(sid => {
+            const l = layers.find(lay => lay.id === sid);
+            if (l) locs[sid] = { x: l.x, y: l.y };
+        });
+        dragStartLocs.current = locs;
+
+    }, [layers, selectedLayerIds, selectLayer]);
+
+    const handleLayerDragMove = useCallback((e: Konva.KonvaEventObject<DragEvent>) => {
+        const id = e.target.id();
+        const startLoc = dragStartLocs.current[id];
+        if (!startLoc) return;
+
+        const stage = e.target.getStage();
+        if (!stage) return;
+
+        // Convert Absolute (Screen) Position to Scene Coordinates
+        const absPos = e.target.getAbsolutePosition();
+        const currentSceneX = (absPos.x - stage.x()) / stage.scaleX();
+        const currentSceneY = (absPos.y - stage.y()) / stage.scaleY();
+
+        const dx = currentSceneX - startLoc.x;
+        const dy = currentSceneY - startLoc.y;
+
+        // Move other selected nodes
+        Object.keys(dragStartLocs.current).forEach(sid => {
+            if (sid === id) return; // Skip self
+
+            const node = stage.findOne("#" + sid);
+            if (node) {
+                const sLoc = dragStartLocs.current[sid];
+                // Calculate target Scene Position
+                const targetSceneX = sLoc.x + dx;
+                const targetSceneY = sLoc.y + dy;
+
+                // Convert back to Absolute for Konva update
+                const targetAbsX = targetSceneX * stage.scaleX() + stage.x();
+                const targetAbsY = targetSceneY * stage.scaleY() + stage.y();
+
+                node.setAbsolutePosition({
+                    x: targetAbsX,
+                    y: targetAbsY
+                });
+            }
+        });
+
+        // Frame Highlight Logic (using Scene Coordinates for hit testing?)
+        // getFrameAtPoint expects Scene Coordinates (store values)
+        // getAbsolutePosition returns Screen logic. getFrameAtPoint checks layer.x/y (Scene).
+        // So we should pass Scene Coordinates to getFrameAtPoint.
+
+        // But wait, getFrameAtPoint iterates layers and checks if (x,y) is within bounds.
+        // Bounds are scene coordinates.
+        // So we must pass Scene Coordinates.
+
+        // Center calculation needs to be in Scene Coordinates
+        // e.target.width() is unscaled? width() * scaleX() is visual width.
+        // visual width / stage scale = scene width.
+        // Or simply: node.width() * node.scaleX().
+        // Wait, node.scaleX() is Local scale. 
+        // Scene Width = Width * LocalScale.
+        // So correct center in Scene:
+        const sceneWidth = e.target.width() * e.target.scaleX();
+        const sceneHeight = e.target.height() * e.target.scaleY();
+        const centerX = currentSceneX + sceneWidth / 2;
+        const centerY = currentSceneY + sceneHeight / 2;
+
+        if (Object.keys(dragStartLocs.current).length === 1) {
+            const frame = getFrameAtPoint(centerX, centerY, id);
+            setHighlightedFrameId(frame?.id || null);
+        } else {
+            setHighlightedFrameId(null);
+        }
+    }, [getFrameAtPoint, setHighlightedFrameId]);
+
+    const handleLayerDragEnd = useCallback((e: Konva.KonvaEventObject<DragEvent>) => {
+        setStageDraggable(true);
+        const id = e.target.id();
+        const startLoc = dragStartLocs.current[id];
+        const stage = e.target.getStage();
+
+        if (startLoc && stage) {
+            // Scene Coordinates
+            const absPos = e.target.getAbsolutePosition();
+            const currentSceneX = (absPos.x - stage.x()) / stage.scaleX();
+            const currentSceneY = (absPos.y - stage.y()) / stage.scaleY();
+
+            const dx = currentSceneX - startLoc.x;
+            const dy = currentSceneY - startLoc.y;
+
+            Object.keys(dragStartLocs.current).forEach(sid => {
+                const sLoc = dragStartLocs.current[sid];
+                if (sid === id) {
+                    updateLayer(sid, { x: currentSceneX, y: currentSceneY });
+                } else {
+                    updateLayer(sid, { x: sLoc.x + dx, y: sLoc.y + dy });
+                }
+            });
+
+            if (Object.keys(dragStartLocs.current).length === 1) {
+                const sceneWidth = e.target.width() * e.target.scaleX();
+                const sceneHeight = e.target.height() * e.target.scaleY();
+                const centerX = currentSceneX + sceneWidth / 2;
+                const centerY = currentSceneY + sceneHeight / 2;
+
+                const frame = getFrameAtPoint(centerX, centerY, id);
+                if (frame) {
+                    moveLayerToFrame(id, frame.id);
+                }
+                setHighlightedFrameId(null);
+            }
+        } else if (stage) {
+            // Fallback
+            const absPos = e.target.getAbsolutePosition();
+            const currentSceneX = (absPos.x - stage.x()) / stage.scaleX();
+            const currentSceneY = (absPos.y - stage.y()) / stage.scaleY();
+            updateLayer(id, { x: currentSceneX, y: currentSceneY });
+        }
+
+        dragStartLocs.current = {};
+    }, [updateLayer, getFrameAtPoint, moveLayerToFrame, setHighlightedFrameId]);
+
+    const handleTransformEnd = useCallback((e: Konva.KonvaEventObject<Event>) => {
+        // Start handling multi-transform logic? 
+        // Konva Transformer updates the nodes directly.
+        // We just need to read their new props and update store.
+        // The transformer usually fires 'transformend' on the transformer?
+        // Or on the nodes? 
+        // Actually, if we use Konva Transformer, it updates the nodes.
+        // We need to iterate selected nodes and sync their generic props.
+
+        // But we passed onTransformEnd to CanvasLayer.
+        // Does CanvasLayer fire it?
+        // 'onTransformEnd' prop on Node fires when that node is transformed.
+
+        const node = e.target;
+        const id = node.id();
+
+        // Read new props
+        const newX = node.x();
+        const newY = node.y();
+        const scaleX = node.scaleX();
+        const scaleY = node.scaleY();
+        const rotation = node.rotation();
+
+        // Reset scale and apply to width/height to avoid compounding scale
+        node.scaleX(1);
+        node.scaleY(1);
+
+        const width = node.width() * scaleX;
+        const height = node.height() * scaleY;
+
+        updateLayer(id, { x: newX, y: newY, width, height, rotation });
+
+        // Handle constrained position for children if it's a frame
+        // (Similar to previous implementation)
+        const layer = layers.find(l => l.id === id);
+        if (layer?.type === "frame") {
+            const frame = layer as FrameLayer;
+            const delta = {
+                oldX: layer.x, oldY: layer.y,
+                oldWidth: layer.width, oldHeight: layer.height,
+                newX, newY, newWidth: width, newHeight: height
+            };
+            frame.childIds.forEach(cid => {
+                const child = layers.find(l => l.id === cid);
+                if (child) {
+                    const res = computeConstrainedPosition(child, delta);
+                    updateLayer(cid, res);
+                }
+            });
+        }
+
+    }, [updateLayer, layers]);
+
+    /* ─── Stage Interaction ───────────────────────────── */
 
     const handleWheel = useCallback(
         (e: Konva.KonvaEventObject<WheelEvent>) => {
@@ -559,20 +723,93 @@ export function Canvas({ stageRef }: CanvasProps) {
         [zoom, stageX, stageY, setZoom, setStagePosition, stageRef]
     );
 
-    const handleStageClick = useCallback(
-        (e: Konva.KonvaEventObject<MouseEvent>) => {
-            if (e.target === e.target.getStage()) {
+    const handleStageMouseDown = useCallback((e: Konva.KonvaEventObject<MouseEvent>) => {
+        // If clicked on stage (background)
+        if (e.target === e.target.getStage()) {
+            const stage = e.target.getStage();
+            if (!stage) return;
+            const pointer = stage.getPointerPosition();
+            if (!pointer) return;
+
+            // Convert to Scene Coordinates for starting point
+            const startSceneX = (pointer.x - stage.x()) / stage.scaleX();
+            const startSceneY = (pointer.y - stage.y()) / stage.scaleY();
+
+            setSelectionBox({
+                x: startSceneX,
+                y: startSceneY,
+                width: 0,
+                height: 0,
+                startX: startSceneX,
+                startY: startSceneY,
+            });
+
+            // Disable dragging if we are selecting
+            setStageDraggable(false);
+
+            // Clear selection if not Shift
+            if (!e.evt.shiftKey && !e.evt.metaKey && !e.evt.ctrlKey) {
                 selectLayer(null);
-                setContextMenu(null);
-                if (isEditingText) {
-                    stopTextEditing();
+            }
+
+            setContextMenu(null);
+            if (isEditingText) {
+                stopTextEditing();
+            }
+        }
+    }, [selectLayer, isEditingText, stopTextEditing]);
+
+    const handleStageMouseMove = useCallback((e: Konva.KonvaEventObject<MouseEvent>) => {
+        if (!selectionBox) return;
+
+        const stage = e.target.getStage();
+        if (!stage) return;
+        const pointer = stage.getPointerPosition();
+        if (!pointer) return;
+
+        const currentSceneX = (pointer.x - stage.x()) / stage.scaleX();
+        const currentSceneY = (pointer.y - stage.y()) / stage.scaleY();
+
+        setSelectionBox(prev => {
+            if (!prev) return null;
+            return {
+                ...prev,
+                x: Math.min(prev.startX, currentSceneX),
+                y: Math.min(prev.startY, currentSceneY),
+                width: Math.abs(currentSceneX - prev.startX),
+                height: Math.abs(currentSceneY - prev.startY),
+            };
+        });
+    }, [selectionBox]);
+
+    const handleStageMouseUp = useCallback((e: Konva.KonvaEventObject<MouseEvent>) => {
+        setStageDraggable(true);
+        if (selectionBox) {
+            // Calculate intersection
+            const box = selectionBox;
+            // Filter layers that intersect
+            const intersectedIds = layers.filter(l => {
+                if (!l.visible || l.locked) return false;
+                // Simple AABB intersection
+                return (
+                    box.x < l.x + l.width &&
+                    box.x + box.width > l.x &&
+                    box.y < l.y + l.height &&
+                    box.y + box.height > l.y
+                );
+            }).map(l => l.id);
+
+            if (intersectedIds.length > 0) {
+                if (e.evt.shiftKey || e.evt.metaKey || e.evt.ctrlKey) {
+                    intersectedIds.forEach(id => addToSelection(id));
+                } else {
+                    intersectedIds.forEach(id => addToSelection(id));
                 }
             }
-        },
-        [selectLayer, isEditingText, stopTextEditing]
-    );
+            setSelectionBox(null);
+        }
+    }, [selectionBox, layers, addToSelection]);
 
-    /* ─── Context menu handler ────────────────────────── */
     const handleContextMenu = useCallback(
         (e: Konva.KonvaEventObject<MouseEvent>) => {
             e.evt.preventDefault();
@@ -580,12 +817,12 @@ export function Canvas({ stageRef }: CanvasProps) {
             const stage = stageRef.current;
             if (!stage) return;
             const target = e.target;
-            // If right-clicking on stage background, close menu
+
             if (target === stage) {
                 setContextMenu(null);
                 return;
             }
-            // Walk up the node tree to find a matching layer by id
+
             let matchedLayer: LayerType | undefined;
             let current: Konva.Node | null = target;
             while (current && current !== stage) {
@@ -600,31 +837,22 @@ export function Canvas({ stageRef }: CanvasProps) {
                 setContextMenu(null);
                 return;
             }
-            selectLayer(matchedLayer.id);
+
+            // Should we select the right-clicked layer?
+            // If it's not already in selection, yes.
+            // If it IS in selection, keep selection?
+            if (!selectedLayerIds.includes(matchedLayer.id)) {
+                selectLayer(matchedLayer.id);
+            }
+
             setContextMenu({
                 x: e.evt.clientX,
                 y: e.evt.clientY,
                 layerId: matchedLayer.id,
             });
         },
-        [layers, selectLayer, stageRef]
+        [layers, selectLayer, stageRef, selectedLayerIds]
     );
-
-    const handleStageTap = useCallback(
-        (e: Konva.KonvaEventObject<TouchEvent>) => {
-            if (e.target === e.target.getStage()) {
-                selectLayer(null);
-                if (isEditingText) {
-                    stopTextEditing();
-                }
-            }
-        },
-        [selectLayer, isEditingText, stopTextEditing]
-    );
-
-    const handleShapeDragStateChange = useCallback((dragging: boolean) => {
-        setStageDraggable(!dragging);
-    }, []);
 
     const handleDblClickText = useCallback(
         (layer: LayerType & { type: "text" }, _node: Konva.Text) => {
@@ -644,47 +872,7 @@ export function Canvas({ stageRef }: CanvasProps) {
         [editingLayerId, updateLayer, stopTextEditing]
     );
 
-    /* ─── Drag-move frame highlight ───────────────────── */
-    const handleDragMove = useCallback(
-        (e: Konva.KonvaEventObject<DragEvent>) => {
-            const target = e.target;
-            // Only highlight for non-frame layers being dragged at top level
-            const stage = target.getStage();
-            if (!stage || target === stage) return;
-
-            // Find the layer being dragged
-            const draggedLayer = layers.find((l) => {
-                // Match by position — Konva node id may not match our id
-                return l.x === target.x() && l.y === target.y();
-            });
-            if (draggedLayer?.type === "frame") {
-                setHighlightedFrameId(null);
-                return;
-            }
-
-            // Skip highlight for layers already inside a frame (local coords)
-            const isChildOfFrame = draggedLayer && layers.some(
-                (l) => l.type === "frame" && (l as FrameLayer).childIds.includes(draggedLayer.id)
-            );
-            if (isChildOfFrame) {
-                setHighlightedFrameId(null);
-                return;
-            }
-
-            const centerX = target.x() + target.width() / 2;
-            const centerY = target.y() + target.height() / 2;
-            const frame = getFrameAtPoint(centerX, centerY, draggedLayer?.id);
-            setHighlightedFrameId(frame?.id || null);
-        },
-        [layers, setHighlightedFrameId, getFrameAtPoint]
-    );
-
-    const editingLayer = isEditingText && editingLayerId
-        ? (layers.find((l) => l.id === editingLayerId) as TextLayer | undefined)
-        : undefined;
-
-    /* ─── File drag-and-drop ─────────────────────────── */
-
+    /* ─── File Drag & Drop ────────────────────────────── */
     const handleDragOver = useCallback((e: React.DragEvent) => {
         e.preventDefault();
         e.stopPropagation();
@@ -725,6 +913,10 @@ export function Canvas({ stageRef }: CanvasProps) {
         [addImageLayer]
     );
 
+    const editingLayer = isEditingText && editingLayerId
+        ? (layers.find((l) => l.id === editingLayerId) as TextLayer | undefined)
+        : undefined;
+
     return (
         <div
             ref={containerRef}
@@ -749,11 +941,16 @@ export function Canvas({ stageRef }: CanvasProps) {
                 x={stageX}
                 y={stageY}
                 onWheel={handleWheel}
-                onClick={handleStageClick}
-                onTap={handleStageTap}
+                onMouseDown={handleStageMouseDown}
+                onMouseMove={handleStageMouseMove}
+                onMouseUp={handleStageMouseUp}
                 onContextMenu={handleContextMenu}
                 draggable={stageDraggable && !isEditingText}
-                onDragMove={handleDragMove}
+                onDragMove={(e) => {
+                    // Stage drag
+                    // We need to differentiate stage drag from shape drag?
+                    // Konva 'draggable' on stage handles it, but verify if check needed
+                }}
                 onDragEnd={(e) => {
                     if (e.target === e.target.getStage()) {
                         setStagePosition(e.target.x(), e.target.y());
@@ -763,103 +960,97 @@ export function Canvas({ stageRef }: CanvasProps) {
                 <Layer>
                     {/* Artboard background */}
                     {artboardProps.clipContent ? (
-                        <Group
-                            clipFunc={(ctx) => {
-                                if (artboardProps.cornerRadius > 0) {
-                                    const r = artboardProps.cornerRadius;
-                                    const w = canvasWidth;
-                                    const h = canvasHeight;
-                                    ctx.beginPath();
-                                    ctx.moveTo(r, 0);
-                                    ctx.arcTo(w, 0, w, h, r);
-                                    ctx.arcTo(w, h, 0, h, r);
-                                    ctx.arcTo(0, h, 0, 0, r);
-                                    ctx.arcTo(0, 0, w, 0, r);
-                                    ctx.closePath();
-                                } else {
-                                    ctx.rect(0, 0, canvasWidth, canvasHeight);
-                                }
-                            }}
-                        >
+                        <Group clipFunc={(ctx) => {
+                            if (artboardProps.cornerRadius > 0) {
+                                const r = artboardProps.cornerRadius;
+                                const w = canvasWidth;
+                                const h = canvasHeight;
+                                ctx.beginPath();
+                                ctx.moveTo(r, 0);
+                                ctx.arcTo(w, 0, w, h, r);
+                                ctx.arcTo(w, h, 0, h, r);
+                                ctx.arcTo(0, h, 0, 0, r);
+                                ctx.arcTo(0, 0, w, 0, r);
+                                ctx.closePath();
+                            } else {
+                                ctx.rect(0, 0, canvasWidth, canvasHeight);
+                            }
+                        }}>
                             <Rect
-                                x={0}
-                                y={0}
-                                width={canvasWidth}
-                                height={canvasHeight}
+                                x={0} y={0} width={canvasWidth} height={canvasHeight}
                                 fill={artboardProps.fill}
                                 stroke={artboardProps.stroke || undefined}
                                 strokeWidth={artboardProps.strokeWidth}
                                 cornerRadius={artboardProps.cornerRadius}
                                 shadowColor="rgba(0,0,0,0.1)"
                                 shadowBlur={20}
-                                shadowOffsetX={0}
-                                shadowOffsetY={4}
                                 listening={false}
                             />
-
-                            {/* Layers — clipped to artboard */}
-                            {layers
-                                .filter((layer) => {
-                                    return !layers.some(
-                                        (l) => l.type === "frame" && (l as FrameLayer).childIds.includes(layer.id)
-                                    );
-                                })
-                                .map((layer) => (
-                                    <CanvasLayer
-                                        key={layer.id}
-                                        layer={layer}
-                                        isSelected={selectedLayerId === layer.id}
-                                        onSelect={() => selectLayer(layer.id)}
-                                        onChange={(updates) => updateLayer(layer.id, updates)}
-                                        onDragStateChange={handleShapeDragStateChange}
-                                        onDblClickText={handleDblClickText}
-                                        isEditing={isEditingText && editingLayerId === layer.id}
-                                    />
-                                ))}
+                            {layers.filter(l => !layers.some(p => p.type === 'frame' && (p as FrameLayer).childIds.includes(l.id))).map(layer => (
+                                <CanvasLayer
+                                    key={layer.id}
+                                    layer={layer}
+                                    isSelected={selectedLayerIds.includes(layer.id)}
+                                    onSelect={handleLayerSelect}
+                                    onDragStart={handleLayerDragStart}
+                                    onDragMove={handleLayerDragMove}
+                                    onDragEnd={handleLayerDragEnd}
+                                    onTransformEnd={handleTransformEnd}
+                                    onDblClickText={handleDblClickText}
+                                    isEditing={isEditingText && editingLayerId === layer.id}
+                                />
+                            ))}
                         </Group>
                     ) : (
                         <>
                             <Rect
-                                x={0}
-                                y={0}
-                                width={canvasWidth}
-                                height={canvasHeight}
+                                x={0} y={0} width={canvasWidth} height={canvasHeight}
                                 fill={artboardProps.fill}
                                 stroke={artboardProps.stroke || undefined}
                                 strokeWidth={artboardProps.strokeWidth}
                                 cornerRadius={artboardProps.cornerRadius}
                                 shadowColor="rgba(0,0,0,0.1)"
                                 shadowBlur={20}
-                                shadowOffsetX={0}
-                                shadowOffsetY={4}
                                 listening={false}
                             />
-
-                            {/* Layers — no clipping */}
-                            {layers
-                                .filter((layer) => {
-                                    return !layers.some(
-                                        (l) => l.type === "frame" && (l as FrameLayer).childIds.includes(layer.id)
-                                    );
-                                })
-                                .map((layer) => (
-                                    <CanvasLayer
-                                        key={layer.id}
-                                        layer={layer}
-                                        isSelected={selectedLayerId === layer.id}
-                                        onSelect={() => selectLayer(layer.id)}
-                                        onChange={(updates) => updateLayer(layer.id, updates)}
-                                        onDragStateChange={handleShapeDragStateChange}
-                                        onDblClickText={handleDblClickText}
-                                        isEditing={isEditingText && editingLayerId === layer.id}
-                                    />
-                                ))}
+                            {layers.filter(l => !layers.some(p => p.type === 'frame' && (p as FrameLayer).childIds.includes(l.id))).map(layer => (
+                                <CanvasLayer
+                                    key={layer.id}
+                                    layer={layer}
+                                    isSelected={selectedLayerIds.includes(layer.id)}
+                                    onSelect={handleLayerSelect}
+                                    onDragStart={handleLayerDragStart}
+                                    onDragMove={handleLayerDragMove}
+                                    onDragEnd={handleLayerDragEnd}
+                                    onTransformEnd={handleTransformEnd}
+                                    onDblClickText={handleDblClickText}
+                                    isEditing={isEditingText && editingLayerId === layer.id}
+                                />
+                            ))}
                         </>
                     )}
+
+                    {/* Selection Box */}
+                    {selectionBox && (
+                        <Rect
+                            x={selectionBox.x}
+                            y={selectionBox.y}
+                            width={selectionBox.width}
+                            height={selectionBox.height}
+                            fill="rgba(99, 102, 241, 0.2)"
+                            stroke="#6366F1"
+                            strokeWidth={1}
+                            listening={false}
+                        />
+                    )}
+
+                    {/* Selection Transformer */}
+                    <SelectionTransformer selectedLayerIds={selectedLayerIds} stageRef={stageRef} />
+
                 </Layer>
             </Stage>
 
-            {/* Inline text editor overlay */}
+            {/* Overlays */}
             {editingLayer && (
                 <InlineTextEditor
                     layer={editingLayer}
@@ -871,7 +1062,6 @@ export function Canvas({ stageRef }: CanvasProps) {
                 />
             )}
 
-            {/* Zoom + format indicator */}
             <div className="absolute bottom-4 right-4 flex items-center gap-2">
                 {activeResizeId !== "master" && (
                     <div className="bg-accent-primary/10 border border-accent-primary/30 rounded-[var(--radius-md)] px-3 py-1.5 shadow-[var(--shadow-sm)]">
@@ -886,7 +1076,7 @@ export function Canvas({ stageRef }: CanvasProps) {
                     </span>
                 </div>
             </div>
-            {/* Drop zone overlay */}
+
             {isDraggingFile && (
                 <div className="absolute inset-4 border-2 border-dashed border-accent-primary rounded-2xl bg-accent-primary/5 flex items-center justify-center z-40 pointer-events-none">
                     <div className="flex flex-col items-center gap-2 text-accent-primary">
@@ -896,7 +1086,6 @@ export function Canvas({ stageRef }: CanvasProps) {
                 </div>
             )}
 
-            {/* Context menu */}
             {contextMenu && (() => {
                 const layer = layers.find((l) => l.id === contextMenu.layerId);
                 if (!layer) return null;
@@ -922,6 +1111,7 @@ export function Canvas({ stageRef }: CanvasProps) {
                     />
                 );
             })()}
+
         </div>
     );
 }
