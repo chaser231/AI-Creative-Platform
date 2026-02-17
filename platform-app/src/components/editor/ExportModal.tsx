@@ -16,7 +16,7 @@ interface ExportModalProps {
 }
 
 type ExportTarget = "artboard" | string; // "artboard" or frame id
-type ExportMode = "single" | "batch";
+type ExportMode = "single" | "batch" | "template";
 
 export function ExportModal({ open, onClose, stageRef }: ExportModalProps) {
     const [scale, setScale] = useState(1);
@@ -191,13 +191,33 @@ export function ExportModal({ open, onClose, stageRef }: ExportModalProps) {
                         <Button onClick={handleSingleExport} icon={<Download size={16} />}>
                             Скачать PNG
                         </Button>
-                    ) : (
+                    ) : exportMode === "batch" ? (
                         <Button
                             onClick={handleBatchExport}
                             icon={<Package size={16} />}
                             disabled={selectedResizes.size === 0 || isExporting}
                         >
                             {isExporting ? "Экспорт..." : `Скачать ${selectedResizes.size} файл(ов)`}
+                        </Button>
+                    ) : (
+                        <Button
+                            onClick={() => {
+                                import("@/services/templateService").then(({ serializeTemplate }) => {
+                                    const { masterComponents, resizes, layers } = useCanvasStore.getState();
+                                    const pack = serializeTemplate({}, masterComponents, resizes);
+                                    const blob = new Blob([JSON.stringify(pack, null, 2)], { type: "application/json" });
+                                    const url = URL.createObjectURL(blob);
+                                    const link = document.createElement("a");
+                                    link.href = url;
+                                    link.download = "template-pack.json";
+                                    link.click();
+                                    URL.revokeObjectURL(url);
+                                    onClose();
+                                });
+                            }}
+                            icon={<Package size={16} />}
+                        >
+                            Скачать .json
                         </Button>
                     )}
                 </>
@@ -221,7 +241,6 @@ export function ExportModal({ open, onClose, stageRef }: ExportModalProps) {
                     <button
                         onClick={() => {
                             setExportMode("batch");
-                            // Initialize all resizes as selected
                             setSelectedResizes(new Set(allResizeIds));
                         }}
                         className={cn(
@@ -233,6 +252,18 @@ export function ExportModal({ open, onClose, stageRef }: ExportModalProps) {
                     >
                         <Layers size={12} />
                         Пакетный
+                    </button>
+                    <button
+                        onClick={() => setExportMode("template")}
+                        className={cn(
+                            "flex-1 flex items-center justify-center gap-1.5 h-8 rounded-[var(--radius-md)] text-xs font-medium transition-all cursor-pointer",
+                            exportMode === "template"
+                                ? "bg-bg-surface text-text-primary shadow-[var(--shadow-sm)] border border-border-primary"
+                                : "text-text-secondary hover:text-text-primary"
+                        )}
+                    >
+                        <Package size={12} />
+                        Темплейт
                     </button>
                 </div>
 
@@ -286,7 +317,7 @@ export function ExportModal({ open, onClose, stageRef }: ExportModalProps) {
                             </div>
                         </div>
                     </>
-                ) : (
+                ) : exportMode === "batch" ? (
                     <>
                         {/* Batch export: resize list */}
                         <div className="space-y-1.5">
@@ -359,6 +390,22 @@ export function ExportModal({ open, onClose, stageRef }: ExportModalProps) {
                         <div className="p-3 bg-bg-secondary rounded-[var(--radius-md)] border border-border-primary">
                             <p className="text-xs text-text-secondary">
                                 Будет экспортировано <span className="text-text-primary font-medium">{selectedResizes.size}</span> файл(ов) в формате PNG @{scale}x
+                            </p>
+                        </div>
+                    </>
+                ) : (
+                    <>
+                        {/* Template Export Info */}
+                        <div className="p-4 bg-bg-secondary rounded-[var(--radius-md)] border border-border-primary space-y-2">
+                            <Package className="text-accent-primary mb-1" size={24} />
+                            <p className="text-sm text-text-primary font-medium">
+                                Экспорт Темплейт Пака
+                            </p>
+                            <p className="text-xs text-text-secondary">
+                                Сохраняет текущую структуру проекта (Мастер-компоненты, слоты, форматы) в файл .json для повторного использования.
+                            </p>
+                            <p className="text-xs text-text-tertiary pt-2 border-t border-border-secondary">
+                                Конкретный контент инстансов не сохраняется, но структура и правила лэйаута будут экспортированы.
                             </p>
                         </div>
                     </>

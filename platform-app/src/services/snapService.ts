@@ -49,15 +49,15 @@ export function getSnapLines(
     let minDiffX = threshold + 1;
     let bestSnapX: { guide: number, offset: number, start: number, end: number } | null = null;
 
-    otherNodes.forEach(node => {
+    for (const node of otherNodes) {
         const edges = [
             node.x,
             node.x + node.width / 2,
             node.x + node.width
         ];
 
-        activeEdges.vertical.forEach(activeEdge => {
-            edges.forEach(targetEdge => {
+        for (const activeEdge of activeEdges.vertical) {
+            for (const targetEdge of edges) {
                 const diff = Math.abs(activeEdge.guide - targetEdge);
                 if (diff < minDiffX) {
                     minDiffX = diff;
@@ -69,17 +69,19 @@ export function getSnapLines(
                         end: Math.max(activeNode.y + activeNode.height, node.y + node.height)
                     };
                 }
-            });
-        });
-    });
+            }
+        }
+    }
 
     if (bestSnapX) {
-        snappedX = bestSnapX.guide + bestSnapX.offset;
+        // Explicit check to satisfy TS if needed, though for-of usually works
+        const snap = bestSnapX;
+        snappedX = snap.guide + snap.offset;
         guides.push({
             orientation: 'vertical',
-            position: bestSnapX.guide,
-            start: bestSnapX.start,
-            end: bestSnapX.end
+            position: snap.guide,
+            start: snap.start,
+            end: snap.end
         });
     }
 
@@ -87,15 +89,15 @@ export function getSnapLines(
     let minDiffY = threshold + 1;
     let bestSnapY: { guide: number, offset: number, start: number, end: number } | null = null;
 
-    otherNodes.forEach(node => {
+    for (const node of otherNodes) {
         const edges = [
             node.y,
             node.y + node.height / 2,
             node.y + node.height
         ];
 
-        activeEdges.horizontal.forEach(activeEdge => {
-            edges.forEach(targetEdge => {
+        for (const activeEdge of activeEdges.horizontal) {
+            for (const targetEdge of edges) {
                 const diff = Math.abs(activeEdge.guide - targetEdge);
                 if (diff < minDiffY) {
                     minDiffY = diff;
@@ -106,17 +108,18 @@ export function getSnapLines(
                         end: Math.max(activeNode.x + activeNode.width, node.x + node.width)
                     };
                 }
-            });
-        });
-    });
+            }
+        }
+    }
 
     if (bestSnapY) {
-        snappedY = bestSnapY.guide + bestSnapY.offset;
+        const snap = bestSnapY;
+        snappedY = snap.guide + snap.offset;
         guides.push({
             orientation: 'horizontal',
-            position: bestSnapY.guide,
-            start: bestSnapY.start,
-            end: bestSnapY.end
+            position: snap.guide,
+            start: snap.start,
+            end: snap.end
         });
     }
 
