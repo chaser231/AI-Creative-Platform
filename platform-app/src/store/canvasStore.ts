@@ -16,6 +16,7 @@ import type {
     LayerConstraints,
 } from "@/types";
 import { CONTENT_SOURCE_KEYS, DEFAULT_CONSTRAINTS } from "@/types";
+import { applyLayout } from "@/services/layoutEngine";
 
 export interface ArtboardProps {
     fill: string;
@@ -400,8 +401,10 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
             id: masterId,
             type: "text",
             name: layer.name,
+            slotId: layer.slotId,
             props: {
                 type: "text",
+                slotId: layer.slotId,
                 x: layer.x,
                 y: layer.y,
                 width: layer.width,
@@ -466,8 +469,10 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
             id: masterId,
             type: "rectangle",
             name: layer.name,
+            slotId: layer.slotId,
             props: {
                 type: "rectangle",
+                slotId: layer.slotId,
                 x: layer.x,
                 y: layer.y,
                 width: layer.width,
@@ -523,8 +528,10 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
             id: masterId,
             type: "image",
             name: layer.name,
+            slotId: layer.slotId,
             props: {
                 type: "image",
+                slotId: layer.slotId,
                 x: layer.x,
                 y: layer.y,
                 width: layer.width,
@@ -583,8 +590,10 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
             id: masterId,
             type: "badge",
             name: layer.name,
+            slotId: layer.slotId,
             props: {
                 type: "badge",
+                slotId: layer.slotId,
                 x: layer.x,
                 y: layer.y,
                 width: layer.width,
@@ -647,8 +656,10 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
             id: masterId,
             type: "frame",
             name: layer.name,
+            slotId: layer.slotId,
             props: {
                 type: "frame",
+                slotId: layer.slotId,
                 x: layer.x,
                 y: layer.y,
                 width: layer.width,
@@ -1298,12 +1309,41 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
     addResize: (format) => {
         const state = get();
         // Auto-create instances for all existing master components
-        const newInstances: ComponentInstance[] = state.masterComponents.map((m) => ({
-            id: uuid(),
-            masterId: m.id,
-            resizeId: format.id,
-            localProps: { ...m.props }, // full copy of master props as starting point
-        }));
+        const newInstances: ComponentInstance[] = state.masterComponents.map((m) => {
+            const initialProps = { ...m.props };
+            let finalProps = initialProps;
+
+            // Apply smart layout if slotId is present
+            if (m.slotId) {
+                // Mock a layer for layout engine
+                const mockLayer = {
+                    ...initialProps,
+                    id: uuid(),
+                    name: m.name,
+                    type: m.type,
+                    masterId: m.id,
+                    slotId: m.slotId
+                } as Layer;
+
+                const [layouted] = applyLayout([mockLayer], format);
+                if (layouted) {
+                    finalProps = {
+                        ...initialProps,
+                        x: layouted.x,
+                        y: layouted.y,
+                        width: layouted.width,
+                        height: layouted.height
+                    };
+                }
+            }
+
+            return {
+                id: uuid(),
+                masterId: m.id,
+                resizeId: format.id,
+                localProps: finalProps,
+            };
+        });
         set((s) => ({
             resizes: [...s.resizes, format],
             componentInstances: [...s.componentInstances, ...newInstances],

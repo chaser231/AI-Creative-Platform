@@ -82,6 +82,7 @@ export interface BaseComponentProps {
     rotation: number;
     visible: boolean;
     locked: boolean;
+    slotId?: TemplateSlotRole;
 }
 
 export interface TextComponentProps extends BaseComponentProps {
@@ -216,6 +217,8 @@ export type EditorMode = "wizard" | "studio";
 // ─── Legacy Layer compat (used by Canvas renderer) ──────
 export type LayerType = "text" | "image" | "rectangle" | "badge" | "frame";
 
+export type TemplateSlotRole = 'headline' | 'subhead' | 'cta' | 'background' | 'image-primary' | 'logo' | 'none';
+
 export type ConstraintH = "left" | "right" | "center" | "stretch" | "scale";
 export type ConstraintV = "top" | "bottom" | "center" | "stretch" | "scale";
 
@@ -239,6 +242,7 @@ export interface BaseLayer {
     locked: boolean;
     masterId?: string; // link to master component
     constraints?: LayerConstraints; // behaviour when parent frame resizes
+    slotId?: TemplateSlotRole; // Smart Resize slot
 }
 
 export interface TextLayer extends BaseLayer {

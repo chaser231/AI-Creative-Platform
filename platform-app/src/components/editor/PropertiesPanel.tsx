@@ -2,7 +2,7 @@
 
 import { useCanvasStore } from "@/store/canvasStore";
 import type { ArtboardProps } from "@/store/canvasStore";
-import type { Layer, TextLayer, RectangleLayer, BadgeLayer, FrameLayer, ImageLayer, ConstraintH, ConstraintV } from "@/types";
+import type { Layer, TextLayer, RectangleLayer, BadgeLayer, FrameLayer, ImageLayer, ConstraintH, ConstraintV, TemplateSlotRole } from "@/types";
 import { DEFAULT_CONSTRAINTS } from "@/types";
 import {
     Link2,
@@ -194,6 +194,26 @@ export function PropertiesPanel() {
             })()}
 
             {/* Divider */}
+            <div className="w-px h-6 bg-border-primary shrink-0" />
+
+            {/* Smart Layout Slot */}
+            <div className="flex items-center gap-1.5 shrink-0">
+                <span className="text-[10px] text-text-tertiary font-light">Slot</span>
+                <select
+                    value={selectedLayer.slotId || "none"}
+                    onChange={(e) => updateLayer(selectedLayer.id, { slotId: e.target.value as TemplateSlotRole })}
+                    className="h-6 px-1 text-[10px] bg-bg-secondary border border-border-primary rounded-[var(--radius-sm)] text-text-primary cursor-pointer focus:outline-none w-20"
+                >
+                    <option value="none">None</option>
+                    <option value="headline">Headline</option>
+                    <option value="subhead">Subhead</option>
+                    <option value="cta">CTA</option>
+                    <option value="background">Background</option>
+                    <option value="image-primary">Image Primary</option>
+                    <option value="logo">Logo</option>
+                </select>
+            </div>
+
             <div className="w-px h-6 bg-border-primary shrink-0" />
 
             {/* Type-specific properties */}
