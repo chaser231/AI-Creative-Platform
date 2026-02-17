@@ -23,12 +23,31 @@ import {
 import { useState, useRef, useEffect } from "react";
 
 export function PropertiesPanel() {
-    const { layers, selectedLayerId, updateLayer, activeResizeId, artboardProps, updateArtboardProps } = useCanvasStore();
-    const selectedLayer = layers.find((l) => l.id === selectedLayerId);
+    const { layers, selectedLayerIds, updateLayer, activeResizeId, artboardProps, updateArtboardProps } = useCanvasStore();
+
+    const isMultiSelection = selectedLayerIds.length > 1;
+    const selectedLayer = selectedLayerIds.length === 1
+        ? layers.find((l) => l.id === selectedLayerIds[0])
+        : null;
+
     const [activePopover, setActivePopover] = useState<string | null>(null);
     const togglePopover = (name: string) => setActivePopover((prev) => (prev === name ? null : name));
 
     const panelPositionClass = "absolute top-3 left-1/2 -translate-x-1/2 z-20 flex items-center gap-2 px-4 py-2.5 border border-border-primary rounded-[var(--radius-2xl)] shadow-[var(--shadow-lg)] max-w-[92%] backdrop-blur-xl bg-bg-surface/85";
+
+    // When multiple items are selected
+    if (isMultiSelection) {
+        return (
+            <div className={panelPositionClass}>
+                <div className="flex items-center gap-2 px-2">
+                    <span className="text-xs text-text-primary font-medium">Multiple items selected</span>
+                    <span className="text-[10px] text-text-tertiary px-1.5 py-0.5 bg-bg-secondary rounded-full">
+                        {selectedLayerIds.length}
+                    </span>
+                </div>
+            </div>
+        );
+    }
 
     // When nothing is selected, show artboard properties
     if (!selectedLayer) {

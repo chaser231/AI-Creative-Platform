@@ -2,10 +2,11 @@
 
 import { useRef, useCallback, useEffect, useState } from "react";
 import { ImageIcon } from "lucide-react";
-import { Stage, Layer, Rect, Text, Image as KonvaImage, Transformer, Group } from "react-konva";
+import { Stage, Layer, Rect, Text, Image as KonvaImage, Transformer, Group, Line } from "react-konva";
 import { useCanvasStore, computeConstrainedPosition } from "@/store/canvasStore";
 import type { Layer as LayerType, TextLayer, BadgeLayer, FrameLayer } from "@/types";
 import { ContextMenu, buildLayerContextMenuItems } from "./ContextMenu";
+import { getSnapLines, SnapResult } from "@/services/snapService";
 import Konva from "konva";
 
 /* ─── Constants ───────────────────────────────────── */
@@ -431,6 +432,9 @@ export function Canvas({ stageRef }: CanvasProps) {
     // Marquee State
     const [selectionBox, setSelectionBox] = useState<{ x: number; y: number; width: number; height: number; startX: number; startY: number } | null>(null);
 
+    // Snap Guides State
+    const [snapLines, setSnapLines] = useState<SnapResult['guides']>([]);
+
     // Track start positions for multi-drag
     const dragStartLocs = useRef<Record<string, { x: number; y: number }>>({});
 
@@ -539,13 +543,53 @@ export function Canvas({ stageRef }: CanvasProps) {
         const currentSceneX = (absPos.x - stage.x()) / stage.scaleX();
         const currentSceneY = (absPos.y - stage.y()) / stage.scaleY();
 
-        const dx = currentSceneX - startLoc.x;
-        const dy = currentSceneY - startLoc.y;
+        let dx = currentSceneX - startLoc.x;
+        let dy = currentSceneY - startLoc.y;
 
-        // Move other selected nodes
+        // Snap Logic (only for single selection drag for now for simplicity, or primary node)
+        // We snap the node that is being dragged (e.target).
+        const primaryLayer = layers.find(l => l.id === id);
+        if (primaryLayer) {
+            const proposedX = startLoc.x + dx;
+            const proposedY = startLoc.y + dy;
+
+            const otherNodes = layers
+                .filter(l => !selectedLayerIds.includes(l.id) && l.visible && !l.locked)
+                .map(l => ({
+                    id: l.id,
+                    x: l.x,
+                    y: l.y,
+                    width: l.width,
+                    height: l.height,
+                    rotation: l.rotation
+                }));
+
+            const snapResult = getSnapLines(
+                {
+                    id: primaryLayer.id,
+                    x: proposedX,
+                    y: proposedY,
+                    width: primaryLayer.width,
+                    height: primaryLayer.height,
+                    rotation: primaryLayer.rotation
+                },
+                otherNodes
+            );
+
+            setSnapLines(snapResult.guides);
+
+            if (snapResult.x !== null) {
+                dx = snapResult.x - startLoc.x;
+            }
+            if (snapResult.y !== null) {
+                dy = snapResult.y - startLoc.y;
+            }
+        } else {
+            setSnapLines([]);
+        }
+
+        // Move other selected nodes (and self)
         Object.keys(dragStartLocs.current).forEach(sid => {
-            if (sid === id) return; // Skip self
-
             const node = stage.findOne("#" + sid);
             if (node) {
                 const sLoc = dragStartLocs.current[sid];
@@ -564,26 +608,10 @@ export function Canvas({ stageRef }: CanvasProps) {
             }
         });
 
-        // Frame Highlight Logic (using Scene Coordinates for hit testing?)
-        // getFrameAtPoint expects Scene Coordinates (store values)
-        // getAbsolutePosition returns Screen logic. getFrameAtPoint checks layer.x/y (Scene).
-        // So we should pass Scene Coordinates to getFrameAtPoint.
-
-        // But wait, getFrameAtPoint iterates layers and checks if (x,y) is within bounds.
-        // Bounds are scene coordinates.
-        // So we must pass Scene Coordinates.
-
-        // Center calculation needs to be in Scene Coordinates
-        // e.target.width() is unscaled? width() * scaleX() is visual width.
-        // visual width / stage scale = scene width.
-        // Or simply: node.width() * node.scaleX().
-        // Wait, node.scaleX() is Local scale. 
-        // Scene Width = Width * LocalScale.
-        // So correct center in Scene:
         const sceneWidth = e.target.width() * e.target.scaleX();
         const sceneHeight = e.target.height() * e.target.scaleY();
-        const centerX = currentSceneX + sceneWidth / 2;
-        const centerY = currentSceneY + sceneHeight / 2;
+        const centerX = (startLoc.x + dx) + sceneWidth / 2;
+        const centerY = (startLoc.y + dy) + sceneHeight / 2;
 
         if (Object.keys(dragStartLocs.current).length === 1) {
             const frame = getFrameAtPoint(centerX, centerY, id);
@@ -591,9 +619,10 @@ export function Canvas({ stageRef }: CanvasProps) {
         } else {
             setHighlightedFrameId(null);
         }
-    }, [getFrameAtPoint, setHighlightedFrameId]);
+    }, [layers, selectedLayerIds, getFrameAtPoint, setHighlightedFrameId]);
 
     const handleLayerDragEnd = useCallback((e: Konva.KonvaEventObject<DragEvent>) => {
+        setSnapLines([]);
         setStageDraggable(true);
         const id = e.target.id();
         const startLoc = dragStartLocs.current[id];
@@ -1029,6 +1058,22 @@ export function Canvas({ stageRef }: CanvasProps) {
                             ))}
                         </>
                     )}
+
+                    {/* Snap Guides */}
+                    {snapLines.map((guide, i) => (
+                        <Line
+                            key={i}
+                            points={
+                                guide.orientation === 'vertical'
+                                    ? [guide.position, guide.start, guide.position, guide.end]
+                                    : [guide.start, guide.position, guide.end, guide.position]
+                            }
+                            stroke="#ff0000"
+                            strokeWidth={1}
+                            dash={[4, 4]}
+                            listening={false}
+                        />
+                    ))}
 
                     {/* Selection Box */}
                     {selectionBox && (

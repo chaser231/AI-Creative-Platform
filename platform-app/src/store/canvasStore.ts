@@ -124,7 +124,7 @@ interface HistorySnapshot {
     layers: Layer[];
     masterComponents: MasterComponent[];
     componentInstances: ComponentInstance[];
-    selectedLayerId: string | null;
+    selectedLayerIds: string[];
 }
 
 // Throttle timer for updateLayer history
@@ -134,7 +134,7 @@ let _updateHistoryPushed = false;
 interface CanvasStore {
     // Layers (rendered on canvas, derived from components for active resize)
     layers: Layer[];
-    selectedLayerId: string | null;
+    selectedLayerIds: string[];
     activeTool: ToolType;
     canvasWidth: number;
     canvasHeight: number;
@@ -175,7 +175,13 @@ interface CanvasStore {
     addFrameLayer: (overrides?: Partial<FrameLayer>) => void;
     updateLayer: (id: string, updates: Partial<Layer>) => void;
     removeLayer: (id: string) => void;
-    selectLayer: (id: string | null) => void;
+    selectLayer: (id: string | string[] | null) => void;
+    toggleSelection: (id: string) => void;
+    addToSelection: (id: string) => void;
+    removeFromSelection: (id: string) => void;
+    deleteSelectedLayers: () => void;
+    batchUpdateLayers: (updates: { id: string; changes: Partial<Layer> }[]) => void;
+    duplicateSelectedLayers: () => void;
     reorderLayers: (fromIndex: number, toIndex: number) => void;
     toggleLayerVisibility: (id: string) => void;
     toggleLayerLock: (id: string) => void;
@@ -295,7 +301,7 @@ function syncFrameChildIdsToInstances(
 
 export const useCanvasStore = create<CanvasStore>((set, get) => ({
     layers: [],
-    selectedLayerId: null,
+    selectedLayerIds: [],
     activeTool: "select",
     canvasWidth: DEFAULT_RESIZE.width,
     canvasHeight: DEFAULT_RESIZE.height,
@@ -329,14 +335,14 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
             layers: state.layers,
             masterComponents: state.masterComponents,
             componentInstances: state.componentInstances,
-            selectedLayerId: state.selectedLayerId,
+            selectedLayerIds: state.selectedLayerIds,
         };
         set({
             history: state.history.slice(0, -1),
             layers: prev.layers,
             masterComponents: prev.masterComponents,
             componentInstances: prev.componentInstances,
-            selectedLayerId: prev.selectedLayerId,
+            selectedLayerIds: prev.selectedLayerIds,
             future: [currentSnapshot, ...state.future].slice(0, MAX_HISTORY),
         });
     },
@@ -349,14 +355,14 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
             layers: state.layers,
             masterComponents: state.masterComponents,
             componentInstances: state.componentInstances,
-            selectedLayerId: state.selectedLayerId,
+            selectedLayerIds: state.selectedLayerIds,
         };
         set({
             future: state.future.slice(1),
             layers: next.layers,
             masterComponents: next.masterComponents,
             componentInstances: next.componentInstances,
-            selectedLayerId: next.selectedLayerId,
+            selectedLayerIds: next.selectedLayerIds,
             history: [...state.history, currentSnapshot].slice(-MAX_HISTORY),
         });
     },
@@ -364,7 +370,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
     // ─── Layer creation ─────────────────────────────────
     addTextLayer: (overrides = {}) => {
         const _s = get();
-        const _snap: HistorySnapshot = { layers: _s.layers, masterComponents: _s.masterComponents, componentInstances: _s.componentInstances, selectedLayerId: _s.selectedLayerId };
+        const _snap: HistorySnapshot = { layers: _s.layers, masterComponents: _s.masterComponents, componentInstances: _s.componentInstances, selectedLayerIds: _s.selectedLayerIds };
         set({ history: [..._s.history, _snap].slice(-MAX_HISTORY), future: [] });
         const id = uuid();
         const masterId = uuid();
@@ -427,14 +433,14 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
             layers: [...s.layers, layer],
             masterComponents: [...s.masterComponents, master],
             componentInstances: [...s.componentInstances, ...newInstances],
-            selectedLayerId: id,
+            selectedLayerIds: [id],
             activeTool: "select",
         }));
     },
 
     addRectangleLayer: (overrides = {}) => {
         const _s = get();
-        const _snap: HistorySnapshot = { layers: _s.layers, masterComponents: _s.masterComponents, componentInstances: _s.componentInstances, selectedLayerId: _s.selectedLayerId };
+        const _snap: HistorySnapshot = { layers: _s.layers, masterComponents: _s.masterComponents, componentInstances: _s.componentInstances, selectedLayerIds: _s.selectedLayerIds };
         set({ history: [..._s.history, _snap].slice(-MAX_HISTORY), future: [] });
         const id = uuid();
         const masterId = uuid();
@@ -488,14 +494,14 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
             layers: [...s.layers, layer],
             masterComponents: [...s.masterComponents, master],
             componentInstances: [...s.componentInstances, ...newInstances],
-            selectedLayerId: id,
+            selectedLayerIds: [id],
             activeTool: "select",
         }));
     },
 
     addImageLayer: (src, width, height) => {
         const _s = get();
-        const _snap: HistorySnapshot = { layers: _s.layers, masterComponents: _s.masterComponents, componentInstances: _s.componentInstances, selectedLayerId: _s.selectedLayerId };
+        const _snap: HistorySnapshot = { layers: _s.layers, masterComponents: _s.masterComponents, componentInstances: _s.componentInstances, selectedLayerIds: _s.selectedLayerIds };
         set({ history: [..._s.history, _snap].slice(-MAX_HISTORY), future: [] });
         const id = uuid();
         const masterId = uuid();
@@ -543,14 +549,14 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
             layers: [...s.layers, layer],
             masterComponents: [...s.masterComponents, master],
             componentInstances: [...s.componentInstances, ...newInstances],
-            selectedLayerId: id,
+            selectedLayerIds: [id],
             activeTool: "select",
         }));
     },
 
     addBadgeLayer: (overrides = {}) => {
         const _s = get();
-        const _snap: HistorySnapshot = { layers: _s.layers, masterComponents: _s.masterComponents, componentInstances: _s.componentInstances, selectedLayerId: _s.selectedLayerId };
+        const _snap: HistorySnapshot = { layers: _s.layers, masterComponents: _s.masterComponents, componentInstances: _s.componentInstances, selectedLayerIds: _s.selectedLayerIds };
         set({ history: [..._s.history, _snap].slice(-MAX_HISTORY), future: [] });
         const id = uuid();
         const masterId = uuid();
@@ -606,14 +612,14 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
             layers: [...s.layers, layer],
             masterComponents: [...s.masterComponents, master],
             componentInstances: [...s.componentInstances, ...newInstances],
-            selectedLayerId: id,
+            selectedLayerIds: [id],
             activeTool: "select",
         }));
     },
 
     addFrameLayer: (overrides = {}) => {
         const _s = get();
-        const _snap: HistorySnapshot = { layers: _s.layers, masterComponents: _s.masterComponents, componentInstances: _s.componentInstances, selectedLayerId: _s.selectedLayerId };
+        const _snap: HistorySnapshot = { layers: _s.layers, masterComponents: _s.masterComponents, componentInstances: _s.componentInstances, selectedLayerIds: _s.selectedLayerIds };
         set({ history: [..._s.history, _snap].slice(-MAX_HISTORY), future: [] });
         const id = uuid();
         const masterId = uuid();
@@ -671,7 +677,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
             layers: [...s.layers, layer],
             masterComponents: [...s.masterComponents, master],
             componentInstances: [...s.componentInstances, ...newInstances],
-            selectedLayerId: id,
+            selectedLayerIds: [id],
             activeTool: "select",
         }));
     },
@@ -680,7 +686,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
         // Throttled history push: save snapshot on first call, skip during rapid updates (drag/nudge)
         if (!_updateHistoryPushed) {
             const _s = get();
-            const _snap: HistorySnapshot = { layers: _s.layers, masterComponents: _s.masterComponents, componentInstances: _s.componentInstances, selectedLayerId: _s.selectedLayerId };
+            const _snap: HistorySnapshot = { layers: _s.layers, masterComponents: _s.masterComponents, componentInstances: _s.componentInstances, selectedLayerIds: _s.selectedLayerIds };
             set({ history: [..._s.history, _snap].slice(-MAX_HISTORY), future: [] });
             _updateHistoryPushed = true;
         }
@@ -688,9 +694,54 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
         _updateHistoryTimer = setTimeout(() => { _updateHistoryPushed = false; }, 300);
 
         set((state) => {
-            const newLayers = state.layers.map((l) =>
-                l.id === id ? ({ ...l, ...updates } as Layer) : l
-            );
+            // Helper to get all layers including updated children
+            const computeUpdatedLayers = (currentLayers: Layer[], targetId: string, layerUpdates: Partial<Layer>): Layer[] => {
+                const targetLayer = currentLayers.find(l => l.id === targetId);
+                if (!targetLayer) return currentLayers;
+
+                // 1. Calculate delta if position changed
+                let dx = 0;
+                let dy = 0;
+                if (targetLayer.type === "frame" && (layerUpdates.x !== undefined || layerUpdates.y !== undefined)) {
+                    if (layerUpdates.x !== undefined) dx = (layerUpdates.x as number) - targetLayer.x;
+                    if (layerUpdates.y !== undefined) dy = (layerUpdates.y as number) - targetLayer.y;
+                }
+
+                // 2. Identify children to move (if any)
+                const childrenIdsToMove = new Set<string>();
+                if ((dx !== 0 || dy !== 0) && targetLayer.type === "frame") {
+                    const collect = (fid: string) => {
+                        const f = currentLayers.find(l => l.id === fid) as FrameLayer;
+                        if (f && f.childIds) {
+                            f.childIds.forEach(cid => {
+                                childrenIdsToMove.add(cid);
+                                const child = currentLayers.find(l => l.id === cid);
+                                if (child?.type === "frame") collect(cid);
+                            });
+                        }
+                    };
+                    collect(targetId);
+                }
+
+                // 3. Map all layers
+                return currentLayers.map(l => {
+                    // Target layer gets explicit updates
+                    if (l.id === targetId) {
+                        return { ...l, ...layerUpdates } as Layer;
+                    }
+                    // Children get delta updates
+                    if (childrenIdsToMove.has(l.id)) {
+                        return {
+                            ...l,
+                            x: l.x + dx,
+                            y: l.y + dy,
+                        } as Layer;
+                    }
+                    return l;
+                });
+            };
+
+            const newLayers = computeUpdatedLayers(state.layers, id, updates);
             const layer = newLayers.find((l) => l.id === id);
 
             if (!layer?.masterId) {
@@ -760,7 +811,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
 
     removeLayer: (id) => {
         const _s = get();
-        const _snap: HistorySnapshot = { layers: _s.layers, masterComponents: _s.masterComponents, componentInstances: _s.componentInstances, selectedLayerId: _s.selectedLayerId };
+        const _snap: HistorySnapshot = { layers: _s.layers, masterComponents: _s.masterComponents, componentInstances: _s.componentInstances, selectedLayerIds: _s.selectedLayerIds };
         set({ history: [..._s.history, _snap].slice(-MAX_HISTORY), future: [] });
         set((state) => {
             const layer = state.layers.find((l) => l.id === id);
@@ -790,7 +841,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
             );
             return {
                 layers: newLayers,
-                selectedLayerId: idsToRemove.has(state.selectedLayerId ?? "") ? null : state.selectedLayerId,
+                selectedLayerIds: state.selectedLayerIds.filter((sid) => !idsToRemove.has(sid)),
                 masterComponents: state.masterComponents.filter((m) => !masterIdsToRemove.has(m.id)),
                 componentInstances: state.componentInstances.filter((i) => !masterIdsToRemove.has(i.masterId)),
             };
@@ -798,7 +849,35 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
     },
 
     selectLayer: (id) => {
-        set({ selectedLayerId: id });
+        if (id === null) {
+            set({ selectedLayerIds: [] });
+        } else if (Array.isArray(id)) {
+            set({ selectedLayerIds: id });
+        } else {
+            set({ selectedLayerIds: [id] });
+        }
+    },
+
+    toggleSelection: (id) => {
+        set((state) => ({
+            selectedLayerIds: state.selectedLayerIds.includes(id)
+                ? state.selectedLayerIds.filter((sid) => sid !== id)
+                : [...state.selectedLayerIds, id],
+        }));
+    },
+
+    addToSelection: (id) => {
+        set((state) => ({
+            selectedLayerIds: state.selectedLayerIds.includes(id)
+                ? state.selectedLayerIds
+                : [...state.selectedLayerIds, id],
+        }));
+    },
+
+    removeFromSelection: (id) => {
+        set((state) => ({
+            selectedLayerIds: state.selectedLayerIds.filter((sid) => sid !== id),
+        }));
     },
 
     toggleLayerLock: (id) => {
@@ -809,9 +888,19 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
 
     duplicateLayer: (id) => {
         const state = get();
+        // ... (reuse existing single duplicate logic or delegate? Let's just keep it for now but maybe just call duplicateSelectedLayers if id == selectedLayer)
+        // Actually, let's implement duplicateSelectedLayers nicely and duplicateLayer can become legacy or specific.
+        // For now, I'll just leave duplicateLayer as is from previous step (it was working for single).
+        // Wait, I need to match the previous content to replace it or just add after it?
+        // I will REPLACE duplicateLayer and ADD duplicateSelectedLayers and deleteSelectedLayers to keep it clean.
+
+        // Re-implement duplicateLayer as a wrapper or just standalone.
+        // Let's implement duplicateSelectedLayers first.
+
+        // ... previous duplicateLayer logic ...
         const layer = state.layers.find((l) => l.id === id);
         if (!layer) return;
-        set({ history: [...state.history, { layers: state.layers, masterComponents: state.masterComponents, componentInstances: state.componentInstances, selectedLayerId: state.selectedLayerId } as HistorySnapshot].slice(-MAX_HISTORY), future: [] });
+        set({ history: [...state.history, { layers: state.layers, masterComponents: state.masterComponents, componentInstances: state.componentInstances, selectedLayerIds: state.selectedLayerIds } as HistorySnapshot].slice(-MAX_HISTORY), future: [] });
 
         const newLayers: Layer[] = [];
         const newMasters: MasterComponent[] = [];
@@ -858,10 +947,8 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
             return newId;
         };
 
-        // Duplicate the root layer
         const newRootId = duplicateOne(layer, 20, 20);
 
-        // If frame, recursively duplicate children
         if (layer.type === "frame") {
             const frame = layer as FrameLayer;
             const rootDuplicate = newLayers.find((l) => l.id === newRootId) as FrameLayer;
@@ -869,7 +956,17 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
                 for (const childId of srcChildIds) {
                     const child = state.layers.find((l) => l.id === childId);
                     if (!child) continue;
-                    const newChildId = duplicateOne(child, 20, 20);
+                    const newChildId = duplicateOne(child, 20, 20); // Keep relative offset 0? Or 20? 
+                    // Usually children keep relative position to parent. 
+                    // If root moved 20,20, and we set child x,y to child.x+20, child.y+20, that's GLOBAL x,y.
+                    // If child x,y is absolute (stage coordinates), then yes +20, +20.
+                    // If child x,y is relative... wait, `srcLayer.x` in CanvasStore usually stores ABSOLUTE Stage Position or Relative?
+                    // In most canvas apps, x/y are relative to parent if inside frame?
+                    // Let's check `moveLayerToFrame`.
+                    // It doesn't adjust x/y. This implies x/y are always global stage coordinates?
+                    // Or `moveLayerToFrame` is buggy.
+                    // `updateLayer` updates x/y.
+                    // If x/y are global, then +20/+20 is correct for children too.
                     parentDuplicate.childIds.push(newChildId);
                     if (child.type === "frame") {
                         const childFrame = child as FrameLayer;
@@ -885,13 +982,149 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
             layers: [...s.layers, ...newLayers],
             masterComponents: [...s.masterComponents, ...newMasters],
             componentInstances: [...s.componentInstances, ...newInstances],
-            selectedLayerId: newRootId,
+            selectedLayerIds: [newRootId],
         }));
+    },
+
+    duplicateSelectedLayers: () => {
+        const state = get();
+        const { selectedLayerIds } = state;
+        if (selectedLayerIds.length === 0) return;
+
+        set({ history: [...state.history, { layers: state.layers, masterComponents: state.masterComponents, componentInstances: state.componentInstances, selectedLayerIds: state.selectedLayerIds } as HistorySnapshot].slice(-MAX_HISTORY), future: [] });
+
+        const newLayers: Layer[] = [];
+        const newMasters: MasterComponent[] = [];
+        const newInstances: ComponentInstance[] = [];
+        const newSelectedIds: string[] = [];
+
+        const duplicateOne = (srcLayer: Layer, offsetX: number, offsetY: number): string => {
+            const newId = uuid();
+            const newName = srcLayer.name + " копия";
+            const newLayer: Layer = {
+                ...srcLayer,
+                id: newId,
+                name: newName,
+                x: srcLayer.x + offsetX,
+                y: srcLayer.y + offsetY,
+                ...(srcLayer.type === "frame" ? { childIds: [] as string[] } : {}),
+            } as Layer;
+
+            const masterId = uuid();
+            const master: MasterComponent = {
+                id: masterId,
+                name: newName,
+                type: srcLayer.type,
+                props: { ...newLayer } as ComponentProps,
+            };
+            delete (master.props as unknown as Record<string, unknown>).id;
+            delete (master.props as unknown as Record<string, unknown>).masterId;
+
+            newLayer.masterId = masterId;
+
+            const instances: ComponentInstance[] = state.resizes
+                .filter((r) => r.id !== "master")
+                .map((r) => ({
+                    id: uuid(),
+                    masterId,
+                    resizeId: r.id,
+                    localProps: { ...master.props },
+                }));
+
+            newLayers.push(newLayer);
+            newMasters.push(master);
+            newInstances.push(...instances);
+
+            return newId;
+        };
+
+        for (const id of selectedLayerIds) {
+            const layer = state.layers.find((l) => l.id === id);
+            if (!layer) continue;
+
+            const newRootId = duplicateOne(layer, 20, 20);
+            newSelectedIds.push(newRootId);
+
+            if (layer.type === "frame") {
+                const frame = layer as FrameLayer;
+                const rootDuplicate = newLayers.find((l) => l.id === newRootId) as FrameLayer;
+                const duplicateChildren = (srcChildIds: string[], parentDuplicate: FrameLayer) => {
+                    for (const childId of srcChildIds) {
+                        const child = state.layers.find((l) => l.id === childId);
+                        if (!child) continue;
+                        const newChildId = duplicateOne(child, 20, 20);
+                        parentDuplicate.childIds.push(newChildId);
+                        if (child.type === "frame") {
+                            const childFrame = child as FrameLayer;
+                            const childDuplicate = newLayers.find((l) => l.id === newChildId) as FrameLayer;
+                            duplicateChildren(childFrame.childIds, childDuplicate);
+                        }
+                    }
+                };
+                duplicateChildren(frame.childIds, rootDuplicate);
+            }
+        }
+
+        set((s) => ({
+            layers: [...s.layers, ...newLayers],
+            masterComponents: [...s.masterComponents, ...newMasters],
+            componentInstances: [...s.componentInstances, ...newInstances],
+            selectedLayerIds: newSelectedIds,
+        }));
+    },
+
+    deleteSelectedLayers: () => {
+        const state = get();
+        const { selectedLayerIds } = state;
+        if (selectedLayerIds.length === 0) return;
+
+        set({ history: [...state.history, { layers: state.layers, masterComponents: state.masterComponents, componentInstances: state.componentInstances, selectedLayerIds: state.selectedLayerIds } as HistorySnapshot].slice(-MAX_HISTORY), future: [] });
+
+        set((state) => {
+            // Collect all IDs to remove (selected + children recursively)
+            const idsToRemove = new Set<string>();
+            const layersMap = new Map(state.layers.map(l => [l.id, l]));
+
+            const collect = (id: string) => {
+                if (idsToRemove.has(id)) return;
+                idsToRemove.add(id);
+                const layer = layersMap.get(id);
+                if (layer?.type === "frame") {
+                    (layer as FrameLayer).childIds.forEach(collect);
+                }
+            };
+
+            selectedLayerIds.forEach(collect);
+
+            const newLayers = state.layers
+                .filter((l) => !idsToRemove.has(l.id))
+                .map((l) => {
+                    // Cleanup childIds of surviving frames
+                    if (l.type === "frame") {
+                        const fl = l as FrameLayer;
+                        if (fl.childIds.some(cid => idsToRemove.has(cid))) {
+                            return { ...l, childIds: fl.childIds.filter(cid => !idsToRemove.has(cid)) } as Layer;
+                        }
+                    }
+                    return l;
+                });
+
+            const masterIdsToRemove = new Set(
+                state.layers.filter((l) => idsToRemove.has(l.id) && l.masterId).map((l) => l.masterId!)
+            );
+
+            return {
+                layers: newLayers,
+                selectedLayerIds: [],
+                masterComponents: state.masterComponents.filter((m) => !masterIdsToRemove.has(m.id)),
+                componentInstances: state.componentInstances.filter((i) => !masterIdsToRemove.has(i.masterId)),
+            };
+        });
     },
 
     bringToFront: (id) => {
         const _s = get();
-        const _snap: HistorySnapshot = { layers: _s.layers, masterComponents: _s.masterComponents, componentInstances: _s.componentInstances, selectedLayerId: _s.selectedLayerId };
+        const _snap: HistorySnapshot = { layers: _s.layers, masterComponents: _s.masterComponents, componentInstances: _s.componentInstances, selectedLayerIds: _s.selectedLayerIds };
         set({ history: [..._s.history, _snap].slice(-MAX_HISTORY), future: [] });
         set((state) => {
             const idx = state.layers.findIndex((l) => l.id === id);
@@ -905,7 +1138,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
 
     sendToBack: (id) => {
         const _s = get();
-        const _snap: HistorySnapshot = { layers: _s.layers, masterComponents: _s.masterComponents, componentInstances: _s.componentInstances, selectedLayerId: _s.selectedLayerId };
+        const _snap: HistorySnapshot = { layers: _s.layers, masterComponents: _s.masterComponents, componentInstances: _s.componentInstances, selectedLayerIds: _s.selectedLayerIds };
         set({ history: [..._s.history, _snap].slice(-MAX_HISTORY), future: [] });
         set((state) => {
             const idx = state.layers.findIndex((l) => l.id === id);
@@ -919,7 +1152,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
 
     reorderLayers: (fromIndex, toIndex) => {
         const _s = get();
-        const _snap: HistorySnapshot = { layers: _s.layers, masterComponents: _s.masterComponents, componentInstances: _s.componentInstances, selectedLayerId: _s.selectedLayerId };
+        const _snap: HistorySnapshot = { layers: _s.layers, masterComponents: _s.masterComponents, componentInstances: _s.componentInstances, selectedLayerIds: _s.selectedLayerIds };
         set({ history: [..._s.history, _snap].slice(-MAX_HISTORY), future: [] });
         set((state) => {
             const layers = [...state.layers];
@@ -931,7 +1164,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
 
     moveLayerToFrame: (layerId, frameId) => {
         const _s = get();
-        const _snap: HistorySnapshot = { layers: _s.layers, masterComponents: _s.masterComponents, componentInstances: _s.componentInstances, selectedLayerId: _s.selectedLayerId };
+        const _snap: HistorySnapshot = { layers: _s.layers, masterComponents: _s.masterComponents, componentInstances: _s.componentInstances, selectedLayerIds: _s.selectedLayerIds };
         set({ history: [..._s.history, _snap].slice(-MAX_HISTORY), future: [] });
         set((state) => {
             const newLayers = state.layers.map((l) => {
@@ -953,7 +1186,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
 
     removeLayerFromFrame: (layerId) => {
         const _s = get();
-        const _snap: HistorySnapshot = { layers: _s.layers, masterComponents: _s.masterComponents, componentInstances: _s.componentInstances, selectedLayerId: _s.selectedLayerId };
+        const _snap: HistorySnapshot = { layers: _s.layers, masterComponents: _s.masterComponents, componentInstances: _s.componentInstances, selectedLayerIds: _s.selectedLayerIds };
         set({ history: [..._s.history, _snap].slice(-MAX_HISTORY), future: [] });
         set((state) => {
             const newLayers = state.layers.map((l) => {
@@ -1175,7 +1408,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
 
     // ─── Canvas actions ─────────────────────────────────
     setActiveTool: (tool) => {
-        set({ activeTool: tool, selectedLayerId: null });
+        set({ activeTool: tool, selectedLayerIds: [] });
     },
 
     setZoom: (zoom) => {
@@ -1207,7 +1440,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
             layers: [],
             masterComponents: [],
             componentInstances: [],
-            selectedLayerId: null,
+            selectedLayerIds: [],
             activeTool: "select",
             zoom: 0.5,
             stageX: 0,
@@ -1259,5 +1492,63 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
 
     stopTextEditing: () => {
         set({ isEditingText: false, editingLayerId: null });
+    },
+
+    batchUpdateLayers: (updates) => {
+        set((state) => {
+            if (updates.length === 0) return state;
+
+            const snapshot: HistorySnapshot = {
+                layers: state.layers,
+                masterComponents: state.masterComponents,
+                componentInstances: state.componentInstances,
+                selectedLayerIds: state.selectedLayerIds,
+            };
+
+            let currentLayers = state.layers;
+
+            updates.forEach(update => {
+                const targetLayer = currentLayers.find(l => l.id === update.id);
+                if (!targetLayer) return;
+
+                let dx = 0;
+                let dy = 0;
+                if (targetLayer.type === "frame" && (update.changes.x !== undefined || update.changes.y !== undefined)) {
+                    if (update.changes.x !== undefined) dx = (update.changes.x as number) - targetLayer.x;
+                    if (update.changes.y !== undefined) dy = (update.changes.y as number) - targetLayer.y;
+                }
+
+                const childrenIdsToMove = new Set<string>();
+                if ((dx !== 0 || dy !== 0) && targetLayer.type === "frame") {
+                    const collect = (fid: string) => {
+                        const f = currentLayers.find(l => l.id === fid) as FrameLayer;
+                        if (f && f.childIds) {
+                            f.childIds.forEach(cid => {
+                                childrenIdsToMove.add(cid);
+                                const child = currentLayers.find(l => l.id === cid);
+                                if (child?.type === "frame") collect(cid);
+                            });
+                        }
+                    };
+                    collect(update.id);
+                }
+
+                currentLayers = currentLayers.map(l => {
+                    if (l.id === update.id) return { ...l, ...update.changes } as Layer;
+                    if (childrenIdsToMove.has(l.id)) {
+                        return { ...l, x: l.x + dx, y: l.y + dy } as Layer;
+                    }
+                    return l;
+                });
+            });
+
+            const newLayers = currentLayers;
+
+            return {
+                history: [...state.history, snapshot].slice(-MAX_HISTORY),
+                future: [],
+                layers: newLayers,
+            };
+        });
     },
 }));

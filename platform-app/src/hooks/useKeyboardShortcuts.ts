@@ -9,11 +9,11 @@ import { useCanvasStore } from "@/store/canvasStore";
  */
 export function useKeyboardShortcuts() {
     const {
-        selectedLayerId,
+        selectedLayerIds,
         layers,
         isEditingText,
-        removeLayer,
-        duplicateLayer,
+        deleteSelectedLayers,
+        duplicateSelectedLayers,
         updateLayer,
         undo,
         redo,
@@ -57,17 +57,17 @@ export function useKeyboardShortcuts() {
             // ─── Duplicate: Cmd+D ────────────────────────
             if (isMeta && e.key === "d") {
                 e.preventDefault();
-                if (selectedLayerId) {
-                    duplicateLayer(selectedLayerId);
+                if (selectedLayerIds.length > 0) {
+                    duplicateSelectedLayers();
                 }
                 return;
             }
 
             // ─── Delete / Backspace ──────────────────────
             if (e.key === "Delete" || e.key === "Backspace") {
-                if (selectedLayerId) {
+                if (selectedLayerIds.length > 0) {
                     e.preventDefault();
-                    removeLayer(selectedLayerId);
+                    deleteSelectedLayers();
                 }
                 return;
             }
@@ -80,33 +80,44 @@ export function useKeyboardShortcuts() {
 
             // ─── Arrow nudge ─────────────────────────────
             const arrowDelta = e.shiftKey ? 10 : 1;
-            if (selectedLayerId) {
-                const layer = layers.find((l) => l.id === selectedLayerId);
-                if (!layer) return;
-
+            if (selectedLayerIds.length > 0) {
+                let didMove = false;
                 if (e.key === "ArrowUp") {
                     e.preventDefault();
-                    updateLayer(selectedLayerId, { y: layer.y - arrowDelta });
-                    return;
+                    selectedLayerIds.forEach((id) => {
+                        const layer = layers.find((l) => l.id === id);
+                        if (layer) updateLayer(id, { y: layer.y - arrowDelta });
+                    });
+                    didMove = true;
                 }
                 if (e.key === "ArrowDown") {
                     e.preventDefault();
-                    updateLayer(selectedLayerId, { y: layer.y + arrowDelta });
-                    return;
+                    selectedLayerIds.forEach((id) => {
+                        const layer = layers.find((l) => l.id === id);
+                        if (layer) updateLayer(id, { y: layer.y + arrowDelta });
+                    });
+                    didMove = true;
                 }
                 if (e.key === "ArrowLeft") {
                     e.preventDefault();
-                    updateLayer(selectedLayerId, { x: layer.x - arrowDelta });
-                    return;
+                    selectedLayerIds.forEach((id) => {
+                        const layer = layers.find((l) => l.id === id);
+                        if (layer) updateLayer(id, { x: layer.x - arrowDelta });
+                    });
+                    didMove = true;
                 }
                 if (e.key === "ArrowRight") {
                     e.preventDefault();
-                    updateLayer(selectedLayerId, { x: layer.x + arrowDelta });
-                    return;
+                    selectedLayerIds.forEach((id) => {
+                        const layer = layers.find((l) => l.id === id);
+                        if (layer) updateLayer(id, { x: layer.x + arrowDelta });
+                    });
+                    didMove = true;
                 }
+                if (didMove) return;
             }
         },
-        [selectedLayerId, layers, isEditingText, removeLayer, duplicateLayer, updateLayer, undo, redo, selectLayer]
+        [selectedLayerIds, layers, isEditingText, deleteSelectedLayers, duplicateSelectedLayers, updateLayer, undo, redo, selectLayer]
     );
 
     useEffect(() => {
