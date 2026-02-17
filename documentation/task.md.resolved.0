@@ -1,0 +1,29 @@
+# AI Creative Platform Development Tasks
+
+- [/] **Research & Analysis**
+  - [ ] Analyze Graphic Software Best Practices (Figma, Adobe)
+  - [ ] Analyze AI Creative Tools & Trends
+  - [ ] Develop Adaptation Strategy for Non-Designers
+  - [ ] Create UX Map
+  - [ ] Draft `research_and_ux_map.md`
+
+- [ ] **Product Strategy**
+  - [ ] Define Product Statement & Vision
+  - [ ] Design Product Architecture
+  - [ ] Define Product Processes (Planning, Dev, Testing, Delivery)
+  - [ ] Define Methodology (Scrum/Kanban) & Backlog Management
+  - [ ] Define Hypothesis & Experimentation Framework
+  - [ ] Define Metrics & Feedback Loops
+  - [ ] Draft `product_strategy.md`
+
+- [ ] **Design & UX Strategy**
+  - [ ] Define Design Principles (Scalability, Consistency, Simplicity)
+  - [ ] Define UX Strategy for Multi-User Levels (Expert vs. Non-Expert)
+  - [ ] Draft `design_ux_strategy.md`
+
+- [ ] **Artifact Decomposition & Finalization**
+  - [ ] Update `development_plan.md` (Roadmap)
+  - [ ] Create `context.md` (High-level context)
+  - [ ] Create `rules.md` (Project rules, constraints)
+  - [ ] Create `skills.md` (Required capabilities)
+  - [ ] Create `implementation_plan.md` (Specific technical plan)

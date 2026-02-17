@@ -1,0 +1,30 @@
+# Development Plan: AI Creative Platform
+
+## Phase 1: Foundation (The MVP)
+*   **Goal:** A working "Banner Editor" that can export a simple image.
+*   **Key Features:**
+    *   [ ] Workspace / Project / Asset DB Schema.
+    *   [ ] Canvas Engine setup (Pan, Zoom, Select).
+    *   [ ] Basic Layers (Text, Image, Rectangle).
+    *   [ ] Export to PNG.
+
+## Phase 2: The "Design Engine"
+*   **Goal:** Parity with basic Figma features needed for banners.
+*   **Key Features:**
+    *   [ ] Auto-Layout (Smart Containers).
+    *   [ ] Rules/Constraints (Brand Kit integration).
+    *   [ ] Resize sidebar (View master + 3 sizes).
+
+## Phase 3: The "AI Layer"
+*   **Goal:** Injecting intelligence.
+*   **Key Features:**
+    *   [ ] **Text:** "Rewrite", "Shorten", "Tone Change" (Contextual Menu).
+    *   [ ] **Image:** "Remove BG", "Inpaint", "Txt2Img" generation.
+    *   [ ] **Context:** System Prompt injection pipeline.
+
+## Phase 4: Scale & Polish
+*   **Goal:** Ready for wide internal rollout.
+*   **Key Features:**
+    *   [ ] Multi-user roles (Admin vs Viewer).
+    *   [ ] Template Library & "Wizard" Mode.
+    *   [ ] Analytics Dashboard.

@@ -1,0 +1,55 @@
+# UXPilot Prompts: AI Creative Platform
+
+Use these prompts in UXPilot to generate high-quality wireframes and UI designs. They are calibrated for the **System Theme (Light)** preference.
+
+## 1. Global System & Navigation
+**Prompt:**
+> Create a high-fidelity web app layout for an AI Creative Platform.
+> *   **Style:** Clean, professional, minimal interface (similar to Linear or Raycast).
+> *   **Theme:** System Light Mode. Background #FFFFFF, Sidebar #F9FAFB, Border #E5E7EB.
+> *   **Typography:** Inter font, clean hierarchy.
+> *   **Layout:**
+>     *   **Left Sidebar (Navigation):** 240px wide. Sections: "Workspace" (Logo + Dropdown), "Projects" (List), "Assets" (Folders), "Team" (Avatars). Active state on "Projects".
+>     *   **Top Bar (Context):** Breadcrumbs ("Yandex Market / Summer Sale / Banner 1"), "Share" button, "Export" button.
+>     *   **Main Content:** Empty state for now.
+> *   **Key Visual:** Use subtle shadows and rounded corners (8px) for buttons.
+
+## 2. The "Wizard" (New Project Flow)
+**Prompt:**
+> Design a modal window for "Create New Project" - Step 1 of 3.
+> *   **Context:** A marketing manager starting a new campaign.
+> *   **Style:** Minimal, centered modal with a backdrop blur.
+> *   **Content:**
+>     *   **Header:** "Start a new campaign".
+>     *   **Input 1:** "Campaign Name" (Text field).
+>     *   **Input 2:** "Business Unit" (Dropdown: Yandex Market, Go, Food).
+>     *   **Selection Grid:** "Choose Goal" - 3 cards with icons:
+>         1.  "Banner Set" (Icon: Image stack)
+>         2.  "Social Media Text" (Icon: Type tool)
+>         3.  "Video Ad" (Icon: Play button)
+>     *   **Footer:** "Cancel" (Ghost button) and "Continue" (Primary Black button).
+
+## 3. The "Canvas" (Banner Editor)
+**Prompt:**
+> Design the main "Banner Editor" interface.
+> *   **Layout:** 3-column "Holy Grail" layout.
+>     *   **Left (Layers & Assets):** Tree view of layers (Background, Product Image, Headline, CTA). Tab switcher for "Assets" (Images, Icons).
+>     *   **Center (Canvas):** Infinite gray grid background. In the center, a 1080x1080 social media banner frame.
+>         *   **Banner Content:** A sneaker photo, bold headline "SUMMER SALE", and a "Shop Now" button.
+>         *   **Controls:** Floating toolbar at the bottom center (Select, Text, Image, AI Magic).
+>     *   **Right (Properties & AI):** 280px wide context panel.
+>         *   **Selected:** The "Headline" text layer is selected.
+>         *   **Panel Content:** Font inputs (Inter, Bold, 64px), Color picker.
+>         *   **AI Section:** A distinct "AI Assistant" block at the top of the panel with a purple gradient border. Actions: "Rewrite", "Shorten", "Make Punchier".
+
+## 4. AI Feature: Image Generation Modal
+**Prompt:**
+> Design a floating palette for "AI Image Generation".
+> *   **Trigger:** User pressed "AI Magic" -> "Generate Image".
+> *   **UI:** A compact, draggable window.
+> *   **Inputs:**
+>     *   **Prompt Area:** Large text area "Describe your image...".
+>     *   **Style Selector:** Horizontal scroller of chips: "Photo", "3D Render", "Illustration", "Corporate".
+>     *   **Aspect Ratio:** Toggle (1:1, 16:9, 9:16).
+>     *   **Button:** Large "Generate" button with a sparkle icon.
+> *   **Results:** Below the button, show 4 skeleton loader squares (indicating generation in progress).
