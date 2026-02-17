@@ -19,3 +19,9 @@
 ## 4. Documentation
 *   All major architectural decisions must be documented in `architecture decision records` (ADR).
 *   All AI prompts must be versioned and stored in a dedicated `prompts/` directory.
+
+## 5. Version Control Workflow
+*   **Mandatory Commits:** Every successful application change that has been **tested and approved** by the user (or confirmed working) must be committed to the local git repository immediately.
+*   **Immediate Push:** After committing, changes MUST be pushed to the remote repository (GitHub) to ensure backups and history preservation.
+*   **Atomic Commits:** Commits should represent a single logical change or feature completion.
+*   **Commit Messages:** Use clear, descriptive messages (e.g., `Feat: Add AI panel`, `Fix: Undo/Redo state bug`).
