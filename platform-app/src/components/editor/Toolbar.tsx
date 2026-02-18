@@ -92,7 +92,7 @@ export function Toolbar({ onOpenTemplates, onToggleAI, aiActive }: ToolbarProps)
 
     return (
         <>
-            <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-20 flex items-center gap-1 border border-border-primary rounded-[var(--radius-2xl)] px-2.5 py-2 shadow-[var(--shadow-lg)] backdrop-blur-xl bg-bg-surface/85">
+            <div className="flex items-center gap-1 border border-border-primary rounded-[var(--radius-2xl)] px-2.5 py-2 shadow-[var(--shadow-lg)] backdrop-blur-xl bg-bg-surface/85">
                 {TOOLS.map((tool) => (
                     <button
                         key={tool.id}
@@ -113,18 +113,16 @@ export function Toolbar({ onOpenTemplates, onToggleAI, aiActive }: ToolbarProps)
                 {/* Divider */}
                 <div className="w-px h-6 bg-border-primary mx-1" />
 
-                {/* Template button */}
                 {onOpenTemplates && (
                     <button
                         onClick={onOpenTemplates}
                         title="Шаблоны"
-                        className="p-2.5 rounded-[var(--radius-md)] text-text-secondary hover:bg-bg-secondary hover:text-text-primary transition-all cursor-pointer"
+                        className="p-2 text-text-secondary hover:text-text-primary hover:bg-bg-secondary rounded-[var(--radius-lg)] transition-colors"
                     >
-                        <LayoutTemplate size={18} />
+                        <LayoutTemplate size={20} />
                     </button>
                 )}
 
-                {/* AI button */}
                 {onToggleAI && (
                     <button
                         onClick={onToggleAI}

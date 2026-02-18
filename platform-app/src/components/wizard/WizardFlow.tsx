@@ -25,6 +25,44 @@ export function WizardFlow({ projectId, onSwitchToStudio }: WizardFlowProps) {
     const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
     const [headline, setHeadline] = useState("");
     const [ctaText, setCtaText] = useState("Shop Now");
+    const [productDescription, setProductDescription] = useState("");
+    const [isGenerating, setIsGenerating] = useState(false);
+
+    const handleGenerateContent = async () => {
+        if (!productDescription) return;
+        setIsGenerating(true);
+        try {
+            const { RemoteTextProvider } = await import("@/services/aiService");
+
+            // Generate Headline
+            const headlineParams = {
+                model: "openai",
+                context: "You are a marketing copywriter. Generate a short, punchy headline (2-3 words, CAPS) for a banner."
+            };
+            const headlineRes = await RemoteTextProvider.generate(
+                `Create a headline for: ${productDescription}`,
+                headlineParams
+            );
+            setHeadline(headlineRes.content.replace(/"/g, ''));
+
+            // Generate CTA
+            const ctaParams = {
+                model: "openai",
+                context: "Generate a short Call to Action button text (max 2 words)."
+            };
+            const ctaRes = await RemoteTextProvider.generate(
+                `CTA for: ${productDescription}`,
+                ctaParams
+            );
+            setCtaText(ctaRes.content.replace(/"/g, ''));
+
+        } catch (err) {
+            console.error("AI Generation failed", err);
+            alert("Не удалось сгенерировать контент. Проверьте API.");
+        } finally {
+            setIsGenerating(false);
+        }
+    };
 
     const selectedTemplate = templates.find((t) => t.id === selectedTemplateId);
 
@@ -338,10 +376,30 @@ export function WizardFlow({ projectId, onSwitchToStudio }: WizardFlowProps) {
                                         className="w-full h-10 px-3 rounded-[var(--radius-md)] border border-border-primary bg-bg-secondary text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-border-focus"
                                     />
                                 </div>
-                                <div className="flex items-center gap-3 p-3 bg-blue-50 rounded-[var(--radius-md)] border border-blue-200">
-                                    <Sparkles size={16} className="text-blue-500 shrink-0" />
-                                    <p className="text-xs text-blue-700">
-                                        ИИ-генерация текста будет доступна в следующем обновлении. Пока введите текст вручную.
+                                <div>
+                                    <label className="block text-xs font-medium text-text-secondary mb-1">
+                                        Описание продукта / Тема
+                                    </label>
+                                    <div className="flex gap-2">
+                                        <input
+                                            type="text"
+                                            placeholder="Напр. Кофейня со свежей выпечкой"
+                                            value={productDescription}
+                                            onChange={(e) => setProductDescription(e.target.value)}
+                                            className="flex-1 h-10 px-3 rounded-[var(--radius-md)] border border-border-primary bg-bg-secondary text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-border-focus"
+                                        />
+                                        <Button
+                                            onClick={handleGenerateContent}
+                                            disabled={isGenerating || !productDescription}
+                                            variant="ai"
+                                            icon={isGenerating ? <div className="animate-spin text-white">⟳</div> : <Sparkles size={16} />}
+                                            title="Сгенерировать варианты"
+                                        >
+                                            {isGenerating ? "..." : "Magically Fill"}
+                                        </Button>
+                                    </div>
+                                    <p className="text-[11px] text-text-tertiary mt-1.5">
+                                        ИИ придумает заголовок и кнопку на основе вашего описания.
                                     </p>
                                 </div>
                             </div>

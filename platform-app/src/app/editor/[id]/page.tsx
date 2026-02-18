@@ -12,7 +12,8 @@ import { Toolbar } from "@/components/editor/Toolbar";
 import { ExportModal } from "@/components/editor/ExportModal";
 import { ResizePanel } from "@/components/editor/ResizePanel";
 import { TemplatePanel } from "@/components/editor/TemplatePanel";
-import { AIPanel } from "@/components/editor/AIPanel";
+import { AIPromptBar } from "@/components/editor/AIPromptBar";
+import { AIChatPanel, AIChatMessage } from "@/components/editor/AIChatPanel";
 import { WizardFlow } from "@/components/wizard/WizardFlow";
 import { useProjectStore } from "@/store/projectStore";
 import { useCanvasStore } from "@/store/canvasStore";
@@ -35,6 +36,8 @@ export default function EditorPage({ params }: EditorPageProps) {
     const [exportOpen, setExportOpen] = useState(false);
     const [templatesOpen, setTemplatesOpen] = useState(false);
     const [aiPanelOpen, setAiPanelOpen] = useState(false);
+    const [aiChatOpen, setAiChatOpen] = useState(false);
+    const [aiMessages, setAiMessages] = useState<AIChatMessage[]>([]);
     const [shareOpen, setShareOpen] = useState(false);
     const [helpOpen, setHelpOpen] = useState(false);
     const [settingsOpen, setSettingsOpen] = useState(false);
@@ -130,38 +133,59 @@ export default function EditorPage({ params }: EditorPageProps) {
                         <LayersPanel />
                     </div>
 
-                    {/* Floating Properties Panel — top center (hidden when AI panel is open) */}
-                    {!aiPanelOpen && <PropertiesPanel />}
+                    {/* Floating Properties Panel — top center (Always visible now) */}
+                    <PropertiesPanel />
 
-                    {/* Floating Toolbar — bottom center */}
-                    <Toolbar
-                        onOpenTemplates={() => setTemplatesOpen(true)}
-                        onToggleAI={() => setAiPanelOpen(!aiPanelOpen)}
-                        aiActive={aiPanelOpen}
+                    {/* Floating Toolbar — moves up when AI is open */}
+                    <div className={`absolute left-1/2 -translate-x-1/2 transition-all duration-300 z-10 ${aiPanelOpen ? "bottom-56" : "bottom-3"}`}>
+                        <Toolbar
+                            onOpenTemplates={() => setTemplatesOpen(true)}
+                            onToggleAI={() => setAiPanelOpen(!aiPanelOpen)}
+                            aiActive={aiPanelOpen}
+                        />
+                    </div>
+
+                    {/* AI Prompt Bar — Bottom Center */}
+                    {aiPanelOpen && (
+                        <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-20">
+                            <AIPromptBar
+                                open={true}
+                                onClose={() => setAiPanelOpen(false)}
+                                onToggleChat={() => setAiChatOpen(!aiChatOpen)}
+                                isChatOpen={aiChatOpen}
+                                onResult={(res) => setAiMessages(prev => [...prev, {
+                                    id: Date.now().toString(),
+                                    role: "user",
+                                    content: res.prompt,
+                                    type: "text",
+                                    timestamp: Date.now()
+                                }, {
+                                    id: (Date.now() + 1).toString(),
+                                    role: "assistant",
+                                    content: res.content,
+                                    type: res.type as any,
+                                    timestamp: Date.now()
+                                }])}
+                            />
+                        </div>
+                    )}
+
+                    {/* AI Chat Panel — Right Sidebar */}
+                    <AIChatPanel
+                        open={aiChatOpen && aiPanelOpen}
+                        onClose={() => setAiChatOpen(false)}
+                        messages={aiMessages}
                     />
 
                     {/* Floating Resize Panel — right */}
-                    <div className="absolute top-3 right-3 bottom-3 z-10 flex gap-3">
-                        {aiPanelOpen && (
-                            <>
-                                <button
-                                    onClick={() => setAiPanelOpen(false)}
-                                    className="self-start flex items-center gap-2 px-3.5 py-2.5 border border-border-primary rounded-[var(--radius-xl)] shadow-[var(--shadow-md)] backdrop-blur-xl bg-bg-surface/90 text-text-secondary hover:text-text-primary hover:bg-bg-surface transition-all cursor-pointer"
-                                >
-                                    <PenTool size={13} />
-                                    <span className="text-[11px] font-medium">Свойства</span>
-                                </button>
-                                <AIPanel onClose={() => setAiPanelOpen(false)} />
-                            </>
-                        )}
-                        <ResizePanel />
+                    <div className="absolute top-3 right-3 bottom-3 z-10 flex gap-3 pointer-events-none">
+                        <div className="pointer-events-auto">
+                            <ResizePanel />
+                        </div>
                     </div>
 
-                    {/* Floating Help/Settings — bottom right, shifts when AI is open */}
-                    <div
-                        className={`absolute bottom-3 z-10 flex items-center gap-1 transition-all ${aiPanelOpen ? "right-[596px]" : "right-[264px]"
-                            }`}
-                    >
+                    {/* Floating Help/Settings — bottom right (Shifted to left of Format panel) */}
+                    <div className="absolute bottom-3 right-[256px] z-10 flex items-center gap-1">
                         <button
                             onClick={() => setHelpOpen(true)}
                             title="Горячие клавиши"
