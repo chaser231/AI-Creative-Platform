@@ -127,13 +127,13 @@
   --color-status-published: var(--status-published);
   --font-sans: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
 
-  /* Override font sizes for slightly larger text */
-  --text-xs: 0.8125rem;
-  /* 13px */
-  --text-sm: 0.9375rem;
-  /* 15px */
-  --text-base: 1.0625rem;
-  /* 17px */
+  /* Override font sizes for slightly larger text - even numbers requested */
+  --text-xs: 0.875rem;
+  /* 14px (prev 13px) */
+  --text-sm: 1rem;
+  /* 16px (prev 15px) */
+  --text-base: 1.125rem;
+  /* 18px (prev 17px) */
 }
 
 body {
