@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Plus, ImageIcon, Type, Camera, Video, Search } from "lucide-react";
+import { Plus, ImageIcon, Type, Camera, Video, Search, HelpCircle } from "lucide-react";
 import { AppShell } from "@/components/layout/AppShell";
 import { TopBar } from "@/components/layout/TopBar";
 import { Button } from "@/components/ui/Button";
@@ -41,6 +41,18 @@ export default function DashboardPage() {
     <AppShell>
       <TopBar
         breadcrumbs={[{ label: "Yandex Market" }, { label: "Последние проекты" }]}
+        showBackToProjects={false}
+        showHistoryNavigation={true}
+        actions={
+          <Button
+            variant="ghost"
+            size="sm"
+            icon={<HelpCircle size={16} />}
+            onClick={() => alert("Здесь будет онбординг!")}
+          >
+            Помощь
+          </Button>
+        }
       />
 
       <div className="flex-1 overflow-y-auto">

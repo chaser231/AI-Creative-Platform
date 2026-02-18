@@ -1,8 +1,9 @@
 "use client";
 
-import { Undo2, Redo2, ArrowLeft } from "lucide-react";
+import { Undo2, Redo2, ArrowLeft, ChevronLeft, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/cn";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 
 interface BreadcrumbItem {
     label: string;
@@ -18,6 +19,8 @@ interface TopBarProps {
     canUndo?: boolean;
     canRedo?: boolean;
     centerContent?: React.ReactNode;
+    showBackToProjects?: boolean;
+    showHistoryNavigation?: boolean;
 }
 
 export function TopBar({
@@ -29,7 +32,11 @@ export function TopBar({
     canUndo = false,
     canRedo = false,
     centerContent,
+    showBackToProjects = true,
+    showHistoryNavigation = false,
 }: TopBarProps) {
+    const router = useRouter();
+
     return (
         <header
             className={cn(
@@ -39,14 +46,35 @@ export function TopBar({
         >
             {/* Left: back + breadcrumbs */}
             <div className="flex items-center gap-3 min-w-0 flex-1">
-                {/* "К проектам" link */}
-                <Link
-                    href="/"
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-[var(--radius-full)] text-xs font-medium text-text-secondary hover:text-text-primary hover:bg-bg-tertiary transition-colors shrink-0"
-                >
-                    <ArrowLeft size={14} />
-                    К проектам
-                </Link>
+                {/* Navigation: either "Back to Projects" or History Arrows */}
+                {showBackToProjects && (
+                    <Link
+                        href="/"
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-[var(--radius-full)] text-xs font-medium text-text-secondary hover:text-text-primary hover:bg-bg-tertiary transition-colors shrink-0"
+                    >
+                        <ArrowLeft size={14} />
+                        К проектам
+                    </Link>
+                )}
+
+                {showHistoryNavigation && (
+                    <div className="flex items-center gap-1 mr-2">
+                        <button
+                            onClick={() => router.back()}
+                            className="p-1.5 rounded-[var(--radius-full)] text-text-secondary hover:text-text-primary hover:bg-bg-tertiary transition-colors cursor-pointer"
+                            title="Назад"
+                        >
+                            <ChevronLeft size={16} />
+                        </button>
+                        <button
+                            onClick={() => router.forward()}
+                            className="p-1.5 rounded-[var(--radius-full)] text-text-secondary hover:text-text-primary hover:bg-bg-tertiary transition-colors cursor-pointer"
+                            title="Вперед"
+                        >
+                            <ChevronRight size={16} />
+                        </button>
+                    </div>
+                )}
 
                 {/* Breadcrumbs */}
                 <nav className="flex items-center gap-1.5 text-sm min-w-0">
