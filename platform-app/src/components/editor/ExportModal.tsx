@@ -263,7 +263,7 @@ export function ExportModal({ open, onClose, stageRef }: ExportModalProps) {
                         )}
                     >
                         <Package size={12} />
-                        Темплейт
+                        Шаблон
                     </button>
                 </div>
 
@@ -399,7 +399,7 @@ export function ExportModal({ open, onClose, stageRef }: ExportModalProps) {
                         <div className="p-4 bg-bg-secondary rounded-[var(--radius-md)] border border-border-primary space-y-2">
                             <Package className="text-accent-primary mb-1" size={24} />
                             <p className="text-sm text-text-primary font-medium">
-                                Экспорт Темплейт Пака
+                                Экспорт пакета шаблонов
                             </p>
                             <p className="text-xs text-text-secondary">
                                 Сохраняет текущую структуру проекта (Мастер-компоненты, слоты, форматы) в файл .json для повторного использования.

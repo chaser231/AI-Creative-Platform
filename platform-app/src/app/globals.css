@@ -2,30 +2,41 @@
 @import "tailwindcss";
 
 :root {
-  /* Backgrounds — warm cream palette */
-  --bg-primary: #FFFCF9;
-  --bg-secondary: #FFF8F0;
-  --bg-tertiary: #F5F0EB;
+  /* Backgrounds — cool white/grey palette (Slate-inspired) */
+  --bg-primary: #FFFFFF;
+  --bg-secondary: #F8FAFC;
+  /* Slate 50 */
+  --bg-tertiary: #F1F5F9;
+  /* Slate 100 */
   --bg-surface: #FFFFFF;
-  --bg-inverse: #1A1A1A;
-  --bg-canvas: #ECEEF1;
+  --bg-inverse: #0F172A;
+  /* Slate 900 */
+  --bg-canvas: #E2E8F0;
+  /* Slate 200 */
 
-  /* Text */
-  --text-primary: #1A1A1A;
-  --text-secondary: #6B6B6B;
-  --text-tertiary: #A3A3A3;
+  /* Text — cool greys */
+  --text-primary: #0F172A;
+  /* Slate 900 */
+  --text-secondary: #475569;
+  /* Slate 600 */
+  --text-tertiary: #94A3B8;
+  /* Slate 400 */
   --text-inverse: #FFFFFF;
 
-  /* Borders — warm */
-  --border-primary: #EDE8E3;
-  --border-secondary: #DDD6CE;
+  /* Borders — cool/neutral */
+  --border-primary: #E2E8F0;
+  /* Slate 200 */
+  --border-secondary: #CBD5E1;
+  /* Slate 300 */
   --border-focus: #C8E64A;
 
   /* Accent — dark + lime */
-  --accent-primary: #1A1A1A;
-  --accent-primary-hover: #333333;
-  --accent-lime: #C8E64A;
-  --accent-lime-hover: #B8D63A;
+  --accent-primary: #0F172A;
+  --accent-primary-hover: #1E293B;
+  --accent-lime: #D9F99D;
+  /* Lime 200 - lighter/fresh */
+  --accent-lime-hover: #BEF264;
+  /* Lime 300 */
   --accent-ai-start: #8B5CF6;
   --accent-ai-mid: #6366F1;
   --accent-ai-end: #EC4899;
@@ -36,11 +47,11 @@
   --status-review: #8B5CF6;
   --status-published: #10B981;
 
-  /* Shadows — warm tint */
-  --shadow-sm: 0 1px 3px 0 rgba(120, 100, 80, 0.06);
-  --shadow-md: 0 4px 16px -2px rgba(120, 100, 80, 0.08), 0 2px 6px -2px rgba(120, 100, 80, 0.04);
-  --shadow-lg: 0 12px 32px -4px rgba(120, 100, 80, 0.1), 0 4px 12px -4px rgba(120, 100, 80, 0.06);
-  --shadow-xl: 0 24px 56px -8px rgba(120, 100, 80, 0.14), 0 8px 20px -6px rgba(120, 100, 80, 0.08);
+  /* Shadows — cool tint */
+  --shadow-sm: 0 1px 3px 0 rgba(15, 23, 42, 0.06);
+  --shadow-md: 0 4px 16px -2px rgba(15, 23, 42, 0.08), 0 2px 6px -2px rgba(15, 23, 42, 0.04);
+  --shadow-lg: 0 12px 32px -4px rgba(15, 23, 42, 0.1), 0 4px 12px -4px rgba(15, 23, 42, 0.06);
+  --shadow-xl: 0 24px 56px -8px rgba(15, 23, 42, 0.14), 0 8px 20px -6px rgba(15, 23, 42, 0.08);
 
   /* Radii — refined */
   --radius-sm: 6px;
@@ -60,30 +71,34 @@
   --foreground: var(--text-primary);
 }
 
-/* Dark theme — class-based toggle */
+/* Dark theme — class-based toggle (Preserved largely as is, slight cool tint adjustments if needed, but keeping safe) */
 .dark {
-  --bg-primary: #121214;
-  --bg-secondary: #1A1A1E;
-  --bg-tertiary: #222226;
-  --bg-surface: #1E1E22;
-  --bg-inverse: #FFFCF9;
-  --bg-canvas: #18181B;
+  --bg-primary: #0B0C10;
+  /* Slightly cooler dark */
+  --bg-secondary: #131418;
+  --bg-tertiary: #1C1D22;
+  --bg-surface: #18191E;
+  --bg-inverse: #FFFFFF;
+  --bg-canvas: #0F1014;
 
-  --text-primary: #F0F0F2;
-  --text-secondary: #A1A1A8;
-  --text-tertiary: #6B6B73;
-  --text-inverse: #1A1A1A;
+  --text-primary: #F1F5F9;
+  /* Slate 100 */
+  --text-secondary: #94A3B8;
+  /* Slate 400 */
+  --text-tertiary: #64748B;
+  /* Slate 500 */
+  --text-inverse: #0F172A;
 
-  --border-primary: #2C2C32;
-  --border-secondary: #3A3A42;
+  --border-primary: #27282D;
+  --border-secondary: #32333A;
 
-  --accent-primary: #F0F0F2;
-  --accent-primary-hover: #D0D0D6;
+  --accent-primary: #F1F5F9;
+  --accent-primary-hover: #E2E8F0;
 
-  --shadow-sm: 0 1px 3px 0 rgba(0, 0, 0, 0.3);
-  --shadow-md: 0 4px 16px -2px rgba(0, 0, 0, 0.4), 0 2px 6px -2px rgba(0, 0, 0, 0.3);
-  --shadow-lg: 0 12px 32px -4px rgba(0, 0, 0, 0.5), 0 4px 12px -4px rgba(0, 0, 0, 0.3);
-  --shadow-xl: 0 24px 56px -8px rgba(0, 0, 0, 0.6), 0 8px 20px -6px rgba(0, 0, 0, 0.3);
+  --shadow-sm: 0 1px 3px 0 rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 4px 16px -2px rgba(0, 0, 0, 0.5), 0 2px 6px -2px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 12px 32px -4px rgba(0, 0, 0, 0.6), 0 4px 12px -4px rgba(0, 0, 0, 0.4);
+  --shadow-xl: 0 24px 56px -8px rgba(0, 0, 0, 0.7), 0 8px 20px -6px rgba(0, 0, 0, 0.4);
 }
 
 @theme inline {
@@ -111,31 +126,53 @@
   --color-status-review: var(--status-review);
   --color-status-published: var(--status-published);
   --font-sans: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+
+  /* Override font sizes for slightly larger text */
+  --text-xs: 0.8125rem;
+  /* 13px */
+  --text-sm: 0.9375rem;
+  /* 15px */
+  --text-base: 1.0625rem;
+  /* 17px */
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
   font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
-  font-weight: 400;
+  font-weight: 300;
+  /* Lighter base weight */
+  letter-spacing: -0.01em;
+  /* Reduced tracking globally */
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* Typography hierarchy */
+/* Typography hierarchy - lighter weights */
 h1 {
   font-weight: 300;
-  letter-spacing: -0.02em;
+  letter-spacing: -0.03em;
 }
 
 h2 {
-  font-weight: 400;
-  letter-spacing: -0.015em;
+  font-weight: 300;
+  letter-spacing: -0.025em;
 }
 
 h3 {
+  font-weight: 400;
+  /* Reduced from 500 */
+  letter-spacing: -0.02em;
+}
+
+/* Caption utility */
+.text-caption {
+  font-size: 0.75rem;
+  /* 12px */
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
   font-weight: 500;
-  letter-spacing: -0.01em;
+  color: var(--text-tertiary);
 }
 
 /* Scrollbar styling */
@@ -173,24 +210,28 @@ h3 {
   background-clip: text;
 }
 
-/* Pastel gradient cards */
+/* Cool gradient cards (Redesigned for cool palette) */
 .gradient-card-yellow {
-  background: linear-gradient(145deg, #FFF9E6 0%, #E8F5D6 100%);
+  background: linear-gradient(145deg, #F8FAFC 0%, #ECFCCB 100%);
+  /* Cool white -> Soft Lime */
 }
 
 .gradient-card-blue {
-  background: linear-gradient(145deg, #EEF0FF 0%, #F0E8FF 100%);
+  background: linear-gradient(145deg, #F8FAFC 0%, #E0F2FE 100%);
+  /* Cool white -> Soft Sky */
 }
 
 .gradient-card-green {
-  background: linear-gradient(145deg, #E6FAF0 0%, #E8F5D6 100%);
+  background: linear-gradient(145deg, #F8FAFC 0%, #DCFCE7 100%);
+  /* Cool white -> Soft Emerald */
 }
 
 .gradient-card-pink {
-  background: linear-gradient(145deg, #FFF0F5 0%, #F0E8FF 100%);
+  background: linear-gradient(145deg, #F8FAFC 0%, #FCE7F3 100%);
+  /* Cool white -> Soft Rose */
 }
 
-/* Dark mode gradient cards */
+/* Dark mode gradient cards (Preserved/Adjusted) */
 .dark .gradient-card-yellow {
   background: linear-gradient(145deg, #2A2510 0%, #1C2A12 100%);
 }

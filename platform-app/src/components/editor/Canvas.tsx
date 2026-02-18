@@ -68,10 +68,15 @@ function SelectionTransformer({ selectedLayerIds, stageRef }: SelectionTransform
 interface CanvasLayerProps {
     layer: LayerType;
     isSelected: boolean;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     onSelect: (e: Konva.KonvaEventObject<any>) => void;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     onDragStart: (e: Konva.KonvaEventObject<any>) => void;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     onDragMove: (e: Konva.KonvaEventObject<any>) => void;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     onDragEnd: (e: Konva.KonvaEventObject<any>) => void;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     onTransformEnd: (e: Konva.KonvaEventObject<any>) => void;
     onDblClickText: (layer: LayerType & { type: "text" }, node: Konva.Text) => void;
     isEditing: boolean;
@@ -263,10 +268,15 @@ function FrameLayerRenderer({
     layer: FrameLayer;
     commonProps: Record<string, unknown>;
     isSelected: boolean;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     onSelect: (e: Konva.KonvaEventObject<any>) => void;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     onDragStart: (e: Konva.KonvaEventObject<any>) => void;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     onDragMove: (e: Konva.KonvaEventObject<any>) => void;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     onDragEnd: (e: Konva.KonvaEventObject<any>) => void;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     onTransformEnd: (e: Konva.KonvaEventObject<any>) => void;
     onDblClickText: (layer: LayerType & { type: "text" }, node: Konva.Text) => void;
     isEditing: boolean;
@@ -425,6 +435,23 @@ interface CanvasProps {
 
 export function Canvas({ stageRef }: CanvasProps) {
     const containerRef = useRef<HTMLDivElement>(null);
+    const [containerDimensions, setContainerDimensions] = useState({ width: 0, height: 0 });
+
+    useEffect(() => {
+        if (!containerRef.current) return;
+        const ro = new ResizeObserver((entries) => {
+            const entry = entries[0];
+            if (entry) {
+                setContainerDimensions({
+                    width: entry.contentRect.width,
+                    height: entry.contentRect.height,
+                });
+            }
+        });
+        ro.observe(containerRef.current);
+        return () => ro.disconnect();
+    }, []);
+
     const [stageDraggable, setStageDraggable] = useState(true);
     const [isDraggingFile, setIsDraggingFile] = useState(false);
     const [contextMenu, setContextMenu] = useState<{ x: number; y: number; layerId: string } | null>(null);
@@ -722,6 +749,43 @@ export function Canvas({ stageRef }: CanvasProps) {
 
     }, [updateLayer, layers]);
 
+    const [isPanning, setIsPanning] = useState(false);
+
+    // Spacebar Panning Logic
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            // Space to pan
+            if (e.code === "Space" && !isEditingText && !isPanning) {
+                e.preventDefault(); // Prevent scrolling
+                setIsPanning(true);
+                // Ensure stage is draggable
+                setStageDraggable(true);
+                if (containerRef.current) {
+                    containerRef.current.style.cursor = "grab";
+                }
+            }
+        };
+
+        const handleKeyUp = (e: KeyboardEvent) => {
+            if (e.code === "Space" && isPanning) {
+                setIsPanning(false);
+                // We might want to keep it draggable or not, but usually we revert to selection mode
+                // which handles draggable locally. But let's reset cursor.
+                if (containerRef.current) {
+                    containerRef.current.style.cursor = "default";
+                }
+            }
+        };
+
+        window.addEventListener("keydown", handleKeyDown);
+        window.addEventListener("keyup", handleKeyUp);
+
+        return () => {
+            window.removeEventListener("keydown", handleKeyDown);
+            window.removeEventListener("keyup", handleKeyUp);
+        };
+    }, [isEditingText, isPanning]);
+
     /* ─── Stage Interaction ───────────────────────────── */
 
     const handleWheel = useCallback(
@@ -730,29 +794,46 @@ export function Canvas({ stageRef }: CanvasProps) {
             const stage = stageRef.current;
             if (!stage) return;
 
-            const oldScale = zoom;
-            const pointer = stage.getPointerPosition();
-            if (!pointer) return;
+            // Check for Pinch (CtrlKey on standard trackpads) for Zoom
+            if (e.evt.ctrlKey) {
+                const oldScale = zoom;
+                const pointer = stage.getPointerPosition();
+                if (!pointer) return;
 
-            const scaleBy = 1.05;
-            const newScale = e.evt.deltaY < 0 ? oldScale * scaleBy : oldScale / scaleBy;
-            const clampedScale = Math.min(Math.max(newScale, 0.1), 3);
+                const scaleBy = 1.05;
+                // e.evt.deltaY is negative for pinch-in (zoom out) usually? 
+                // Actually deltaY < 0 is scrolling up (zoom in)
+                const newScale = e.evt.deltaY < 0 ? oldScale * scaleBy : oldScale / scaleBy;
+                const clampedScale = Math.min(Math.max(newScale, 0.1), 3);
 
-            const mousePointTo = {
-                x: (pointer.x - stageX) / oldScale,
-                y: (pointer.y - stageY) / oldScale,
-            };
+                const mousePointTo = {
+                    x: (pointer.x - stageX) / oldScale,
+                    y: (pointer.y - stageY) / oldScale,
+                };
 
-            setZoom(clampedScale);
-            setStagePosition(
-                pointer.x - mousePointTo.x * clampedScale,
-                pointer.y - mousePointTo.y * clampedScale
-            );
+                setZoom(clampedScale);
+                setStagePosition(
+                    pointer.x - mousePointTo.x * clampedScale,
+                    pointer.y - mousePointTo.y * clampedScale
+                );
+            } else {
+                // Pan
+                setStagePosition(
+                    stageX - e.evt.deltaX,
+                    stageY - e.evt.deltaY
+                );
+            }
         },
         [zoom, stageX, stageY, setZoom, setStagePosition, stageRef]
     );
 
     const handleStageMouseDown = useCallback((e: Konva.KonvaEventObject<MouseEvent>) => {
+        // If panning, let Konva handle drag (stage is draggable)
+        if (isPanning) {
+            if (containerRef.current) containerRef.current.style.cursor = "grabbing";
+            return;
+        }
+
         // If clicked on stage (background)
         if (e.target === e.target.getStage()) {
             const stage = e.target.getStage();
@@ -786,7 +867,7 @@ export function Canvas({ stageRef }: CanvasProps) {
                 stopTextEditing();
             }
         }
-    }, [selectLayer, isEditingText, stopTextEditing]);
+    }, [selectLayer, isEditingText, stopTextEditing, isPanning]);
 
     const handleStageMouseMove = useCallback((e: Konva.KonvaEventObject<MouseEvent>) => {
         if (!selectionBox) return;
@@ -812,6 +893,12 @@ export function Canvas({ stageRef }: CanvasProps) {
     }, [selectionBox]);
 
     const handleStageMouseUp = useCallback((e: Konva.KonvaEventObject<MouseEvent>) => {
+        if (isPanning) {
+            if (containerRef.current) containerRef.current.style.cursor = "grab";
+            setStageDraggable(true);
+            return;
+        }
+
         setStageDraggable(true);
         if (selectionBox) {
             // Calculate intersection
@@ -837,7 +924,7 @@ export function Canvas({ stageRef }: CanvasProps) {
             }
             setSelectionBox(null);
         }
-    }, [selectionBox, layers, addToSelection]);
+    }, [selectionBox, layers, addToSelection, isPanning]);
 
     const handleContextMenu = useCallback(
         (e: Konva.KonvaEventObject<MouseEvent>) => {
@@ -963,8 +1050,8 @@ export function Canvas({ stageRef }: CanvasProps) {
         >
             <Stage
                 ref={stageRef}
-                width={containerRef.current?.clientWidth || 1200}
-                height={containerRef.current?.clientHeight || 800}
+                width={containerDimensions.width || 1200}
+                height={containerDimensions.height || 800}
                 scaleX={zoom}
                 scaleY={zoom}
                 x={stageX}

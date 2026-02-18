@@ -78,27 +78,29 @@ export function TopBar({
 
             {/* Center: undo/redo + mode switcher */}
             <div className="flex items-center gap-2 shrink-0">
-                {/* Undo/Redo */}
-                <div className="flex items-center gap-0.5 mr-2">
-                    <button
-                        onClick={onUndo}
-                        disabled={!canUndo}
-                        title="Отменить (⌘Z)"
-                        className="flex items-center gap-1 px-2.5 py-1.5 rounded-[var(--radius-lg)] text-[11px] font-medium text-text-secondary hover:text-text-primary hover:bg-bg-tertiary transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-default disabled:hover:bg-transparent disabled:hover:text-text-secondary"
-                    >
-                        <Undo2 size={14} />
-                        <span className="hidden sm:inline">Отменить</span>
-                    </button>
-                    <button
-                        onClick={onRedo}
-                        disabled={!canRedo}
-                        title="Повторить (⌘⇧Z)"
-                        className="flex items-center gap-1 px-2.5 py-1.5 rounded-[var(--radius-lg)] text-[11px] font-medium text-text-secondary hover:text-text-primary hover:bg-bg-tertiary transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-default disabled:hover:bg-transparent disabled:hover:text-text-secondary"
-                    >
-                        <Redo2 size={14} />
-                        <span className="hidden sm:inline">Повторить</span>
-                    </button>
-                </div>
+                {/* Undo/Redo - Only show if handlers are provided */}
+                {(onUndo || onRedo) && (
+                    <div className="flex items-center gap-0.5 mr-2">
+                        <button
+                            onClick={onUndo}
+                            disabled={!canUndo}
+                            title="Отменить (⌘Z)"
+                            className="flex items-center gap-1 px-2.5 py-1.5 rounded-[var(--radius-lg)] text-[11px] font-medium text-text-secondary hover:text-text-primary hover:bg-bg-tertiary transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-default disabled:hover:bg-transparent disabled:hover:text-text-secondary"
+                        >
+                            <Undo2 size={14} />
+                            <span className="hidden sm:inline">Отменить</span>
+                        </button>
+                        <button
+                            onClick={onRedo}
+                            disabled={!canRedo}
+                            title="Повторить (⌘⇧Z)"
+                            className="flex items-center gap-1 px-2.5 py-1.5 rounded-[var(--radius-lg)] text-[11px] font-medium text-text-secondary hover:text-text-primary hover:bg-bg-tertiary transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-default disabled:hover:bg-transparent disabled:hover:text-text-secondary"
+                        >
+                            <Redo2 size={14} />
+                            <span className="hidden sm:inline">Повторить</span>
+                        </button>
+                    </div>
+                )}
 
                 {/* Mode Switcher (passed as centerContent) */}
                 {centerContent}

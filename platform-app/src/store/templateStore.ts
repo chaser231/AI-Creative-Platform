@@ -1,15 +1,22 @@
 import { create } from "zustand";
+import { persist } from "zustand/middleware";
 import { v4 as uuid } from "uuid";
 import type { Template, TemplateSlot, ComponentType } from "@/types";
+import type { TemplatePack } from "@/services/templateService";
 
 interface TemplateStore {
     templates: Template[];
+    savedPacks: TemplatePack[]; // User-saved packs
     activeTemplateId: string | null;
 
     addTemplate: (template: Omit<Template, "id" | "createdAt" | "updatedAt">) => string;
     updateTemplate: (id: string, updates: Partial<Template>) => void;
     deleteTemplate: (id: string) => void;
     setActiveTemplate: (id: string | null) => void;
+
+    // Pack management
+    addPack: (pack: TemplatePack) => void;
+    deletePack: (id: string) => void;
 
     // Slot management
     addSlot: (templateId: string, slot: Omit<TemplateSlot, "id">) => void;
@@ -97,8 +104,9 @@ const STARTER_TEMPLATES: Template[] = [
     },
 ];
 
-export const useTemplateStore = create<TemplateStore>((set) => ({
+export const useTemplateStore = create<TemplateStore>()(persist((set) => ({
     templates: STARTER_TEMPLATES,
+    savedPacks: [],
     activeTemplateId: null,
 
     addTemplate: (templateData) => {
@@ -132,6 +140,18 @@ export const useTemplateStore = create<TemplateStore>((set) => ({
 
     setActiveTemplate: (id) => {
         set({ activeTemplateId: id });
+    },
+
+    addPack: (pack) => {
+        set((state) => ({
+            savedPacks: [...state.savedPacks, pack],
+        }));
+    },
+
+    deletePack: (id) => {
+        set((state) => ({
+            savedPacks: state.savedPacks.filter((p) => p.id !== id),
+        }));
     },
 
     addSlot: (templateId, slotData) => {
@@ -168,4 +188,7 @@ export const useTemplateStore = create<TemplateStore>((set) => ({
             ),
         }));
     },
+}), {
+    name: "template-storage",
+    partialize: (state) => ({ savedPacks: state.savedPacks }), // Only persist saved packs
 }));
