@@ -38,21 +38,21 @@
 *   [x] Inline rename (double-click layer name in panel).
 *   [x] New store actions: duplicateLayer, bringToFront, sendToBack, toggleLayerLock.
 
-### Sprint 3A — Editor Polish & Template Foundations
-*   [ ] Share / Help / Settings dialogs (MVP implementations).
-*   [ ] Breadcrumbs — clickable navigation.
-*   [ ] Template custom naming (input dialog on save).
-*   [ ] Format packs (preset groups of resize formats, e.g. "Social Media Pack").
-*   [ ] Undo/Redo system (history stack).
-*   [ ] Keyboard shortcuts (Delete, Cmd+C/V, arrow nudge).
-*   [ ] Snap guides / smart alignment on canvas.
-*   [ ] Multi-select layers (Shift+Click / drag-select).
-
-### Sprint 3B — Smart Resize MVP
-*   [ ] Template slot mapping UI (master layer → template slot assignment).
-*   [ ] Auto-placement algorithm (constraints + slot rules per format).
-*   [ ] Template packs (save/load reusable format+slot groups).
-*   [ ] Smart Resize integration testing.
+### Sprint 3A — Editor Polish & Navigation ✅
+*   [x] Share / Help / Settings dialogs (Project Settings, Hotkeys).
+*   [x] Breadcrumbs — clickable navigation + Project Name edit.
+*   [x] Template custom naming (input dialog on save).
+*   [x] Format packs (UI in ResizePanel).
+*   [x] Undo/Redo system (HistorySnapshot + throttled updates).
+*   [x] Keyboard shortcuts (Delete, Cmd+Z/Shift+Z, arrow nudge).
+### Sprint 4 — Canvas Intelligence & Smart Layout 🚧
+*   [ ] **Snap Guides** — smart alignment lines (center, edges) when dragging.
+*   [ ] **Multi-select** — Shift+Click selection and drag-box selection.
+*   [ ] **Smart Resize Engine:**
+    *   [ ] Template slot mapping UI (assign layers to specific template slots).
+    *   [ ] Auto-placement algorithm (constraints logic + slot rules).
+    *   [ ] Template packs (save/load groups of formats).
+    *   [ ] Bulk export for multiple sizes.
 
 ## Phase 3: AI Layer + Agent Mode
 *   **Goal:** Injecting intelligence at every level.

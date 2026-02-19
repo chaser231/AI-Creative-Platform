@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useCallback, useEffect, useState } from "react";
+import { useRef, useCallback, useEffect, useState, useMemo } from "react";
 import { ImageIcon } from "lucide-react";
 import { Stage, Layer, Rect, Text, Image as KonvaImage, Transformer, Group, Line } from "react-konva";
 import { useCanvasStore, computeConstrainedPosition } from "@/store/canvasStore";
@@ -31,22 +31,63 @@ function useImage(src: string): HTMLImageElement | undefined {
 interface SelectionTransformerProps {
     selectedLayerIds: string[];
     stageRef: React.RefObject<Konva.Stage | null>;
+    /** IDs to exclude (e.g. children nested inside frames) */
+    excludeIds?: Set<string>;
 }
 
-function SelectionTransformer({ selectedLayerIds, stageRef }: SelectionTransformerProps) {
+function SelectionTransformer({ selectedLayerIds, stageRef, excludeIds }: SelectionTransformerProps) {
     const trRef = useRef<Konva.Transformer>(null);
 
     useEffect(() => {
         if (!trRef.current || !stageRef.current) return;
 
-        // Find all selected nodes
-        const nodes = selectedLayerIds
+        // Find all selected nodes, excluding frame children
+        const filteredIds = excludeIds
+            ? selectedLayerIds.filter((id) => !excludeIds.has(id))
+            : selectedLayerIds;
+        const nodes = filteredIds
             .map((id) => stageRef.current?.findOne("#" + id))
             .filter((node): node is Konva.Node => !!node);
 
         trRef.current.nodes(nodes);
         trRef.current.getLayer()?.batchDraw();
-    }, [selectedLayerIds, stageRef]);
+    }, [selectedLayerIds, stageRef, excludeIds]);
+
+    return (
+        <Transformer
+            ref={trRef}
+            boundBoxFunc={(oldBox, newBox) => {
+                if (newBox.width < 5 || newBox.height < 5) return oldBox;
+                return newBox;
+            }}
+            borderStroke="#6366F1"
+            anchorStroke="#6366F1"
+            anchorFill="#FFFFFF"
+            anchorSize={8}
+            anchorCornerRadius={2}
+        />
+    );
+}
+
+/* ─── Inner Transformer for Frame Children ────────── */
+interface FrameChildTransformerProps {
+    selectedChildIds: string[];
+    containerRef: React.RefObject<Konva.Group | null>;
+}
+
+function FrameChildTransformer({ selectedChildIds, containerRef }: FrameChildTransformerProps) {
+    const trRef = useRef<Konva.Transformer>(null);
+
+    useEffect(() => {
+        if (!trRef.current || !containerRef.current) return;
+
+        const nodes = selectedChildIds
+            .map((id) => containerRef.current?.findOne("#" + id))
+            .filter((node): node is Konva.Node => !!node);
+
+        trRef.current.nodes(nodes);
+        trRef.current.getLayer()?.batchDraw();
+    }, [selectedChildIds, containerRef]);
 
     return (
         <Transformer
@@ -283,12 +324,42 @@ function FrameLayerRenderer({
 }) {
     const layers = useCanvasStore((s) => s.layers);
     const selectedLayerIds = useCanvasStore((s) => s.selectedLayerIds);
+    const updateLayer = useCanvasStore((s) => s.updateLayer);
     const highlightedFrameId = useCanvasStore((s) => s.highlightedFrameId);
+    const clipGroupRef = useRef<Konva.Group>(null);
     const childLayers = layer.childIds
         .map((id) => layers.find((l) => l.id === id))
         .filter(Boolean) as LayerType[];
 
     const isHighlighted = highlightedFrameId === layer.id;
+
+    // Determine which children are currently selected
+    const selectedChildIds = layer.childIds.filter((id) => selectedLayerIds.includes(id));
+
+    // Handle transform end for children inside this frame.
+    // Node x/y are in frame-local coords; we must convert to absolute scene coords.
+    const handleChildTransformEnd = useCallback((e: Konva.KonvaEventObject<Event>) => {
+        const node = e.target;
+        const id = node.id();
+
+        const scaleX = node.scaleX();
+        const scaleY = node.scaleY();
+        const rotation = node.rotation();
+
+        // Reset scale and apply to width/height
+        node.scaleX(1);
+        node.scaleY(1);
+
+        const width = node.width() * scaleX;
+        const height = node.height() * scaleY;
+
+        // node.x()/y() are relative to the frame Group.
+        // Convert to absolute scene coords by adding the frame's position.
+        const newX = node.x() + layer.x;
+        const newY = node.y() + layer.y;
+
+        updateLayer(id, { x: newX, y: newY, width, height, rotation });
+    }, [updateLayer, layer.x, layer.y]);
 
     return (
         <Group
@@ -296,6 +367,7 @@ function FrameLayerRenderer({
             {...commonProps}
         >
             <Group
+                ref={clipGroupRef}
                 clipFunc={layer.clipContent ? (ctx) => {
                     if (layer.cornerRadius > 0) {
                         const r = layer.cornerRadius;
@@ -331,12 +403,19 @@ function FrameLayerRenderer({
                         onDragStart={onDragStart}
                         onDragMove={onDragMove}
                         onDragEnd={onDragEnd}
-                        onTransformEnd={onTransformEnd}
+                        onTransformEnd={handleChildTransformEnd}
                         onDblClickText={onDblClickText}
                         isEditing={false}
                     />
                 ))}
             </Group>
+            {/* Inner Transformer for selected children — operates in frame-local coords */}
+            {selectedChildIds.length > 0 && (
+                <FrameChildTransformer
+                    selectedChildIds={selectedChildIds}
+                    containerRef={clipGroupRef}
+                />
+            )}
         </Group>
     );
 }
@@ -496,6 +575,17 @@ export function Canvas({ stageRef }: CanvasProps) {
         getFrameAtPoint,
         moveLayerToFrame,
     } = useCanvasStore();
+
+    // Collect all IDs that are children of any frame (to exclude from top-level SelectionTransformer)
+    const frameChildIds = useMemo(() => {
+        const ids = new Set<string>();
+        layers.forEach((l) => {
+            if (l.type === "frame") {
+                (l as FrameLayer).childIds.forEach((cid) => ids.add(cid));
+            }
+        });
+        return ids;
+    }, [layers]);
 
     /* ─── Layer Interactions ──────────────────────────── */
 
@@ -711,10 +801,8 @@ export function Canvas({ stageRef }: CanvasProps) {
 
         const node = e.target;
         const id = node.id();
+        const stage = node.getStage();
 
-        // Read new props
-        const newX = node.x();
-        const newY = node.y();
         const scaleX = node.scaleX();
         const scaleY = node.scaleY();
         const rotation = node.rotation();
@@ -725,6 +813,20 @@ export function Canvas({ stageRef }: CanvasProps) {
 
         const width = node.width() * scaleX;
         const height = node.height() * scaleY;
+
+        // Convert to absolute scene coordinates (handles frame-nested children)
+        // node.x()/y() returns coords relative to parent Group, which is wrong
+        // for children inside frames. Use getAbsolutePosition() instead,
+        // matching the pattern in handleLayerDragEnd.
+        let newX: number, newY: number;
+        if (stage) {
+            const absPos = node.getAbsolutePosition();
+            newX = (absPos.x - stage.x()) / stage.scaleX();
+            newY = (absPos.y - stage.y()) / stage.scaleY();
+        } else {
+            newX = node.x();
+            newY = node.y();
+        }
 
         updateLayer(id, { x: newX, y: newY, width, height, rotation });
 
@@ -1177,7 +1279,7 @@ export function Canvas({ stageRef }: CanvasProps) {
                     )}
 
                     {/* Selection Transformer */}
-                    <SelectionTransformer selectedLayerIds={selectedLayerIds} stageRef={stageRef} />
+                    <SelectionTransformer selectedLayerIds={selectedLayerIds} stageRef={stageRef} excludeIds={frameChildIds} />
 
                 </Layer>
             </Stage>
