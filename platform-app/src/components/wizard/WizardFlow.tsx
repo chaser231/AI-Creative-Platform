@@ -1,14 +1,16 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronRight, LayoutTemplate, FileText, ImagePlus, Sparkles } from "lucide-react";
+import { ChevronRight, LayoutTemplate, FileText, ImagePlus, Sparkles, Search, Star, X } from "lucide-react";
 import { useTemplateStore } from "@/store/templateStore";
 import { useCanvasStore } from "@/store/canvasStore";
 import { useProjectStore } from "@/store/projectStore";
 import { Button } from "@/components/ui/Button";
-import { DEFAULT_PACKS, TemplatePackMeta } from "@/constants/defaultPacks";
-import type { Template } from "@/types";
+import { DEFAULT_PACKS, type TemplatePackMeta } from "@/constants/defaultPacks";
+import { getRecommendedPacks, searchPacks } from "@/services/templateCatalogService";
+import type { TemplatePackV2 } from "@/services/templateService";
+import type { Template, BusinessUnit } from "@/types";
 
 interface WizardFlowProps {
     projectId: string;
@@ -20,6 +22,7 @@ type WizardStep = "template" | "content" | "review";
 export function WizardFlow({ projectId, onSwitchToStudio }: WizardFlowProps) {
     const { templates, savedPacks } = useTemplateStore();
     const { setCanvasSize, addTextLayer, addRectangleLayer, addBadgeLayer, resetCanvas, loadTemplatePack } = useCanvasStore();
+    const { projects } = useProjectStore();
     const [step, setStep] = useState<WizardStep>("template");
     const [templateMode, setTemplateMode] = useState<"single" | "pack">("single");
     const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
@@ -27,6 +30,27 @@ export function WizardFlow({ projectId, onSwitchToStudio }: WizardFlowProps) {
     const [ctaText, setCtaText] = useState("Shop Now");
     const [productDescription, setProductDescription] = useState("");
     const [isGenerating, setIsGenerating] = useState(false);
+    const [packSearch, setPackSearch] = useState("");
+
+    // Get project BU for recommendations
+    const activeProject = projects.find(p => p.id === projectId);
+    const projectBU: BusinessUnit = activeProject?.businessUnit || "yandex-market";
+
+    // Recommended packs for this project's BU
+    const recommended = useMemo(
+        () => getRecommendedPacks(projectBU, savedPacks, 4),
+        [projectBU, savedPacks]
+    );
+
+    // Search results (all packs filtered by search query)
+    const searchResults = useMemo(() => {
+        if (!packSearch) return null;
+        return searchPacks({
+            query: packSearch,
+            sortBy: "popularity",
+            sortOrder: "desc",
+        }, savedPacks);
+    }, [packSearch, savedPacks]);
 
     const handleGenerateContent = async () => {
         if (!productDescription) return;
@@ -34,7 +58,6 @@ export function WizardFlow({ projectId, onSwitchToStudio }: WizardFlowProps) {
         try {
             const { RemoteTextProvider } = await import("@/services/aiService");
 
-            // Generate Headline
             const headlineParams = {
                 model: "openai",
                 context: "You are a marketing copywriter. Generate a short, punchy headline (2-3 words, CAPS) for a banner."
@@ -45,7 +68,6 @@ export function WizardFlow({ projectId, onSwitchToStudio }: WizardFlowProps) {
             );
             setHeadline(headlineRes.content.replace(/"/g, ''));
 
-            // Generate CTA
             const ctaParams = {
                 model: "openai",
                 context: "Generate a short Call to Action button text (max 2 words)."
@@ -92,7 +114,6 @@ export function WizardFlow({ projectId, onSwitchToStudio }: WizardFlowProps) {
                 const hydrated = hydrateTemplate(pack);
 
                 loadTemplatePack(hydrated);
-                // Skip to studio immediately as content filling is for single templates
                 onSwitchToStudio();
             } catch (err) {
                 console.error("Failed to load template pack", err);
@@ -108,7 +129,6 @@ export function WizardFlow({ projectId, onSwitchToStudio }: WizardFlowProps) {
         resetCanvas();
         setCanvasSize(selectedTemplate.baseWidth, selectedTemplate.baseHeight);
 
-        // Populate slots with user content
         selectedTemplate.slots.forEach((slot) => {
             const dp = slot.defaultProps;
             const defaultType = slot.acceptTypes[0];
@@ -164,6 +184,71 @@ export function WizardFlow({ projectId, onSwitchToStudio }: WizardFlowProps) {
         setStep("review");
     };
 
+    /* ─── Pack Card (V2 enhanced) ───────────────────────── */
+    const PackCard = ({ pack, color }: { pack: TemplatePackV2 | TemplatePackMeta; color?: string }) => {
+        // Normalize: TemplatePackMeta wraps data, TemplatePackV2 is direct
+        const isV2 = "businessUnits" in pack;
+        const v2 = isV2 ? (pack as TemplatePackV2) : (pack as TemplatePackMeta).data;
+        const displayColor = color || (isV2 ? "#6366F1" : (pack as TemplatePackMeta).thumbnailColor);
+
+        return (
+            <button
+                onClick={() => handleLoadPack(isV2 ? pack : pack)}
+                className="relative p-3 rounded-xl border border-border-primary hover:border-accent-primary/40 bg-bg-primary text-left transition-all cursor-pointer group hover:shadow-md"
+            >
+                <div
+                    className="w-full h-24 rounded-lg mb-3 relative overflow-hidden flex items-center justify-center"
+                    style={{ backgroundColor: displayColor + "15" }}
+                >
+                    <LayoutTemplate size={28} style={{ color: displayColor }} />
+                    {v2.isOfficial && (
+                        <div className="absolute top-1.5 right-1.5 flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-amber-500/15 border border-amber-500/20">
+                            <Star size={8} className="text-amber-500 fill-amber-500" />
+                            <span className="text-[8px] font-semibold text-amber-600">Official</span>
+                        </div>
+                    )}
+                </div>
+                <div className="text-xs font-semibold text-text-primary truncate">{v2.name}</div>
+                <div className="text-[10px] text-text-tertiary mt-0.5 line-clamp-1">
+                    {v2.description}
+                </div>
+                <div className="flex items-center justify-between mt-2">
+                    <div className="flex gap-1 flex-wrap">
+                        {v2.categories.slice(0, 2).map(c => (
+                            <span key={c} className="text-[8px] px-1.5 py-0.5 rounded bg-bg-secondary text-text-secondary">
+                                {c}
+                            </span>
+                        ))}
+                    </div>
+                    <span className="text-[9px] text-text-tertiary">
+                        {v2.resizes.length} фмт
+                    </span>
+                </div>
+                {v2.tags.length > 0 && (
+                    <div className="flex gap-1 mt-1.5 flex-wrap">
+                        {v2.tags.slice(0, 2).map(tag => (
+                            <span
+                                key={tag.id}
+                                className="text-[8px] px-1 py-0.5 rounded-full border border-border-primary text-text-tertiary"
+                                style={tag.color ? { borderColor: tag.color + "40", color: tag.color } : undefined}
+                            >
+                                #{tag.label}
+                            </span>
+                        ))}
+                    </div>
+                )}
+            </button>
+        );
+    };
+
+    const BU_LABELS: Record<string, string> = {
+        "yandex-market": "Маркет",
+        "yandex-go": "Go",
+        "yandex-food": "Еда",
+        "yandex-lavka": "Лавка",
+        "other": "Другое",
+    };
+
     return (
         <div className="flex-1 flex items-center justify-center bg-bg-secondary p-8">
             <div className="w-full max-w-2xl bg-bg-primary rounded-[var(--radius-xl)] shadow-[var(--shadow-lg)] border border-border-primary overflow-hidden">
@@ -205,13 +290,13 @@ export function WizardFlow({ projectId, onSwitchToStudio }: WizardFlowProps) {
                                 <div className="flex bg-bg-secondary rounded-[var(--radius-md)] p-1 border border-border-primary">
                                     <button
                                         onClick={() => setTemplateMode("single")}
-                                        className={`px-3 py-1 rounded-[var(--radius-sm)] text-xs font-medium transition-all ${templateMode === "single" ? "bg-bg-surface shadow-[var(--shadow-sm)] text-text-primary" : "text-text-secondary"}`}
+                                        className={`px-3 py-1 rounded-[var(--radius-sm)] text-xs font-medium transition-all cursor-pointer ${templateMode === "single" ? "bg-bg-surface shadow-[var(--shadow-sm)] text-text-primary" : "text-text-secondary"}`}
                                     >
                                         Шаблоны
                                     </button>
                                     <button
                                         onClick={() => setTemplateMode("pack")}
-                                        className={`px-3 py-1 rounded-[var(--radius-sm)] text-xs font-medium transition-all ${templateMode === "pack" ? "bg-bg-surface shadow-[var(--shadow-sm)] text-text-primary" : "text-text-secondary"}`}
+                                        className={`px-3 py-1 rounded-[var(--radius-sm)] text-xs font-medium transition-all cursor-pointer ${templateMode === "pack" ? "bg-bg-surface shadow-[var(--shadow-sm)] text-text-primary" : "text-text-secondary"}`}
                                     >
                                         Пакеты
                                     </button>
@@ -253,90 +338,113 @@ export function WizardFlow({ projectId, onSwitchToStudio }: WizardFlowProps) {
                                     </div>
                                 </>
                             ) : (
-                                <div className="space-y-6">
-                                    {/* Saved Packs */}
-                                    {savedPacks.length > 0 && (
-                                        <div>
-                                            <h3 className="text-xs font-semibold text-text-secondary uppercase tracking-wider mb-3">
-                                                Мои пакеты
-                                            </h3>
-                                            <div className="grid grid-cols-2 gap-4">
-                                                {savedPacks.map((pack) => (
-                                                    <button
-                                                        key={pack.id}
-                                                        onClick={() => handleLoadPack(pack)}
-                                                        className="relative p-4 rounded-[var(--radius-md)] border border-border-primary hover:border-border-secondary bg-bg-primary text-left transition-all cursor-pointer group hover:shadow-md"
-                                                    >
-                                                        <div
-                                                            className="w-full h-32 rounded-[var(--radius-sm)] mb-4 relative overflow-hidden flex items-center justify-center bg-accent-primary/10"
-                                                        >
-                                                            <LayoutTemplate size={32} className="text-accent-primary" />
-                                                        </div>
-                                                        <div className="text-sm font-medium text-text-primary">{pack.name}</div>
-                                                        <div className="text-xs text-text-tertiary mt-1 mb-3">
-                                                            {pack.masterComponents.length} компонентов, {pack.resizes.length} макетов
-                                                        </div>
-                                                    </button>
-                                                ))}
-                                            </div>
-                                        </div>
-                                    )}
-
-                                    {/* Default Packs */}
-                                    <div>
-                                        {savedPacks.length > 0 && (
-                                            <h3 className="text-xs font-semibold text-text-secondary uppercase tracking-wider mb-3">
-                                                Готовые пакеты
-                                            </h3>
+                                <div className="space-y-5">
+                                    {/* Pack search */}
+                                    <div className="relative">
+                                        <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-tertiary" />
+                                        <input
+                                            type="text"
+                                            value={packSearch}
+                                            onChange={(e) => setPackSearch(e.target.value)}
+                                            placeholder="Найти пакет..."
+                                            className="w-full h-9 pl-9 pr-8 rounded-lg border border-border-primary bg-bg-secondary text-xs text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-accent-primary/20 focus:border-accent-primary/40 transition-all"
+                                        />
+                                        {packSearch && (
+                                            <button
+                                                onClick={() => setPackSearch("")}
+                                                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-text-tertiary hover:text-text-primary cursor-pointer"
+                                            >
+                                                <X size={12} />
+                                            </button>
                                         )}
-                                        <div className="grid grid-cols-2 gap-4">
-                                            {DEFAULT_PACKS.map((pack) => (
-                                                <button
-                                                    key={pack.id}
-                                                    onClick={() => handleLoadPack(pack)}
-                                                    className="relative p-4 rounded-[var(--radius-md)] border border-border-primary hover:border-border-secondary bg-bg-primary text-left transition-all cursor-pointer group hover:shadow-md"
-                                                >
-                                                    <div
-                                                        className="w-full h-32 rounded-[var(--radius-sm)] mb-4 relative overflow-hidden flex items-center justify-center"
-                                                        style={{ backgroundColor: pack.thumbnailColor + "20" }}
-                                                    >
-                                                        <LayoutTemplate size={32} style={{ color: pack.thumbnailColor }} />
-                                                    </div>
-                                                    <div className="text-sm font-medium text-text-primary">{pack.name}</div>
-                                                    <div className="text-xs text-text-tertiary mt-1 mb-3 line-clamp-2">
-                                                        {pack.description}
-                                                    </div>
-                                                    <div className="flex gap-1.5 flex-wrap">
-                                                        {pack.data.resizes.map(r => (
-                                                            <span key={r.id} className="text-[10px] px-2 py-0.5 bg-bg-secondary rounded-full text-text-secondary border border-border-secondary">
-                                                                {r.name}
-                                                            </span>
+                                    </div>
+
+                                    {packSearch && searchResults ? (
+                                        /* Search results */
+                                        <div>
+                                            <h3 className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wider mb-2">
+                                                Результаты ({searchResults.total})
+                                            </h3>
+                                            {searchResults.items.length > 0 ? (
+                                                <div className="grid grid-cols-2 gap-3">
+                                                    {searchResults.items.map(pack => (
+                                                        <PackCard key={pack.id} pack={pack} />
+                                                    ))}
+                                                </div>
+                                            ) : (
+                                                <div className="text-center py-8 text-xs text-text-tertiary">
+                                                    Ничего не найдено по запросу «{packSearch}»
+                                                </div>
+                                            )}
+                                        </div>
+                                    ) : (
+                                        <>
+                                            {/* Recommended for project BU */}
+                                            {recommended.length > 0 && (
+                                                <div>
+                                                    <h3 className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wider mb-2">
+                                                        📌 Рекомендовано для {BU_LABELS[projectBU] || projectBU}
+                                                    </h3>
+                                                    <div className="grid grid-cols-2 gap-3">
+                                                        {recommended.map(pack => (
+                                                            <PackCard key={pack.id} pack={pack} />
                                                         ))}
                                                     </div>
-                                                </button>
-                                            ))}
-                                        </div>
-                                    </div>
+                                                </div>
+                                            )}
 
-                                    <div className="border-t border-border-primary pt-6">
-                                        <div className="flex flex-col items-center justify-center py-8 border-2 border-dashed border-border-primary rounded-[var(--radius-lg)] bg-bg-secondary/30">
-                                            <h3 className="text-sm font-medium text-text-primary mb-2">Импорт своего пакета</h3>
-                                            <p className="text-xs text-text-secondary mb-4 text-center max-w-xs">
-                                                Если у вас уже есть сохраненный файл .json, вы можете загрузить его здесь.
-                                            </p>
-                                            <label className="cursor-pointer">
-                                                <span className="px-4 py-2 bg-white border border-border-primary text-text-primary text-xs font-medium rounded-[var(--radius-md)] hover:bg-bg-secondary transition-colors shadow-sm">
-                                                    Выбрать файл .json
-                                                </span>
-                                                <input
-                                                    type="file"
-                                                    accept=".json"
-                                                    className="hidden"
-                                                    onChange={handleImportPack}
-                                                />
-                                            </label>
-                                        </div>
-                                    </div>
+                                            {/* Saved Packs */}
+                                            {savedPacks.length > 0 && (
+                                                <div>
+                                                    <h3 className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wider mb-2">
+                                                        Мои пакеты
+                                                    </h3>
+                                                    <div className="grid grid-cols-2 gap-3">
+                                                        {savedPacks.map((pack) => (
+                                                            <PackCard key={pack.id} pack={pack} />
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            )}
+
+                                            {/* Default Packs */}
+                                            <div>
+                                                <h3 className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wider mb-2">
+                                                    Готовые пакеты
+                                                </h3>
+                                                <div className="grid grid-cols-2 gap-3">
+                                                    {DEFAULT_PACKS.map((pack) => (
+                                                        <PackCard
+                                                            key={pack.id}
+                                                            pack={pack}
+                                                            color={pack.thumbnailColor}
+                                                        />
+                                                    ))}
+                                                </div>
+                                            </div>
+
+                                            {/* Import */}
+                                            <div className="border-t border-border-primary pt-4">
+                                                <div className="flex flex-col items-center justify-center py-6 border-2 border-dashed border-border-primary rounded-xl bg-bg-secondary/30">
+                                                    <h3 className="text-xs font-medium text-text-primary mb-1.5">Импорт своего пакета</h3>
+                                                    <p className="text-[10px] text-text-secondary mb-3 text-center max-w-xs">
+                                                        Загрузите .json файл пакета шаблонов
+                                                    </p>
+                                                    <label className="cursor-pointer">
+                                                        <span className="px-4 py-1.5 bg-white border border-border-primary text-text-primary text-xs font-medium rounded-lg hover:bg-bg-secondary transition-colors shadow-sm">
+                                                            Выбрать файл
+                                                        </span>
+                                                        <input
+                                                            type="file"
+                                                            accept=".json"
+                                                            className="hidden"
+                                                            onChange={handleImportPack}
+                                                        />
+                                                    </label>
+                                                </div>
+                                            </div>
+                                        </>
+                                    )}
                                 </div>
                             )}
                         </div>
