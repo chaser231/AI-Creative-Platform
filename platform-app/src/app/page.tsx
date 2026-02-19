@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
-import { Plus, ImageIcon, Type, Camera, Video, Search, HelpCircle } from "lucide-react";
+import { useState, useMemo } from "react";
+import Link from "next/link";
+import { Plus, ImageIcon, Type, Camera, Video, Search, HelpCircle, LayoutTemplate, ArrowRight, Star } from "lucide-react";
 import { AppShell } from "@/components/layout/AppShell";
 import { TopBar } from "@/components/layout/TopBar";
 import { Button } from "@/components/ui/Button";
@@ -9,7 +10,64 @@ import { ProjectCard } from "@/components/dashboard/ProjectCard";
 import { EmptyState } from "@/components/dashboard/EmptyState";
 import { NewProjectModal } from "@/components/dashboard/NewProjectModal";
 import { useProjectStore } from "@/store/projectStore";
+import { useTemplateStore } from "@/store/templateStore";
+import { getRecommendedPacks } from "@/services/templateCatalogService";
+import type { TemplatePackV2 } from "@/services/templateService";
 
+function RecommendedTemplates() {
+  const { savedPacks } = useTemplateStore();
+  // TODO: Use actual user BU from profile/auth context
+  const userBU = "yandex-market" as const;
+
+  const recommended = useMemo(
+    () => getRecommendedPacks(userBU, savedPacks, 4),
+    [savedPacks]
+  );
+
+  if (recommended.length === 0) return null;
+
+  return (
+    <div className="px-6 pt-6">
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <LayoutTemplate size={16} className="text-accent-primary" />
+          <h2 className="text-sm font-semibold text-text-primary">Готовые наборы</h2>
+        </div>
+        <Link
+          href="/templates"
+          className="flex items-center gap-1 text-[11px] text-text-tertiary hover:text-accent-primary transition-colors"
+        >
+          Все шаблоны
+          <ArrowRight size={12} />
+        </Link>
+      </div>
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        {recommended.map(pack => (
+          <Link
+            key={pack.id}
+            href="/templates"
+            className="flex items-center gap-3 p-3 rounded-xl border border-border-primary bg-bg-surface hover:border-accent-primary/30 hover:shadow-sm transition-all group"
+          >
+            <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-accent-primary/10 to-accent-primary/20 flex items-center justify-center shrink-0">
+              <LayoutTemplate size={18} className="text-accent-primary/70" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-1">
+                <span className="text-xs font-medium text-text-primary truncate">{pack.name}</span>
+                {pack.isOfficial && (
+                  <Star size={8} className="text-amber-500 fill-amber-500 shrink-0" />
+                )}
+              </div>
+              <span className="text-[10px] text-text-tertiary">
+                {pack.resizes.length} форматов · {pack.categories[0] || "visual"}
+              </span>
+            </div>
+          </Link>
+        ))}
+      </div>
+    </div>
+  );
+}
 const generationTypes = [
   {
     icon: <ImageIcon size={28} strokeWidth={1.5} />,
@@ -74,6 +132,9 @@ export default function DashboardPage() {
             ))}
           </div>
         </div>
+
+        {/* Recommended templates — compact, extensible section */}
+        <RecommendedTemplates />
 
         {/* Projects section */}
         <div className="px-6 pt-8">

@@ -12,6 +12,7 @@ import {
     ChevronDown,
     Plus,
     Star,
+    LayoutTemplate,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
 
@@ -25,6 +26,7 @@ const navItems: NavItem[] = [
     { label: "Последние проекты", href: "/", icon: <LayoutDashboard size={18} /> },
     { label: "Все проекты", href: "/projects", icon: <FolderKanban size={18} /> },
     { label: "Ассеты", href: "/assets", icon: <Image size={18} /> },
+    { label: "Шаблоны", href: "/templates", icon: <LayoutTemplate size={18} /> },
     { label: "Бренд-кит", href: "/settings/brand-kit", icon: <Palette size={18} /> },
     { label: "Команда", href: "/team", icon: <Users size={18} /> },
 ];
