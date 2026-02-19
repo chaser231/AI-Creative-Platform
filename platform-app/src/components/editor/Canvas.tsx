@@ -587,6 +587,28 @@ export function Canvas({ stageRef }: CanvasProps) {
         return ids;
     }, [layers]);
 
+    // Auto-center artboard on first render when container dimensions are known
+    const hasCentered = useRef(false);
+    useEffect(() => {
+        if (hasCentered.current) return;
+        if (containerDimensions.width === 0 || containerDimensions.height === 0) return;
+
+        const padding = 60; // px padding around the artboard
+        const availW = containerDimensions.width - padding * 2;
+        const availH = containerDimensions.height - padding * 2;
+
+        // Fit artboard in viewport
+        const fitZoom = Math.min(availW / canvasWidth, availH / canvasHeight, 1);
+
+        // Center the artboard
+        const centerX = (containerDimensions.width - canvasWidth * fitZoom) / 2;
+        const centerY = (containerDimensions.height - canvasHeight * fitZoom) / 2;
+
+        setZoom(fitZoom);
+        setStagePosition(centerX, centerY);
+        hasCentered.current = true;
+    }, [containerDimensions, canvasWidth, canvasHeight, setZoom, setStagePosition]);
+
     /* ─── Layer Interactions ──────────────────────────── */
 
     const handleLayerSelect = useCallback((e: Konva.KonvaEventObject<MouseEvent>) => {
