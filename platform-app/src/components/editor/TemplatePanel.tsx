@@ -2,7 +2,7 @@
 
 import { useState, useMemo } from "react";
 import { v4 as uuid } from "uuid";
-import { LayoutTemplate, Plus, ArrowRight, Check, Search, X, Star, Download, Upload } from "lucide-react";
+import { LayoutTemplate, Plus, ArrowRight, Check, Search, X, Star, Download, Upload, Shuffle } from "lucide-react";
 import { useTemplateStore } from "@/store/templateStore";
 import { useCanvasStore } from "@/store/canvasStore";
 import { useProjectStore } from "@/store/projectStore";
@@ -11,8 +11,9 @@ import { Button } from "@/components/ui/Button";
 import { DEFAULT_PACKS, type TemplatePackMeta } from "@/constants/defaultPacks";
 import { serializeTemplate } from "@/services/templateService";
 import { searchPacks } from "@/services/templateCatalogService";
-import type { TemplatePackV2 } from "@/services/templateService";
+import type { TemplatePackV2, TemplatePack } from "@/services/templateService";
 import type { Template, BusinessUnit, TemplateCategory, ContentType } from "@/types";
+import { SlotMappingModal } from "@/components/editor/SlotMappingModal";
 
 interface TemplatePanelProps {
     open: boolean;
@@ -54,8 +55,8 @@ function Chip({
         <button
             onClick={onClick}
             className={`px-2 py-1 rounded-full text-[10px] font-medium transition-all cursor-pointer border ${active
-                    ? "bg-accent-primary text-white border-accent-primary"
-                    : "bg-bg-surface text-text-secondary border-border-primary hover:border-accent-primary/30"
+                ? "bg-accent-primary text-white border-accent-primary"
+                : "bg-bg-surface text-text-secondary border-border-primary hover:border-accent-primary/30"
                 }`}
         >
             {label}
@@ -82,6 +83,10 @@ export function TemplatePanel({ open, onClose }: TemplatePanelProps) {
     const [saveContentType, setSaveContentType] = useState<ContentType>("visual");
     const [saveTagInput, setSaveTagInput] = useState("");
     const [saveTags, setSaveTags] = useState<string[]>([]);
+
+    // Smart Resize state
+    const [smartResizePack, setSmartResizePack] = useState<TemplatePack | null>(null);
+    const [smartResizePackName, setSmartResizePackName] = useState("");
 
     // Search results
     const searchResults = useMemo(() => {
@@ -311,8 +316,23 @@ export function TemplatePanel({ open, onClose }: TemplatePanelProps) {
                         </div>
                     )}
                 </button>
-                {/* Action buttons */}
+                {/* Action buttons — top-left on hover */}
                 <div className="absolute top-1.5 left-1.5 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    {/* Smart Resize button — only when master has components */}
+                    {masterComponents.length > 0 && (
+                        <button
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                const rawPack = isV2 ? (pack as TemplatePackV2) : (pack as TemplatePackMeta).data;
+                                setSmartResizePack(rawPack);
+                                setSmartResizePackName(v2.name);
+                            }}
+                            className="p-1 bg-accent-primary/10 border border-accent-primary/20 rounded hover:bg-accent-primary/20 transition-colors cursor-pointer"
+                            title="С текущим мастером"
+                        >
+                            <Shuffle size={10} className="text-accent-primary" />
+                        </button>
+                    )}
                     {isV2 && (
                         <button
                             onClick={(e) => { e.stopPropagation(); handleExportPack(v2); }}
@@ -337,370 +357,384 @@ export function TemplatePanel({ open, onClose }: TemplatePanelProps) {
     };
 
     return (
-        <Modal open={open} title="Шаблоны" onClose={onClose}>
-            <div className="space-y-4">
-                {/* Tabs */}
-                <div className="flex gap-1 p-1 bg-bg-secondary rounded-xl border border-border-primary mb-2">
-                    <button
-                        onClick={() => setActiveTab("single")}
-                        className={`flex-1 flex items-center justify-center h-8 rounded-lg text-xs font-medium transition-all cursor-pointer ${activeTab === "single"
+        <>
+            <Modal open={open} title="Шаблоны" onClose={onClose}>
+                <div className="space-y-4">
+                    {/* Tabs */}
+                    <div className="flex gap-1 p-1 bg-bg-secondary rounded-xl border border-border-primary mb-2">
+                        <button
+                            onClick={() => setActiveTab("single")}
+                            className={`flex-1 flex items-center justify-center h-8 rounded-lg text-xs font-medium transition-all cursor-pointer ${activeTab === "single"
                                 ? "bg-bg-surface text-text-primary shadow-sm border border-border-primary"
                                 : "text-text-secondary hover:text-text-primary"
-                            }`}
-                    >
-                        Одиночные
-                    </button>
-                    <button
-                        onClick={() => setActiveTab("pack")}
-                        className={`flex-1 flex items-center justify-center h-8 rounded-lg text-xs font-medium transition-all cursor-pointer ${activeTab === "pack"
+                                }`}
+                        >
+                            Одиночные
+                        </button>
+                        <button
+                            onClick={() => setActiveTab("pack")}
+                            className={`flex-1 flex items-center justify-center h-8 rounded-lg text-xs font-medium transition-all cursor-pointer ${activeTab === "pack"
                                 ? "bg-bg-surface text-text-primary shadow-sm border border-border-primary"
                                 : "text-text-secondary hover:text-text-primary"
-                            }`}
-                    >
-                        Пакеты
-                    </button>
-                </div>
+                                }`}
+                        >
+                            Пакеты
+                        </button>
+                    </div>
 
-                {activeTab === "single" ? (
-                    <>
-                        {/* Save current as template */}
-                        {masterComponents.length > 0 && (
-                            <div className="p-3 bg-bg-secondary rounded-xl border border-border-primary">
-                                <div className="flex items-center gap-2 mb-2">
-                                    <Plus size={14} className="text-accent-primary" />
-                                    <span className="text-xs font-medium text-text-primary">Сохранить холст как шаблон</span>
+                    {activeTab === "single" ? (
+                        <>
+                            {/* Save current as template */}
+                            {masterComponents.length > 0 && (
+                                <div className="p-3 bg-bg-secondary rounded-xl border border-border-primary">
+                                    <div className="flex items-center gap-2 mb-2">
+                                        <Plus size={14} className="text-accent-primary" />
+                                        <span className="text-xs font-medium text-text-primary">Сохранить холст как шаблон</span>
+                                    </div>
+                                    <p className="text-[11px] text-text-tertiary mb-2">
+                                        Создаст шаблон из {masterComponents.length} компонент{masterComponents.length !== 1 ? "ов" : "а"}.
+                                    </p>
+                                    <Button size="sm" variant="secondary" onClick={handleSaveAsTemplate}>
+                                        Сохранить как шаблон
+                                    </Button>
                                 </div>
-                                <p className="text-[11px] text-text-tertiary mb-2">
-                                    Создаст шаблон из {masterComponents.length} компонент{masterComponents.length !== 1 ? "ов" : "а"}.
-                                </p>
-                                <Button size="sm" variant="secondary" onClick={handleSaveAsTemplate}>
-                                    Сохранить как шаблон
-                                </Button>
-                            </div>
-                        )}
+                            )}
 
-                        {/* Template grid */}
-                        <div>
-                            <h4 className="text-xs font-semibold text-text-secondary uppercase tracking-wider mb-3">
-                                Доступные шаблоны
-                            </h4>
-                            <div className="grid grid-cols-2 gap-3">
-                                {templates.map((template) => (
-                                    <button
-                                        key={template.id}
-                                        onClick={() => setSelectedTemplate(
-                                            selectedTemplate === template.id ? null : template.id
-                                        )}
-                                        className={`
+                            {/* Template grid */}
+                            <div>
+                                <h4 className="text-xs font-semibold text-text-secondary uppercase tracking-wider mb-3">
+                                    Доступные шаблоны
+                                </h4>
+                                <div className="grid grid-cols-2 gap-3">
+                                    {templates.map((template) => (
+                                        <button
+                                            key={template.id}
+                                            onClick={() => setSelectedTemplate(
+                                                selectedTemplate === template.id ? null : template.id
+                                            )}
+                                            className={`
                                             relative p-3 rounded-xl border text-left transition-all cursor-pointer group
                                             ${selectedTemplate === template.id
-                                                ? "border-accent-primary bg-bg-active shadow-sm"
-                                                : "border-border-primary hover:border-border-secondary bg-bg-primary"
-                                            }
+                                                    ? "border-accent-primary bg-bg-active shadow-sm"
+                                                    : "border-border-primary hover:border-border-secondary bg-bg-primary"
+                                                }
                                         `}
-                                    >
-                                        <div
-                                            className="w-full bg-bg-secondary rounded-lg mb-2 border border-border-primary relative overflow-hidden"
-                                            style={{ aspectRatio: `${template.baseWidth} / ${template.baseHeight}` }}
                                         >
-                                            {template.slots.map((slot) => {
-                                                const dp = slot.defaultProps;
-                                                if (!dp.width || !dp.height) return null;
-                                                const scaleX = 100 / template.baseWidth;
-                                                const scaleY = 100 / template.baseHeight;
-                                                return (
-                                                    <div
-                                                        key={slot.id}
-                                                        className="absolute border border-dashed border-text-tertiary/30 rounded-[1px]"
-                                                        style={{
-                                                            left: `${(dp.x || 0) * scaleX}%`,
-                                                            top: `${(dp.y || 0) * scaleY}%`,
-                                                            width: `${dp.width * scaleX}%`,
-                                                            height: `${dp.height * scaleY}%`,
-                                                        }}
-                                                    />
-                                                );
-                                            })}
-                                        </div>
-                                        <div className="text-xs font-medium text-text-primary">{template.name}</div>
-                                        <div className="text-[10px] text-text-tertiary mt-0.5">
-                                            {template.slots.length} слотов · {template.baseWidth}×{template.baseHeight}
-                                        </div>
-                                        {selectedTemplate === template.id && (
-                                            <div className="absolute top-2 right-2 w-5 h-5 rounded-full bg-accent-primary flex items-center justify-center">
-                                                <Check size={12} className="text-white" />
+                                            <div
+                                                className="w-full bg-bg-secondary rounded-lg mb-2 border border-border-primary relative overflow-hidden"
+                                                style={{ aspectRatio: `${template.baseWidth} / ${template.baseHeight}` }}
+                                            >
+                                                {template.slots.map((slot) => {
+                                                    const dp = slot.defaultProps;
+                                                    if (!dp.width || !dp.height) return null;
+                                                    const scaleX = 100 / template.baseWidth;
+                                                    const scaleY = 100 / template.baseHeight;
+                                                    return (
+                                                        <div
+                                                            key={slot.id}
+                                                            className="absolute border border-dashed border-text-tertiary/30 rounded-[1px]"
+                                                            style={{
+                                                                left: `${(dp.x || 0) * scaleX}%`,
+                                                                top: `${(dp.y || 0) * scaleY}%`,
+                                                                width: `${dp.width * scaleX}%`,
+                                                                height: `${dp.height * scaleY}%`,
+                                                            }}
+                                                        />
+                                                    );
+                                                })}
                                             </div>
-                                        )}
-                                    </button>
-                                ))}
-                            </div>
-                        </div>
-                    </>
-                ) : (
-                    <div className="space-y-4">
-                        {/* Search */}
-                        <div className="relative">
-                            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-tertiary" />
-                            <input
-                                type="text"
-                                value={packSearch}
-                                onChange={(e) => setPackSearch(e.target.value)}
-                                placeholder="Найти пакет..."
-                                className="w-full h-9 pl-9 pr-8 rounded-lg border border-border-primary bg-bg-secondary text-xs text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-accent-primary/20 focus:border-accent-primary/40 transition-all"
-                            />
-                            {packSearch && (
-                                <button
-                                    onClick={() => setPackSearch("")}
-                                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-text-tertiary hover:text-text-primary cursor-pointer"
-                                >
-                                    <X size={12} />
-                                </button>
-                            )}
-                        </div>
-
-                        {/* Save Pack (extended form) */}
-                        {masterComponents.length > 0 && (
-                            <div className="p-3 bg-bg-secondary rounded-xl border border-border-primary">
-                                {!showSaveForm ? (
-                                    <>
-                                        <div className="flex items-center gap-2 mb-2">
-                                            <Plus size={14} className="text-accent-primary" />
-                                            <span className="text-xs font-medium text-text-primary">Создать свой пакет</span>
-                                        </div>
-                                        <p className="text-[11px] text-text-tertiary mb-2">
-                                            Сохранить текущий проект как пакет с метаданными.
-                                        </p>
-                                        <Button size="sm" variant="secondary" onClick={() => setShowSaveForm(true)}>
-                                            Сохранить этот проект
-                                        </Button>
-                                    </>
-                                ) : (
-                                    <div className="space-y-3">
-                                        <h4 className="text-xs font-semibold text-text-primary">Сохранить пакет</h4>
-
-                                        {/* Name */}
-                                        <div>
-                                            <label className="block text-[10px] font-medium text-text-secondary mb-1">Название *</label>
-                                            <input
-                                                type="text"
-                                                value={saveName}
-                                                onChange={(e) => setSaveName(e.target.value)}
-                                                placeholder="Напр. Промо-набор Q1"
-                                                className="w-full h-8 px-2.5 rounded-lg border border-border-primary bg-bg-surface text-xs text-text-primary focus:outline-none focus:ring-2 focus:ring-accent-primary/20 transition-all"
-                                            />
-                                        </div>
-
-                                        {/* Description */}
-                                        <div>
-                                            <label className="block text-[10px] font-medium text-text-secondary mb-1">Описание</label>
-                                            <input
-                                                type="text"
-                                                value={saveDescription}
-                                                onChange={(e) => setSaveDescription(e.target.value)}
-                                                placeholder="Краткое описание пакета"
-                                                className="w-full h-8 px-2.5 rounded-lg border border-border-primary bg-bg-surface text-xs text-text-primary focus:outline-none focus:ring-2 focus:ring-accent-primary/20 transition-all"
-                                            />
-                                        </div>
-
-                                        {/* BU */}
-                                        <div>
-                                            <label className="block text-[10px] font-medium text-text-secondary mb-1">Сервис</label>
-                                            <div className="flex flex-wrap gap-1">
-                                                {BU_OPTIONS.map(bu => (
-                                                    <Chip
-                                                        key={bu.value}
-                                                        label={bu.label}
-                                                        active={saveBUs.includes(bu.value)}
-                                                        onClick={() => setSaveBUs(prev =>
-                                                            prev.includes(bu.value)
-                                                                ? prev.filter(b => b !== bu.value)
-                                                                : [...prev, bu.value]
-                                                        )}
-                                                    />
-                                                ))}
+                                            <div className="text-xs font-medium text-text-primary">{template.name}</div>
+                                            <div className="text-[10px] text-text-tertiary mt-0.5">
+                                                {template.slots.length} слотов · {template.baseWidth}×{template.baseHeight}
                                             </div>
-                                        </div>
-
-                                        {/* Category */}
-                                        <div>
-                                            <label className="block text-[10px] font-medium text-text-secondary mb-1">Категория</label>
-                                            <div className="flex flex-wrap gap-1">
-                                                {CATEGORY_OPTIONS.map(cat => (
-                                                    <Chip
-                                                        key={cat.value}
-                                                        label={cat.label}
-                                                        active={saveCategories.includes(cat.value)}
-                                                        onClick={() => setSaveCategories(prev =>
-                                                            prev.includes(cat.value)
-                                                                ? prev.filter(c => c !== cat.value)
-                                                                : [...prev, cat.value]
-                                                        )}
-                                                    />
-                                                ))}
-                                            </div>
-                                        </div>
-
-                                        {/* Content type */}
-                                        <div>
-                                            <label className="block text-[10px] font-medium text-text-secondary mb-1">Тип контента</label>
-                                            <div className="flex flex-wrap gap-1">
-                                                {CONTENT_TYPE_OPTIONS.map(ct => (
-                                                    <Chip
-                                                        key={ct.value}
-                                                        label={ct.label}
-                                                        active={saveContentType === ct.value}
-                                                        onClick={() => setSaveContentType(ct.value)}
-                                                    />
-                                                ))}
-                                            </div>
-                                        </div>
-
-                                        {/* Tags */}
-                                        <div>
-                                            <label className="block text-[10px] font-medium text-text-secondary mb-1">Теги</label>
-                                            <div className="flex gap-1.5">
-                                                <input
-                                                    type="text"
-                                                    value={saveTagInput}
-                                                    onChange={(e) => setSaveTagInput(e.target.value)}
-                                                    onKeyDown={(e) => e.key === "Enter" && handleAddTag()}
-                                                    placeholder="Введите тег..."
-                                                    className="flex-1 h-7 px-2 rounded-md border border-border-primary bg-bg-surface text-[10px] text-text-primary focus:outline-none focus:ring-1 focus:ring-accent-primary/20 transition-all"
-                                                />
-                                                <button
-                                                    onClick={handleAddTag}
-                                                    className="px-2 h-7 rounded-md bg-bg-surface border border-border-primary text-[10px] text-text-secondary hover:text-text-primary transition-colors cursor-pointer"
-                                                >
-                                                    +
-                                                </button>
-                                            </div>
-                                            {saveTags.length > 0 && (
-                                                <div className="flex flex-wrap gap-1 mt-1.5">
-                                                    {saveTags.map(tag => (
-                                                        <span
-                                                            key={tag}
-                                                            className="flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-accent-primary/10 text-accent-primary text-[9px] font-medium"
-                                                        >
-                                                            #{tag}
-                                                            <button
-                                                                onClick={() => setSaveTags(prev => prev.filter(t => t !== tag))}
-                                                                className="cursor-pointer hover:text-red-500"
-                                                            >
-                                                                <X size={8} />
-                                                            </button>
-                                                        </span>
-                                                    ))}
+                                            {selectedTemplate === template.id && (
+                                                <div className="absolute top-2 right-2 w-5 h-5 rounded-full bg-accent-primary flex items-center justify-center">
+                                                    <Check size={12} className="text-white" />
                                                 </div>
                                             )}
-                                        </div>
-
-                                        {/* Actions */}
-                                        <div className="flex gap-2 pt-1">
-                                            <Button size="sm" variant="ghost" onClick={() => { setShowSaveForm(false); resetSaveForm(); }}>
-                                                Отмена
-                                            </Button>
-                                            <Button size="sm" disabled={!saveName.trim()} onClick={handleSaveAsPack}>
-                                                Сохранить пакет
-                                            </Button>
-                                        </div>
-                                    </div>
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                        </>
+                    ) : (
+                        <div className="space-y-4">
+                            {/* Search */}
+                            <div className="relative">
+                                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-tertiary" />
+                                <input
+                                    type="text"
+                                    value={packSearch}
+                                    onChange={(e) => setPackSearch(e.target.value)}
+                                    placeholder="Найти пакет..."
+                                    className="w-full h-9 pl-9 pr-8 rounded-lg border border-border-primary bg-bg-secondary text-xs text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-accent-primary/20 focus:border-accent-primary/40 transition-all"
+                                />
+                                {packSearch && (
+                                    <button
+                                        onClick={() => setPackSearch("")}
+                                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-text-tertiary hover:text-text-primary cursor-pointer"
+                                    >
+                                        <X size={12} />
+                                    </button>
                                 )}
                             </div>
-                        )}
 
-                        {/* Search results or browse */}
-                        {packSearch && searchResults ? (
-                            <div>
-                                <h4 className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wider mb-2">
-                                    Результаты ({searchResults.total})
-                                </h4>
-                                {searchResults.items.length > 0 ? (
-                                    <div className="grid grid-cols-2 gap-3">
-                                        {searchResults.items.map(pack => (
-                                            <PackCard key={pack.id} pack={pack} />
-                                        ))}
-                                    </div>
-                                ) : (
-                                    <div className="text-center py-6 text-xs text-text-tertiary">
-                                        Ничего не найдено
-                                    </div>
-                                )}
-                            </div>
-                        ) : (
-                            <>
-                                {/* Saved Packs */}
-                                {savedPacks.length > 0 && (
+                            {/* Save Pack (extended form) */}
+                            {masterComponents.length > 0 && (
+                                <div className="p-3 bg-bg-secondary rounded-xl border border-border-primary">
+                                    {!showSaveForm ? (
+                                        <>
+                                            <div className="flex items-center gap-2 mb-2">
+                                                <Plus size={14} className="text-accent-primary" />
+                                                <span className="text-xs font-medium text-text-primary">Создать свой пакет</span>
+                                            </div>
+                                            <p className="text-[11px] text-text-tertiary mb-2">
+                                                Сохранить текущий проект как пакет с метаданными.
+                                            </p>
+                                            <Button size="sm" variant="secondary" onClick={() => setShowSaveForm(true)}>
+                                                Сохранить этот проект
+                                            </Button>
+                                        </>
+                                    ) : (
+                                        <div className="space-y-3">
+                                            <h4 className="text-xs font-semibold text-text-primary">Сохранить пакет</h4>
+
+                                            {/* Name */}
+                                            <div>
+                                                <label className="block text-[10px] font-medium text-text-secondary mb-1">Название *</label>
+                                                <input
+                                                    type="text"
+                                                    value={saveName}
+                                                    onChange={(e) => setSaveName(e.target.value)}
+                                                    placeholder="Напр. Промо-набор Q1"
+                                                    className="w-full h-8 px-2.5 rounded-lg border border-border-primary bg-bg-surface text-xs text-text-primary focus:outline-none focus:ring-2 focus:ring-accent-primary/20 transition-all"
+                                                />
+                                            </div>
+
+                                            {/* Description */}
+                                            <div>
+                                                <label className="block text-[10px] font-medium text-text-secondary mb-1">Описание</label>
+                                                <input
+                                                    type="text"
+                                                    value={saveDescription}
+                                                    onChange={(e) => setSaveDescription(e.target.value)}
+                                                    placeholder="Краткое описание пакета"
+                                                    className="w-full h-8 px-2.5 rounded-lg border border-border-primary bg-bg-surface text-xs text-text-primary focus:outline-none focus:ring-2 focus:ring-accent-primary/20 transition-all"
+                                                />
+                                            </div>
+
+                                            {/* BU */}
+                                            <div>
+                                                <label className="block text-[10px] font-medium text-text-secondary mb-1">Сервис</label>
+                                                <div className="flex flex-wrap gap-1">
+                                                    {BU_OPTIONS.map(bu => (
+                                                        <Chip
+                                                            key={bu.value}
+                                                            label={bu.label}
+                                                            active={saveBUs.includes(bu.value)}
+                                                            onClick={() => setSaveBUs(prev =>
+                                                                prev.includes(bu.value)
+                                                                    ? prev.filter(b => b !== bu.value)
+                                                                    : [...prev, bu.value]
+                                                            )}
+                                                        />
+                                                    ))}
+                                                </div>
+                                            </div>
+
+                                            {/* Category */}
+                                            <div>
+                                                <label className="block text-[10px] font-medium text-text-secondary mb-1">Категория</label>
+                                                <div className="flex flex-wrap gap-1">
+                                                    {CATEGORY_OPTIONS.map(cat => (
+                                                        <Chip
+                                                            key={cat.value}
+                                                            label={cat.label}
+                                                            active={saveCategories.includes(cat.value)}
+                                                            onClick={() => setSaveCategories(prev =>
+                                                                prev.includes(cat.value)
+                                                                    ? prev.filter(c => c !== cat.value)
+                                                                    : [...prev, cat.value]
+                                                            )}
+                                                        />
+                                                    ))}
+                                                </div>
+                                            </div>
+
+                                            {/* Content type */}
+                                            <div>
+                                                <label className="block text-[10px] font-medium text-text-secondary mb-1">Тип контента</label>
+                                                <div className="flex flex-wrap gap-1">
+                                                    {CONTENT_TYPE_OPTIONS.map(ct => (
+                                                        <Chip
+                                                            key={ct.value}
+                                                            label={ct.label}
+                                                            active={saveContentType === ct.value}
+                                                            onClick={() => setSaveContentType(ct.value)}
+                                                        />
+                                                    ))}
+                                                </div>
+                                            </div>
+
+                                            {/* Tags */}
+                                            <div>
+                                                <label className="block text-[10px] font-medium text-text-secondary mb-1">Теги</label>
+                                                <div className="flex gap-1.5">
+                                                    <input
+                                                        type="text"
+                                                        value={saveTagInput}
+                                                        onChange={(e) => setSaveTagInput(e.target.value)}
+                                                        onKeyDown={(e) => e.key === "Enter" && handleAddTag()}
+                                                        placeholder="Введите тег..."
+                                                        className="flex-1 h-7 px-2 rounded-md border border-border-primary bg-bg-surface text-[10px] text-text-primary focus:outline-none focus:ring-1 focus:ring-accent-primary/20 transition-all"
+                                                    />
+                                                    <button
+                                                        onClick={handleAddTag}
+                                                        className="px-2 h-7 rounded-md bg-bg-surface border border-border-primary text-[10px] text-text-secondary hover:text-text-primary transition-colors cursor-pointer"
+                                                    >
+                                                        +
+                                                    </button>
+                                                </div>
+                                                {saveTags.length > 0 && (
+                                                    <div className="flex flex-wrap gap-1 mt-1.5">
+                                                        {saveTags.map(tag => (
+                                                            <span
+                                                                key={tag}
+                                                                className="flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-accent-primary/10 text-accent-primary text-[9px] font-medium"
+                                                            >
+                                                                #{tag}
+                                                                <button
+                                                                    onClick={() => setSaveTags(prev => prev.filter(t => t !== tag))}
+                                                                    className="cursor-pointer hover:text-red-500"
+                                                                >
+                                                                    <X size={8} />
+                                                                </button>
+                                                            </span>
+                                                        ))}
+                                                    </div>
+                                                )}
+                                            </div>
+
+                                            {/* Actions */}
+                                            <div className="flex gap-2 pt-1">
+                                                <Button size="sm" variant="ghost" onClick={() => { setShowSaveForm(false); resetSaveForm(); }}>
+                                                    Отмена
+                                                </Button>
+                                                <Button size="sm" disabled={!saveName.trim()} onClick={handleSaveAsPack}>
+                                                    Сохранить пакет
+                                                </Button>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
+                            {/* Search results or browse */}
+                            {packSearch && searchResults ? (
+                                <div>
+                                    <h4 className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wider mb-2">
+                                        Результаты ({searchResults.total})
+                                    </h4>
+                                    {searchResults.items.length > 0 ? (
+                                        <div className="grid grid-cols-2 gap-3">
+                                            {searchResults.items.map(pack => (
+                                                <PackCard key={pack.id} pack={pack} />
+                                            ))}
+                                        </div>
+                                    ) : (
+                                        <div className="text-center py-6 text-xs text-text-tertiary">
+                                            Ничего не найдено
+                                        </div>
+                                    )}
+                                </div>
+                            ) : (
+                                <>
+                                    {/* Saved Packs */}
+                                    {savedPacks.length > 0 && (
+                                        <div>
+                                            <h4 className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wider mb-2">
+                                                Мои пакеты
+                                            </h4>
+                                            <div className="grid grid-cols-2 gap-3">
+                                                {savedPacks.map((pack) => (
+                                                    <PackCard
+                                                        key={pack.id}
+                                                        pack={pack}
+                                                        onDelete={() => deletePack(pack.id)}
+                                                    />
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* Default Packs */}
                                     <div>
                                         <h4 className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wider mb-2">
-                                            Мои пакеты
+                                            Готовые пакеты
                                         </h4>
                                         <div className="grid grid-cols-2 gap-3">
-                                            {savedPacks.map((pack) => (
+                                            {DEFAULT_PACKS.map((pack) => (
                                                 <PackCard
                                                     key={pack.id}
                                                     pack={pack}
-                                                    onDelete={() => deletePack(pack.id)}
+                                                    color={pack.thumbnailColor}
                                                 />
                                             ))}
                                         </div>
                                     </div>
-                                )}
 
-                                {/* Default Packs */}
-                                <div>
-                                    <h4 className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wider mb-2">
-                                        Готовые пакеты
-                                    </h4>
-                                    <div className="grid grid-cols-2 gap-3">
-                                        {DEFAULT_PACKS.map((pack) => (
-                                            <PackCard
-                                                key={pack.id}
-                                                pack={pack}
-                                                color={pack.thumbnailColor}
-                                            />
-                                        ))}
-                                    </div>
-                                </div>
-
-                                {/* Import */}
-                                <div className="pt-3 border-t border-border-primary">
-                                    <div className="flex items-center justify-between p-3 border-2 border-dashed border-border-primary rounded-xl bg-bg-secondary/30">
-                                        <div className="flex items-center gap-2">
-                                            <Upload size={14} className="text-text-tertiary" />
-                                            <span className="text-[11px] text-text-primary font-medium">Импорт .json</span>
+                                    {/* Import */}
+                                    <div className="pt-3 border-t border-border-primary">
+                                        <div className="flex items-center justify-between p-3 border-2 border-dashed border-border-primary rounded-xl bg-bg-secondary/30">
+                                            <div className="flex items-center gap-2">
+                                                <Upload size={14} className="text-text-tertiary" />
+                                                <span className="text-[11px] text-text-primary font-medium">Импорт .json</span>
+                                            </div>
+                                            <label className="cursor-pointer">
+                                                <span className="px-3 py-1.5 bg-bg-surface border border-border-primary text-text-primary text-[10px] font-medium rounded-lg hover:bg-bg-tertiary transition-colors">
+                                                    Выбрать файл
+                                                </span>
+                                                <input
+                                                    type="file"
+                                                    accept=".json"
+                                                    className="hidden"
+                                                    onChange={handleImportPack}
+                                                />
+                                            </label>
                                         </div>
-                                        <label className="cursor-pointer">
-                                            <span className="px-3 py-1.5 bg-bg-surface border border-border-primary text-text-primary text-[10px] font-medium rounded-lg hover:bg-bg-tertiary transition-colors">
-                                                Выбрать файл
-                                            </span>
-                                            <input
-                                                type="file"
-                                                accept=".json"
-                                                className="hidden"
-                                                onChange={handleImportPack}
-                                            />
-                                        </label>
                                     </div>
-                                </div>
-                            </>
-                        )}
+                                </>
+                            )}
+                        </div>
+                    )}
+                </div>
+
+                {/* Footer */}
+                {activeTab === "single" && (
+                    <div className="flex justify-end gap-2 mt-6 pt-4 border-t border-border-primary">
+                        <Button variant="ghost" onClick={onClose}>Отмена</Button>
+                        <Button
+                            disabled={!selectedTemplate}
+                            icon={<ArrowRight size={14} />}
+                            onClick={handleApplyTemplate}
+                        >
+                            Применить шаблон
+                        </Button>
                     </div>
                 )}
-            </div>
+            </Modal>
 
-            {/* Footer */}
-            {activeTab === "single" && (
-                <div className="flex justify-end gap-2 mt-6 pt-4 border-t border-border-primary">
-                    <Button variant="ghost" onClick={onClose}>Отмена</Button>
-                    <Button
-                        disabled={!selectedTemplate}
-                        icon={<ArrowRight size={14} />}
-                        onClick={handleApplyTemplate}
-                    >
-                        Применить шаблон
-                    </Button>
-                </div>
-            )}
-        </Modal>
+            {/* Smart Resize Modal */}
+            {
+                smartResizePack && (
+                    <SlotMappingModal
+                        open={!!smartResizePack}
+                        onClose={() => { setSmartResizePack(null); setSmartResizePackName(""); }}
+                        templatePack={smartResizePack}
+                        templateName={smartResizePackName}
+                    />
+                )
+            }
+        </>
     );
 }

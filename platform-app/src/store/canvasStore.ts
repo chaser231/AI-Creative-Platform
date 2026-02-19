@@ -17,6 +17,8 @@ import type {
 } from "@/types";
 import { CONTENT_SOURCE_KEYS, DEFAULT_CONSTRAINTS } from "@/types";
 import { applyLayout } from "@/services/layoutEngine";
+import type { SlotMapping } from "@/services/slotMappingService";
+import type { TemplatePack } from "@/services/templateService";
 
 export interface ArtboardProps {
     fill: string;
@@ -226,6 +228,7 @@ interface CanvasStore {
     setCanvasSize: (width: number, height: number) => void;
     resetCanvas: () => void;
     loadTemplatePack: (data: { masterComponents: MasterComponent[]; componentInstances: ComponentInstance[]; resizes: ResizeFormat[]; layers?: Layer[] }) => void;
+    applySmartResize: (templatePack: TemplatePack, mappings: SlotMapping[]) => { unmappedSlotNames: string[] };
 
     // Inline text editing
     startTextEditing: (layerId: string) => void;
@@ -1540,6 +1543,38 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
             stageX: 0,
             stageY: 0,
         });
+    },
+
+    applySmartResize: (templatePack, mappings) => {
+        const { generateSmartResizes } = require("@/services/smartResizeService") as typeof import("@/services/smartResizeService");
+        const state = get();
+        const result = generateSmartResizes(state.masterComponents, templatePack, mappings);
+
+        // Merge new resizes (skip duplicates by id)
+        const existingResizeIds = new Set(state.resizes.map(r => r.id));
+        const newResizes = result.resizes.filter(r => !existingResizeIds.has(r.id));
+        const mergedResizes = [...state.resizes, ...newResizes];
+
+        // Merge new instances
+        const mergedInstances = [...state.componentInstances, ...result.instances];
+
+        // Switch to first new resize for preview
+        const firstNewResize = newResizes[0];
+
+        set({
+            resizes: mergedResizes,
+            componentInstances: mergedInstances,
+            activeResizeId: firstNewResize?.id || state.activeResizeId,
+            canvasWidth: firstNewResize?.width || state.canvasWidth,
+            canvasHeight: firstNewResize?.height || state.canvasHeight,
+        });
+
+        // Sync layers to the new resize
+        if (firstNewResize) {
+            get().syncLayersToResize();
+        }
+
+        return { unmappedSlotNames: result.unmappedSlotNames };
     },
 
     // ─── Artboard actions ───────────────────────────────
