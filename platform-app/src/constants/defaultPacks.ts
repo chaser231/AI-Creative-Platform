@@ -1,11 +1,11 @@
-import type { TemplatePack as ServiceTemplatePack } from "@/services/templateService";
+import type { TemplatePackV2 } from "@/services/templateService";
 
 export interface TemplatePackMeta {
     id: string;
     name: string;
     description: string;
     thumbnailColor: string;
-    data: ServiceTemplatePack;
+    data: TemplatePackV2;
 }
 
 export const DEFAULT_PACKS: TemplatePackMeta[] = [
@@ -13,14 +13,30 @@ export const DEFAULT_PACKS: TemplatePackMeta[] = [
         id: "ecommerce-bundle",
         name: "E-commerce Bundle",
         description: "Готовый набор для товаров: Instagram Post + Story",
-        thumbnailColor: "#4F46E5", // Indigo
+        thumbnailColor: "#4F46E5",
         data: {
             id: "ecommerce-bundle-data",
-            version: "1.0.0",
+            version: "1.1.0",
             name: "E-commerce Bundle",
             description: "Default E-commerce Pack",
             baseWidth: 1080,
             baseHeight: 1080,
+
+            // V2 catalog metadata
+            businessUnits: ["yandex-market"],
+            categories: ["smm", "performance"],
+            contentType: "visual",
+            occasion: "default",
+            tags: [
+                { id: "tag-ecom", label: "E-commerce", color: "#4F46E5" },
+                { id: "tag-product", label: "Продуктовый" },
+            ],
+            author: "system",
+            isOfficial: true,
+            popularity: 42,
+            createdAt: "2026-01-15T00:00:00Z",
+            updatedAt: "2026-02-19T00:00:00Z",
+
             resizes: [
                 { id: "post", name: "Instagram Post", width: 1080, height: 1080, label: "1080 × 1080", instancesEnabled: true },
                 { id: "story", name: "Instagram Story", width: 1080, height: 1920, label: "1080 × 1920", instancesEnabled: true },
@@ -45,7 +61,6 @@ export const DEFAULT_PACKS: TemplatePackMeta[] = [
                 }
             ],
             componentInstances: [
-                // Story Instances
                 {
                     id: "ci-bg-story", masterId: "mc-bg", resizeId: "story",
                     localProps: { type: "rectangle", x: 0, y: 0, width: 1080, height: 1920, fill: "#F3F4F6", stroke: "", strokeWidth: 0, cornerRadius: 0, rotation: 0, visible: true, locked: true }
@@ -69,14 +84,30 @@ export const DEFAULT_PACKS: TemplatePackMeta[] = [
         id: "blog-bundle",
         name: "Blog Post Bundle",
         description: "Обложки для статей: Facebook + LinkedIn",
-        thumbnailColor: "#10B981", // Emerald
+        thumbnailColor: "#10B981",
         data: {
             id: "blog-bundle-data",
-            version: "1.0.0",
+            version: "1.1.0",
             name: "Blog Bundle",
             description: "Default Blog Pack",
             baseWidth: 1200,
             baseHeight: 630,
+
+            // V2 catalog metadata
+            businessUnits: ["other"],
+            categories: ["smm", "digital"],
+            contentType: "visual",
+            occasion: "default",
+            tags: [
+                { id: "tag-blog", label: "Блог", color: "#10B981" },
+                { id: "tag-content", label: "Контент-маркетинг" },
+            ],
+            author: "system",
+            isOfficial: true,
+            popularity: 28,
+            createdAt: "2026-01-15T00:00:00Z",
+            updatedAt: "2026-02-19T00:00:00Z",
+
             resizes: [
                 { id: "linkedin", name: "LinkedIn Cover", width: 1584, height: 396, label: "1584 × 396", instancesEnabled: true }
             ],

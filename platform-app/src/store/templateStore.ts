@@ -1,12 +1,12 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { v4 as uuid } from "uuid";
-import type { Template, TemplateSlot, ComponentType } from "@/types";
-import type { TemplatePack } from "@/services/templateService";
+import type { Template, TemplateSlot, ComponentType, BusinessUnit, TemplateCategory, ContentType, TemplateOccasion, TemplateTag } from "@/types";
+import type { TemplatePack, TemplatePackV2 } from "@/services/templateService";
 
 interface TemplateStore {
     templates: Template[];
-    savedPacks: TemplatePack[]; // User-saved packs
+    savedPacks: TemplatePackV2[];
     activeTemplateId: string | null;
 
     addTemplate: (template: Omit<Template, "id" | "createdAt" | "updatedAt">) => string;
@@ -14,8 +14,9 @@ interface TemplateStore {
     deleteTemplate: (id: string) => void;
     setActiveTemplate: (id: string | null) => void;
 
-    // Pack management
-    addPack: (pack: TemplatePack) => void;
+    // Pack management (V2)
+    addPack: (pack: TemplatePack, meta?: Partial<TemplatePackV2>) => void;
+    updatePack: (id: string, updates: Partial<TemplatePackV2>) => void;
     deletePack: (id: string) => void;
 
     // Slot management
@@ -104,6 +105,24 @@ const STARTER_TEMPLATES: Template[] = [
     },
 ];
 
+/** Upgrades a v1 TemplatePack to V2 with default metadata */
+function toV2(pack: TemplatePack, meta?: Partial<TemplatePackV2>): TemplatePackV2 {
+    return {
+        ...pack,
+        businessUnits: meta?.businessUnits ?? ["other"],
+        categories: meta?.categories ?? ["other"],
+        contentType: meta?.contentType ?? "visual",
+        occasion: meta?.occasion ?? "default",
+        tags: meta?.tags ?? [],
+        author: meta?.author ?? "system",
+        isOfficial: meta?.isOfficial ?? false,
+        thumbnailUrl: meta?.thumbnailUrl,
+        popularity: meta?.popularity ?? 0,
+        createdAt: meta?.createdAt ?? new Date().toISOString(),
+        updatedAt: meta?.updatedAt ?? new Date().toISOString(),
+    };
+}
+
 export const useTemplateStore = create<TemplateStore>()(persist((set) => ({
     templates: STARTER_TEMPLATES,
     savedPacks: [],
@@ -142,9 +161,18 @@ export const useTemplateStore = create<TemplateStore>()(persist((set) => ({
         set({ activeTemplateId: id });
     },
 
-    addPack: (pack) => {
+    addPack: (pack, meta) => {
+        const v2Pack = toV2(pack, meta);
         set((state) => ({
-            savedPacks: [...state.savedPacks, pack],
+            savedPacks: [...state.savedPacks, v2Pack],
+        }));
+    },
+
+    updatePack: (id, updates) => {
+        set((state) => ({
+            savedPacks: state.savedPacks.map((p) =>
+                p.id === id ? { ...p, ...updates, updatedAt: new Date().toISOString() } : p
+            ),
         }));
     },
 
@@ -190,5 +218,5 @@ export const useTemplateStore = create<TemplateStore>()(persist((set) => ({
     },
 }), {
     name: "template-storage",
-    partialize: (state) => ({ savedPacks: state.savedPacks }), // Only persist saved packs
+    partialize: (state) => ({ savedPacks: state.savedPacks }),
 }));

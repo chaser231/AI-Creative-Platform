@@ -290,3 +290,28 @@ export interface FrameLayer extends BaseLayer {
 }
 
 export type Layer = TextLayer | RectangleLayer | ImageLayer | BadgeLayer | FrameLayer;
+
+// ─── Template Catalogization ────────────────────────────
+
+export type TemplateCategory =
+    | "in-app" | "performance" | "digital" | "offline"
+    | "smm" | "showcase" | "email" | "other";
+
+export type ContentType = "visual" | "video" | "audio" | "generative" | "mixed";
+
+export type TemplateOccasion =
+    | "default" | "black-friday" | "new-year" | "spring-sale"
+    | "back-to-school" | "summer" | "custom";
+
+export interface TemplateTag {
+    id: string;
+    label: string;
+    color?: string;
+}
+
+/** Serialized layer node — preserves frame → children nesting */
+export interface SerializedLayerNode {
+    layer: Layer;
+    masterId?: string;
+    children?: SerializedLayerNode[];
+}

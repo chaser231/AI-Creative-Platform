@@ -19,7 +19,7 @@ interface TemplatePanelProps {
 
 export function TemplatePanel({ open, onClose }: TemplatePanelProps) {
     const { templates, savedPacks, addPack, deletePack } = useTemplateStore();
-    const { masterComponents, componentInstances, resizes, resetCanvas, setCanvasSize } = useCanvasStore();
+    const { masterComponents, componentInstances, resizes, layers, resetCanvas, setCanvasSize } = useCanvasStore();
     const { projects, activeProjectId } = useProjectStore();
     const [activeTab, setActiveTab] = useState<"single" | "pack">("single");
     const [selectedTemplate, setSelectedTemplate] = useState<string | null>(null);
@@ -118,12 +118,13 @@ export function TemplatePanel({ open, onClose }: TemplatePanelProps) {
         const activeProject = projects.find((p) => p.id === activeProjectId);
         const projectData = activeProject || { name: "My Custom Pack" };
 
-        // Ensure we pass only serializable data
+        // Ensure we pass only serializable data (now includes layers for nesting)
         const newPack = serializeTemplate(
             projectData,
             masterComponents,
             resizes,
-            componentInstances
+            componentInstances,
+            layers
         );
 
         addPack(newPack);

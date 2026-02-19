@@ -225,7 +225,7 @@ interface CanvasStore {
     setStagePosition: (x: number, y: number) => void;
     setCanvasSize: (width: number, height: number) => void;
     resetCanvas: () => void;
-    loadTemplatePack: (data: { masterComponents: MasterComponent[]; componentInstances: ComponentInstance[]; resizes: ResizeFormat[] }) => void;
+    loadTemplatePack: (data: { masterComponents: MasterComponent[]; componentInstances: ComponentInstance[]; resizes: ResizeFormat[]; layers?: Layer[] }) => void;
 
     // Inline text editing
     startTextEditing: (layerId: string) => void;
@@ -1501,34 +1501,29 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
     },
 
     loadTemplatePack: (data) => {
-        const { masterComponents, componentInstances, resizes } = data;
+        const { masterComponents, componentInstances, resizes, layers: hydratedLayers } = data;
         // Assume master resize exists or use first one
         const masterResize = resizes.find(r => r.id === "master") || resizes[0];
         const width = masterResize?.width || 1080;
         const height = masterResize?.height || 1080;
 
-        // Populate initial layers based on Master Components for Master View
-        // Note: For frames, we might need to reconstruct hierarchy if we wanted perfect fidelity immediately,
-        // but simple mapping works for now as syncLayersToResize logic will just use these IDs.
-        // Wait, syncLayersToResize expects logic to exist.
-        // Here we just initialize 'layers' to match Masters.
-        // MasterComponent props should contain everything needed for the layer.
+        let initialLayers: Layer[];
 
-        const initialLayers: Layer[] = masterComponents.map((m) => {
-            // Generate a new ID for the layer instance on the canvas
-            // or should we reuse ID? 
-            // In our system, Layer ID != Master ID usually. Layer has masterId pointer.
-            // But for Master View, the layer is a direct representation.
-            // Let's create new IDs.
-            return {
-                ...m.props,
-                id: uuid(),
-                name: m.name,
-                masterId: m.id,
-                // Ensure type is correct
-                type: m.type,
-            } as Layer;
-        });
+        if (hydratedLayers && hydratedLayers.length > 0) {
+            // Use hydrated layers — these already have proper frame→childIds nesting
+            initialLayers = hydratedLayers;
+        } else {
+            // Fallback: create flat layers from master components (no nesting)
+            initialLayers = masterComponents.map((m) => {
+                return {
+                    ...m.props,
+                    id: uuid(),
+                    name: m.name,
+                    masterId: m.id,
+                    type: m.type,
+                } as Layer;
+            });
+        }
 
         set({
             layers: initialLayers,
