@@ -7,6 +7,7 @@ import { useCanvasStore, computeConstrainedPosition } from "@/store/canvasStore"
 import type { Layer as LayerType, TextLayer, BadgeLayer, FrameLayer } from "@/types";
 import { ContextMenu, buildLayerContextMenuItems } from "./ContextMenu";
 import { getSnapLines, SnapResult } from "@/services/snapService";
+import { isFocusedOnInput } from "@/utils/keyboard";
 import Konva from "konva";
 
 /* ─── Constants ───────────────────────────────────── */
@@ -878,6 +879,8 @@ export function Canvas({ stageRef }: CanvasProps) {
     // Spacebar Panning Logic
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
+            if (isFocusedOnInput(e)) return;
+
             // Space to pan
             if (e.code === "Space" && !isEditingText && !isPanning) {
                 e.preventDefault(); // Prevent scrolling
@@ -891,6 +894,8 @@ export function Canvas({ stageRef }: CanvasProps) {
         };
 
         const handleKeyUp = (e: KeyboardEvent) => {
+            if (isFocusedOnInput(e)) return;
+
             if (e.code === "Space" && isPanning) {
                 setIsPanning(false);
                 // We might want to keep it draggable or not, but usually we revert to selection mode

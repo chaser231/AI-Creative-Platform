@@ -2,6 +2,7 @@
 
 import { useEffect, useCallback } from "react";
 import { useCanvasStore } from "@/store/canvasStore";
+import { isFocusedOnInput } from "@/utils/keyboard";
 
 /**
  * Global keyboard shortcuts for the editor.
@@ -25,15 +26,7 @@ export function useKeyboardShortcuts() {
     const handleKeyDown = useCallback(
         (e: KeyboardEvent) => {
             // Skip if inside input, textarea, or contentEditable
-            const target = e.target as HTMLElement;
-            if (
-                target.tagName === "INPUT" ||
-                target.tagName === "TEXTAREA" ||
-                target.tagName === "SELECT" ||
-                target.isContentEditable
-            ) {
-                return;
-            }
+            if (isFocusedOnInput(e)) return;
 
             // Skip if inline text editing is active
             if (isEditingText) return;
