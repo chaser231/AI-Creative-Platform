@@ -719,16 +719,28 @@ export function Canvas({ stageRef }: CanvasProps) {
 
     const handleLayerDragStart = useCallback((e: Konva.KonvaEventObject<DragEvent>) => {
         setStageDraggable(false);
-        const id = e.target.id();
+        let id = e.target.id();
+
+        const isDeepSelect = e.evt.metaKey || e.evt.ctrlKey;
+
+        // "Deep select" drag logic: if it's nested in a frame, and not deep-selected,
+        // and not already selected, redirect drag to the parent frame
+        if (!isDeepSelect && !selectedLayerIds.includes(id)) {
+            const parentFrame = layers.find(l => l.type === "frame" && (l as FrameLayer).childIds.includes(id));
+            if (parentFrame) {
+                e.target.stopDrag();
+                const frameNode = e.target.getStage()?.findOne("#" + parentFrame.id);
+                if (frameNode) {
+                    // Delegating drag to the frame
+                    frameNode.startDrag(e.evt as any);
+                    id = parentFrame.id;
+                }
+            }
+        }
 
         // If dragging an item that is NOT selected, select it (exclusive)
         if (!selectedLayerIds.includes(id)) {
             selectLayer(id);
-            // And update ref immediately? The store update might be async or ref access safe?
-            // Store update triggers re-render. But drag continues.
-            // We'll assume for this drag session, we only move THIS layer if it wasn't selected.
-            // But simpler: just force select it. 
-            // Ideally we want to move it. Konva allows dragging unselected nodes.
         }
 
         // Snapshot positions of ALL selected layers (including the one being dragged if it is selected)
