@@ -58,11 +58,11 @@ const SORT_OPTIONS = [
 /* ─── Pack Card ──────────────────────────────────────── */
 
 function PackCard({ pack, onLoad }: { pack: TemplatePackV2; onLoad: (pack: TemplatePackV2) => void }) {
-    const categoryLabels = pack.categories
+    const categoryLabels = (pack.categories || [])
         .map(c => CATEGORY_OPTIONS.find(o => o.value === c)?.label)
         .filter(Boolean);
 
-    const buLabels = pack.businessUnits
+    const buLabels = (pack.businessUnits || [])
         .map(bu => BU_OPTIONS.find(o => o.value === bu)?.label)
         .filter(Boolean);
 
@@ -109,14 +109,14 @@ function PackCard({ pack, onLoad }: { pack: TemplatePackV2; onLoad: (pack: Templ
                     ))}
                 </div>
                 <span className="text-[10px] text-text-tertiary">
-                    {pack.resizes.length} {pack.resizes.length === 1 ? "формат" : "форматов"}
+                    {pack.resizes?.length || 0} {(pack.resizes?.length || 0) === 1 ? "формат" : "форматов"}
                 </span>
             </div>
 
             {/* Tags */}
-            {pack.tags.length > 0 && (
+            {(pack.tags || []).length > 0 && (
                 <div className="mt-2 flex gap-1 flex-wrap">
-                    {pack.tags.slice(0, 3).map(tag => (
+                    {(pack.tags || []).slice(0, 3).map((tag: any) => (
                         <span
                             key={tag.id}
                             className="text-[9px] px-1.5 py-0.5 rounded-full border border-border-primary text-text-tertiary"
@@ -149,8 +149,8 @@ function FilterChip({
         <button
             onClick={onClick}
             className={`px-3 py-1.5 rounded-full text-[11px] font-medium transition-all cursor-pointer border ${active
-                    ? "bg-accent-primary text-white border-accent-primary shadow-sm"
-                    : "bg-bg-surface text-text-secondary border-border-primary hover:border-accent-primary/30 hover:text-text-primary"
+                ? "bg-accent-primary text-white border-accent-primary shadow-sm"
+                : "bg-bg-surface text-text-secondary border-border-primary hover:border-accent-primary/30 hover:text-text-primary"
                 }`}
         >
             {label}
@@ -276,8 +276,8 @@ export default function TemplateCatalogPage() {
                         <button
                             onClick={() => setShowFilters(!showFilters)}
                             className={`flex items-center gap-1.5 h-10 px-4 rounded-xl border text-xs font-medium transition-all cursor-pointer ${showFilters
-                                    ? "bg-accent-primary/10 border-accent-primary/30 text-accent-primary"
-                                    : "bg-bg-surface border-border-primary text-text-secondary hover:text-text-primary"
+                                ? "bg-accent-primary/10 border-accent-primary/30 text-accent-primary"
+                                : "bg-bg-surface border-border-primary text-text-secondary hover:text-text-primary"
                                 }`}
                         >
                             <SlidersHorizontal size={14} />
@@ -349,8 +349,8 @@ export default function TemplateCatalogPage() {
                                                 key={opt.value}
                                                 onClick={() => setSortBy(opt.value)}
                                                 className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition-all cursor-pointer ${sortBy === opt.value
-                                                        ? "bg-bg-surface text-text-primary shadow-sm border border-border-primary"
-                                                        : "text-text-tertiary hover:text-text-secondary"
+                                                    ? "bg-bg-surface text-text-primary shadow-sm border border-border-primary"
+                                                    : "text-text-tertiary hover:text-text-secondary"
                                                     }`}
                                             >
                                                 {opt.label}
