@@ -266,18 +266,19 @@ export function TemplatePanel({ open, onClose }: TemplatePanelProps) {
 
     /* ─── V2 Pack Card ──────────────────────────────────── */
     const PackCard = ({ pack, color, onDelete }: {
-        pack: TemplatePackV2 | TemplatePackMeta;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        pack: any;
         color?: string;
         onDelete?: () => void;
     }) => {
-        const isV2 = "businessUnits" in pack;
-        const v2 = isV2 ? (pack as TemplatePackV2) : (pack as TemplatePackMeta).data;
-        const displayColor = color || (isV2 ? "#6366F1" : (pack as TemplatePackMeta).thumbnailColor);
+        const isMeta = "data" in pack;
+        const v2 = isMeta ? pack.data : pack;
+        const displayColor = color || (isMeta ? pack.thumbnailColor : "#6366F1");
 
         return (
             <div className="relative group">
                 <button
-                    onClick={() => handleLoadPack(isV2 ? pack : pack)}
+                    onClick={() => handleLoadPack(isMeta ? pack : pack)}
                     className="w-full relative p-3 rounded-xl border border-border-primary hover:border-accent-primary/40 bg-bg-primary text-left transition-all cursor-pointer hover:shadow-md"
                 >
                     <div
@@ -292,19 +293,19 @@ export function TemplatePanel({ open, onClose }: TemplatePanelProps) {
                             </div>
                         )}
                     </div>
-                    <div className="text-[11px] font-semibold text-text-primary truncate">{v2.name}</div>
-                    <div className="text-[9px] text-text-tertiary mt-0.5 line-clamp-1">{v2.description}</div>
+                    <div className="text-[11px] font-semibold text-text-primary truncate">{v2.name || "Без названия"}</div>
+                    <div className="text-[9px] text-text-tertiary mt-0.5 line-clamp-1">{v2.description || ""}</div>
                     <div className="flex items-center justify-between mt-1.5">
                         <div className="flex gap-0.5 flex-wrap">
-                            {v2.categories.slice(0, 2).map(c => (
+                            {(v2.categories || []).slice(0, 2).map((c: string) => (
                                 <span key={c} className="text-[7px] px-1 py-0.5 rounded bg-bg-secondary text-text-secondary">{c}</span>
                             ))}
                         </div>
-                        <span className="text-[8px] text-text-tertiary">{v2.resizes.length} фмт</span>
+                        <span className="text-[8px] text-text-tertiary">{v2.resizes?.length || 0} фмт</span>
                     </div>
-                    {v2.tags.length > 0 && (
+                    {(v2.tags || []).length > 0 && (
                         <div className="flex gap-0.5 mt-1 flex-wrap">
-                            {v2.tags.slice(0, 2).map(tag => (
+                            {v2.tags.slice(0, 2).map((tag: any) => (
                                 <span
                                     key={tag.id}
                                     className="text-[7px] px-1 py-0.5 rounded-full border border-border-primary text-text-tertiary"
@@ -323,9 +324,9 @@ export function TemplatePanel({ open, onClose }: TemplatePanelProps) {
                         <button
                             onClick={(e) => {
                                 e.stopPropagation();
-                                const rawPack = isV2 ? (pack as TemplatePackV2) : (pack as TemplatePackMeta).data;
+                                const rawPack = isMeta ? pack.data : pack;
                                 setSmartResizePack(rawPack);
-                                setSmartResizePackName(v2.name);
+                                setSmartResizePackName(v2.name || "Без названия");
                             }}
                             className="p-1 bg-accent-primary/10 border border-accent-primary/20 rounded hover:bg-accent-primary/20 transition-colors cursor-pointer"
                             title="С текущим мастером"
@@ -333,7 +334,7 @@ export function TemplatePanel({ open, onClose }: TemplatePanelProps) {
                             <Shuffle size={10} className="text-accent-primary" />
                         </button>
                     )}
-                    {isV2 && (
+                    {!isMeta && (
                         <button
                             onClick={(e) => { e.stopPropagation(); handleExportPack(v2); }}
                             className="p-1 bg-bg-surface/90 border border-border-primary rounded hover:bg-bg-secondary transition-colors cursor-pointer"
