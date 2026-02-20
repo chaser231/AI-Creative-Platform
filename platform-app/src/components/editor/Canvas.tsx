@@ -149,7 +149,7 @@ function CanvasLayer({
         width: layer.width,
         height: layer.height,
         rotation: layer.rotation,
-        draggable: !layer.locked && !isEditing && !isAutoLayoutChild,
+        draggable: !layer.locked && !isEditing,
         onClick: onSelect,
         onTap: onSelect,
         onDragStart,
@@ -890,7 +890,27 @@ export function Canvas({ stageRef }: CanvasProps) {
 
                 const frame = getFrameAtPoint(centerX, centerY, id);
                 if (frame) {
-                    moveLayerToFrame(id, frame.id);
+                    if (frame.layoutMode && frame.layoutMode !== "none") {
+                        const siblings = frame.childIds.filter(cId => cId !== id).map(cId => layers.find(l => l.id === cId)).filter(Boolean) as LayerType[];
+                        let dropIndex = siblings.length;
+                        for (let i = 0; i < siblings.length; i++) {
+                            const sib = siblings[i];
+                            if (frame.layoutMode === "horizontal") {
+                                if (centerX < sib.x + sib.width / 2) {
+                                    dropIndex = i;
+                                    break;
+                                }
+                            } else {
+                                if (centerY < sib.y + sib.height / 2) {
+                                    dropIndex = i;
+                                    break;
+                                }
+                            }
+                        }
+                        moveLayerToFrame(id, frame.id, dropIndex);
+                    } else {
+                        moveLayerToFrame(id, frame.id);
+                    }
                 } else {
                     // Dropped completely outside of any frame
                     removeLayerFromFrame(id);

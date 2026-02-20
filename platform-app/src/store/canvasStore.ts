@@ -194,7 +194,7 @@ interface CanvasStore {
     duplicateLayer: (id: string) => void;
     bringToFront: (id: string) => void;
     sendToBack: (id: string) => void;
-    moveLayerToFrame: (layerId: string, frameId: string) => void;
+    moveLayerToFrame: (layerId: string, frameId: string, dropIndex?: number) => void;
     removeLayerFromFrame: (layerId: string) => void;
 
     // Undo / Redo actions
@@ -1233,22 +1233,33 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
         });
     },
 
-    moveLayerToFrame: (layerId, frameId) => {
+    moveLayerToFrame: (layerId, frameId, dropIndex) => {
         const _s = get();
         const _snap: HistorySnapshot = { layers: _s.layers, masterComponents: _s.masterComponents, componentInstances: _s.componentInstances, selectedLayerIds: _s.selectedLayerIds };
         set({ history: [..._s.history, _snap].slice(-MAX_HISTORY), future: [] });
         set((state) => {
-            const newLayers = state.layers.map((l) => {
-                // Remove from any existing parent frame
-                if (l.type === "frame" && (l as FrameLayer).childIds.includes(layerId) && l.id !== frameId) {
-                    return { ...l, childIds: (l as FrameLayer).childIds.filter((c) => c !== layerId) } as Layer;
-                }
-                // Add to target frame
-                if (l.id === frameId && l.type === "frame" && !(l as FrameLayer).childIds.includes(layerId)) {
-                    return { ...l, childIds: [...(l as FrameLayer).childIds, layerId] } as Layer;
+            let newLayers = [...state.layers];
+
+            // Remove from existing parent (if different, or if same but we want to re-insert)
+            const currentParent = newLayers.find(l => l.type === "frame" && (l as FrameLayer).childIds.includes(layerId)) as FrameLayer | undefined;
+            if (currentParent && currentParent.id !== frameId) {
+                newLayers = newLayers.map(l => l.id === currentParent.id ? { ...l, childIds: (l as FrameLayer).childIds.filter((id: string) => id !== layerId) } as FrameLayer : l);
+            }
+
+            // Insert into new or same parent
+            newLayers = newLayers.map(l => {
+                if (l.id === frameId && l.type === "frame") {
+                    const childIds = (l as FrameLayer).childIds.filter((id: string) => id !== layerId);
+                    if (dropIndex !== undefined && dropIndex >= 0) {
+                        childIds.splice(dropIndex, 0, layerId);
+                    } else {
+                        childIds.push(layerId);
+                    }
+                    return { ...l, childIds } as Layer;
                 }
                 return l;
             });
+
             const newMasters = syncFrameChildIdsToMasters(newLayers, state.masterComponents);
             const newInstances = syncFrameChildIdsToInstances(newLayers, state.masterComponents, state.componentInstances, state.activeResizeId);
             return { layers: applyAllAutoLayouts(newLayers), masterComponents: newMasters, componentInstances: newInstances };

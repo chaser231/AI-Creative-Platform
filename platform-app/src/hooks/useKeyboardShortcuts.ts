@@ -3,6 +3,7 @@
 import { useEffect, useCallback } from "react";
 import { useCanvasStore } from "@/store/canvasStore";
 import { isFocusedOnInput } from "@/utils/keyboard";
+import type { FrameLayer } from "@/types";
 
 /**
  * Global keyboard shortcuts for the editor.
@@ -19,6 +20,7 @@ export function useKeyboardShortcuts() {
         undo,
         redo,
         selectLayer,
+        reorderLayer,
     } = useCanvasStore();
 
     // clipboard state lives in a ref so it persists across renders
@@ -79,7 +81,13 @@ export function useKeyboardShortcuts() {
                     e.preventDefault();
                     selectedLayerIds.forEach((id) => {
                         const layer = layers.find((l) => l.id === id);
-                        if (layer) updateLayer(id, { y: layer.y - arrowDelta });
+                        if (!layer) return;
+                        const parentFrame = layers.find(l => l.type === "frame" && (l as FrameLayer).childIds.includes(id)) as FrameLayer | undefined;
+                        if (parentFrame && parentFrame.layoutMode && parentFrame.layoutMode !== "none" && !layer.isAbsolutePositioned) {
+                            if (parentFrame.layoutMode === "vertical") reorderLayer(id, "down");
+                        } else {
+                            updateLayer(id, { y: layer.y - arrowDelta });
+                        }
                     });
                     didMove = true;
                 }
@@ -87,7 +95,13 @@ export function useKeyboardShortcuts() {
                     e.preventDefault();
                     selectedLayerIds.forEach((id) => {
                         const layer = layers.find((l) => l.id === id);
-                        if (layer) updateLayer(id, { y: layer.y + arrowDelta });
+                        if (!layer) return;
+                        const parentFrame = layers.find(l => l.type === "frame" && (l as FrameLayer).childIds.includes(id)) as FrameLayer | undefined;
+                        if (parentFrame && parentFrame.layoutMode && parentFrame.layoutMode !== "none" && !layer.isAbsolutePositioned) {
+                            if (parentFrame.layoutMode === "vertical") reorderLayer(id, "up");
+                        } else {
+                            updateLayer(id, { y: layer.y + arrowDelta });
+                        }
                     });
                     didMove = true;
                 }
@@ -95,7 +109,13 @@ export function useKeyboardShortcuts() {
                     e.preventDefault();
                     selectedLayerIds.forEach((id) => {
                         const layer = layers.find((l) => l.id === id);
-                        if (layer) updateLayer(id, { x: layer.x - arrowDelta });
+                        if (!layer) return;
+                        const parentFrame = layers.find(l => l.type === "frame" && (l as FrameLayer).childIds.includes(id)) as FrameLayer | undefined;
+                        if (parentFrame && parentFrame.layoutMode && parentFrame.layoutMode !== "none" && !layer.isAbsolutePositioned) {
+                            if (parentFrame.layoutMode === "horizontal") reorderLayer(id, "down");
+                        } else {
+                            updateLayer(id, { x: layer.x - arrowDelta });
+                        }
                     });
                     didMove = true;
                 }
@@ -103,14 +123,20 @@ export function useKeyboardShortcuts() {
                     e.preventDefault();
                     selectedLayerIds.forEach((id) => {
                         const layer = layers.find((l) => l.id === id);
-                        if (layer) updateLayer(id, { x: layer.x + arrowDelta });
+                        if (!layer) return;
+                        const parentFrame = layers.find(l => l.type === "frame" && (l as FrameLayer).childIds.includes(id)) as FrameLayer | undefined;
+                        if (parentFrame && parentFrame.layoutMode && parentFrame.layoutMode !== "none" && !layer.isAbsolutePositioned) {
+                            if (parentFrame.layoutMode === "horizontal") reorderLayer(id, "up");
+                        } else {
+                            updateLayer(id, { x: layer.x + arrowDelta });
+                        }
                     });
                     didMove = true;
                 }
                 if (didMove) return;
             }
         },
-        [selectedLayerIds, layers, isEditingText, deleteSelectedLayers, duplicateSelectedLayers, updateLayer, undo, redo, selectLayer]
+        [selectedLayerIds, layers, isEditingText, deleteSelectedLayers, duplicateSelectedLayers, updateLayer, undo, redo, selectLayer, reorderLayer]
     );
 
     useEffect(() => {
