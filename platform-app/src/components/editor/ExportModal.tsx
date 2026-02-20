@@ -8,6 +8,8 @@ import Konva from "konva";
 import { useCanvasStore } from "@/store/canvasStore";
 import type { FrameLayer } from "@/types";
 import { cn } from "@/lib/cn";
+import JSZip from "jszip";
+import { saveAs } from "file-saver";
 
 interface ExportModalProps {
     open: boolean;
@@ -133,6 +135,8 @@ export function ExportModal({ open, onClose, stageRef }: ExportModalProps) {
         const oldX = stage.x();
         const oldY = stage.y();
 
+        const zip = new JSZip();
+
         for (const resize of resizesToExport) {
             // Switch to resize
             setActiveResize(resize.id);
@@ -154,15 +158,14 @@ export function ExportModal({ open, onClose, stageRef }: ExportModalProps) {
                 mimeType: "image/png",
             });
 
-            // Download
-            const link = document.createElement("a");
-            link.download = `${resize.name}-${resize.width}x${resize.height}@${scale}x.png`;
-            link.href = dataURL;
-            link.click();
-
-            // Small delay between downloads to avoid browser blocking
-            await new Promise((resolve) => setTimeout(resolve, 300));
+            // Add the image to the zip file
+            const base64Data = dataURL.replace(/^data:image\/png;base64,/, "");
+            zip.file(`${resize.name}-${resize.width}x${resize.height}@${scale}x.png`, base64Data, { base64: true });
         }
+
+        // Generate and download the zip file
+        const content = await zip.generateAsync({ type: "blob" });
+        saveAs(content, "export-batch.zip");
 
         // Restore original state
         setActiveResize(originalResizeId);

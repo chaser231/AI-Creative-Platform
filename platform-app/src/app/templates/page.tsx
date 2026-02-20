@@ -12,7 +12,9 @@ import {
     Package,
     Star,
     Clock,
+    Check,
 } from "lucide-react";
+import { Popover, PopoverButton } from "@/components/ui/Popover";
 import { AppShell } from "@/components/layout/AppShell";
 import { TopBar } from "@/components/layout/TopBar";
 import { Button } from "@/components/ui/Button";
@@ -69,13 +71,16 @@ function PackCard({ pack, onLoad }: { pack: TemplatePackV2; onLoad: (pack: Templ
     return (
         <button
             onClick={() => onLoad(pack)}
-            className="relative group text-left p-4 rounded-2xl border border-border-primary bg-bg-surface hover:border-accent-primary/40 hover:shadow-lg transition-all duration-200 cursor-pointer"
+            className="group flex flex-col bg-bg-surface border border-border-primary rounded-[var(--radius-xl)] overflow-hidden hover:shadow-[var(--shadow-lg)] hover:border-border-secondary transition-all duration-[var(--transition-base)] cursor-pointer text-left relative"
         >
-            {/* Preview area */}
-            <div className="w-full h-32 rounded-xl mb-3 relative overflow-hidden flex items-center justify-center bg-gradient-to-br from-accent-primary/5 to-accent-primary/15">
-                <LayoutTemplate size={32} className="text-accent-primary/60" />
+            {/* Thumbnail */}
+            <div className="relative w-full aspect-[4/3] bg-bg-tertiary flex items-center justify-center overflow-hidden shrink-0">
+                <LayoutTemplate
+                    size={40}
+                    className="text-text-tertiary/50 group-hover:scale-110 transition-transform duration-[var(--transition-slow)]"
+                />
                 {pack.isOfficial && (
-                    <div className="absolute top-2 right-2 flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/15 border border-amber-500/20">
+                    <div className="absolute top-2.5 right-2.5 flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/15 border border-amber-500/20">
                         <Star size={10} className="text-amber-500 fill-amber-500" />
                         <span className="text-[9px] font-semibold text-amber-600">Official</span>
                     </div>
@@ -83,77 +88,45 @@ function PackCard({ pack, onLoad }: { pack: TemplatePackV2; onLoad: (pack: Templ
             </div>
 
             {/* Info */}
-            <h3 className="text-sm font-semibold text-text-primary truncate">{pack.name}</h3>
-            <p className="text-[11px] text-text-tertiary mt-0.5 line-clamp-2 leading-relaxed">
-                {pack.description}
-            </p>
+            <div className="flex flex-col p-3.5 gap-2 w-full">
+                <div className="min-w-0">
+                    <h3 className="text-sm font-semibold text-text-primary truncate">{pack.name}</h3>
+                    <p className="text-[11px] text-text-tertiary mt-1 truncate">
+                        {pack.description || "Без описания"}
+                    </p>
+                </div>
 
-            {/* BU badges */}
-            {buLabels.length > 0 && (
-                <div className="mt-2 flex gap-1 flex-wrap">
-                    {buLabels.map(label => (
-                        <span key={label} className="text-[9px] px-1.5 py-0.5 rounded-full bg-accent-primary/10 text-accent-primary font-medium">
+                <div className="flex flex-wrap gap-1 mt-1 shrink-0">
+                    {buLabels.length > 0 && (
+                        <span className="text-[9px] px-1.5 py-0.5 rounded-md bg-bg-secondary border border-border-primary text-text-secondary whitespace-nowrap">
+                            {buLabels[0]}
+                        </span>
+                    )}
+                    {categoryLabels.slice(0, 1).map(label => (
+                        <span key={label} className="text-[9px] px-1.5 py-0.5 rounded-md bg-bg-secondary border border-border-primary text-text-secondary whitespace-nowrap">
                             {label}
                         </span>
                     ))}
-                </div>
-            )}
-
-            {/* Category + format count */}
-            <div className="mt-2 flex items-center justify-between">
-                <div className="flex gap-1 flex-wrap">
-                    {categoryLabels.slice(0, 2).map(label => (
-                        <span key={label} className="text-[9px] px-1.5 py-0.5 rounded bg-bg-secondary text-text-secondary">
-                            {label}
-                        </span>
-                    ))}
-                </div>
-                <span className="text-[10px] text-text-tertiary">
-                    {pack.resizes?.length || 0} {(pack.resizes?.length || 0) === 1 ? "формат" : "форматов"}
-                </span>
-            </div>
-
-            {/* Tags */}
-            {(pack.tags || []).length > 0 && (
-                <div className="mt-2 flex gap-1 flex-wrap">
-                    {(pack.tags || []).slice(0, 3).map((tag: any) => (
+                    {(pack.tags || []).slice(0, 1).map((tag: any) => (
                         <span
                             key={tag.id}
-                            className="text-[9px] px-1.5 py-0.5 rounded-full border border-border-primary text-text-tertiary"
+                            className="text-[9px] px-1.5 py-0.5 rounded-md border border-border-primary text-text-tertiary whitespace-nowrap"
                             style={tag.color ? { borderColor: tag.color + "40", color: tag.color } : undefined}
                         >
                             #{tag.label}
                         </span>
                     ))}
                 </div>
-            )}
+
+                <div className="flex items-center justify-end w-full mt-auto pt-1 border-t border-border-primary/50">
+                    <span className="text-[10px] text-text-tertiary font-medium">
+                        {pack.resizes?.length || 0} {(pack.resizes?.length || 0) === 1 ? "формат" : "форматов"}
+                    </span>
+                </div>
+            </div>
 
             {/* Hover overlay */}
-            <div className="absolute inset-0 rounded-2xl bg-accent-primary/5 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" />
-        </button>
-    );
-}
-
-/* ─── Filter Chip ────────────────────────────────────── */
-
-function FilterChip({
-    label,
-    active,
-    onClick,
-}: {
-    label: string;
-    active: boolean;
-    onClick: () => void;
-}) {
-    return (
-        <button
-            onClick={onClick}
-            className={`px-3 py-1.5 rounded-full text-[11px] font-medium transition-all cursor-pointer border ${active
-                ? "bg-accent-primary text-white border-accent-primary shadow-sm"
-                : "bg-bg-surface text-text-secondary border-border-primary hover:border-accent-primary/30 hover:text-text-primary"
-                }`}
-        >
-            {label}
+            <div className="absolute inset-0 bg-accent-primary/0 group-hover:bg-accent-primary/5 transition-colors pointer-events-none" />
         </button>
     );
 }
@@ -168,7 +141,11 @@ export default function TemplateCatalogPage() {
     const [selectedCategories, setSelectedCategories] = useState<TemplateCategory[]>([]);
     const [selectedContentType, setSelectedContentType] = useState<ContentType | null>(null);
     const [sortBy, setSortBy] = useState<"popularity" | "date" | "name">("popularity");
-    const [showFilters, setShowFilters] = useState(true);
+    const [activePopover, setActivePopover] = useState<string | null>(null);
+
+    const togglePopover = (name: string) => {
+        setActivePopover((prev) => (prev === name ? null : name));
+    };
 
     const toggleBU = (bu: BusinessUnit) => {
         setSelectedBUs(prev =>
@@ -273,103 +250,132 @@ export default function TemplateCatalogPage() {
                                 </button>
                             )}
                         </div>
-                        <button
-                            onClick={() => setShowFilters(!showFilters)}
-                            className={`flex items-center gap-1.5 h-10 px-4 rounded-xl border text-xs font-medium transition-all cursor-pointer ${showFilters
-                                ? "bg-accent-primary/10 border-accent-primary/30 text-accent-primary"
-                                : "bg-bg-surface border-border-primary text-text-secondary hover:text-text-primary"
-                                }`}
-                        >
-                            <SlidersHorizontal size={14} />
-                            Фильтры
-                        </button>
-                    </div>
-
-                    {/* Filters */}
-                    {showFilters && (
-                        <div className="space-y-3 p-4 rounded-2xl border border-border-primary bg-bg-secondary/50 mb-4">
-                            {/* BU filter */}
-                            <div>
-                                <label className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wider mb-2 block">
-                                    Сервис
-                                </label>
-                                <div className="flex flex-wrap gap-1.5">
-                                    {BU_OPTIONS.map(bu => (
-                                        <FilterChip
-                                            key={bu.value}
-                                            label={bu.label}
-                                            active={selectedBUs.includes(bu.value)}
-                                            onClick={() => toggleBU(bu.value)}
-                                        />
-                                    ))}
-                                </div>
-                            </div>
-
-                            {/* Category filter */}
-                            <div>
-                                <label className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wider mb-2 block">
-                                    Категория
-                                </label>
-                                <div className="flex flex-wrap gap-1.5">
-                                    {CATEGORY_OPTIONS.map(cat => (
-                                        <FilterChip
-                                            key={cat.value}
-                                            label={cat.label}
-                                            active={selectedCategories.includes(cat.value)}
-                                            onClick={() => toggleCategory(cat.value)}
-                                        />
-                                    ))}
-                                </div>
-                            </div>
-
-                            {/* Content type filter */}
-                            <div>
-                                <label className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wider mb-2 block">
-                                    Тип контента
-                                </label>
-                                <div className="flex flex-wrap gap-1.5">
-                                    {CONTENT_TYPE_OPTIONS.map(ct => (
-                                        <FilterChip
-                                            key={ct.value}
-                                            label={`${ct.emoji} ${ct.label}`}
-                                            active={selectedContentType === ct.value}
-                                            onClick={() => setSelectedContentType(selectedContentType === ct.value ? null : ct.value)}
-                                        />
-                                    ))}
-                                </div>
-                            </div>
-
-                            {/* Sort + Clear */}
-                            <div className="flex items-center justify-between pt-2 border-t border-border-primary">
-                                <div className="flex items-center gap-2">
-                                    <ArrowUpDown size={12} className="text-text-tertiary" />
-                                    <div className="flex gap-1">
-                                        {SORT_OPTIONS.map(opt => (
-                                            <button
-                                                key={opt.value}
-                                                onClick={() => setSortBy(opt.value)}
-                                                className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition-all cursor-pointer ${sortBy === opt.value
-                                                    ? "bg-bg-surface text-text-primary shadow-sm border border-border-primary"
-                                                    : "text-text-tertiary hover:text-text-secondary"
-                                                    }`}
-                                            >
-                                                {opt.label}
-                                            </button>
-                                        ))}
+                        <div className="flex items-center gap-2 relative">
+                            {/* BU Filter */}
+                            <div className="relative">
+                                <PopoverButton
+                                    label={`Сервис${selectedBUs.length ? ` (${selectedBUs.length})` : ""}`}
+                                    isActive={activePopover === "bu"}
+                                    onClick={() => togglePopover("bu")}
+                                />
+                                <Popover isOpen={activePopover === "bu"} onClose={() => setActivePopover(null)} className="w-[200px]">
+                                    <div className="flex flex-col gap-1">
+                                        {BU_OPTIONS.map(bu => {
+                                            const isActive = selectedBUs.includes(bu.value);
+                                            return (
+                                                <button
+                                                    key={bu.value}
+                                                    onClick={() => toggleBU(bu.value)}
+                                                    className={`flex items-center justify-between px-3 py-2 text-xs rounded-lg transition-colors cursor-pointer ${isActive ? "bg-accent-primary/10 text-accent-primary font-medium" : "text-text-secondary hover:bg-bg-secondary hover:text-text-primary"}`}
+                                                >
+                                                    <span>{bu.label}</span>
+                                                    {isActive && <Check size={14} />}
+                                                </button>
+                                            );
+                                        })}
                                     </div>
-                                </div>
-                                {hasFilters && (
-                                    <button
-                                        onClick={clearFilters}
-                                        className="flex items-center gap-1 text-[11px] text-text-tertiary hover:text-accent-primary transition-colors cursor-pointer"
-                                    >
-                                        <X size={12} />
-                                        Сбросить фильтры
-                                    </button>
-                                )}
+                                </Popover>
                             </div>
+
+                            {/* Category Filter */}
+                            <div className="relative">
+                                <PopoverButton
+                                    label={`Категория${selectedCategories.length ? ` (${selectedCategories.length})` : ""}`}
+                                    isActive={activePopover === "category"}
+                                    onClick={() => togglePopover("category")}
+                                />
+                                <Popover isOpen={activePopover === "category"} onClose={() => setActivePopover(null)} className="w-[200px]">
+                                    <div className="flex flex-col gap-1">
+                                        {CATEGORY_OPTIONS.map(cat => {
+                                            const isActive = selectedCategories.includes(cat.value);
+                                            return (
+                                                <button
+                                                    key={cat.value}
+                                                    onClick={() => toggleCategory(cat.value)}
+                                                    className={`flex items-center justify-between px-3 py-2 text-xs rounded-lg transition-colors cursor-pointer ${isActive ? "bg-accent-primary/10 text-accent-primary font-medium" : "text-text-secondary hover:bg-bg-secondary hover:text-text-primary"}`}
+                                                >
+                                                    <span>{cat.label}</span>
+                                                    {isActive && <Check size={14} />}
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                </Popover>
+                            </div>
+
+                            {/* Content Type Filter */}
+                            <div className="relative">
+                                <PopoverButton
+                                    label={selectedContentType ? `Тип: ${CONTENT_TYPE_OPTIONS.find(o => o.value === selectedContentType)?.label}` : "Тип контента"}
+                                    isActive={activePopover === "contentType"}
+                                    onClick={() => togglePopover("contentType")}
+                                />
+                                <Popover isOpen={activePopover === "contentType"} onClose={() => setActivePopover(null)} className="w-[200px]">
+                                    <div className="flex flex-col gap-1">
+                                        {CONTENT_TYPE_OPTIONS.map(ct => {
+                                            const isActive = selectedContentType === ct.value;
+                                            return (
+                                                <button
+                                                    key={ct.value}
+                                                    onClick={() => {
+                                                        setSelectedContentType(isActive ? null : ct.value);
+                                                        setActivePopover(null);
+                                                    }}
+                                                    className={`flex items-center justify-between px-3 py-2 text-xs rounded-lg transition-colors cursor-pointer ${isActive ? "bg-accent-primary/10 text-accent-primary font-medium" : "text-text-secondary hover:bg-bg-secondary hover:text-text-primary"}`}
+                                                >
+                                                    <span>{ct.emoji} {ct.label}</span>
+                                                    {isActive && <Check size={14} />}
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                </Popover>
+                            </div>
+
+                            <div className="w-px h-5 bg-border-primary mx-1"></div>
+
+                            {/* Sort Filter */}
+                            <div className="relative">
+                                <PopoverButton
+                                    icon={<ArrowUpDown size={12} />}
+                                    label={SORT_OPTIONS.find(o => o.value === sortBy)?.label || "Сортировка"}
+                                    isActive={activePopover === "sort"}
+                                    onClick={() => togglePopover("sort")}
+                                />
+                                <Popover isOpen={activePopover === "sort"} onClose={() => setActivePopover(null)} className="w-[180px]">
+                                    <div className="flex flex-col gap-1">
+                                        {SORT_OPTIONS.map(opt => {
+                                            const isActive = sortBy === opt.value;
+                                            return (
+                                                <button
+                                                    key={opt.value}
+                                                    onClick={() => {
+                                                        setSortBy(opt.value);
+                                                        setActivePopover(null);
+                                                    }}
+                                                    className={`flex items-center justify-between px-3 py-2 text-xs rounded-lg transition-colors cursor-pointer ${isActive ? "bg-bg-surface text-text-primary font-medium border border-border-primary" : "text-text-secondary hover:bg-bg-secondary hover:text-text-primary border border-transparent"}`}
+                                                >
+                                                    <span>{opt.label}</span>
+                                                    {isActive && <Check size={14} className="text-text-primary" />}
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                </Popover>
+                            </div>
+
+                            {hasFilters && (
+                                <button
+                                    onClick={clearFilters}
+                                    className="ml-auto flex items-center gap-1 text-[11px] text-text-tertiary hover:text-accent-primary transition-colors cursor-pointer"
+                                    title="Сбросить все фильтры"
+                                >
+                                    <X size={12} />
+                                    Сбросить
+                                </button>
+                            )}
                         </div>
-                    )}
+                    </div>
                 </div>
 
                 {/* Results grid */}

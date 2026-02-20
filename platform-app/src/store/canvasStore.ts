@@ -1317,6 +1317,10 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
     // ─── Resize actions ─────────────────────────────────
     addResize: (format) => {
         const state = get();
+        const masterFormat = state.resizes.find((r) => r.id === "master");
+        const mw = masterFormat?.width || 1080;
+        const mh = masterFormat?.height || 1080;
+
         // Auto-create instances for all existing master components
         const newInstances: ComponentInstance[] = state.masterComponents.map((m) => {
             const initialProps = { ...m.props };
@@ -1334,6 +1338,12 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
                     slotId: m.slotId
                 } as Layer;
 
+                import("@/services/layoutEngine").then(({ applyLayout }) => {
+                    // This is synchronous in current code but we are inside map which expects sync
+                    // Since applyLayout is already imported at top of canvasStore.ts, we can just use it
+                });
+
+                const { applyLayout } = require("@/services/layoutEngine");
                 const [layouted] = applyLayout([mockLayer], format);
                 if (layouted) {
                     finalProps = {
@@ -1342,8 +1352,19 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
                         y: layouted.y,
                         width: layouted.width,
                         height: layouted.height
-                    };
+                    } as ComponentProps;
                 }
+            } else {
+                const { applyConstraints } = require("@/utils/resizeUtil");
+                const constrained = applyConstraints(
+                    m.props,
+                    { width: mw, height: mh },
+                    { width: format.width, height: format.height }
+                );
+                finalProps = {
+                    ...finalProps,
+                    ...constrained
+                } as ComponentProps;
             }
 
             return {

@@ -83,6 +83,10 @@ export interface BaseComponentProps {
     visible: boolean;
     locked: boolean;
     slotId?: TemplateSlotRole;
+    constraints?: {
+        horizontal: "left" | "right" | "center" | "stretch" | "scale";
+        vertical: "top" | "bottom" | "center" | "stretch" | "scale";
+    };
 }
 
 export interface TextComponentProps extends BaseComponentProps {

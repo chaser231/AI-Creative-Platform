@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import type { AIResult } from "@/services/aiService";
-import { MockTextProvider, MockImageProvider } from "@/services/aiService";
+import { RemoteTextProvider, RemoteImageProvider } from "@/services/aiService";
 import { useBrandKitStore } from "./brandKitStore";
 
 interface AIStore {
@@ -37,7 +37,7 @@ export const useAIStore = create<AIStore>((set, get) => ({
                 ? `[TOV: ${tov}]\n\nЗадача: ${prompt}`
                 : prompt;
 
-            const result = await MockTextProvider.generate(fullPrompt);
+            const result = await RemoteTextProvider.generate(fullPrompt);
             set((s) => ({
                 isGenerating: false,
                 generationHistory: [result, ...s.generationHistory],
@@ -55,7 +55,7 @@ export const useAIStore = create<AIStore>((set, get) => ({
     generateImage: async (prompt: string) => {
         set({ isGenerating: true, error: null });
         try {
-            const result = await MockImageProvider.generate(prompt);
+            const result = await RemoteImageProvider.generate(prompt);
             set((s) => ({
                 isGenerating: false,
                 generationHistory: [result, ...s.generationHistory],
