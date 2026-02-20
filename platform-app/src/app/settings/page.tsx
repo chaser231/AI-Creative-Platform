@@ -4,6 +4,7 @@ import { Sun, Moon, Monitor } from "lucide-react";
 import { useThemeStore, type ThemeMode } from "@/store/themeStore";
 import { AppShell } from "@/components/layout/AppShell";
 import Link from "next/link";
+import { useEffect, useState } from "react";
 
 const themeOptions: { id: ThemeMode; label: string; icon: React.ReactNode; description: string }[] = [
     { id: "light", label: "Светлая", icon: <Sun size={20} />, description: "Тёплая кремовая палитра" },
@@ -13,6 +14,13 @@ const themeOptions: { id: ThemeMode; label: string; icon: React.ReactNode; descr
 
 export default function SettingsPage() {
     const { theme, setTheme } = useThemeStore();
+    const [mounted, setMounted] = useState(false);
+
+    useEffect(() => {
+        setMounted(true);
+    }, []);
+
+    const currentTheme = mounted ? theme : undefined;
 
     return (
         <AppShell>
@@ -33,17 +41,17 @@ export default function SettingsPage() {
                                     onClick={() => setTheme(option.id)}
                                     className={`
                                         flex flex-col items-center gap-3 p-5 rounded-[var(--radius-xl)] border transition-all cursor-pointer
-                                        ${theme === option.id
+                                        ${currentTheme === option.id
                                             ? "bg-bg-tertiary border-accent-primary shadow-[var(--shadow-md)]"
                                             : "bg-bg-surface border-border-primary hover:border-border-secondary hover:shadow-[var(--shadow-sm)]"
                                         }
                                     `}
                                 >
-                                    <span className={theme === option.id ? "text-accent-primary" : "text-text-secondary"}>
+                                    <span className={currentTheme === option.id ? "text-accent-primary" : "text-text-secondary"}>
                                         {option.icon}
                                     </span>
                                     <div className="text-center">
-                                        <p className={`text-sm font-medium ${theme === option.id ? "text-text-primary" : "text-text-secondary"}`}>
+                                        <p className={`text-sm font-medium ${currentTheme === option.id ? "text-text-primary" : "text-text-secondary"}`}>
                                             {option.label}
                                         </p>
                                         <p className="text-[11px] text-text-tertiary mt-0.5">

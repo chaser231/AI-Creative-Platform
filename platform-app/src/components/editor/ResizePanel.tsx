@@ -97,8 +97,8 @@ export function ResizePanel() {
                                                 .forEach((pf) => addResize(pf));
                                         }}
                                         className={`px-2.5 py-1 rounded-[var(--radius-full)] text-[10px] font-medium border transition-colors cursor-pointer ${alreadyAdded
-                                                ? "border-border-primary text-text-tertiary opacity-50 cursor-not-allowed"
-                                                : "border-accent-primary/30 text-accent-primary hover:bg-accent-primary/5"
+                                            ? "border-border-primary text-text-tertiary opacity-50 cursor-not-allowed"
+                                            : "border-accent-primary/30 text-accent-primary hover:bg-accent-primary/5"
                                             }`}
                                         title={pack.description}
                                     >
@@ -159,8 +159,16 @@ export function ResizePanel() {
 
             <div className="flex-1 overflow-y-auto p-2">
                 {resizes.map((resize) => (
-                    <button
+                    <div
                         key={resize.id}
+                        role="button"
+                        tabIndex={0}
+                        onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                                e.preventDefault();
+                                setActiveResize(resize.id);
+                            }
+                        }}
                         onClick={() => setActiveResize(resize.id)}
                         className={`
                             w-full flex items-center gap-3 px-3 py-2.5 rounded-[var(--radius-lg)] mb-1
@@ -251,7 +259,7 @@ export function ResizePanel() {
                                 <Trash2 size={11} className="text-text-tertiary" />
                             </button>
                         )}
-                    </button>
+                    </div>
                 ))}
             </div>
 

@@ -57,21 +57,21 @@ export function searchPacks(
         packs = packs.filter(p =>
             p.name.toLowerCase().includes(q) ||
             p.description.toLowerCase().includes(q) ||
-            p.tags.some(t => t.label.toLowerCase().includes(q))
+            p.tags?.some(t => t.label.toLowerCase().includes(q))
         );
     }
 
     // Business unit filter
     if (params.businessUnits && params.businessUnits.length > 0) {
         packs = packs.filter(p =>
-            p.businessUnits.some(bu => params.businessUnits!.includes(bu))
+            p.businessUnits?.some(bu => params.businessUnits!.includes(bu))
         );
     }
 
     // Category filter
     if (params.categories && params.categories.length > 0) {
         packs = packs.filter(p =>
-            p.categories.some(c => params.categories!.includes(c))
+            p.categories?.some(c => params.categories!.includes(c))
         );
     }
 
@@ -88,7 +88,7 @@ export function searchPacks(
     // Tag filter
     if (params.tags && params.tags.length > 0) {
         packs = packs.filter(p =>
-            params.tags!.some(tagId => p.tags.some(t => t.id === tagId))
+            params.tags!.some(tagId => p.tags?.some(t => t.id === tagId))
         );
     }
 
@@ -191,7 +191,7 @@ export function getAllTags(savedPacks: TemplatePackV2[] = []): { id: string; lab
     const allPacks = getAllPacks(savedPacks);
 
     allPacks.forEach(p => {
-        p.tags.forEach(t => {
+        p.tags?.forEach(t => {
             const existing = tagMap.get(t.id);
             if (existing) {
                 existing.count++;
