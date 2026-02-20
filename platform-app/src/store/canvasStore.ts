@@ -227,7 +227,7 @@ interface CanvasStore {
     setStagePosition: (x: number, y: number) => void;
     setCanvasSize: (width: number, height: number) => void;
     resetCanvas: () => void;
-    loadTemplatePack: (data: { masterComponents: MasterComponent[]; componentInstances: ComponentInstance[]; resizes: ResizeFormat[]; layers?: Layer[] }) => void;
+    loadTemplatePack: (data: { masterComponents: MasterComponent[]; componentInstances: ComponentInstance[]; resizes: ResizeFormat[]; layers?: Layer[]; baseWidth: number; baseHeight: number; }) => void;
     applySmartResize: (templatePack: TemplatePack, mappings: SlotMapping[]) => { unmappedSlotNames: string[] };
 
     // Inline text editing
@@ -1525,11 +1525,26 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
     },
 
     loadTemplatePack: (data) => {
-        const { masterComponents, componentInstances, resizes, layers: hydratedLayers } = data;
-        // Assume master resize exists or use first one
-        const masterResize = resizes.find(r => r.id === "master") || resizes[0];
-        const width = masterResize?.width || 1080;
-        const height = masterResize?.height || 1080;
+        const { masterComponents, componentInstances, resizes, layers: hydratedLayers, baseWidth, baseHeight } = data;
+
+        let finalResizes = [...resizes];
+        let masterResize = finalResizes.find(r => r.id === "master");
+
+        // Restore "master" format if it was stripped during serialization
+        if (!masterResize) {
+            masterResize = {
+                id: "master",
+                name: "Мастер макет",
+                label: `${baseWidth} × ${baseHeight}`,
+                width: baseWidth,
+                height: baseHeight,
+                instancesEnabled: false
+            };
+            finalResizes.unshift(masterResize);
+        }
+
+        const width = masterResize.width;
+        const height = masterResize.height;
 
         let initialLayers: Layer[];
 
@@ -1553,7 +1568,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
             layers: initialLayers,
             masterComponents,
             componentInstances,
-            resizes,
+            resizes: finalResizes,
             activeResizeId: "master",
             selectedLayerIds: [],
             history: [],

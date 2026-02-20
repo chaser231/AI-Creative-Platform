@@ -122,6 +122,8 @@ export function hydrateTemplate(pack: TemplatePack): {
     componentInstances: ComponentInstance[];
     resizes: ResizeFormat[];
     layers?: Layer[];
+    baseWidth: number;
+    baseHeight: number;
 } {
     const idMap = new Map<string, string>(); // Old Master ID -> New Master ID
 
@@ -194,6 +196,8 @@ export function hydrateTemplate(pack: TemplatePack): {
         componentInstances: newInstances,
         resizes: newResizes,
         layers,
+        baseWidth: pack.baseWidth || 1080,
+        baseHeight: pack.baseHeight || 1080,
     };
 }
 
