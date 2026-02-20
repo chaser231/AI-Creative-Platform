@@ -154,6 +154,16 @@ function CanvasLayer({
         onDragMove,
         onDragEnd,
         onTransformEnd,
+        onDblClick: (e: Konva.KonvaEventObject<MouseEvent>) => {
+            // For text, we already handle dblClick in the <Text> node itself to trigger editing.
+            // But for other shapes inside frames, a double click should deep-select them natively.
+            if (layer.type !== "text") {
+                // If it's already selected, don't do anything (or maybe keep it selected). 
+                // We'll pass it to onSelect, but we'll attach a custom property to bypass frame redirection.
+                (e.evt as any)._isDeepSelect = true;
+                onSelect(e);
+            }
+        }
     };
 
     return (
@@ -364,6 +374,63 @@ function FrameLayerRenderer({
 
         updateLayer(id, { x: newX, y: newY, width, height, rotation });
     }, [updateLayer, layer.x, layer.y]);
+
+    // Force the bounding box of the frame to its own dimensions
+    // ignoring any overflowing children.
+    useEffect(() => {
+        if (groupRef.current) {
+            groupRef.current.getClientRect = (config?: { skipTransform?: boolean; skipShadow?: boolean; skipStroke?: boolean; relativeTo?: Konva.Container }) => {
+                const node = groupRef.current!;
+
+                // Base dimensions
+                let x = 0;
+                let y = 0;
+                let width = layer.width;
+                let height = layer.height;
+
+                if (!config?.skipStroke && layer.strokeWidth) {
+                    const sw = layer.strokeWidth;
+                    x -= sw / 2;
+                    y -= sw / 2;
+                    width += sw;
+                    height += sw;
+                }
+
+                const rect = { x, y, width, height };
+
+                if (config?.skipTransform) {
+                    return rect;
+                }
+
+                // Apply transforms
+                const abosluteTransform = node.getAbsoluteTransform();
+                const relativeToTransform = config?.relativeTo?.getAbsoluteTransform() ?? new Konva.Transform();
+
+                // We want to transform 'rect' into the destination coordinate space.
+                const relativeTransform = relativeToTransform.copy().invert().multiply(abosluteTransform);
+
+                // Get transforming points
+                const pts = [
+                    { x: rect.x, y: rect.y },
+                    { x: rect.x + rect.width, y: rect.y },
+                    { x: rect.x + rect.width, y: rect.y + rect.height },
+                    { x: rect.x, y: rect.y + rect.height }
+                ].map(p => relativeTransform.point(p));
+
+                const minX = Math.min(...pts.map(p => p.x));
+                const minY = Math.min(...pts.map(p => p.y));
+                const maxX = Math.max(...pts.map(p => p.x));
+                const maxY = Math.max(...pts.map(p => p.y));
+
+                return {
+                    x: minX,
+                    y: minY,
+                    width: maxX - minX,
+                    height: maxY - minY
+                };
+            };
+        }
+    }, [layer.width, layer.height, layer.strokeWidth, groupRef]);
 
     return (
         <Group
@@ -578,6 +645,7 @@ export function Canvas({ stageRef }: CanvasProps) {
         setHighlightedFrameId,
         getFrameAtPoint,
         moveLayerToFrame,
+        removeLayerFromFrame,
     } = useCanvasStore();
 
     // Collect all IDs that are children of any frame (to exclude from top-level SelectionTransformer)
@@ -619,10 +687,20 @@ export function Canvas({ stageRef }: CanvasProps) {
         // Stop propagation so stage click doesn't deselect
         e.cancelBubble = true;
 
-        const id = e.target.id();
+        let id = e.target.id();
         if (!id) return;
 
-        const isMulti = e.evt.shiftKey || e.evt.metaKey || e.evt.ctrlKey;
+        const isMulti = e.evt.shiftKey;
+        const isDeepSelect = e.evt.metaKey || e.evt.ctrlKey || (e.evt as any)._isDeepSelect;
+
+        // "Deep select" logic: if it's nested in a frame, we select the frame
+        // UNLESS the user holds Cmd/Ctrl (isDeepSelect)
+        if (!isDeepSelect) {
+            const parentFrame = layers.find(l => l.type === "frame" && (l as FrameLayer).childIds.includes(id));
+            if (parentFrame) {
+                id = parentFrame.id; // redirect selection to parent frame
+            }
+        }
 
         if (isMulti) {
             toggleSelection(id);
@@ -637,7 +715,7 @@ export function Canvas({ stageRef }: CanvasProps) {
             // So if we click safely, yes, select just this one.
             selectLayer(id);
         }
-    }, [toggleSelection, selectLayer]);
+    }, [toggleSelection, selectLayer, layers]);
 
     const handleLayerDragStart = useCallback((e: Konva.KonvaEventObject<DragEvent>) => {
         setStageDraggable(false);
@@ -798,6 +876,9 @@ export function Canvas({ stageRef }: CanvasProps) {
                 const frame = getFrameAtPoint(centerX, centerY, id);
                 if (frame) {
                     moveLayerToFrame(id, frame.id);
+                } else {
+                    // Dropped completely outside of any frame
+                    removeLayerFromFrame(id);
                 }
                 setHighlightedFrameId(null);
             }
@@ -810,7 +891,7 @@ export function Canvas({ stageRef }: CanvasProps) {
         }
 
         dragStartLocs.current = {};
-    }, [updateLayer, getFrameAtPoint, moveLayerToFrame, setHighlightedFrameId]);
+    }, [updateLayer, getFrameAtPoint, moveLayerToFrame, removeLayerFromFrame, setHighlightedFrameId]);
 
     const handleTransformEnd = useCallback((e: Konva.KonvaEventObject<Event>) => {
         // Start handling multi-transform logic? 
