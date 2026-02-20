@@ -184,25 +184,22 @@ export default function TemplateCatalogPage() {
     const tags = useMemo(() => getAllTags(savedPacks), [savedPacks]);
 
     const handleLoadPack = async (pack: TemplatePackV2) => {
-        try {
-            const { hydrateTemplate } = await import("@/services/templateService");
-            const hydrated = hydrateTemplate(pack);
-            const { useCanvasStore } = await import("@/store/canvasStore");
-            useCanvasStore.getState().loadTemplatePack(hydrated);
+        const { applyTemplatePack } = await import("@/services/templateService");
 
-            // Navigate to editor with the latest project
-            const { useProjectStore } = await import("@/store/projectStore");
-            const store = useProjectStore.getState();
-            const project = store.createProject({
-                name: pack.name,
-                businessUnit: pack.businessUnits[0] || "other",
-                goal: "banner",
-            });
-            store.setActiveProject(project.id);
-            router.push(`/editor/${project.id}`);
-        } catch (err) {
-            console.error("Failed to load pack", err);
-        }
+        applyTemplatePack(pack, {
+            onSuccess: async () => {
+                // Navigate to editor with the latest project
+                const { useProjectStore } = await import("@/store/projectStore");
+                const store = useProjectStore.getState();
+                const project = store.createProject({
+                    name: pack.name,
+                    businessUnit: pack.businessUnits?.[0] || "other",
+                    goal: "banner",
+                });
+                store.setActiveProject(project.id);
+                router.push(`/editor/${project.id}`);
+            }
+        });
     };
 
     return (

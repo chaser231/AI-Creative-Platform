@@ -167,8 +167,26 @@ export function hydrateTemplate(pack: TemplatePack): {
 
     // 3. Hydrate layer tree if present
     let layers: Layer[] | undefined;
+    let layerIdMap = new Map<string, string>();
     if (pack.layerTree && pack.layerTree.length > 0) {
-        layers = hydrateLayerTree(pack.layerTree, idMap);
+        const result = hydrateLayerTree(pack.layerTree, idMap);
+        layers = result.layers;
+        layerIdMap = result.layerIdMap;
+    }
+
+    // 4. Update childIds in masterComponents and componentInstances
+    if (layerIdMap.size > 0) {
+        newMasters.forEach(m => {
+            if (m.props.type === "frame" && (m.props as any).childIds) {
+                (m.props as any).childIds = (m.props as any).childIds.map((cid: string) => layerIdMap.get(cid) || cid);
+            }
+        });
+
+        newInstances.forEach(inst => {
+            if (inst.localProps.type === "frame" && (inst.localProps as any).childIds) {
+                (inst.localProps as any).childIds = (inst.localProps as any).childIds.map((cid: string) => layerIdMap.get(cid) || cid);
+            }
+        });
     }
 
     return {
@@ -186,7 +204,7 @@ export function hydrateTemplate(pack: TemplatePack): {
 function hydrateLayerTree(
     nodes: SerializedLayerNode[],
     masterIdMap: Map<string, string>
-): Layer[] {
+): { layers: Layer[]; layerIdMap: Map<string, string> } {
     const layerIdMap = new Map<string, string>(); // Old Layer ID -> New Layer ID
     const allLayers: Layer[] = [];
 
@@ -217,5 +235,28 @@ function hydrateLayerTree(
     }
 
     nodes.forEach(n => processNode(n));
-    return allLayers;
+    return { layers: allLayers, layerIdMap };
+}
+
+/* ─── Unified Loading Utility ───────────────────────────── */
+
+/**
+ * Standardized function to apply a template pack across the App.
+ * Safely extracts data (if wrapped in Meta), hydrates, and loads into CanvasStore.
+ */
+export async function applyTemplatePack(
+    pack: any,
+    options?: { onSuccess?: () => void; onError?: (err: any) => void }
+) {
+    try {
+        const data = pack.data || pack; // Handle TemplatePackMeta wrapper if present
+        const hydrated = hydrateTemplate(data);
+        const { useCanvasStore } = await import("@/store/canvasStore");
+        useCanvasStore.getState().loadTemplatePack(hydrated);
+
+        options?.onSuccess?.();
+    } catch (err) {
+        console.error("Failed to apply template pack:", err);
+        options?.onError?.(err);
+    }
 }

@@ -231,15 +231,10 @@ export function TemplatePanel({ open, onClose }: TemplatePanelProps) {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const handleLoadPack = async (pack: any) => {
-        try {
-            const data = pack.data || pack;
-            const { hydrateTemplate } = await import("@/services/templateService");
-            const hydrated = hydrateTemplate(data);
-            useCanvasStore.getState().loadTemplatePack(hydrated);
-            onClose();
-        } catch (err) {
-            console.error("Failed to load pack", err);
-        }
+        const { applyTemplatePack } = await import("@/services/templateService");
+        applyTemplatePack(pack, {
+            onSuccess: () => onClose()
+        });
     };
 
     const handleImportPack = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -250,13 +245,18 @@ export function TemplatePanel({ open, onClose }: TemplatePanelProps) {
             try {
                 const json = event.target?.result as string;
                 const pack = JSON.parse(json);
-                const { hydrateTemplate } = await import("@/services/templateService");
-                const hydrated = hydrateTemplate(pack);
-                useCanvasStore.getState().loadTemplatePack(hydrated);
-                onClose();
+                const { applyTemplatePack } = await import("@/services/templateService");
+
+                applyTemplatePack(pack, {
+                    onSuccess: () => {
+                        onClose();
+                        resetSaveForm();
+                    },
+                    onError: () => alert("Ошибка загрузки пакета шаблонов")
+                });
             } catch (err) {
-                console.error("Failed to load template pack", err);
-                alert("Ошибка загрузки пакета шаблонов");
+                console.error("Failed to parse template pack", err);
+                alert("Ошибка структуры файла: неверный JSON");
             }
         };
         reader.readAsText(file);
