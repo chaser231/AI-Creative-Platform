@@ -20,6 +20,7 @@ import {
     Paintbrush,
     Maximize2,
     RotateCw,
+    Anchor,
 } from "lucide-react";
 import { Popover, PopoverButton } from "@/components/ui/Popover";
 import { useState, useRef, useEffect } from "react";
@@ -151,65 +152,82 @@ export function PropertiesPanel() {
                 </Popover>
             </div>
 
-            {/* Constraints */}
-            {(() => {
-                const c = selectedLayer.constraints ?? DEFAULT_CONSTRAINTS;
-                return (
-                    <>
-                        <div className="w-px h-6 bg-border-primary shrink-0" />
-                        <div className="flex items-center gap-1.5 shrink-0">
-                            <span className="text-[10px] text-text-tertiary font-light">H</span>
+            {/* ── Привязки и Слот ──────────────────── */}
+            <div className="w-px h-6 bg-border-primary shrink-0" />
+            <div className="relative">
+                <PopoverButton
+                    icon={<Anchor size={12} />}
+                    label="Привязки"
+                    isActive={activePopover === "constraints"}
+                    onClick={() => togglePopover("constraints")}
+                />
+                <Popover isOpen={activePopover === "constraints"} onClose={() => setActivePopover(null)}>
+                    <div className="space-y-4">
+                        {/* Constraints */}
+                        {(() => {
+                            const c = selectedLayer.constraints ?? DEFAULT_CONSTRAINTS;
+                            return (
+                                <div>
+                                    <label className="text-[9px] text-text-tertiary uppercase tracking-wider font-medium mb-1.5 block">Выравнивание</label>
+                                    <div className="grid grid-cols-2 gap-2">
+                                        <div>
+                                            <span className="text-[10px] text-text-tertiary font-light mb-1 block">По горизонтали</span>
+                                            <select
+                                                value={c.horizontal}
+                                                onChange={(e) => updateLayer(selectedLayer.id, {
+                                                    constraints: { ...c, horizontal: e.target.value as ConstraintH }
+                                                })}
+                                                className="w-full h-8 px-2 text-[11px] bg-bg-secondary border border-border-primary rounded-[var(--radius-md)] text-text-primary cursor-pointer focus:outline-none focus:ring-1 focus:ring-border-focus"
+                                            >
+                                                <option value="left">Слева (Left)</option>
+                                                <option value="right">Справа (Right)</option>
+                                                <option value="center">По центру (Center)</option>
+                                                <option value="stretch">Растянуть (Stretch)</option>
+                                                <option value="scale">Масштаб (Scale)</option>
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <span className="text-[10px] text-text-tertiary font-light mb-1 block">По вертикали</span>
+                                            <select
+                                                value={c.vertical}
+                                                onChange={(e) => updateLayer(selectedLayer.id, {
+                                                    constraints: { ...c, vertical: e.target.value as ConstraintV }
+                                                })}
+                                                className="w-full h-8 px-2 text-[11px] bg-bg-secondary border border-border-primary rounded-[var(--radius-md)] text-text-primary cursor-pointer focus:outline-none focus:ring-1 focus:ring-border-focus"
+                                            >
+                                                <option value="top">Сверху (Top)</option>
+                                                <option value="bottom">Снизу (Bottom)</option>
+                                                <option value="center">По центру (Center)</option>
+                                                <option value="stretch">Растянуть (Stretch)</option>
+                                                <option value="scale">Масштаб (Scale)</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                </div>
+                            );
+                        })()}
+
+                        <div className="w-full h-px bg-border-primary shrink-0" />
+
+                        {/* Smart Layout Slot */}
+                        <div>
+                            <label className="text-[9px] text-text-tertiary uppercase tracking-wider font-medium mb-1.5 block">Роль в шаблоне (Slot)</label>
                             <select
-                                value={c.horizontal}
-                                onChange={(e) => updateLayer(selectedLayer.id, {
-                                    constraints: { ...c, horizontal: e.target.value as ConstraintH }
-                                })}
-                                className="h-6 px-1 text-[10px] bg-bg-secondary border border-border-primary rounded-[var(--radius-sm)] text-text-primary cursor-pointer focus:outline-none"
+                                value={selectedLayer.slotId || "none"}
+                                onChange={(e) => updateLayer(selectedLayer.id, { slotId: e.target.value as TemplateSlotRole })}
+                                className="w-full h-8 px-2 text-[11px] bg-bg-secondary border border-border-primary rounded-[var(--radius-md)] text-text-primary cursor-pointer focus:outline-none focus:ring-1 focus:ring-border-focus"
                             >
-                                <option value="left">Left</option>
-                                <option value="right">Right</option>
-                                <option value="center">Center</option>
-                                <option value="stretch">Stretch</option>
-                                <option value="scale">Scale</option>
-                            </select>
-                            <span className="text-[10px] text-text-tertiary font-light">V</span>
-                            <select
-                                value={c.vertical}
-                                onChange={(e) => updateLayer(selectedLayer.id, {
-                                    constraints: { ...c, vertical: e.target.value as ConstraintV }
-                                })}
-                                className="h-6 px-1 text-[10px] bg-bg-secondary border border-border-primary rounded-[var(--radius-sm)] text-text-primary cursor-pointer focus:outline-none"
-                            >
-                                <option value="top">Top</option>
-                                <option value="bottom">Bottom</option>
-                                <option value="center">Center</option>
-                                <option value="stretch">Stretch</option>
-                                <option value="scale">Scale</option>
+                                <option value="none">Без роли (None)</option>
+                                <option value="headline">Заголовок (Headline)</option>
+                                <option value="subhead">Подзаголовок (Subhead)</option>
+                                <option value="cta">Кнопка (CTA)</option>
+                                <option value="background">Фон (Background)</option>
+                                <option value="image-primary">Главное фото</option>
+                                <option value="logo">Логотип (Logo)</option>
                             </select>
                         </div>
-                    </>
-                );
-            })()}
-
-            {/* Divider */}
-            <div className="w-px h-6 bg-border-primary shrink-0" />
-
-            {/* Smart Layout Slot */}
-            <div className="flex items-center gap-1.5 shrink-0">
-                <span className="text-[10px] text-text-tertiary font-light">Slot</span>
-                <select
-                    value={selectedLayer.slotId || "none"}
-                    onChange={(e) => updateLayer(selectedLayer.id, { slotId: e.target.value as TemplateSlotRole })}
-                    className="h-6 px-1 text-[10px] bg-bg-secondary border border-border-primary rounded-[var(--radius-sm)] text-text-primary cursor-pointer focus:outline-none w-20"
-                >
-                    <option value="none">None</option>
-                    <option value="headline">Headline</option>
-                    <option value="subhead">Subhead</option>
-                    <option value="cta">CTA</option>
-                    <option value="background">Background</option>
-                    <option value="image-primary">Image Primary</option>
-                    <option value="logo">Logo</option>
-                </select>
+                    </div>
+                </Popover>
             </div>
 
             <div className="w-px h-6 bg-border-primary shrink-0" />
