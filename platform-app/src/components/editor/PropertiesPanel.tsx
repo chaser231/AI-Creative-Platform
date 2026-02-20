@@ -21,6 +21,7 @@ import {
     Maximize2,
     RotateCw,
     Anchor,
+    LayoutDashboard,
 } from "lucide-react";
 import { Popover, PopoverButton } from "@/components/ui/Popover";
 import { useState, useRef, useEffect } from "react";
@@ -135,7 +136,8 @@ export function PropertiesPanel() {
                     onClick={() => togglePopover("size")}
                 />
                 <Popover isOpen={activePopover === "size"} onClose={() => setActivePopover(null)}>
-                    <div className="space-y-3">
+                    <div className="space-y-4">
+                        {/* Base Dimensions */}
                         <div className="grid grid-cols-2 gap-2">
                             <div>
                                 <label className="text-[9px] text-text-tertiary uppercase tracking-wider font-medium mb-1 block">Ширина</label>
@@ -148,6 +150,60 @@ export function PropertiesPanel() {
                                     className="w-full h-8 px-2 rounded-[var(--radius-md)] border border-border-primary bg-bg-secondary text-[11px] text-text-primary text-center focus:outline-none focus:ring-1 focus:ring-border-focus" />
                             </div>
                         </div>
+
+                        {/* Auto-Layout Child Sizing (if applicable) */}
+                        {(() => {
+                            const parentFrame = layers.find(l => l.type === "frame" && (l as FrameLayer).childIds.includes(selectedLayer.id)) as FrameLayer | undefined;
+                            if (parentFrame && parentFrame.layoutMode && parentFrame.layoutMode !== "none") {
+                                return (
+                                    <>
+                                        <div className="w-full h-px bg-border-primary shrink-0" />
+                                        <div>
+                                            <label className="text-[9px] text-text-tertiary uppercase tracking-wider font-medium mb-1.5 block">Размер в Авто-лейауте</label>
+                                            <div className="grid grid-cols-2 gap-2">
+                                                <div>
+                                                    <span className="text-[10px] text-text-tertiary font-light mb-1 block">По горизонтали</span>
+                                                    <select
+                                                        value={selectedLayer.layoutSizingWidth || "fixed"}
+                                                        onChange={(e) => updateLayer(selectedLayer.id, { layoutSizingWidth: e.target.value as any })}
+                                                        className="w-full h-8 px-2 text-[11px] bg-bg-secondary border border-border-primary rounded-[var(--radius-md)] text-text-primary cursor-pointer focus:outline-none focus:ring-1 focus:ring-border-focus"
+                                                    >
+                                                        <option value="fixed">Fixed</option>
+                                                        <option value="fill">Fill</option>
+                                                        {selectedLayer.type === "frame" && <option value="hug">Hug</option>}
+                                                    </select>
+                                                </div>
+                                                <div>
+                                                    <span className="text-[10px] text-text-tertiary font-light mb-1 block">По вертикали</span>
+                                                    <select
+                                                        value={selectedLayer.layoutSizingHeight || "fixed"}
+                                                        onChange={(e) => updateLayer(selectedLayer.id, { layoutSizingHeight: e.target.value as any })}
+                                                        className="w-full h-8 px-2 text-[11px] bg-bg-secondary border border-border-primary rounded-[var(--radius-md)] text-text-primary cursor-pointer focus:outline-none focus:ring-1 focus:ring-border-focus"
+                                                    >
+                                                        <option value="fixed">Fixed</option>
+                                                        <option value="fill">Fill</option>
+                                                        {selectedLayer.type === "frame" && <option value="hug">Hug</option>}
+                                                    </select>
+                                                </div>
+                                            </div>
+                                            <div className="mt-3 flex items-center gap-2">
+                                                <input
+                                                    type="checkbox"
+                                                    id="isAbsolutePositioned"
+                                                    checked={!!selectedLayer.isAbsolutePositioned}
+                                                    onChange={(e) => updateLayer(selectedLayer.id, { isAbsolutePositioned: e.target.checked })}
+                                                    className="rounded border-border-primary text-accent-primary focus:ring-accent-primary bg-bg-secondary"
+                                                />
+                                                <label htmlFor="isAbsolutePositioned" className="text-[10px] text-text-primary cursor-pointer">
+                                                    Абсолютное позиционирование
+                                                </label>
+                                            </div>
+                                        </div>
+                                    </>
+                                );
+                            }
+                            return null;
+                        })()}
                     </div>
                 </Popover>
             </div>
@@ -655,6 +711,102 @@ function FramePropsGrouped({
 
     return (
         <div className="flex items-center gap-1 relative">
+            {/* Auto-Layout */}
+            <div className="relative">
+                <PopoverButton
+                    icon={<LayoutDashboard size={12} />}
+                    label="Лейаут"
+                    isActive={activePopover === "layout"}
+                    onClick={() => togglePopover("layout")}
+                />
+                <Popover isOpen={activePopover === "layout"} onClose={() => setActivePopover(null)}>
+                    <div className="space-y-4">
+                        <div className="flex items-center justify-between">
+                            <label className="text-[10px] text-text-primary font-medium">Авто-лейаут</label>
+                            <select
+                                value={layer.layoutMode || "none"}
+                                onChange={(e) => onChange({ layoutMode: e.target.value as any })}
+                                className="h-7 px-2 text-[10px] bg-bg-secondary border border-border-primary rounded-[var(--radius-sm)] text-text-primary cursor-pointer focus:outline-none"
+                            >
+                                <option value="none">Выкл</option>
+                                <option value="horizontal">Горизонтальный</option>
+                                <option value="vertical">Вертикальный</option>
+                            </select>
+                        </div>
+
+                        {layer.layoutMode && layer.layoutMode !== "none" && (
+                            <>
+                                <div className="w-full h-px bg-border-primary shrink-0" />
+                                <div className="grid grid-cols-2 gap-3">
+                                    <div>
+                                        <label className="text-[9px] text-text-tertiary uppercase tracking-wider font-medium mb-1.5 block">Отступы</label>
+                                        <div className="space-y-1.5">
+                                            <CompactInput label="Верт." value={layer.paddingTop || 0} onChange={(v) => onChange({ paddingTop: Number(v), paddingBottom: Number(v) })} width="w-full" />
+                                            <CompactInput label="Гориз." value={layer.paddingLeft || 0} onChange={(v) => onChange({ paddingLeft: Number(v), paddingRight: Number(v) })} width="w-full" />
+                                            <CompactInput label="Между" value={layer.spacing || 0} onChange={(v) => onChange({ spacing: Number(v) })} width="w-full" />
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <label className="text-[9px] text-text-tertiary uppercase tracking-wider font-medium mb-1.5 block">Выравнивание</label>
+                                        <div className="space-y-1.5">
+                                            <select
+                                                value={layer.primaryAxisAlignItems || "flex-start"}
+                                                onChange={(e) => onChange({ primaryAxisAlignItems: e.target.value as any })}
+                                                className="w-full h-7 px-1.5 text-[10px] bg-bg-secondary border border-border-primary rounded-[var(--radius-sm)] text-text-primary cursor-pointer focus:outline-none"
+                                            >
+                                                <option value="flex-start">Start</option>
+                                                <option value="center">Center</option>
+                                                <option value="flex-end">End</option>
+                                                <option value="space-between">Space Between</option>
+                                            </select>
+                                            <select
+                                                value={layer.counterAxisAlignItems || "flex-start"}
+                                                onChange={(e) => onChange({ counterAxisAlignItems: e.target.value as any })}
+                                                className="w-full h-7 px-1.5 text-[10px] bg-bg-secondary border border-border-primary rounded-[var(--radius-sm)] text-text-primary cursor-pointer focus:outline-none"
+                                            >
+                                                <option value="flex-start">Top/Left</option>
+                                                <option value="center">Center</option>
+                                                <option value="flex-end">Bottom/Right</option>
+                                                <option value="stretch">Stretch</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div className="w-full h-px bg-border-primary shrink-0" />
+                                <div>
+                                    <label className="text-[9px] text-text-tertiary uppercase tracking-wider font-medium mb-1.5 block">Размер Контейнера</label>
+                                    <div className="grid grid-cols-2 gap-2">
+                                        <div>
+                                            <span className="text-[9px] text-text-tertiary font-light mb-1 block">Осн. Ось (Main)</span>
+                                            <select
+                                                value={layer.primaryAxisSizingMode || "fixed"}
+                                                onChange={(e) => onChange({ primaryAxisSizingMode: e.target.value as any })}
+                                                className="w-full h-7 px-1.5 text-[10px] bg-bg-secondary border border-border-primary rounded-[var(--radius-sm)] text-text-primary cursor-pointer focus:outline-none"
+                                            >
+                                                <option value="fixed">Fixed</option>
+                                                <option value="auto">Hug Contents</option>
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <span className="text-[9px] text-text-tertiary font-light mb-1 block">Попер. Ось (Cross)</span>
+                                            <select
+                                                value={layer.counterAxisSizingMode || "fixed"}
+                                                onChange={(e) => onChange({ counterAxisSizingMode: e.target.value as any })}
+                                                className="w-full h-7 px-1.5 text-[10px] bg-bg-secondary border border-border-primary rounded-[var(--radius-sm)] text-text-primary cursor-pointer focus:outline-none"
+                                            >
+                                                <option value="fixed">Fixed</option>
+                                                <option value="auto">Hug Contents</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                </div>
+                            </>
+                        )}
+                    </div>
+                </Popover>
+            </div>
+
+            <div className="w-px h-6 bg-border-primary shrink-0" />
             <div className="relative">
                 <PopoverButton
                     icon={<Paintbrush size={12} />}

@@ -122,6 +122,7 @@ interface CanvasLayerProps {
     onTransformEnd: (e: Konva.KonvaEventObject<any>) => void;
     onDblClickText: (layer: LayerType & { type: "text" }, node: Konva.Text) => void;
     isEditing: boolean;
+    isAutoLayoutChild?: boolean;
 }
 
 function CanvasLayer({
@@ -134,6 +135,7 @@ function CanvasLayer({
     onTransformEnd,
     onDblClickText,
     isEditing,
+    isAutoLayoutChild,
 }: CanvasLayerProps) {
     const shapeRef = useRef<Konva.Shape>(null);
     const groupRef = useRef<Konva.Group>(null);
@@ -147,7 +149,7 @@ function CanvasLayer({
         width: layer.width,
         height: layer.height,
         rotation: layer.rotation,
-        draggable: !layer.locked && !isEditing,
+        draggable: !layer.locked && !isEditing && !isAutoLayoutChild,
         onClick: onSelect,
         onTap: onSelect,
         onDragStart,
@@ -477,6 +479,7 @@ function FrameLayerRenderer({
                         onTransformEnd={handleChildTransformEnd}
                         onDblClickText={onDblClickText}
                         isEditing={false}
+                        isAutoLayoutChild={layer.layoutMode !== undefined && layer.layoutMode !== "none" && !child.isAbsolutePositioned}
                     />
                 ))}
             </Group>

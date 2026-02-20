@@ -17,6 +17,7 @@ import type {
 } from "@/types";
 import { CONTENT_SOURCE_KEYS, DEFAULT_CONSTRAINTS } from "@/types";
 import { applyLayout } from "@/services/layoutEngine";
+import { applyAllAutoLayouts } from "@/utils/layoutEngine";
 import type { SlotMapping } from "@/services/slotMappingService";
 import type { TemplatePack } from "@/services/templateService";
 
@@ -187,6 +188,7 @@ interface CanvasStore {
     batchUpdateLayers: (updates: { id: string; changes: Partial<Layer> }[]) => void;
     duplicateSelectedLayers: () => void;
     reorderLayers: (fromIndex: number, toIndex: number) => void;
+    reorderLayer: (layerId: string, mode: "up" | "down" | "top" | "bottom") => void;
     toggleLayerVisibility: (id: string) => void;
     toggleLayerLock: (id: string) => void;
     duplicateLayer: (id: string) => void;
@@ -765,7 +767,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
                 });
             };
 
-            const newLayers = computeUpdatedLayers(state.layers, id, updates);
+            const newLayers = applyAllAutoLayouts(computeUpdatedLayers(state.layers, id, updates));
             const layer = newLayers.find((l) => l.id === id);
 
             if (!layer?.masterId) {
@@ -1158,7 +1160,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
             const layers = [...state.layers];
             const [moved] = layers.splice(idx, 1);
             layers.push(moved);
-            return { layers };
+            return { layers: applyAllAutoLayouts(layers) };
         });
     },
 
@@ -1172,7 +1174,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
             const layers = [...state.layers];
             const [moved] = layers.splice(idx, 1);
             layers.unshift(moved);
-            return { layers };
+            return { layers: applyAllAutoLayouts(layers) };
         });
     },
 
@@ -1184,7 +1186,50 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
             const layers = [...state.layers];
             const [moved] = layers.splice(fromIndex, 1);
             layers.splice(toIndex, 0, moved);
-            return { layers };
+            return { layers: applyAllAutoLayouts(layers) };
+        });
+    },
+
+    reorderLayer: (layerId: string, mode: "up" | "down" | "top" | "bottom") => {
+        const _s = get();
+        const _snap: HistorySnapshot = { layers: _s.layers, masterComponents: _s.masterComponents, componentInstances: _s.componentInstances, selectedLayerIds: _s.selectedLayerIds };
+        set({ history: [..._s.history, _snap].slice(-MAX_HISTORY), future: [] });
+
+        set((state) => {
+            let layers = [...state.layers];
+
+            // Check if nested in a frame
+            const parentFrame = layers.find(l => l.type === "frame" && (l as FrameLayer).childIds.includes(layerId)) as FrameLayer | undefined;
+
+            if (parentFrame) {
+                // Reorder within frame's childIds
+                const idx = parentFrame.childIds.indexOf(layerId);
+                const maxIdx = parentFrame.childIds.length - 1;
+                if (idx !== -1) {
+                    const newChildIds = [...parentFrame.childIds];
+                    newChildIds.splice(idx, 1);
+
+                    if (mode === "top") newChildIds.push(layerId);
+                    else if (mode === "bottom") newChildIds.unshift(layerId);
+                    else if (mode === "up") newChildIds.splice(Math.min(maxIdx, idx + 1), 0, layerId);
+                    else if (mode === "down") newChildIds.splice(Math.max(0, idx - 1), 0, layerId);
+
+                    layers = layers.map(l => l.id === parentFrame.id ? { ...l, childIds: newChildIds } as FrameLayer : l);
+                }
+            } else {
+                // Reorder globally
+                // In our global array, index 0 is bottom, index length-1 is top
+                const idx = layers.findIndex(l => l.id === layerId);
+                if (idx !== -1) {
+                    const [moved] = layers.splice(idx, 1);
+                    if (mode === "top") layers.push(moved);
+                    else if (mode === "bottom") layers.unshift(moved);
+                    else if (mode === "up") layers.splice(Math.min(layers.length, idx + 1), 0, moved);
+                    else if (mode === "down") layers.splice(Math.max(0, idx - 1), 0, moved);
+                }
+            }
+
+            return { layers: applyAllAutoLayouts(layers) };
         });
     },
 
@@ -1206,7 +1251,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
             });
             const newMasters = syncFrameChildIdsToMasters(newLayers, state.masterComponents);
             const newInstances = syncFrameChildIdsToInstances(newLayers, state.masterComponents, state.componentInstances, state.activeResizeId);
-            return { layers: newLayers, masterComponents: newMasters, componentInstances: newInstances };
+            return { layers: applyAllAutoLayouts(newLayers), masterComponents: newMasters, componentInstances: newInstances };
         });
     },
 
@@ -1223,7 +1268,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
             });
             const newMasters = syncFrameChildIdsToMasters(newLayers, state.masterComponents);
             const newInstances = syncFrameChildIdsToInstances(newLayers, state.masterComponents, state.componentInstances, state.activeResizeId);
-            return { layers: newLayers, masterComponents: newMasters, componentInstances: newInstances };
+            return { layers: applyAllAutoLayouts(newLayers), masterComponents: newMasters, componentInstances: newInstances };
         });
     },
 

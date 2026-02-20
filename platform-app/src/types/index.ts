@@ -87,6 +87,9 @@ export interface BaseComponentProps {
         horizontal: "left" | "right" | "center" | "stretch" | "scale";
         vertical: "top" | "bottom" | "center" | "stretch" | "scale";
     };
+    layoutSizingWidth?: "fixed" | "fill" | "hug";
+    layoutSizingHeight?: "fixed" | "fill" | "hug";
+    isAbsolutePositioned?: boolean;
 }
 
 export interface TextComponentProps extends BaseComponentProps {
@@ -135,6 +138,16 @@ export interface FrameComponentProps extends BaseComponentProps {
     cornerRadius: number;
     clipContent: boolean;
     childIds: string[];
+    layoutMode?: "none" | "horizontal" | "vertical";
+    paddingTop?: number;
+    paddingRight?: number;
+    paddingBottom?: number;
+    paddingLeft?: number;
+    spacing?: number;
+    primaryAxisAlignItems?: "flex-start" | "center" | "flex-end" | "space-between";
+    counterAxisAlignItems?: "flex-start" | "center" | "flex-end" | "stretch";
+    primaryAxisSizingMode?: "fixed" | "auto";
+    counterAxisSizingMode?: "fixed" | "auto";
 }
 
 export type ComponentProps = TextComponentProps | RectangleComponentProps | ImageComponentProps | BadgeComponentProps | FrameComponentProps;
@@ -250,6 +263,9 @@ export interface BaseLayer {
     masterId?: string; // link to master component
     constraints?: LayerConstraints; // behaviour when parent frame resizes
     slotId?: TemplateSlotRole; // Smart Resize slot
+    layoutSizingWidth?: "fixed" | "fill" | "hug";
+    layoutSizingHeight?: "fixed" | "fill" | "hug";
+    isAbsolutePositioned?: boolean;
 }
 
 export interface TextLayer extends BaseLayer {
@@ -297,6 +313,16 @@ export interface FrameLayer extends BaseLayer {
     cornerRadius: number;
     clipContent: boolean;
     childIds: string[];
+    layoutMode?: "none" | "horizontal" | "vertical";
+    paddingTop?: number;
+    paddingRight?: number;
+    paddingBottom?: number;
+    paddingLeft?: number;
+    spacing?: number;
+    primaryAxisAlignItems?: "flex-start" | "center" | "flex-end" | "space-between";
+    counterAxisAlignItems?: "flex-start" | "center" | "flex-end" | "stretch";
+    primaryAxisSizingMode?: "fixed" | "auto";
+    counterAxisSizingMode?: "fixed" | "auto";
 }
 
 export type Layer = TextLayer | RectangleLayer | ImageLayer | BadgeLayer | FrameLayer;
