@@ -172,6 +172,8 @@ function CanvasLayer({
                 <Text
                     ref={shapeRef as React.RefObject<Konva.Text | null>}
                     {...commonProps}
+                    width={layer.textAdjust === "auto_width" ? undefined : layer.width}
+                    height={layer.textAdjust === "auto_width" || layer.textAdjust === "auto_height" ? undefined : layer.height}
                     text={layer.text}
                     fontSize={layer.fontSize}
                     fontFamily={layer.fontFamily}
@@ -180,7 +182,8 @@ function CanvasLayer({
                     align={layer.align}
                     letterSpacing={layer.letterSpacing}
                     lineHeight={layer.lineHeight}
-                    wrap="word"
+                    wrap={layer.textAdjust === "auto_width" ? "none" : "word"}
+                    ellipsis={layer.textAdjust === "fixed" ? (layer.truncateText || false) : false}
                     onDblClick={() => {
                         if (shapeRef.current) {
                             onDblClickText(layer as LayerType & { type: "text" }, shapeRef.current as Konva.Text);
@@ -837,6 +840,16 @@ export function Canvas({ stageRef }: CanvasProps) {
         const width = node.width() * scaleX;
         const height = node.height() * scaleY;
 
+        let extraProps: any = {};
+        if (node.getClassName() === "Text") {
+            const layer = layers.find(l => l.id === id);
+            if (layer && layer.type === "text") {
+                if (Math.abs(scaleX - 1) > 0.01 || Math.abs(scaleY - 1) > 0.01) {
+                    extraProps.textAdjust = "fixed";
+                }
+            }
+        }
+
         // Convert to absolute scene coordinates (handles frame-nested children)
         // node.x()/y() returns coords relative to parent Group, which is wrong
         // for children inside frames. Use getAbsolutePosition() instead,
@@ -851,7 +864,7 @@ export function Canvas({ stageRef }: CanvasProps) {
             newY = node.y();
         }
 
-        updateLayer(id, { x: newX, y: newY, width, height, rotation });
+        updateLayer(id, { x: newX, y: newY, width, height, rotation, ...extraProps });
 
         // Handle constrained position for children if it's a frame
         // (Similar to previous implementation)

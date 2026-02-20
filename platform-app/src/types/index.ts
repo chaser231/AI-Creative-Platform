@@ -99,6 +99,9 @@ export interface TextComponentProps extends BaseComponentProps {
     align: "left" | "center" | "right";
     letterSpacing: number;
     lineHeight: number;
+    textAdjust?: "auto_width" | "auto_height" | "fixed";
+    truncateText?: boolean;
+    verticalTrim?: boolean;
 }
 
 export interface RectangleComponentProps extends BaseComponentProps {
@@ -259,6 +262,9 @@ export interface TextLayer extends BaseLayer {
     align: "left" | "center" | "right";
     letterSpacing: number;
     lineHeight: number;
+    textAdjust?: "auto_width" | "auto_height" | "fixed";
+    truncateText?: boolean;
+    verticalTrim?: boolean;
 }
 
 export interface RectangleLayer extends BaseLayer {

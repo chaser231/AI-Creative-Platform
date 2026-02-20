@@ -8,6 +8,7 @@ import {
     Link2,
     Type,
     ALargeSmall,
+    BoxSelect,
     AlignLeft,
     AlignCenter,
     AlignRight,
@@ -400,6 +401,58 @@ function TextPropsGrouped({
                                 onChange={(e) => onChange({ lineHeight: Number(e.target.value) })}
                                 className="w-full h-8 px-2 rounded-[var(--radius-md)] border border-border-primary bg-bg-secondary text-[11px] text-text-primary text-center focus:outline-none focus:ring-1 focus:ring-border-focus"
                             />
+                        </div>
+                    </div>
+                </Popover>
+            </div>
+
+            {/* Контейнер — layout, overflow */}
+            <div className="relative">
+                <PopoverButton
+                    icon={<BoxSelect size={12} />}
+                    label="Контейнер"
+                    isActive={activePopover === "layout"}
+                    onClick={() => togglePopover("layout")}
+                />
+                <Popover isOpen={activePopover === "layout"} onClose={() => setActivePopover(null)}>
+                    <div className="space-y-4">
+                        <div>
+                            <label className="text-[9px] text-text-tertiary uppercase tracking-wider font-medium mb-1.5 block">Размер Контейнера</label>
+                            <select
+                                value={layer.textAdjust || "auto_width"}
+                                onChange={(e) => onChange({ textAdjust: e.target.value as any })}
+                                className="w-full h-8 px-2 rounded-[var(--radius-md)] border border-border-primary bg-bg-secondary text-[11px] text-text-primary cursor-pointer focus:outline-none focus:ring-1 focus:ring-border-focus"
+                            >
+                                <option value="auto_width">Auto Width</option>
+                                <option value="auto_height">Auto Height</option>
+                                <option value="fixed">Fixed Size</option>
+                            </select>
+                        </div>
+                        <div className="space-y-2">
+                            <label className="flex items-center gap-2 cursor-pointer group">
+                                <div className={`w-3.5 h-3.5 rounded-[var(--radius-sm)] border flex items-center justify-center transition-colors ${layer.truncateText ? 'bg-accent-primary border-accent-primary' : 'border-border-primary bg-bg-secondary group-hover:border-border-focus'}`}>
+                                    {layer.truncateText && <div className="w-1.5 h-1.5 bg-white rounded-sm" />}
+                                </div>
+                                <span className="text-[11px] text-text-primary">Truncate Text</span>
+                                <input
+                                    type="checkbox"
+                                    className="hidden"
+                                    checked={layer.truncateText || false}
+                                    onChange={(e) => onChange({ truncateText: e.target.checked })}
+                                />
+                            </label>
+                            <label className="flex items-center gap-2 cursor-pointer group">
+                                <div className={`w-3.5 h-3.5 rounded-[var(--radius-sm)] border flex items-center justify-center transition-colors ${layer.verticalTrim ? 'bg-accent-primary border-accent-primary' : 'border-border-primary bg-bg-secondary group-hover:border-border-focus'}`}>
+                                    {layer.verticalTrim && <div className="w-1.5 h-1.5 bg-white rounded-sm" />}
+                                </div>
+                                <span className="text-[11px] text-text-primary">Vertical Trim</span>
+                                <input
+                                    type="checkbox"
+                                    className="hidden"
+                                    checked={layer.verticalTrim || false}
+                                    onChange={(e) => onChange({ verticalTrim: e.target.checked })}
+                                />
+                            </label>
                         </div>
                     </div>
                 </Popover>

@@ -401,6 +401,9 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
             align: "left",
             letterSpacing: 0,
             lineHeight: 1.2,
+            textAdjust: "auto_width",
+            truncateText: false,
+            verticalTrim: false,
             masterId,
             ...overrides,
         };
@@ -427,6 +430,9 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
                 align: layer.align,
                 letterSpacing: layer.letterSpacing,
                 lineHeight: layer.lineHeight,
+                textAdjust: layer.textAdjust,
+                truncateText: layer.truncateText,
+                verticalTrim: layer.verticalTrim,
             },
         };
         // Auto-create instances for existing non-master resizes
