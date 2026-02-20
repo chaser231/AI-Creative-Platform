@@ -186,14 +186,16 @@ export function WizardFlow({ projectId, onSwitchToStudio }: WizardFlowProps) {
 
     /* ─── Pack Card (V2 enhanced) ───────────────────────── */
     const PackCard = ({ pack, color }: { pack: TemplatePackV2 | TemplatePackMeta; color?: string }) => {
-        // Normalize: TemplatePackMeta wraps data, TemplatePackV2 is direct
-        const isV2 = "businessUnits" in pack;
-        const v2 = isV2 ? (pack as TemplatePackV2) : (pack as TemplatePackMeta).data;
-        const displayColor = color || (isV2 ? "#6366F1" : (pack as TemplatePackMeta).thumbnailColor);
+        const isMeta = "data" in pack;
+        const v2 = isMeta ? (pack as TemplatePackMeta).data : (pack as TemplatePackV2);
+
+        if (!v2) return null;
+
+        const displayColor = color || (isMeta ? (pack as TemplatePackMeta).thumbnailColor : "#6366F1");
 
         return (
             <button
-                onClick={() => handleLoadPack(isV2 ? pack : pack)}
+                onClick={() => handleLoadPack(v2)}
                 className="relative p-3 rounded-xl border border-border-primary hover:border-accent-primary/40 bg-bg-primary text-left transition-all cursor-pointer group hover:shadow-md"
             >
                 <div
@@ -214,19 +216,19 @@ export function WizardFlow({ projectId, onSwitchToStudio }: WizardFlowProps) {
                 </div>
                 <div className="flex items-center justify-between mt-2">
                     <div className="flex gap-1 flex-wrap">
-                        {v2.categories.slice(0, 2).map(c => (
+                        {(v2.categories || []).slice(0, 2).map((c: string) => (
                             <span key={c} className="text-[8px] px-1.5 py-0.5 rounded bg-bg-secondary text-text-secondary">
                                 {c}
                             </span>
                         ))}
                     </div>
                     <span className="text-[9px] text-text-tertiary">
-                        {v2.resizes.length} фмт
+                        {v2.resizes?.length || 0} фмт
                     </span>
                 </div>
-                {v2.tags.length > 0 && (
+                {(v2.tags || []).length > 0 && (
                     <div className="flex gap-1 mt-1.5 flex-wrap">
-                        {v2.tags.slice(0, 2).map(tag => (
+                        {(v2.tags || []).slice(0, 2).map((tag: any) => (
                             <span
                                 key={tag.id}
                                 className="text-[8px] px-1 py-0.5 rounded-full border border-border-primary text-text-tertiary"

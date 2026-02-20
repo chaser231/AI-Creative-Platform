@@ -273,12 +273,15 @@ export function TemplatePanel({ open, onClose }: TemplatePanelProps) {
     }) => {
         const isMeta = "data" in pack;
         const v2 = isMeta ? pack.data : pack;
+
+        if (!v2) return null;
+
         const displayColor = color || (isMeta ? pack.thumbnailColor : "#6366F1");
 
         return (
             <div className="relative group">
                 <button
-                    onClick={() => handleLoadPack(isMeta ? pack : pack)}
+                    onClick={() => handleLoadPack(v2)}
                     className="w-full relative p-3 rounded-xl border border-border-primary hover:border-accent-primary/40 bg-bg-primary text-left transition-all cursor-pointer hover:shadow-md"
                 >
                     <div
@@ -305,7 +308,7 @@ export function TemplatePanel({ open, onClose }: TemplatePanelProps) {
                     </div>
                     {(v2.tags || []).length > 0 && (
                         <div className="flex gap-0.5 mt-1 flex-wrap">
-                            {v2.tags.slice(0, 2).map((tag: any) => (
+                            {(v2.tags || []).slice(0, 2).map((tag: any) => (
                                 <span
                                     key={tag.id}
                                     className="text-[7px] px-1 py-0.5 rounded-full border border-border-primary text-text-tertiary"
