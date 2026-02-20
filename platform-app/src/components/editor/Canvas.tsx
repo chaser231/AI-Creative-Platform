@@ -690,8 +690,8 @@ export function Canvas({ stageRef }: CanvasProps) {
         let id = e.target.id();
         if (!id) return;
 
-        const isMulti = e.evt.shiftKey;
-        const isDeepSelect = e.evt.metaKey || e.evt.ctrlKey || (e.evt as any)._isDeepSelect;
+        const isMulti = e.evt?.shiftKey;
+        const isDeepSelect = e.evt?.metaKey || e.evt?.ctrlKey || (e.evt as any)?._isDeepSelect;
 
         // "Deep select" logic: if it's nested in a frame, we select the frame
         // UNLESS the user holds Cmd/Ctrl (isDeepSelect)
@@ -721,7 +721,7 @@ export function Canvas({ stageRef }: CanvasProps) {
         setStageDraggable(false);
         let id = e.target.id();
 
-        const isDeepSelect = e.evt.metaKey || e.evt.ctrlKey;
+        const isDeepSelect = e.evt?.metaKey || e.evt?.ctrlKey;
 
         // "Deep select" drag logic: if it's nested in a frame, and not deep-selected,
         // and not already selected, redirect drag to the parent frame
