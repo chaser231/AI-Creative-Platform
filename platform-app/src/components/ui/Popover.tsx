@@ -33,11 +33,13 @@ export function Popover({
     isOpen,
     onClose,
     className = "",
+    position = "bottom",
 }: {
     children: React.ReactNode;
     isOpen: boolean;
     onClose: () => void;
     className?: string;
+    position?: "top" | "bottom";
 }) {
     const ref = useRef<HTMLDivElement>(null);
 
@@ -57,7 +59,7 @@ export function Popover({
     return (
         <div
             ref={ref}
-            className={`absolute top-full left-0 mt-2 p-3 bg-bg-surface border border-border-primary rounded-[var(--radius-xl)] shadow-[var(--shadow-lg)] backdrop-blur-xl z-30 min-w-[220px] ${className}`}
+            className={`absolute ${position === 'top' ? 'bottom-full mb-3' : 'top-full mt-2'} left-0 p-3 bg-bg-surface border border-border-primary rounded-[var(--radius-xl)] shadow-[var(--shadow-lg)] backdrop-blur-xl z-30 min-w-[220px] ${className}`}
         >
             {children}
         </div>
