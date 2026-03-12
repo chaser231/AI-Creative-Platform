@@ -27,12 +27,17 @@ import { Popover, PopoverButton } from "@/components/ui/Popover";
 import { useState, useRef, useEffect } from "react";
 
 export function PropertiesPanel() {
-    const { layers, selectedLayerIds, updateLayer, activeResizeId, artboardProps, updateArtboardProps } = useCanvasStore();
+    const { layers, selectedLayerIds, updateLayer, activeResizeId, artboardProps, updateArtboardProps, alignSelectedLayers } = useCanvasStore();
 
     const isMultiSelection = selectedLayerIds.length > 1;
     const selectedLayer = selectedLayerIds.length === 1
         ? layers.find((l) => l.id === selectedLayerIds[0])
         : null;
+
+    const isInsideAL = selectedLayerIds.some(id => {
+        const parent = layers.find(l => l.type === "frame" && (l as FrameLayer).childIds.includes(id)) as FrameLayer | undefined;
+        return parent?.layoutMode && parent.layoutMode !== "none";
+    });
 
     const [activePopover, setActivePopover] = useState<string | null>(null);
     const togglePopover = (name: string) => setActivePopover((prev) => (prev === name ? null : name));
@@ -95,6 +100,19 @@ export function PropertiesPanel() {
                     {activeResizeId === "master" ? "Мастер" : "Инстанс"}
                 </div>
             )}
+
+            {/* ── Alignment ────────── */}
+            <div className={`flex items-center gap-0.5 bg-bg-secondary rounded-[var(--radius-lg)] p-0.5 border border-border-primary shrink-0 transition-opacity ${isInsideAL ? 'opacity-40 pointer-events-none' : ''}`}>
+                <button onClick={() => alignSelectedLayers('left')} className="p-1 hover:bg-bg-tertiary rounded-[var(--radius-sm)] text-text-tertiary hover:text-text-primary transition-colors" title="Выровнять по левому краю"><AlignLeft size={12} /></button>
+                <button onClick={() => alignSelectedLayers('center')} className="p-1 hover:bg-bg-tertiary rounded-[var(--radius-sm)] text-text-tertiary hover:text-text-primary transition-colors" title="Выровнять по горизонтальному центру"><AlignCenter size={12} /></button>
+                <button onClick={() => alignSelectedLayers('right')} className="p-1 hover:bg-bg-tertiary rounded-[var(--radius-sm)] text-text-tertiary hover:text-text-primary transition-colors" title="Выровнять по правому краю"><AlignRight size={12} /></button>
+                <div className="w-[1px] h-3 bg-border-primary mx-0.5" />
+                <button onClick={() => alignSelectedLayers('top')} className="p-1 hover:bg-bg-tertiary rounded-[var(--radius-sm)] text-text-tertiary hover:text-text-primary transition-colors" title="Выровнять по верхнему краю"><AlignLeft size={12} className="-rotate-90" /></button>
+                <button onClick={() => alignSelectedLayers('middle')} className="p-1 hover:bg-bg-tertiary rounded-[var(--radius-sm)] text-text-tertiary hover:text-text-primary transition-colors" title="Выровнять по вертикальному центру"><AlignCenter size={12} className="rotate-90" /></button>
+                <button onClick={() => alignSelectedLayers('bottom')} className="p-1 hover:bg-bg-tertiary rounded-[var(--radius-sm)] text-text-tertiary hover:text-text-primary transition-colors" title="Выровнять по нижнему краю"><AlignRight size={12} className="-rotate-90" /></button>
+            </div>
+
+            <div className="w-px h-5 bg-border-primary shrink-0" />
 
             {/* ── Позиция (X, Y, Rotation) ────────── */}
             <div className="relative">
