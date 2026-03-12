@@ -1475,21 +1475,21 @@ export function Canvas({ stageRef }: CanvasProps) {
                                 {/* Distance label */}
                                 <Rect
                                     key={`dist-bg-${i}`}
-                                    x={labelX - 14}
-                                    y={labelY - 2}
-                                    width={28}
-                                    height={14}
+                                    x={labelX - 22}
+                                    y={labelY - 4}
+                                    width={44}
+                                    height={20}
                                     fill="#F97316"
-                                    cornerRadius={3}
+                                    cornerRadius={4}
                                     listening={false}
                                 />
                                 <Text
                                     key={`dist-label-${i}`}
-                                    x={labelX - 14}
-                                    y={labelY}
-                                    width={28}
-                                    text={`${dm.distance}`}
-                                    fontSize={9}
+                                    x={labelX - 22}
+                                    y={labelY + 1}
+                                    width={44}
+                                    text={`${Number(dm.distance.toFixed(1))}`}
+                                    fontSize={11}
                                     fontFamily="Inter, sans-serif"
                                     fill="#fff"
                                     align="center"
@@ -1520,21 +1520,21 @@ export function Canvas({ stageRef }: CanvasProps) {
                                     />
                                     <Rect
                                         key={`spc-bg-${i}-${j}`}
-                                        x={labelX - 14}
-                                        y={labelY - 2}
-                                        width={28}
-                                        height={14}
+                                        x={labelX - 22}
+                                        y={labelY - 4}
+                                        width={44}
+                                        height={20}
                                         fill="#EC4899"
-                                        cornerRadius={3}
+                                        cornerRadius={4}
                                         listening={false}
                                     />
                                     <Text
                                         key={`spc-label-${i}-${j}`}
-                                        x={labelX - 14}
-                                        y={labelY}
-                                        width={28}
-                                        text={`${sg.gap}`}
-                                        fontSize={9}
+                                        x={labelX - 22}
+                                        y={labelY + 1}
+                                        width={44}
+                                        text={`${Number(sg.gap.toFixed(1))}`}
+                                        fontSize={11}
                                         fontFamily="Inter, sans-serif"
                                         fill="#fff"
                                         align="center"

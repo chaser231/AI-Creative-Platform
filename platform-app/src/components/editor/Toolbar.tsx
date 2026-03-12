@@ -133,7 +133,7 @@ export function Toolbar({ onOpenTemplates, onToggleAI, aiActive }: ToolbarProps)
                     >
                         <Magnet size={18} />
                     </button>
-                    <Popover isOpen={showSnapConfig} onClose={() => setShowSnapConfig(false)}>
+                    <Popover isOpen={showSnapConfig} onClose={() => setShowSnapConfig(false)} className="bottom-full top-auto mb-2 mt-0">
                         <div className="space-y-3 min-w-[180px]">
                             <p className="text-[9px] text-text-tertiary uppercase tracking-wider font-medium">Привязки</p>
                             <SnapToggle label="К объектам" checked={snapConfig.objectSnap} onChange={(v) => updateSnapConfig({ objectSnap: v })} />
