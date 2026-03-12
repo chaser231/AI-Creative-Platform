@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/Button";
 import { DEFAULT_PACKS, type TemplatePackMeta } from "@/constants/defaultPacks";
 import { getRecommendedPacks, searchPacks } from "@/services/templateCatalogService";
 import type { TemplatePackV2 } from "@/services/templateService";
-import type { Template, BusinessUnit } from "@/types";
+import type { BusinessUnit } from "@/types";
 
 interface WizardFlowProps {
     projectId: string;
@@ -20,12 +20,15 @@ interface WizardFlowProps {
 type WizardStep = "template" | "content" | "review";
 
 export function WizardFlow({ projectId, onSwitchToStudio }: WizardFlowProps) {
-    const { templates, savedPacks } = useTemplateStore();
-    const { setCanvasSize, addTextLayer, addRectangleLayer, addBadgeLayer, resetCanvas, loadTemplatePack } = useCanvasStore();
+    const { savedPacks } = useTemplateStore();
+    const { resetCanvas } = useCanvasStore();
     const { projects } = useProjectStore();
     const [step, setStep] = useState<WizardStep>("template");
-    const [templateMode, setTemplateMode] = useState<"single" | "pack">("single");
+    const [templateMode, setTemplateMode] = useState<"single" | "pack" | "manual">("single");
     const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
+    const [manualSizes, setManualSizes] = useState<{width: number; height: number; id: string}[]>([]);
+    const [manualW, setManualW] = useState("1080");
+    const [manualH, setManualH] = useState("1080");
     const [headline, setHeadline] = useState("");
     const [ctaText, setCtaText] = useState("Shop Now");
     const [productDescription, setProductDescription] = useState("");
@@ -86,98 +89,71 @@ export function WizardFlow({ projectId, onSwitchToStudio }: WizardFlowProps) {
         }
     };
 
-    const selectedTemplate = templates.find((t) => t.id === selectedTemplateId);
+    const selectedTemplate = savedPacks.find(p => p.id === selectedTemplateId) || DEFAULT_PACKS.find(p => p.id === selectedTemplateId)?.data;
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const handleLoadPack = async (pack: any) => {
+    const handleApplyAndContinue = async () => {
+        if (templateMode !== "manual" && !selectedTemplateId) return;
+
+        let packToApply: TemplatePackV2;
+
+        if (templateMode === "manual") {
+            if (manualSizes.length === 0) return;
+            const masterSize = manualSizes[0];
+            
+            packToApply = {
+                id: "manual_" + Date.now(),
+                name: "Свой пакет форматов",
+                description: "Собранные вручную форматы",
+                isOfficial: false,
+                baseWidth: masterSize.width,
+                baseHeight: masterSize.height,
+                masterComponents: [],
+                componentInstances: [],
+                resizes: manualSizes.map((sz, i) => ({
+                     id: i === 0 ? "master" : `resize_${i}`,
+                     name: `Формат ${sz.width}x${sz.height}`,
+                     label: `${sz.width}×${sz.height}`,
+                     width: sz.width,
+                     height: sz.height,
+                     instancesEnabled: i !== 0
+                }))
+            } as unknown as TemplatePackV2;
+        } else {
+            let selectedPack = savedPacks.find(p => p.id === selectedTemplateId);
+            if (!selectedPack) {
+                const meta = DEFAULT_PACKS.find(p => p.id === selectedTemplateId);
+                if (meta) selectedPack = meta.data;
+            }
+
+            if (!selectedPack) return;
+            
+            // Deep clone to avoid mutating store state
+            packToApply = JSON.parse(JSON.stringify(selectedPack));
+        }
+
         const { applyTemplatePack } = await import("@/services/templateService");
-        applyTemplatePack(pack, {
-            onSuccess: () => onSwitchToStudio()
-        });
-    };
 
-    const handleImportPack = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0];
-        if (!file) return;
+        // Basic AI text mapping
+        if (headline || ctaText) {
+            packToApply.masterComponents = packToApply.masterComponents.map(mc => {
+                if (mc.type === "text") {
+                    const name = mc.name.toLowerCase();
+                    if ((name.includes("head") || name.includes("заголовок") || name.includes("title")) && headline) {
+                        return { ...mc, props: { ...mc.props, text: headline } };
+                    }
+                    if ((name.includes("cta") || name.includes("кнопк") || name.includes("button")) && ctaText) {
+                        return { ...mc, props: { ...mc.props, text: ctaText } };
+                    }
+                }
+                return mc;
+            });
+        }
 
-        const reader = new FileReader();
-        reader.onload = async (event) => {
-            try {
-                const json = event.target?.result as string;
-                const pack = JSON.parse(json);
-                const { applyTemplatePack } = await import("@/services/templateService");
-
-                applyTemplatePack(pack, {
-                    onSuccess: () => onSwitchToStudio(),
-                    onError: () => alert("Ошибка загрузки пакета шаблонов")
-                });
-            } catch (err) {
-                console.error("Failed to parse template pack", err);
-                alert("Ошибка структуры файла: неверный JSON");
-            }
-        };
-        reader.readAsText(file);
-    };
-
-    const handleApplyAndContinue = () => {
-        if (!selectedTemplate) return;
-
-        resetCanvas();
-        setCanvasSize(selectedTemplate.baseWidth, selectedTemplate.baseHeight);
-
-        selectedTemplate.slots.forEach((slot) => {
-            const dp = slot.defaultProps;
-            const defaultType = slot.acceptTypes[0];
-
-            switch (defaultType) {
-                case "text":
-                    addTextLayer({
-                        name: slot.name,
-                        x: dp.x ?? 0,
-                        y: dp.y ?? 0,
-                        width: dp.width ?? 300,
-                        height: dp.height ?? 60,
-                        text:
-                            slot.name === "Headline" ? (headline || "Your Headline") :
-                                slot.name === "CTA Button" ? (ctaText || "Shop Now") :
-                                    slot.name,
-                    });
-                    break;
-                case "rectangle":
-                    addRectangleLayer({
-                        name: slot.name,
-                        x: dp.x ?? 0,
-                        y: dp.y ?? 0,
-                        width: dp.width ?? 200,
-                        height: dp.height ?? 200,
-                        fill: slot.name === "Background" ? "#F3F4F6" : "#E5E7EB",
-                    });
-                    break;
-                case "image":
-                    addRectangleLayer({
-                        name: slot.name,
-                        x: dp.x ?? 0,
-                        y: dp.y ?? 0,
-                        width: dp.width ?? 400,
-                        height: dp.height ?? 300,
-                        fill: "#E0E7FF",
-                        stroke: "#A5B4FC",
-                        strokeWidth: 2,
-                    });
-                    break;
-                case "badge":
-                    addBadgeLayer({
-                        name: slot.name,
-                        x: dp.x ?? 0,
-                        y: dp.y ?? 0,
-                        width: dp.width ?? 120,
-                        height: dp.height ?? 36,
-                    });
-                    break;
+        applyTemplatePack(packToApply, {
+            onSuccess: () => {
+                onSwitchToStudio();
             }
         });
-
-        setStep("review");
     };
 
     /* ─── Pack Card (V2 enhanced) ───────────────────────── */
@@ -191,8 +167,10 @@ export function WizardFlow({ projectId, onSwitchToStudio }: WizardFlowProps) {
 
         return (
             <button
-                onClick={() => handleLoadPack(v2)}
-                className="relative p-3 rounded-xl border border-border-primary hover:border-accent-primary/40 bg-bg-primary text-left transition-all cursor-pointer group hover:shadow-md"
+                onClick={() => setSelectedTemplateId(v2.id)}
+                className={`relative p-3 rounded-xl border transition-all cursor-pointer group hover:shadow-md text-left
+                    ${selectedTemplateId === v2.id ? "border-accent-primary bg-accent-primary/5 ring-1 ring-accent-primary" : "border-border-primary hover:border-accent-primary/40 bg-bg-primary"}
+                `}
             >
                 <div
                     className="w-full h-24 rounded-lg mb-3 relative overflow-hidden flex items-center justify-center"
@@ -298,33 +276,27 @@ export function WizardFlow({ projectId, onSwitchToStudio }: WizardFlowProps) {
                                     >
                                         Пакеты
                                     </button>
+                                    <button
+                                        onClick={() => setTemplateMode("manual")}
+                                        className={`px-3 py-1 rounded-[var(--radius-sm)] text-xs font-medium transition-all cursor-pointer ${templateMode === "manual" ? "bg-bg-surface shadow-[var(--shadow-sm)] text-text-primary" : "text-text-secondary"}`}
+                                    >
+                                        Вручную
+                                    </button>
                                 </div>
                             </div>
 
                             {templateMode === "single" ? (
                                 <>
                                     <div className="grid grid-cols-2 gap-4">
-                                        {templates.map((template) => (
-                                            <button
-                                                key={template.id}
-                                                onClick={() => setSelectedTemplateId(template.id)}
-                                                className={`
-                                                    p-4 rounded-[var(--radius-md)] border text-left transition-all cursor-pointer
-                                                    ${selectedTemplateId === template.id
-                                                        ? "border-accent-primary bg-accent-primary/5 shadow-[var(--shadow-sm)]"
-                                                        : "border-border-primary hover:border-border-secondary"
-                                                    }
-                                                `}
-                                            >
-                                                <div
-                                                    className="w-full bg-bg-secondary rounded-[var(--radius-sm)] mb-3 border border-border-primary"
-                                                    style={{ aspectRatio: `${template.baseWidth} / ${template.baseHeight}` }}
-                                                />
-                                                <div className="text-sm font-medium text-text-primary">{template.name}</div>
-                                                <div className="text-xs text-text-tertiary mt-0.5">{template.description}</div>
-                                            </button>
+                                        {savedPacks.filter(p => !p.resizes || p.resizes.length === 0).map((pack) => (
+                                            <PackCard key={pack.id} pack={pack} />
                                         ))}
                                     </div>
+                                    {savedPacks.filter(p => !p.resizes || p.resizes.length === 0).length === 0 && (
+                                        <div className="text-center py-6 text-xs text-text-tertiary">
+                                            Нет одиночных шаблонов.<br />Используйте вкладку "Пакеты" или редактор для их создания.
+                                        </div>
+                                    )}
                                     <div className="flex justify-end pt-2">
                                         <Button
                                             disabled={!selectedTemplateId}
@@ -335,7 +307,7 @@ export function WizardFlow({ projectId, onSwitchToStudio }: WizardFlowProps) {
                                         </Button>
                                     </div>
                                 </>
-                            ) : (
+                            ) : templateMode === "pack" ? (
                                 <div className="space-y-5">
                                     {/* Pack search */}
                                     <div className="relative">
@@ -421,28 +393,51 @@ export function WizardFlow({ projectId, onSwitchToStudio }: WizardFlowProps) {
                                                 </div>
                                             </div>
 
-                                            {/* Import */}
-                                            <div className="border-t border-border-primary pt-4">
-                                                <div className="flex flex-col items-center justify-center py-6 border-2 border-dashed border-border-primary rounded-xl bg-bg-secondary/30">
-                                                    <h3 className="text-xs font-medium text-text-primary mb-1.5">Импорт своего пакета</h3>
-                                                    <p className="text-[10px] text-text-secondary mb-3 text-center max-w-xs">
-                                                        Загрузите .json файл пакета шаблонов
-                                                    </p>
-                                                    <label className="cursor-pointer">
-                                                        <span className="px-4 py-1.5 bg-white border border-border-primary text-text-primary text-xs font-medium rounded-lg hover:bg-bg-secondary transition-colors shadow-sm">
-                                                            Выбрать файл
-                                                        </span>
-                                                        <input
-                                                            type="file"
-                                                            accept=".json"
-                                                            className="hidden"
-                                                            onChange={handleImportPack}
-                                                        />
-                                                    </label>
-                                                </div>
-                                            </div>
                                         </>
                                     )}
+                                    <div className="flex justify-end pt-2 border-t border-border-primary">
+                                        <Button
+                                            disabled={!selectedTemplateId}
+                                            icon={<ChevronRight size={14} />}
+                                            onClick={() => setStep("content")}
+                                        >
+                                            Продолжить
+                                        </Button>
+                                    </div>
+                                </div>
+                            ) : (
+                                <div className="space-y-4">
+                                     <p className="text-sm text-text-secondary">Укажите список форматов (ширина × высота), для которых вы хотите собрать креативы с нуля.</p>
+                                     <div className="flex gap-2 items-center">
+                                         <input type="number" value={manualW} onChange={e => setManualW(e.target.value)} className="w-24 h-9 px-3 text-sm rounded-lg border border-border-primary bg-bg-secondary text-text-primary focus:outline-none focus:ring-2 focus:ring-accent-primary/20" placeholder="W" />
+                                         <span className="text-text-tertiary">×</span>
+                                         <input type="number" value={manualH} onChange={e => setManualH(e.target.value)} className="w-24 h-9 px-3 text-sm rounded-lg border border-border-primary bg-bg-secondary text-text-primary focus:outline-none focus:ring-2 focus:ring-accent-primary/20" placeholder="H" />
+                                         <Button variant="secondary" onClick={() => {
+                                             const w = parseInt(manualW);
+                                             const h = parseInt(manualH);
+                                             if (w > 0 && h > 0) {
+                                                setManualSizes(prev => [...prev, { width: w, height: h, id: Math.random().toString(36).substr(2, 9) }]);
+                                             }
+                                         }}>Добавить</Button>
+                                     </div>
+                                     <div className="flex flex-wrap gap-2 mt-4 min-h-8">
+                                        {manualSizes.map(sz => (
+                                             <div key={sz.id} className="flex items-center gap-1.5 bg-bg-secondary px-2.5 py-1.5 rounded-[var(--radius-md)] border border-border-primary text-xs text-text-secondary font-medium shadow-sm">
+                                                  {sz.width} × {sz.height}
+                                                  <button className="text-text-tertiary hover:text-text-primary cursor-pointer transition-colors" onClick={() => setManualSizes(prev => prev.filter(s => s.id !== sz.id))}><X size={12} /></button>
+                                             </div>
+                                        ))}
+                                        {manualSizes.length === 0 && <span className="text-xs text-text-tertiary">Форматы не добавлены. Добавьте хотя бы один.</span>}
+                                     </div>
+                                     <div className="flex justify-end pt-2 border-t border-border-primary">
+                                        <Button
+                                            disabled={manualSizes.length === 0}
+                                            icon={<ChevronRight size={14} />}
+                                            onClick={handleApplyAndContinue}
+                                        >
+                                            Собрать форматы
+                                        </Button>
+                                    </div>
                                 </div>
                             )}
                         </div>

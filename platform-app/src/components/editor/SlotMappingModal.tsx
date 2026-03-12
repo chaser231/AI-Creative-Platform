@@ -45,7 +45,7 @@ export function SlotMappingModal({ open, onClose, templatePack, templateName }: 
     // For manual mapping dropdown
     const [editingMasterId, setEditingMasterId] = useState<string | null>(null);
 
-    const resizeCount = templatePack.resizes.filter(r => r.id !== "master").length;
+    const resizeCount = (templatePack.resizes || []).filter(r => r.id !== "master").length;
 
     const handleApply = () => {
         const { unmappedSlotNames } = applySmartResize(templatePack, mappingResult.mappings);

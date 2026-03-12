@@ -12,7 +12,7 @@ import { DEFAULT_PACKS, type TemplatePackMeta } from "@/constants/defaultPacks";
 import { serializeTemplate } from "@/services/templateService";
 import { searchPacks } from "@/services/templateCatalogService";
 import type { TemplatePackV2, TemplatePack } from "@/services/templateService";
-import type { Template, BusinessUnit, TemplateCategory, ContentType } from "@/types";
+import type { BusinessUnit, TemplateCategory, ContentType } from "@/types";
 import { SlotMappingModal } from "@/components/editor/SlotMappingModal";
 
 interface TemplatePanelProps {
@@ -65,11 +65,11 @@ function Chip({
 }
 
 export function TemplatePanel({ open, onClose }: TemplatePanelProps) {
-    const { templates, savedPacks, addPack, deletePack } = useTemplateStore();
+    const { savedPacks, addPack, deletePack } = useTemplateStore();
     const { masterComponents, componentInstances, resizes, layers, resetCanvas, setCanvasSize } = useCanvasStore();
     const { projects, activeProjectId } = useProjectStore();
     const [activeTab, setActiveTab] = useState<"single" | "pack">("single");
-    const [selectedTemplate, setSelectedTemplate] = useState<string | null>(null);
+    const [packToApply, setPackToApply] = useState<TemplatePackV2 | null>(null);
 
     // Pack tab state
     const [packSearch, setPackSearch] = useState("");
@@ -94,80 +94,47 @@ export function TemplatePanel({ open, onClose }: TemplatePanelProps) {
         return searchPacks({ query: packSearch, sortBy: "popularity", sortOrder: "desc" }, savedPacks);
     }, [packSearch, savedPacks]);
 
-    const handleApplyTemplate = () => {
-        if (!selectedTemplate) return;
-        const template = templates.find((t) => t.id === selectedTemplate);
-        if (!template) return;
-
-        resetCanvas();
-        setCanvasSize(template.baseWidth, template.baseHeight);
-
-        const { addTextLayer, addRectangleLayer, addBadgeLayer } = useCanvasStore.getState();
-
-        template.slots.forEach((slot) => {
-            const defaultType = slot.acceptTypes[0];
-            const dp = slot.defaultProps;
-
-            switch (defaultType) {
-                case "text":
-                    addTextLayer({
-                        name: slot.name,
-                        x: dp.x ?? 0, y: dp.y ?? 0,
-                        width: dp.width ?? 300, height: dp.height ?? 60,
-                        text: slot.name,
-                    });
-                    break;
-                case "rectangle":
-                    addRectangleLayer({
-                        name: slot.name,
-                        x: dp.x ?? 0, y: dp.y ?? 0,
-                        width: dp.width ?? 200, height: dp.height ?? 200,
-                        fill: slot.name === "Background" ? "#F3F4F6" : "#E5E7EB",
-                    });
-                    break;
-                case "image":
-                    addRectangleLayer({
-                        name: slot.name,
-                        x: dp.x ?? 0, y: dp.y ?? 0,
-                        width: dp.width ?? 400, height: dp.height ?? 300,
-                        fill: "#E5E7EB", stroke: "#D1D5DB", strokeWidth: 2,
-                    });
-                    break;
-                case "badge":
-                    addBadgeLayer({
-                        name: slot.name,
-                        x: dp.x ?? 0, y: dp.y ?? 0,
-                        width: dp.width ?? 120, height: dp.height ?? 36,
-                    });
-                    break;
+    const handleApplyPackDestructive = async () => {
+        if (!packToApply) return;
+        const { applyTemplatePack } = await import("@/services/templateService");
+        applyTemplatePack(packToApply, {
+            onSuccess: () => {
+                setPackToApply(null);
+                onClose();
             }
         });
+    };
 
-        onClose();
+    const handleApplyPackSmart = () => {
+        if (!packToApply) return;
+        setSmartResizePack(packToApply);
+        setSmartResizePackName(packToApply.name);
+        setPackToApply(null);
     };
 
     const handleSaveAsTemplate = () => {
         const state = useCanvasStore.getState();
-        const { addTemplate } = useTemplateStore.getState();
+        const activeProject = projects.find((p) => p.id === activeProjectId);
+        const projectData = activeProject || { name: "Новый шаблон" };
 
-        const slots = state.masterComponents.map((mc) => ({
-            id: uuid(),
-            name: mc.name,
-            acceptTypes: [mc.type] as Template["slots"][0]["acceptTypes"],
-            defaultProps: {
-                x: mc.props.x, y: mc.props.y,
-                width: mc.props.width, height: mc.props.height,
-                rotation: mc.props.rotation, visible: mc.props.visible, locked: mc.props.locked,
-            },
-        }));
+        const newPack = serializeTemplate(
+            { ...projectData, name: "Мой одиночный шаблон" },
+            state.masterComponents,
+            [], // Empty resizes implies single template
+            [], // No instances
+            state.layers
+        );
 
-        addTemplate({
-            name: "Мой шаблон",
+        const meta: Partial<TemplatePackV2> = {
             description: "Создан из текущего холста",
-            baseWidth: state.canvasWidth,
-            baseHeight: state.canvasHeight,
-            slots,
-        });
+            businessUnits: ["other"],
+            categories: ["other"],
+            contentType: "visual",
+            author: "user",
+            isOfficial: false,
+        };
+
+        addPack(newPack, meta);
     };
 
     const handleSaveAsPack = () => {
@@ -229,12 +196,8 @@ export function TemplatePanel({ open, onClose }: TemplatePanelProps) {
         URL.revokeObjectURL(url);
     };
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const handleLoadPack = async (pack: any) => {
-        const { applyTemplatePack } = await import("@/services/templateService");
-        applyTemplatePack(pack, {
-            onSuccess: () => onClose()
-        });
+    const handleLoadPack = (pack: any) => {
+        setPackToApply(pack);
     };
 
     const handleImportPack = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -404,61 +367,24 @@ export function TemplatePanel({ open, onClose }: TemplatePanelProps) {
                                 </div>
                             )}
 
-                            {/* Template grid */}
                             <div>
-                                <h4 className="text-xs font-semibold text-text-secondary uppercase tracking-wider mb-3">
-                                    Доступные шаблоны
+                                <h4 className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wider mb-2">
+                                    Сохраненные одиночные шаблоны
                                 </h4>
                                 <div className="grid grid-cols-2 gap-3">
-                                    {templates.map((template) => (
-                                        <button
-                                            key={template.id}
-                                            onClick={() => setSelectedTemplate(
-                                                selectedTemplate === template.id ? null : template.id
-                                            )}
-                                            className={`
-                                            relative p-3 rounded-xl border text-left transition-all cursor-pointer group
-                                            ${selectedTemplate === template.id
-                                                    ? "border-accent-primary bg-bg-active shadow-sm"
-                                                    : "border-border-primary hover:border-border-secondary bg-bg-primary"
-                                                }
-                                        `}
-                                        >
-                                            <div
-                                                className="w-full bg-bg-secondary rounded-lg mb-2 border border-border-primary relative overflow-hidden"
-                                                style={{ aspectRatio: `${template.baseWidth} / ${template.baseHeight}` }}
-                                            >
-                                                {template.slots.map((slot) => {
-                                                    const dp = slot.defaultProps;
-                                                    if (!dp.width || !dp.height) return null;
-                                                    const scaleX = 100 / template.baseWidth;
-                                                    const scaleY = 100 / template.baseHeight;
-                                                    return (
-                                                        <div
-                                                            key={slot.id}
-                                                            className="absolute border border-dashed border-text-tertiary/30 rounded-[1px]"
-                                                            style={{
-                                                                left: `${(dp.x || 0) * scaleX}%`,
-                                                                top: `${(dp.y || 0) * scaleY}%`,
-                                                                width: `${dp.width * scaleX}%`,
-                                                                height: `${dp.height * scaleY}%`,
-                                                            }}
-                                                        />
-                                                    );
-                                                })}
-                                            </div>
-                                            <div className="text-xs font-medium text-text-primary">{template.name}</div>
-                                            <div className="text-[10px] text-text-tertiary mt-0.5">
-                                                {template.slots.length} слотов · {template.baseWidth}×{template.baseHeight}
-                                            </div>
-                                            {selectedTemplate === template.id && (
-                                                <div className="absolute top-2 right-2 w-5 h-5 rounded-full bg-accent-primary flex items-center justify-center">
-                                                    <Check size={12} className="text-white" />
-                                                </div>
-                                            )}
-                                        </button>
+                                    {savedPacks.filter(p => !p.resizes || p.resizes.length === 0).map((pack) => (
+                                        <PackCard
+                                            key={pack.id}
+                                            pack={pack}
+                                            onDelete={() => deletePack(pack.id)}
+                                        />
                                     ))}
                                 </div>
+                                {savedPacks.filter(p => !p.resizes || p.resizes.length === 0).length === 0 && (
+                                    <div className="col-span-2 text-center py-6 text-xs text-text-tertiary">
+                                        Нет сохраненных одиночных шаблонов.<br />Сохраните текущий холст для быстрого старта!
+                                    </div>
+                                )}
                             </div>
                         </>
                     ) : (
@@ -660,7 +586,7 @@ export function TemplatePanel({ open, onClose }: TemplatePanelProps) {
                                                 Мои пакеты
                                             </h4>
                                             <div className="grid grid-cols-2 gap-3">
-                                                {savedPacks.map((pack) => (
+                                                {savedPacks.filter(p => p.resizes && p.resizes.length > 0).map((pack) => (
                                                     <PackCard
                                                         key={pack.id}
                                                         pack={pack}
@@ -713,19 +639,43 @@ export function TemplatePanel({ open, onClose }: TemplatePanelProps) {
                     )}
                 </div>
 
-                {/* Footer */}
-                {activeTab === "single" && (
-                    <div className="flex justify-end gap-2 mt-6 pt-4 border-t border-border-primary">
-                        <Button variant="ghost" onClick={onClose}>Отмена</Button>
-                        <Button
-                            disabled={!selectedTemplate}
-                            icon={<ArrowRight size={14} />}
-                            onClick={handleApplyTemplate}
-                        >
-                            Применить шаблон
-                        </Button>
+                {/* Application Options Modal */}
+                <Modal open={!!packToApply} title="Применение шаблона" onClose={() => setPackToApply(null)}>
+                    <div className="space-y-4">
+                        <p className="text-[13px] text-text-secondary">
+                            Как вы хотите применить шаблон <strong className="text-text-primary">{packToApply?.name}</strong>?
+                        </p>
+                        <div className="grid grid-cols-1 gap-3 mt-4">
+                            <button
+                                onClick={handleApplyPackDestructive}
+                                className="p-4 border border-border-primary bg-bg-secondary rounded-xl text-left hover:border-accent-primary focus:outline-none transition-colors group cursor-pointer"
+                            >
+                                <div className="text-sm font-semibold text-text-primary group-hover:text-accent-primary flex items-center gap-2 mb-1">
+                                    <ArrowRight size={14} />
+                                    Заменить текущий проект
+                                </div>
+                                <div className="text-[11px] text-text-tertiary">
+                                    Очистит холст и текущие форматы, загрузив шаблон с нуля. Подходит для старта нового проекта.
+                                </div>
+                            </button>
+                            <button
+                                onClick={handleApplyPackSmart}
+                                className="p-4 border border-border-primary bg-bg-secondary rounded-xl text-left hover:border-accent-primary focus:outline-none transition-colors group cursor-pointer"
+                            >
+                                <div className="text-sm font-semibold text-text-primary group-hover:text-accent-primary flex items-center gap-2 mb-1">
+                                    <Plus size={14} />
+                                    Добавить как новый формат
+                                </div>
+                                <div className="text-[11px] text-text-tertiary">
+                                    Сохранит ваш проект и добавит этот шаблон как новую вкладку ресайза, позволяя интеллектуально перенести в него текущий контент.
+                                </div>
+                            </button>
+                        </div>
+                        <div className="flex justify-end pt-2 mt-4">
+                            <Button variant="ghost" onClick={() => setPackToApply(null)}>Отмена</Button>
+                        </div>
                     </div>
-                )}
+                </Modal>
             </Modal>
 
             {/* Smart Resize Modal */}

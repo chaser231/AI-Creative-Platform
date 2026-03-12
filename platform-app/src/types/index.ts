@@ -184,26 +184,7 @@ export interface ComponentInstance {
     localProps: ComponentProps; // full copy — layout stays local, only content cascades
 }
 
-// ─── Template ───────────────────────────────────────────
-export interface TemplateSlot {
-    id: string;
-    name: string;       // e.g. "Header", "Hero Image", "CTA"
-    acceptTypes: ComponentType[]; // which component types fit this slot
-    defaultProps: Partial<BaseComponentProps>; // default position/size for the slot
-}
-
-export interface Template {
-    id: string;
-    name: string;
-    description: string;
-    thumbnail?: string;
-    baseWidth: number;
-    baseHeight: number;
-    slots: TemplateSlot[];
-    createdAt: Date;
-    updatedAt: Date;
-}
-
+// ─── Removed Legacy Template ──────────────────────────────
 // ─── Brand Kit ──────────────────────────────────────────
 export interface BrandColor {
     id: string;
