@@ -13,12 +13,12 @@ export interface DistanceMeasurement {
     from: number;       // start coordinate on measuring axis
     to: number;         // end coordinate on measuring axis
     position: number;   // cross-axis position for the label
-    distance: number;   // pixel distance (always positive)
+    distance: number;   // pixel distance (always positive, integer)
 }
 
 export interface SpacingGuide {
     axis: 'horizontal' | 'vertical';
-    gap: number;
+    gap: number;        // always integer
     // Pairs of object edges that share the same gap
     segments: { from: number; to: number; crossPos: number }[];
 }
@@ -48,7 +48,6 @@ export const DEFAULT_SNAP_CONFIG: SnapConfig = {
 };
 
 const SNAP_THRESHOLD = 5;
-const SPACING_TOLERANCE = 3; // 3px tolerance for "equal gap" detection
 
 export interface NodeBounds {
     id: string;
@@ -81,28 +80,18 @@ export function computeSnap(
         const gridX = Math.round(activeNode.x / gs) * gs;
         const gridY = Math.round(activeNode.y / gs) * gs;
 
-        // Also snap right/bottom edges to grid
         const rightEdge = activeNode.x + activeNode.width;
         const bottomEdge = activeNode.y + activeNode.height;
         const gridRightX = Math.round(rightEdge / gs) * gs;
         const gridBottomY = Math.round(bottomEdge / gs) * gs;
 
-        // Pick whichever is closer: snap left edge or right edge
         const diffLeft = Math.abs(activeNode.x - gridX);
         const diffRight = Math.abs(rightEdge - gridRightX);
-        if (diffLeft <= diffRight) {
-            snappedX = gridX;
-        } else {
-            snappedX = gridRightX - activeNode.width;
-        }
+        snappedX = diffLeft <= diffRight ? gridX : gridRightX - activeNode.width;
 
         const diffTop = Math.abs(activeNode.y - gridY);
         const diffBottom = Math.abs(bottomEdge - gridBottomY);
-        if (diffTop <= diffBottom) {
-            snappedY = gridY;
-        } else {
-            snappedY = gridBottomY - activeNode.height;
-        }
+        snappedY = diffTop <= diffBottom ? gridY : gridBottomY - activeNode.height;
     }
 
     // ── 2. Artboard Snapping ────────────────────────────────
@@ -111,6 +100,9 @@ export function computeSnap(
         : null;
 
     // ── 3. Object Snapping (including artboard as virtual node) ──
+    let objectSnapDiffX = Infinity;
+    let objectSnapDiffY = Infinity;
+
     if (config.objectSnap || artboardNode) {
         const allTargets = config.objectSnap
             ? [...otherNodes, ...(artboardNode ? [artboardNode] : [])]
@@ -121,33 +113,59 @@ export function computeSnap(
         // Object snap overrides grid snap when within threshold
         if (objectSnap.x !== null) {
             snappedX = objectSnap.x;
+            objectSnapDiffX = objectSnap.diffX;
         }
         if (objectSnap.y !== null) {
             snappedY = objectSnap.y;
+            objectSnapDiffY = objectSnap.diffY;
         }
         guides.push(...objectSnap.guides);
     }
 
     // ── 4. Smart Spacing Guides ─────────────────────────────
+    // Only run if objectSnap is enabled and we have at least 2 other objects
     if (config.objectSnap && otherNodes.length >= 2) {
+        // Use the current best snapped position
+        const currentX = snappedX ?? activeNode.x;
+        const currentY = snappedY ?? activeNode.y;
+
         const spacingResult = getSpacingGuides(
-            { ...activeNode, x: snappedX ?? activeNode.x, y: snappedY ?? activeNode.y },
+            { ...activeNode, x: currentX, y: currentY },
             otherNodes,
-            threshold
+            threshold,
+            config.pixelSnap
         );
-        spacingGuides.push(...spacingResult.spacingGuides);
-        // If spacing snap found a better position, use it
+
+        // Spacing snap only wins over object snap if object snap was not active
+        // or if the spacing snap is closer
         if (spacingResult.snapX !== null) {
-            snappedX = spacingResult.snapX;
-            guides.push(...spacingResult.guides);
+            const spacingDiffX = Math.abs(activeNode.x - spacingResult.snapX);
+            // Only override if object snap wasn't set or spacing is at least as close
+            if (objectSnapDiffX > threshold || spacingDiffX <= objectSnapDiffX) {
+                snappedX = spacingResult.snapX;
+            }
         }
         if (spacingResult.snapY !== null) {
-            snappedY = spacingResult.snapY;
-            guides.push(...spacingResult.guides);
+            const spacingDiffY = Math.abs(activeNode.y - spacingResult.snapY);
+            if (objectSnapDiffY > threshold || spacingDiffY <= objectSnapDiffY) {
+                snappedY = spacingResult.snapY;
+            }
         }
+        // Always show spacing guides if they exist (even if we didn't adopt the snap position)
+        spacingGuides.push(...spacingResult.spacingGuides);
     }
 
-    // ── 5. Distance Measurement (Alt+drag) ──────────────────
+    // ── 5. Pixel Rounding (before distance measurement so distances are accurate) ──
+    if (config.pixelSnap) {
+        if (snappedX !== null) snappedX = Math.round(snappedX);
+        if (snappedY !== null) snappedY = Math.round(snappedY);
+
+        // Even if no snap happened, round the proposed position
+        if (snappedX === null) snappedX = Math.round(activeNode.x);
+        if (snappedY === null) snappedY = Math.round(activeNode.y);
+    }
+
+    // ── 6. Distance Measurement (Alt+drag) — AFTER pixel rounding ──
     if (showDistances) {
         const finalNode = {
             ...activeNode,
@@ -156,16 +174,6 @@ export function computeSnap(
         };
         const allTargets = [...otherNodes, ...(artboardNode ? [artboardNode] : [])];
         distances.push(...getDistanceMeasurements(finalNode, allTargets));
-    }
-
-    // ── 6. Pixel Rounding (final pass) ──────────────────────
-    if (config.pixelSnap) {
-        if (snappedX !== null) snappedX = Math.round(snappedX);
-        if (snappedY !== null) snappedY = Math.round(snappedY);
-
-        // Even if no snap happened, round the proposed position
-        if (snappedX === null) snappedX = Math.round(activeNode.x);
-        if (snappedY === null) snappedY = Math.round(activeNode.y);
     }
 
     return { x: snappedX, y: snappedY, guides, distances, spacingGuides };
@@ -194,7 +202,7 @@ function getObjectSnap(
     activeNode: NodeBounds,
     otherNodes: NodeBounds[],
     threshold: number
-): { x: number | null; y: number | null; guides: SnapGuide[] } {
+): { x: number | null; y: number | null; diffX: number; diffY: number; guides: SnapGuide[] } {
     const guides: SnapGuide[] = [];
     let snappedX: number | null = null;
     let snappedY: number | null = null;
@@ -283,7 +291,7 @@ function getObjectSnap(
         });
     }
 
-    return { x: snappedX, y: snappedY, guides };
+    return { x: snappedX, y: snappedY, diffX: minDiffX, diffY: minDiffY, guides };
 }
 
 // ─── Distance Measurement ───────────────────────────────────
@@ -298,8 +306,6 @@ function getDistanceMeasurements(
     const aRight = activeNode.x + activeNode.width;
     const aTop = activeNode.y;
     const aBottom = activeNode.y + activeNode.height;
-    const aCenterY = activeNode.y + activeNode.height / 2;
-    const aCenterX = activeNode.x + activeNode.width / 2;
 
     for (const node of otherNodes) {
         const bLeft = node.x;
@@ -384,101 +390,114 @@ function getDistanceMeasurements(
 
 // ─── Smart Spacing Guides ───────────────────────────────────
 
+/**
+ * Checks if two nodes overlap on the cross-axis (i.e. they are roughly
+ * "in the same row" for horizontal gaps, or "in the same column" for vertical).
+ * Uses a generous overlap check: the vertical extent of one must overlap the other.
+ */
+function hasCrossAxisOverlap(
+    a: NodeBounds,
+    b: NodeBounds,
+    axis: 'horizontal' | 'vertical'
+): boolean {
+    if (axis === 'horizontal') {
+        // For horizontal gap analysis, check Y overlap
+        return a.y < b.y + b.height && a.y + a.height > b.y;
+    } else {
+        // For vertical gap analysis, check X overlap
+        return a.x < b.x + b.width && a.x + a.width > b.x;
+    }
+}
+
 function getSpacingGuides(
     activeNode: NodeBounds,
     otherNodes: NodeBounds[],
-    threshold: number
-): { spacingGuides: SpacingGuide[]; snapX: number | null; snapY: number | null; guides: SnapGuide[] } {
+    threshold: number,
+    pixelSnap: boolean
+): { spacingGuides: SpacingGuide[]; snapX: number | null; snapY: number | null } {
     const spacingGuides: SpacingGuide[] = [];
     let snapX: number | null = null;
     let snapY: number | null = null;
-    const guides: SnapGuide[] = [];
 
-    // Get all nodes including active, sorted by position
-    const allNodes = [...otherNodes]; // don't include active for gap calculation between others
-
-    if (allNodes.length < 2) return { spacingGuides, snapX, snapY, guides };
+    if (otherNodes.length < 2) return { spacingGuides, snapX, snapY };
 
     // ── Horizontal spacing ──────────────────────────────
-    // Sort other nodes by X position
-    const sortedX = [...allNodes].sort((a, b) => a.x - b.x);
+    const sortedX = [...otherNodes].sort((a, b) => a.x - b.x);
 
-    // Compute gaps between consecutive other nodes (horizontally adjacent)
+    // Compute gaps between consecutive nodes that overlap on Y axis
     const xGaps: { from: NodeBounds; to: NodeBounds; gap: number }[] = [];
     for (let i = 0; i < sortedX.length - 1; i++) {
         const a = sortedX[i];
         const b = sortedX[i + 1];
         const gap = b.x - (a.x + a.width);
-        if (gap > 0) {
-            xGaps.push({ from: a, to: b, gap });
+        // Only consider positive gaps between objects that share Y range
+        if (gap > 0 && hasCrossAxisOverlap(a, b, 'horizontal')) {
+            xGaps.push({ from: a, to: b, gap: Math.round(gap) });
         }
     }
 
-    // Check if active node can be placed to create an equal gap with any existing gap
+    // Try each xGap: can the active node create an equal gap?
     for (const gapInfo of xGaps) {
-        // Could active fit to the left of gapInfo.from with same gap?
-        const leftTarget = gapInfo.from.x - gapInfo.gap - activeNode.width;
+        const roundedGap = gapInfo.gap; // already rounded
+
+        // Also check that active node is roughly on the same Y range
+        if (!hasCrossAxisOverlap(activeNode, gapInfo.from, 'horizontal') &&
+            !hasCrossAxisOverlap(activeNode, gapInfo.to, 'horizontal')) {
+            continue;
+        }
+
+        const crossY = getCrossAxisCenter([activeNode, gapInfo.from, gapInfo.to], 'horizontal');
+
+        // Option A: active placed to the LEFT of gapInfo.from
+        const leftTarget = gapInfo.from.x - roundedGap - activeNode.width;
         if (Math.abs(activeNode.x - leftTarget) < threshold) {
-            snapX = leftTarget;
-            const midY = Math.min(activeNode.y, gapInfo.from.y, gapInfo.to.y);
-            const maxY = Math.max(
-                activeNode.y + activeNode.height,
-                gapInfo.from.y + gapInfo.from.height,
-                gapInfo.to.y + gapInfo.to.height
-            );
+            snapX = pixelSnap ? Math.round(leftTarget) : leftTarget;
             spacingGuides.push({
                 axis: 'horizontal',
-                gap: gapInfo.gap,
+                gap: roundedGap,
                 segments: [
-                    { from: leftTarget + activeNode.width, to: gapInfo.from.x, crossPos: (midY + maxY) / 2 },
-                    { from: gapInfo.from.x + gapInfo.from.width, to: gapInfo.to.x, crossPos: (midY + maxY) / 2 },
+                    { from: snapX + activeNode.width, to: gapInfo.from.x, crossPos: crossY },
+                    { from: gapInfo.from.x + gapInfo.from.width, to: gapInfo.to.x, crossPos: crossY },
                 ],
             });
             break;
         }
 
-        // Could active fit to the right of gapInfo.to with same gap?
-        const rightTarget = gapInfo.to.x + gapInfo.to.width + gapInfo.gap;
+        // Option B: active placed to the RIGHT of gapInfo.to
+        const rightTarget = gapInfo.to.x + gapInfo.to.width + roundedGap;
         if (Math.abs(activeNode.x - rightTarget) < threshold) {
-            snapX = rightTarget;
-            const midY = Math.min(activeNode.y, gapInfo.from.y, gapInfo.to.y);
-            const maxY = Math.max(
-                activeNode.y + activeNode.height,
-                gapInfo.from.y + gapInfo.from.height,
-                gapInfo.to.y + gapInfo.to.height
-            );
+            snapX = pixelSnap ? Math.round(rightTarget) : rightTarget;
             spacingGuides.push({
                 axis: 'horizontal',
-                gap: gapInfo.gap,
+                gap: roundedGap,
                 segments: [
-                    { from: gapInfo.from.x + gapInfo.from.width, to: gapInfo.to.x, crossPos: (midY + maxY) / 2 },
-                    { from: gapInfo.to.x + gapInfo.to.width, to: rightTarget, crossPos: (midY + maxY) / 2 },
+                    { from: gapInfo.from.x + gapInfo.from.width, to: gapInfo.to.x, crossPos: crossY },
+                    { from: gapInfo.to.x + gapInfo.to.width, to: snapX, crossPos: crossY },
                 ],
             });
             break;
         }
 
-        // Could active fit between from and to, splitting the gap equally?
+        // Option C: active placed BETWEEN from and to, splitting the gap equally
         const betweenLeft = gapInfo.from.x + gapInfo.from.width;
         const betweenRight = gapInfo.to.x;
         const totalSpace = betweenRight - betweenLeft;
         const equalGap = (totalSpace - activeNode.width) / 2;
-        if (equalGap > 0) {
+        if (equalGap > 2) { // minimum 2px gap to be meaningful
             const betweenTarget = betweenLeft + equalGap;
-            if (Math.abs(activeNode.x - betweenTarget) < threshold) {
-                snapX = betweenTarget;
-                const midY = Math.min(activeNode.y, gapInfo.from.y, gapInfo.to.y);
-                const maxY = Math.max(
-                    activeNode.y + activeNode.height,
-                    gapInfo.from.y + gapInfo.from.height,
-                    gapInfo.to.y + gapInfo.to.height
-                );
+            const roundedTarget = pixelSnap ? Math.round(betweenTarget) : betweenTarget;
+            if (Math.abs(activeNode.x - roundedTarget) < threshold) {
+                snapX = roundedTarget;
+                // Recalculate actual gaps after rounding
+                const gapLeft = snapX - betweenLeft;
+                const gapRight = betweenRight - (snapX + activeNode.width);
+                const displayGap = Math.round((gapLeft + gapRight) / 2);
                 spacingGuides.push({
                     axis: 'horizontal',
-                    gap: Math.round(equalGap),
+                    gap: displayGap,
                     segments: [
-                        { from: betweenLeft, to: betweenTarget, crossPos: (midY + maxY) / 2 },
-                        { from: betweenTarget + activeNode.width, to: betweenRight, crossPos: (midY + maxY) / 2 },
+                        { from: betweenLeft, to: snapX, crossPos: crossY },
+                        { from: snapX + activeNode.width, to: betweenRight, crossPos: crossY },
                     ],
                 });
                 break;
@@ -486,81 +505,78 @@ function getSpacingGuides(
         }
     }
 
-    // ── Vertical spacing (same logic, rotated) ──────────
-    const sortedY = [...allNodes].sort((a, b) => a.y - b.y);
+    // ── Vertical spacing ──────────────────────────────
+    const sortedY = [...otherNodes].sort((a, b) => a.y - b.y);
 
     const yGaps: { from: NodeBounds; to: NodeBounds; gap: number }[] = [];
     for (let i = 0; i < sortedY.length - 1; i++) {
         const a = sortedY[i];
         const b = sortedY[i + 1];
         const gap = b.y - (a.y + a.height);
-        if (gap > 0) {
-            yGaps.push({ from: a, to: b, gap });
+        if (gap > 0 && hasCrossAxisOverlap(a, b, 'vertical')) {
+            yGaps.push({ from: a, to: b, gap: Math.round(gap) });
         }
     }
 
     for (const gapInfo of yGaps) {
-        const topTarget = gapInfo.from.y - gapInfo.gap - activeNode.height;
+        const roundedGap = gapInfo.gap;
+
+        if (!hasCrossAxisOverlap(activeNode, gapInfo.from, 'vertical') &&
+            !hasCrossAxisOverlap(activeNode, gapInfo.to, 'vertical')) {
+            continue;
+        }
+
+        const crossX = getCrossAxisCenter([activeNode, gapInfo.from, gapInfo.to], 'vertical');
+
+        // Option A: active placed ABOVE gapInfo.from
+        const topTarget = gapInfo.from.y - roundedGap - activeNode.height;
         if (Math.abs(activeNode.y - topTarget) < threshold) {
-            snapY = topTarget;
-            const midX = Math.min(activeNode.x, gapInfo.from.x, gapInfo.to.x);
-            const maxX = Math.max(
-                activeNode.x + activeNode.width,
-                gapInfo.from.x + gapInfo.from.width,
-                gapInfo.to.x + gapInfo.to.width
-            );
+            snapY = pixelSnap ? Math.round(topTarget) : topTarget;
             spacingGuides.push({
                 axis: 'vertical',
-                gap: gapInfo.gap,
+                gap: roundedGap,
                 segments: [
-                    { from: topTarget + activeNode.height, to: gapInfo.from.y, crossPos: (midX + maxX) / 2 },
-                    { from: gapInfo.from.y + gapInfo.from.height, to: gapInfo.to.y, crossPos: (midX + maxX) / 2 },
+                    { from: snapY + activeNode.height, to: gapInfo.from.y, crossPos: crossX },
+                    { from: gapInfo.from.y + gapInfo.from.height, to: gapInfo.to.y, crossPos: crossX },
                 ],
             });
             break;
         }
 
-        const bottomTarget = gapInfo.to.y + gapInfo.to.height + gapInfo.gap;
+        // Option B: active placed BELOW gapInfo.to
+        const bottomTarget = gapInfo.to.y + gapInfo.to.height + roundedGap;
         if (Math.abs(activeNode.y - bottomTarget) < threshold) {
-            snapY = bottomTarget;
-            const midX = Math.min(activeNode.x, gapInfo.from.x, gapInfo.to.x);
-            const maxX = Math.max(
-                activeNode.x + activeNode.width,
-                gapInfo.from.x + gapInfo.from.width,
-                gapInfo.to.x + gapInfo.to.width
-            );
+            snapY = pixelSnap ? Math.round(bottomTarget) : bottomTarget;
             spacingGuides.push({
                 axis: 'vertical',
-                gap: gapInfo.gap,
+                gap: roundedGap,
                 segments: [
-                    { from: gapInfo.from.y + gapInfo.from.height, to: gapInfo.to.y, crossPos: (midX + maxX) / 2 },
-                    { from: gapInfo.to.y + gapInfo.to.height, to: bottomTarget, crossPos: (midX + maxX) / 2 },
+                    { from: gapInfo.from.y + gapInfo.from.height, to: gapInfo.to.y, crossPos: crossX },
+                    { from: gapInfo.to.y + gapInfo.to.height, to: snapY, crossPos: crossX },
                 ],
             });
             break;
         }
 
-        // Between
+        // Option C: active placed BETWEEN
         const betweenTop = gapInfo.from.y + gapInfo.from.height;
         const betweenBottom = gapInfo.to.y;
         const totalSpace = betweenBottom - betweenTop;
         const equalGap = (totalSpace - activeNode.height) / 2;
-        if (equalGap > 0) {
+        if (equalGap > 2) {
             const betweenTarget = betweenTop + equalGap;
-            if (Math.abs(activeNode.y - betweenTarget) < threshold) {
-                snapY = betweenTarget;
-                const midX = Math.min(activeNode.x, gapInfo.from.x, gapInfo.to.x);
-                const maxX = Math.max(
-                    activeNode.x + activeNode.width,
-                    gapInfo.from.x + gapInfo.from.width,
-                    gapInfo.to.x + gapInfo.to.width
-                );
+            const roundedTarget = pixelSnap ? Math.round(betweenTarget) : betweenTarget;
+            if (Math.abs(activeNode.y - roundedTarget) < threshold) {
+                snapY = roundedTarget;
+                const gapTop = snapY - betweenTop;
+                const gapBottom = betweenBottom - (snapY + activeNode.height);
+                const displayGap = Math.round((gapTop + gapBottom) / 2);
                 spacingGuides.push({
                     axis: 'vertical',
-                    gap: Math.round(equalGap),
+                    gap: displayGap,
                     segments: [
-                        { from: betweenTop, to: betweenTarget, crossPos: (midX + maxX) / 2 },
-                        { from: betweenTarget + activeNode.height, to: betweenBottom, crossPos: (midX + maxX) / 2 },
+                        { from: betweenTop, to: snapY, crossPos: crossX },
+                        { from: snapY + activeNode.height, to: betweenBottom, crossPos: crossX },
                     ],
                 });
                 break;
@@ -568,5 +584,18 @@ function getSpacingGuides(
         }
     }
 
-    return { spacingGuides, snapX, snapY, guides };
+    return { spacingGuides, snapX, snapY };
+}
+
+/** Compute a shared cross-axis center for the spacing guide line */
+function getCrossAxisCenter(nodes: NodeBounds[], axis: 'horizontal' | 'vertical'): number {
+    if (axis === 'horizontal') {
+        const minY = Math.min(...nodes.map(n => n.y));
+        const maxY = Math.max(...nodes.map(n => n.y + n.height));
+        return (minY + maxY) / 2;
+    } else {
+        const minX = Math.min(...nodes.map(n => n.x));
+        const maxX = Math.max(...nodes.map(n => n.x + n.width));
+        return (minX + maxX) / 2;
+    }
 }
