@@ -20,6 +20,8 @@ import { applyLayout } from "@/services/layoutEngine";
 import { applyAllAutoLayouts } from "@/utils/layoutEngine";
 import type { SlotMapping } from "@/services/slotMappingService";
 import type { TemplatePack } from "@/services/templateService";
+import { DEFAULT_SNAP_CONFIG } from "@/services/snapService";
+import type { SnapConfig } from "@/services/snapService";
 
 export interface ArtboardProps {
     fill: string;
@@ -149,6 +151,9 @@ interface CanvasStore {
     // Artboard
     artboardProps: ArtboardProps;
 
+    // Snap config
+    snapConfig: SnapConfig;
+
     // Drag-to-frame highlight
     highlightedFrameId: string | null;
 
@@ -203,6 +208,7 @@ interface CanvasStore {
 
     // Artboard actions
     updateArtboardProps: (updates: Partial<ArtboardProps>) => void;
+    updateSnapConfig: (updates: Partial<SnapConfig>) => void;
 
     // Drag-to-frame actions
     setHighlightedFrameId: (id: string | null) => void;
@@ -318,6 +324,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
     stageY: 0,
 
     artboardProps: { ...DEFAULT_ARTBOARD_PROPS },
+    snapConfig: { ...DEFAULT_SNAP_CONFIG },
     highlightedFrameId: null,
 
     // Undo / Redo
@@ -1679,6 +1686,12 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
     updateArtboardProps: (updates) => {
         set((state) => ({
             artboardProps: { ...state.artboardProps, ...updates },
+        }));
+    },
+
+    updateSnapConfig: (updates) => {
+        set((state) => ({
+            snapConfig: { ...state.snapConfig, ...updates },
         }));
     },
 

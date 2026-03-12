@@ -6,7 +6,7 @@ import { Stage, Layer, Rect, Text, Image as KonvaImage, Transformer, Group, Line
 import { useCanvasStore, computeConstrainedPosition } from "@/store/canvasStore";
 import type { Layer as LayerType, TextLayer, BadgeLayer, FrameLayer } from "@/types";
 import { ContextMenu, buildLayerContextMenuItems } from "./ContextMenu";
-import { getSnapLines, SnapResult } from "@/services/snapService";
+import { computeSnap, SnapResult, DistanceMeasurement, SpacingGuide } from "@/services/snapService";
 import { isFocusedOnInput } from "@/utils/keyboard";
 import Konva from "konva";
 
@@ -614,6 +614,9 @@ export function Canvas({ stageRef }: CanvasProps) {
 
     // Snap Guides State
     const [snapLines, setSnapLines] = useState<SnapResult['guides']>([]);
+    const [distanceMeasurements, setDistanceMeasurements] = useState<DistanceMeasurement[]>([]);
+    const [spacingGuides, setSpacingGuides] = useState<SpacingGuide[]>([]);
+    const isAltPressed = useRef(false);
 
     // Track start positions for multi-drag
     const dragStartLocs = useRef<Record<string, { x: number; y: number }>>({});
@@ -766,6 +769,18 @@ export function Canvas({ stageRef }: CanvasProps) {
 
     }, [layers, selectedLayerIds, selectLayer]);
 
+    // Alt key tracking for distance measurement
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => { if (e.key === 'Alt') isAltPressed.current = true; };
+        const handleKeyUp = (e: KeyboardEvent) => { if (e.key === 'Alt') isAltPressed.current = false; };
+        window.addEventListener('keydown', handleKeyDown);
+        window.addEventListener('keyup', handleKeyUp);
+        return () => {
+            window.removeEventListener('keydown', handleKeyDown);
+            window.removeEventListener('keyup', handleKeyUp);
+        };
+    }, []);
+
     const handleLayerDragMove = useCallback((e: Konva.KonvaEventObject<DragEvent>) => {
         const id = e.target.id();
         const startLoc = dragStartLocs.current[id];
@@ -773,6 +788,8 @@ export function Canvas({ stageRef }: CanvasProps) {
 
         const stage = e.target.getStage();
         if (!stage) return;
+
+        const { snapConfig } = useCanvasStore.getState();
 
         // Convert Absolute (Screen) Position to Scene Coordinates
         const absPos = e.target.getAbsolutePosition();
@@ -782,8 +799,7 @@ export function Canvas({ stageRef }: CanvasProps) {
         let dx = currentSceneX - startLoc.x;
         let dy = currentSceneY - startLoc.y;
 
-        // Snap Logic (only for single selection drag for now for simplicity, or primary node)
-        // We snap the node that is being dragged (e.target).
+        // Snap Logic
         const primaryLayer = layers.find(l => l.id === id);
         if (primaryLayer) {
             const proposedX = startLoc.x + dx;
@@ -800,7 +816,7 @@ export function Canvas({ stageRef }: CanvasProps) {
                     rotation: l.rotation
                 }));
 
-            const snapResult = getSnapLines(
+            const snapResult = computeSnap(
                 {
                     id: primaryLayer.id,
                     x: proposedX,
@@ -809,10 +825,15 @@ export function Canvas({ stageRef }: CanvasProps) {
                     height: primaryLayer.height,
                     rotation: primaryLayer.rotation
                 },
-                otherNodes
+                otherNodes,
+                snapConfig,
+                { width: canvasWidth, height: canvasHeight },
+                isAltPressed.current
             );
 
             setSnapLines(snapResult.guides);
+            setDistanceMeasurements(snapResult.distances);
+            setSpacingGuides(snapResult.spacingGuides);
 
             if (snapResult.x !== null) {
                 dx = snapResult.x - startLoc.x;
@@ -822,6 +843,8 @@ export function Canvas({ stageRef }: CanvasProps) {
             }
         } else {
             setSnapLines([]);
+            setDistanceMeasurements([]);
+            setSpacingGuides([]);
         }
 
         // Move other selected nodes (and self)
@@ -829,11 +852,9 @@ export function Canvas({ stageRef }: CanvasProps) {
             const node = stage.findOne("#" + sid);
             if (node) {
                 const sLoc = dragStartLocs.current[sid];
-                // Calculate target Scene Position
                 const targetSceneX = sLoc.x + dx;
                 const targetSceneY = sLoc.y + dy;
 
-                // Convert back to Absolute for Konva update
                 const targetAbsX = targetSceneX * stage.scaleX() + stage.x();
                 const targetAbsY = targetSceneY * stage.scaleY() + stage.y();
 
@@ -855,10 +876,12 @@ export function Canvas({ stageRef }: CanvasProps) {
         } else {
             setHighlightedFrameId(null);
         }
-    }, [layers, selectedLayerIds, getFrameAtPoint, setHighlightedFrameId]);
+    }, [layers, selectedLayerIds, getFrameAtPoint, setHighlightedFrameId, canvasWidth, canvasHeight]);
 
     const handleLayerDragEnd = useCallback((e: Konva.KonvaEventObject<DragEvent>) => {
         setSnapLines([]);
+        setDistanceMeasurements([]);
+        setSpacingGuides([]);
         setStageDraggable(true);
         const id = e.target.id();
         const startLoc = dragStartLocs.current[id];
@@ -1407,18 +1430,120 @@ export function Canvas({ stageRef }: CanvasProps) {
                     {/* Snap Guides */}
                     {snapLines.map((guide, i) => (
                         <Line
-                            key={i}
+                            key={`snap-${i}`}
                             points={
                                 guide.orientation === 'vertical'
                                     ? [guide.position, guide.start, guide.position, guide.end]
                                     : [guide.start, guide.position, guide.end, guide.position]
                             }
-                            stroke="#ff0000"
+                            stroke={guide.type === 'artboard' ? '#6366F1' : '#ff0000'}
                             strokeWidth={1}
                             dash={[4, 4]}
                             listening={false}
                         />
                     ))}
+
+                    {/* Distance Measurements (Alt+drag) */}
+                    {distanceMeasurements.map((dm, i) => {
+                        const isHz = dm.axis === 'horizontal';
+                        const points = isHz
+                            ? [dm.from, dm.position, dm.to, dm.position]
+                            : [dm.position, dm.from, dm.position, dm.to];
+                        const labelX = isHz ? (dm.from + dm.to) / 2 : dm.position + 4;
+                        const labelY = isHz ? dm.position - 14 : (dm.from + dm.to) / 2 - 6;
+                        return (
+                            <>
+                                <Line
+                                    key={`dist-line-${i}`}
+                                    points={points}
+                                    stroke="#F97316"
+                                    strokeWidth={1}
+                                    listening={false}
+                                />
+                                {/* End caps */}
+                                {isHz ? (
+                                    <>
+                                        <Line key={`dist-cap-a-${i}`} points={[dm.from, dm.position - 4, dm.from, dm.position + 4]} stroke="#F97316" strokeWidth={1} listening={false} />
+                                        <Line key={`dist-cap-b-${i}`} points={[dm.to, dm.position - 4, dm.to, dm.position + 4]} stroke="#F97316" strokeWidth={1} listening={false} />
+                                    </>
+                                ) : (
+                                    <>
+                                        <Line key={`dist-cap-a-${i}`} points={[dm.position - 4, dm.from, dm.position + 4, dm.from]} stroke="#F97316" strokeWidth={1} listening={false} />
+                                        <Line key={`dist-cap-b-${i}`} points={[dm.position - 4, dm.to, dm.position + 4, dm.to]} stroke="#F97316" strokeWidth={1} listening={false} />
+                                    </>
+                                )}
+                                {/* Distance label */}
+                                <Rect
+                                    key={`dist-bg-${i}`}
+                                    x={labelX - 14}
+                                    y={labelY - 2}
+                                    width={28}
+                                    height={14}
+                                    fill="#F97316"
+                                    cornerRadius={3}
+                                    listening={false}
+                                />
+                                <Text
+                                    key={`dist-label-${i}`}
+                                    x={labelX - 14}
+                                    y={labelY}
+                                    width={28}
+                                    text={`${dm.distance}`}
+                                    fontSize={9}
+                                    fontFamily="Inter, sans-serif"
+                                    fill="#fff"
+                                    align="center"
+                                    listening={false}
+                                />
+                            </>
+                        );
+                    })}
+
+                    {/* Smart Spacing Guides */}
+                    {spacingGuides.map((sg, i) =>
+                        sg.segments.map((seg, j) => {
+                            const isHz = sg.axis === 'horizontal';
+                            const points = isHz
+                                ? [seg.from, seg.crossPos, seg.to, seg.crossPos]
+                                : [seg.crossPos, seg.from, seg.crossPos, seg.to];
+                            const labelX = isHz ? (seg.from + seg.to) / 2 : seg.crossPos + 4;
+                            const labelY = isHz ? seg.crossPos - 14 : (seg.from + seg.to) / 2 - 6;
+                            return (
+                                <>
+                                    <Line
+                                        key={`spc-line-${i}-${j}`}
+                                        points={points}
+                                        stroke="#EC4899"
+                                        strokeWidth={1}
+                                        dash={[2, 2]}
+                                        listening={false}
+                                    />
+                                    <Rect
+                                        key={`spc-bg-${i}-${j}`}
+                                        x={labelX - 14}
+                                        y={labelY - 2}
+                                        width={28}
+                                        height={14}
+                                        fill="#EC4899"
+                                        cornerRadius={3}
+                                        listening={false}
+                                    />
+                                    <Text
+                                        key={`spc-label-${i}-${j}`}
+                                        x={labelX - 14}
+                                        y={labelY}
+                                        width={28}
+                                        text={`${sg.gap}`}
+                                        fontSize={9}
+                                        fontFamily="Inter, sans-serif"
+                                        fill="#fff"
+                                        align="center"
+                                        listening={false}
+                                    />
+                                </>
+                            );
+                        })
+                    )}
 
                     {/* Selection Box */}
                     {selectionBox && (
