@@ -239,10 +239,10 @@ export function WizardFlow({ projectId, onSwitchToStudio }: WizardFlowProps) {
     };
 
     return (
-        <div className="flex-1 flex items-center justify-center bg-bg-secondary p-8">
-            <div className="w-full max-w-2xl bg-bg-primary rounded-[var(--radius-xl)] shadow-[var(--shadow-lg)] border border-border-primary overflow-hidden">
+        <div className="flex-1 flex items-center justify-center bg-bg-secondary p-8 overflow-hidden">
+            <div className="w-full max-w-2xl bg-bg-primary rounded-[var(--radius-xl)] shadow-[var(--shadow-lg)] border border-border-primary overflow-hidden flex flex-col max-h-full">
                 {/* Progress bar */}
-                <div className="flex items-center gap-0 border-b border-border-primary">
+                <div className="flex items-center gap-0 border-b border-border-primary shrink-0">
                     {(["template", "content", "review"] as WizardStep[]).map((s, i) => (
                         <div
                             key={s}
@@ -265,7 +265,7 @@ export function WizardFlow({ projectId, onSwitchToStudio }: WizardFlowProps) {
                     ))}
                 </div>
 
-                <div className="p-6">
+                <div className="p-6 overflow-y-auto flex-1">
                     {/* Step 1: Template */}
                     {step === "template" && (
                         <div className="space-y-4">
