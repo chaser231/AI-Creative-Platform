@@ -29,8 +29,8 @@ export function WizardFlow({ projectId, onSwitchToStudio }: WizardFlowProps) {
     const [manualSizes, setManualSizes] = useState<{width: number; height: number; id: string}[]>([]);
     const [manualW, setManualW] = useState("1080");
     const [manualH, setManualH] = useState("1080");
-    const [headline, setHeadline] = useState("");
-    const [ctaText, setCtaText] = useState("Shop Now");
+    const [textValues, setTextValues] = useState<Record<string, string>>({});
+    const [imageValues, setImageValues] = useState<Record<string, string>>({});
     const [productDescription, setProductDescription] = useState("");
     const [isGenerating, setIsGenerating] = useState(false);
     const [packSearch, setPackSearch] = useState("");
@@ -55,32 +55,34 @@ export function WizardFlow({ projectId, onSwitchToStudio }: WizardFlowProps) {
         }, savedPacks);
     }, [packSearch, savedPacks]);
 
+    const selectedTemplate = savedPacks.find(p => p.id === selectedTemplateId) || DEFAULT_PACKS.find(p => p.id === selectedTemplateId || p.data.id === selectedTemplateId)?.data;
+
     const handleGenerateContent = async () => {
-        if (!productDescription) return;
+        if (!productDescription || !selectedTemplate) return;
         setIsGenerating(true);
         try {
             const { RemoteTextProvider } = await import("@/services/aiService");
+            const newValues = { ...textValues };
 
-            const headlineParams = {
-                model: "openai",
-                context: "You are a marketing copywriter. Generate a short, punchy headline (2-3 words, CAPS) for a banner."
-            };
-            const headlineRes = await RemoteTextProvider.generate(
-                `Create a headline for: ${productDescription}`,
-                headlineParams
-            );
-            setHeadline(headlineRes.content.replace(/"/g, ''));
-
-            const ctaParams = {
-                model: "openai",
-                context: "Generate a short Call to Action button text (max 2 words)."
-            };
-            const ctaRes = await RemoteTextProvider.generate(
-                `CTA for: ${productDescription}`,
-                ctaParams
-            );
-            setCtaText(ctaRes.content.replace(/"/g, ''));
-
+            for (const mc of selectedTemplate.masterComponents) {
+                if (mc.type !== "text") continue;
+                const name = mc.name.toLowerCase();
+                
+                if (name.includes("head") || name.includes("заголовок") || name.includes("title")) {
+                    const params = { model: "openai", context: "You are a marketing copywriter. Generate a short, punchy headline (2-3 words, CAPS) for a banner." };
+                    const res = await RemoteTextProvider.generate(`Create a headline for: ${productDescription}`, params);
+                    newValues[mc.id] = res.content.replace(/"/g, '').trim();
+                } else if (name.includes("cta") || name.includes("кнопк") || name.includes("button")) {
+                    const params = { model: "openai", context: "Generate a short Call to Action button text (max 2 words, no quotes)." };
+                    const res = await RemoteTextProvider.generate(`CTA for: ${productDescription}`, params);
+                    newValues[mc.id] = res.content.replace(/"/g, '').trim();
+                } else if (name.includes("subhead") || name.includes("подзаголовок") || name.includes("desc") || name.includes("описан")) {
+                    const params = { model: "openai", context: "Generate a short subtitle/description (5-7 words)." };
+                    const res = await RemoteTextProvider.generate(`Subtitle for: ${productDescription}`, params);
+                    newValues[mc.id] = res.content.replace(/"/g, '').trim();
+                }
+            }
+            setTextValues(newValues);
         } catch (err) {
             console.error("AI Generation failed", err);
             alert("Не удалось сгенерировать контент. Проверьте API.");
@@ -89,7 +91,17 @@ export function WizardFlow({ projectId, onSwitchToStudio }: WizardFlowProps) {
         }
     };
 
-    const selectedTemplate = savedPacks.find(p => p.id === selectedTemplateId) || DEFAULT_PACKS.find(p => p.id === selectedTemplateId)?.data;
+    const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>, id: string) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+            if (ev.target?.result && typeof ev.target.result === "string") {
+                setImageValues(prev => ({ ...prev, [id]: ev.target!.result as string }));
+            }
+        };
+        reader.readAsDataURL(file);
+    };
 
     const handleApplyAndContinue = async () => {
         if (templateMode !== "manual" && !selectedTemplateId) return;
@@ -121,7 +133,7 @@ export function WizardFlow({ projectId, onSwitchToStudio }: WizardFlowProps) {
         } else {
             let selectedPack = savedPacks.find(p => p.id === selectedTemplateId);
             if (!selectedPack) {
-                const meta = DEFAULT_PACKS.find(p => p.id === selectedTemplateId);
+                const meta = DEFAULT_PACKS.find(p => p.id === selectedTemplateId || p.data.id === selectedTemplateId);
                 if (meta) selectedPack = meta.data;
             }
 
@@ -133,21 +145,22 @@ export function WizardFlow({ projectId, onSwitchToStudio }: WizardFlowProps) {
 
         const { applyTemplatePack } = await import("@/services/templateService");
 
-        // Basic AI text mapping
-        if (headline || ctaText) {
-            packToApply.masterComponents = packToApply.masterComponents.map(mc => {
-                if (mc.type === "text") {
-                    const name = mc.name.toLowerCase();
-                    if ((name.includes("head") || name.includes("заголовок") || name.includes("title")) && headline) {
-                        return { ...mc, props: { ...mc.props, text: headline } };
-                    }
-                    if ((name.includes("cta") || name.includes("кнопк") || name.includes("button")) && ctaText) {
-                        return { ...mc, props: { ...mc.props, text: ctaText } };
-                    }
-                }
-                return mc;
-            });
-        }
+        // Content Mapping based on Dynamic Fields
+        packToApply.masterComponents = packToApply.masterComponents.map(mc => {
+            if ((mc.type === "text" || mc.type === "badge") && textValues[mc.id] !== undefined) {
+                return { 
+                    ...mc, 
+                    props: { 
+                        ...mc.props, 
+                        [mc.type === "text" ? "text" : "label"]: textValues[mc.id] 
+                    } 
+                };
+            }
+            if (mc.type === "image" && imageValues[mc.id] !== undefined) {
+                return { ...mc, props: { ...mc.props, src: imageValues[mc.id] } };
+            }
+            return mc;
+        });
 
         applyTemplatePack(packToApply, {
             onSuccess: () => {
@@ -453,30 +466,56 @@ export function WizardFlow({ projectId, onSwitchToStudio }: WizardFlowProps) {
                                 </p>
                             </div>
                             <div className="space-y-3">
-                                <div>
-                                    <label className="block text-xs font-medium text-text-secondary mb-1">
-                                        Заголовок
-                                    </label>
-                                    <input
-                                        type="text"
-                                        placeholder="Напр. ЛЕТНЯЯ РАСПРОДАЖА"
-                                        value={headline}
-                                        onChange={(e) => setHeadline(e.target.value)}
-                                        className="w-full h-10 px-3 rounded-[var(--radius-md)] border border-border-primary bg-bg-secondary text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-border-focus"
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-xs font-medium text-text-secondary mb-1">
-                                        Текст кнопки
-                                    </label>
-                                    <input
-                                        type="text"
-                                        placeholder="Напр. Купить"
-                                        value={ctaText}
-                                        onChange={(e) => setCtaText(e.target.value)}
-                                        className="w-full h-10 px-3 rounded-[var(--radius-md)] border border-border-primary bg-bg-secondary text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-border-focus"
-                                    />
-                                </div>
+                                {selectedTemplate.masterComponents.filter(mc => mc.type === "text" || mc.type === "image" || mc.type === "badge").map(mc => {
+                                    if (mc.type === "text" || mc.type === "badge") {
+                                        const propName = mc.type === "text" ? "text" : "label";
+                                        return (
+                                            <div key={mc.id}>
+                                                <label className="block text-xs font-medium text-text-secondary mb-1">
+                                                    {mc.name}
+                                                </label>
+                                                <input
+                                                    type="text"
+                                                    placeholder={(mc.props as any)[propName] || "Введите контент"}
+                                                    value={textValues[mc.id] ?? ""}
+                                                    onChange={(e) => setTextValues(prev => ({ ...prev, [mc.id]: e.target.value }))}
+                                                    className="w-full h-10 px-3 rounded-[var(--radius-md)] border border-border-primary bg-bg-secondary text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-border-focus"
+                                                />
+                                            </div>
+                                        );
+                                    }
+                                    if (mc.type === "image") {
+                                        const currentSrc = imageValues[mc.id] || (mc.props as any).src;
+                                        return (
+                                            <div key={mc.id}>
+                                                <label className="block text-xs font-medium text-text-secondary mb-1">
+                                                    {mc.name}
+                                                </label>
+                                                <div className="flex items-center gap-3">
+                                                    <div className="w-12 h-12 rounded-[var(--radius-sm)] border border-border-primary overflow-hidden bg-bg-secondary flex-shrink-0 flex items-center justify-center">
+                                                        {currentSrc ? (
+                                                            <img src={currentSrc} alt={mc.name} className="w-full h-full object-cover" />
+                                                        ) : (
+                                                            <ImagePlus size={16} className="text-text-tertiary" />
+                                                        )}
+                                                    </div>
+                                                    <div className="flex-1 relative">
+                                                        <input 
+                                                            type="file" 
+                                                            accept="image/*" 
+                                                            onChange={(e) => handleImageUpload(e, mc.id)}
+                                                            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                                                        />
+                                                        <Button variant="secondary" className="w-full pointer-events-none" icon={<ImagePlus size={14} />}>
+                                                            Загрузить изображение
+                                                        </Button>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        );
+                                    }
+                                    return null;
+                                })}
                                 <div>
                                     <label className="block text-xs font-medium text-text-secondary mb-1">
                                         Описание продукта / Тема
