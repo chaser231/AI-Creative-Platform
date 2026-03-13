@@ -8,6 +8,8 @@
  */
 
 
+import type { BusinessUnit } from "@/types";
+
 // ─── Types ──────────────────────────────────────────────
 
 export interface AIProvider {
@@ -83,6 +85,32 @@ export const RemoteImageProvider: AIProvider = {
         return callAIApi(prompt, "image", model, params);
     },
 };
+
+// ─── Business Unit Contexts ─────────────────────────────
+
+export function getSystemPromptForBU(bu: BusinessUnit, type: "text" | "image"): string {
+    if (type === "text") {
+        switch (bu) {
+            case "yandex-market":
+                return "Ты профессиональный копирайтер Яндекс Маркета. Пиши кратко, динамично и продающе. Используй призыв к покупке. Тон: дружелюбный и выгодный.";
+            case "yandex-food":
+            case "yandex-go": // Treating go/food similarly for now or separate
+                return "Ты копирайтер Яндекс Еды / Лавки. Твои тексты вызывают аппетит и желание заказать прямо сейчас. Пиши вкусно, с заботой, но очень емко.";
+            default:
+                return "Ты рекламный копирайтер. Пиши броские и лаконичные рекламные тексты для баннеров.";
+        }
+    } else {
+        // Image generation prompts
+        switch (bu) {
+            case "yandex-market":
+                return "Продуктовая фотография студийного качества, яркий сплошной фон (желтый или контрастный), товар по центру, реалистично, высокое разрешение, 4k, студийный свет.";
+            case "yandex-food":
+                return "Вкусная еда крупным планом, теплый свет, аппетитно, профессиональная фуд-фотография, боке, глубина резкости, 8k, photorealistic.";
+            default:
+                return "Высококачественное изображение для рекламы, эстетично, профессионально, студийный свет, 4k.";
+        }
+    }
+}
 
 // ─── Pipeline runner ────────────────────────────────────
 

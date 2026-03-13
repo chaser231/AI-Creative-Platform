@@ -11,6 +11,10 @@ import { DEFAULT_PACKS, type TemplatePackMeta } from "@/constants/defaultPacks";
 import { getRecommendedPacks, searchPacks } from "@/services/templateCatalogService";
 import type { TemplatePackV2 } from "@/services/templateService";
 import type { BusinessUnit } from "@/types";
+import { TextContentBlock } from "@/components/wizard/blocks/TextContentBlock";
+import { ImageContentBlock } from "@/components/wizard/blocks/ImageContentBlock";
+import { BadgeContentBlock } from "@/components/wizard/blocks/BadgeContentBlock";
+import { PreviewCanvas } from "@/components/editor/PreviewCanvas";
 
 interface WizardFlowProps {
     projectId: string;
@@ -164,7 +168,11 @@ export function WizardFlow({ projectId, onSwitchToStudio }: WizardFlowProps) {
 
         applyTemplatePack(packToApply, {
             onSuccess: () => {
-                onSwitchToStudio();
+                if (templateMode === "manual") {
+                    onSwitchToStudio();
+                } else {
+                    setStep("review");
+                }
             }
         });
     };
@@ -466,52 +474,46 @@ export function WizardFlow({ projectId, onSwitchToStudio }: WizardFlowProps) {
                                 </p>
                             </div>
                             <div className="space-y-3">
-                                {selectedTemplate.masterComponents.filter(mc => mc.type === "text" || mc.type === "image" || mc.type === "badge").map(mc => {
-                                    if (mc.type === "text" || mc.type === "badge") {
-                                        const propName = mc.type === "text" ? "text" : "label";
+                                {selectedTemplate.masterComponents.filter(mc => ["text", "image", "badge"].includes(mc.type)).map(mc => {
+                                    if (mc.type === "text") {
                                         return (
-                                            <div key={mc.id}>
-                                                <label className="block text-xs font-medium text-text-secondary mb-1">
-                                                    {mc.name}
-                                                </label>
-                                                <input
-                                                    type="text"
-                                                    placeholder={(mc.props as any)[propName] || "Введите контент"}
-                                                    value={textValues[mc.id] ?? ""}
-                                                    onChange={(e) => setTextValues(prev => ({ ...prev, [mc.id]: e.target.value }))}
-                                                    className="w-full h-10 px-3 rounded-[var(--radius-md)] border border-border-primary bg-bg-secondary text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-border-focus"
-                                                />
-                                            </div>
+                                            <TextContentBlock
+                                                key={mc.id}
+                                                id={mc.id}
+                                                name={mc.name}
+                                                props={mc.props as any}
+                                                value={textValues[mc.id] ?? ""}
+                                                onChange={(val) => setTextValues(prev => ({ ...prev, [mc.id]: val }))}
+                                                businessUnit={projectBU}
+                                                productDescription={productDescription}
+                                            />
+                                        );
+                                    }
+                                    if (mc.type === "badge") {
+                                        return (
+                                            <BadgeContentBlock
+                                                key={mc.id}
+                                                id={mc.id}
+                                                name={mc.name}
+                                                props={mc.props as any}
+                                                value={textValues[mc.id] ?? ""}
+                                                onChange={(val) => setTextValues(prev => ({ ...prev, [mc.id]: val }))}
+                                                businessUnit={projectBU}
+                                            />
                                         );
                                     }
                                     if (mc.type === "image") {
-                                        const currentSrc = imageValues[mc.id] || (mc.props as any).src;
                                         return (
-                                            <div key={mc.id}>
-                                                <label className="block text-xs font-medium text-text-secondary mb-1">
-                                                    {mc.name}
-                                                </label>
-                                                <div className="flex items-center gap-3">
-                                                    <div className="w-12 h-12 rounded-[var(--radius-sm)] border border-border-primary overflow-hidden bg-bg-secondary flex-shrink-0 flex items-center justify-center">
-                                                        {currentSrc ? (
-                                                            <img src={currentSrc} alt={mc.name} className="w-full h-full object-cover" />
-                                                        ) : (
-                                                            <ImagePlus size={16} className="text-text-tertiary" />
-                                                        )}
-                                                    </div>
-                                                    <div className="flex-1 relative">
-                                                        <input 
-                                                            type="file" 
-                                                            accept="image/*" 
-                                                            onChange={(e) => handleImageUpload(e, mc.id)}
-                                                            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                                                        />
-                                                        <Button variant="secondary" className="w-full pointer-events-none" icon={<ImagePlus size={14} />}>
-                                                            Загрузить изображение
-                                                        </Button>
-                                                    </div>
-                                                </div>
-                                            </div>
+                                            <ImageContentBlock
+                                                key={mc.id}
+                                                id={mc.id}
+                                                name={mc.name}
+                                                props={mc.props as any}
+                                                value={imageValues[mc.id] ?? ""}
+                                                onChange={(val) => setImageValues(prev => ({ ...prev, [mc.id]: val }))}
+                                                businessUnit={projectBU}
+                                                productDescription={productDescription}
+                                            />
                                         );
                                     }
                                     return null;
@@ -557,24 +559,30 @@ export function WizardFlow({ projectId, onSwitchToStudio }: WizardFlowProps) {
 
                     {/* Step 3: Review */}
                     {step === "review" && (
-                        <div className="space-y-4">
+                        <div className="space-y-4 h-full flex flex-col">
                             <div>
                                 <h2 className="text-lg font-semibold text-text-primary">Ваш креатив готов!</h2>
                                 <p className="text-sm text-text-secondary mt-1">
-                                    Компоненты размещены на холсте. Переключитесь в режим Студии для тонкой настройки.
+                                    Мастер-баннер сгенерирован. Проверьте результат перед переходом в Студию.
                                 </p>
                             </div>
-                            <div className="flex items-center justify-center py-8">
-                                <div className="w-32 h-32 rounded-[var(--radius-lg)] bg-gradient-to-br from-accent-primary/20 to-accent-primary/5 border border-accent-primary/30 flex items-center justify-center">
-                                    <LayoutTemplate size={40} className="text-accent-primary/60" />
-                                </div>
+                            
+                            <div className="flex-1 min-h-[400px] w-full bg-bg-secondary rounded-[var(--radius-lg)] border border-border-primary overflow-hidden relative">
+                                <PreviewCanvas
+                                    layers={useCanvasStore.getState().layers}
+                                    artboardWidth={useCanvasStore.getState().canvasWidth}
+                                    artboardHeight={useCanvasStore.getState().canvasHeight}
+                                    containerWidth={800} // Approximate width, could be dynamic but fixed is ok for a modal
+                                    containerHeight={400} // Approximate height
+                                />
                             </div>
-                            <div className="flex justify-center gap-3 pt-2">
+
+                            <div className="flex justify-between pt-2">
                                 <Button variant="secondary" onClick={() => setStep("content")}>
-                                    Изменить контент
+                                    Назад к контенту
                                 </Button>
                                 <Button onClick={onSwitchToStudio}>
-                                    Открыть в Студии →
+                                    Редактировать в Студии →
                                 </Button>
                             </div>
                         </div>

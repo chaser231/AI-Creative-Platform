@@ -217,9 +217,10 @@ function hydrateLayerTree(
         const newId = uuid();
         layerIdMap.set(oldId, newId);
 
-        // Map masterId if exists
-        const newMasterId = node.masterId
-            ? masterIdMap.get(node.masterId) || node.masterId
+        // Map masterId if exists (fallback to node.layer.masterId for backward compat)
+        const oldMasterId = node.masterId || node.layer.masterId;
+        const newMasterId = oldMasterId
+            ? masterIdMap.get(oldMasterId) || oldMasterId
             : undefined;
 
         const newLayer = {

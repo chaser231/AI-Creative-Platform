@@ -1482,28 +1482,34 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
 
     syncLayersToResize: () => {
         const state = get();
-        const { masterComponents, componentInstances, activeResizeId, resizes } = state;
+        const { masterComponents, componentInstances, activeResizeId, resizes, layers } = state;
 
         if (activeResizeId === "master") {
             // On master: layers reflect master component props directly
-            const newLayers: Layer[] = masterComponents.map((m) => {
-                const existingLayer = state.layers.find((l) => l.masterId === m.id);
+            const newLayers: Layer[] = layers.map((existingLayer) => {
+                const m = masterComponents.find((mc) => mc.id === existingLayer.masterId);
+                if (!m) return existingLayer; // Keep unharmed if no master
+
                 return {
+                    ...existingLayer,
                     ...m.props,
-                    id: existingLayer?.id || uuid(),
+                    id: existingLayer.id, // Preserve vital Canvas identity and nesting childIds!
                     name: m.name,
                     masterId: m.id,
+                    type: m.type, // Ensure type holds
                 } as Layer;
             });
             set({ layers: newLayers });
         } else {
             // On instance resize: use localProps from instance
             const resize = resizes.find((r) => r.id === activeResizeId);
-            const newLayers: Layer[] = masterComponents.map((m) => {
+            const newLayers: Layer[] = layers.map((existingLayer) => {
+                const m = masterComponents.find((mc) => mc.id === existingLayer.masterId);
+                if (!m) return existingLayer;
+
                 const instance = componentInstances.find(
                     (i) => i.masterId === m.id && i.resizeId === activeResizeId
                 );
-                const existingLayer = state.layers.find((l) => l.masterId === m.id);
 
                 if (instance) {
                     // Use local props, but merge content-source from master if instances are enabled
@@ -1513,16 +1519,18 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
                         props = { ...props, ...contentUpdates } as ComponentProps;
                     }
                     return {
+                        ...existingLayer,
                         ...props,
-                        id: existingLayer?.id || uuid(),
+                        id: existingLayer.id,
                         name: m.name,
                         masterId: m.id,
                     } as Layer;
                 } else {
                     // No instance yet — fall back to master props
                     return {
+                        ...existingLayer,
                         ...m.props,
-                        id: existingLayer?.id || uuid(),
+                        id: existingLayer.id,
                         name: m.name,
                         masterId: m.id,
                     } as Layer;
@@ -1649,6 +1657,10 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
             stageX: 0,
             stageY: 0,
         });
+
+        // Force sync layers to pick up any updated content from masterComponents 
+        // (since hydrateLayerTree builds layerTree with original template content)
+        get().syncLayersToResize();
     },
 
     applySmartResize: (templatePack, mappings) => {
