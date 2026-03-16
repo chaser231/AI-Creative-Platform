@@ -949,7 +949,7 @@ export function Canvas({ stageRef }: CanvasProps) {
         }
 
         dragStartLocs.current = {};
-    }, [updateLayer, getFrameAtPoint, moveLayerToFrame, removeLayerFromFrame, setHighlightedFrameId]);
+    }, [updateLayer, getFrameAtPoint, moveLayerToFrame, removeLayerFromFrame, setHighlightedFrameId, layers]);
 
     const handleTransformEnd = useCallback((e: Konva.KonvaEventObject<Event>) => {
         // Start handling multi-transform logic? 
