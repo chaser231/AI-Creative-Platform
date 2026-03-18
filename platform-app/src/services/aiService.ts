@@ -156,3 +156,113 @@ export async function runPipeline(
 
     return results;
 }
+
+// ─── Text Generation Presets ────────────────────────────
+
+import type { TextGenPreset } from "@/types";
+
+const PRESET_INSTRUCTIONS: Record<TextGenPreset, string> = {
+    selling: "Пиши продающе, с призывом к действию и акцентом на выгоду. Текст должен мотивировать на покупку.",
+    informational: "Пиши информативно, нейтрально, с фокусом на факты и характеристики.",
+    emotional: "Пиши эмоционально, используй яркие образы и метафоры, вызывай эмоции.",
+    short: "Пиши максимально кратко — не более 2-3 слов.",
+    long: "Пиши развёрнуто — 1-2 предложения с деталями и описанием.",
+};
+
+/**
+ * Generate multiple text variants for a single field.
+ * Returns an array of `count` text variants.
+ */
+export async function generateTextVariants(
+    userPrompt: string,
+    fieldName: string,
+    count: number = 3,
+    bu?: BusinessUnit,
+    preset?: TextGenPreset,
+): Promise<string[]> {
+    const buContext = bu ? getSystemPromptForBU(bu, "text") : "";
+    const presetInstr = preset ? PRESET_INSTRUCTIONS[preset] : "";
+
+    const systemPrompt = [
+        buContext,
+        presetInstr,
+        `Сгенерируй ровно ${count} вариант${count > 1 ? "ов" : ""} текста для элемента «${fieldName}».`,
+        `Каждый вариант на отдельной строке. Без нумерации, без кавычек, без пояснений.`,
+        `Только текст элемента — больше ничего.`,
+    ].filter(Boolean).join("\n");
+
+    const result = await RemoteTextProvider.generate(
+        `${systemPrompt}\n\nЗапрос пользователя: ${userPrompt}`,
+        { model: "openai" },
+    );
+
+    const variants = result.content
+        .split("\n")
+        .map((s: string) => s.replace(/^\d+[\.\)]\s*/, "").replace(/^["«]|["»]$/g, "").trim())
+        .filter((s: string) => s.length > 0);
+
+    // Pad or truncate to exactly `count`
+    while (variants.length < count) variants.push(variants[0] || fieldName);
+    return variants.slice(0, count);
+}
+
+/**
+ * Coordinated generation for a group of linked text fields.
+ *
+ * Example: a frame with groupSlotId="hero" containing headline + subheadline.
+ * The AI generates all fields in one call so they are thematically consistent.
+ *
+ * @param fields — array of { id, name, role } for each text slot in the group
+ * @param userPrompt — high-level user description
+ * @param bu — business unit for TOV
+ * @param preset — optional style preset
+ * @returns Record<fieldId, string> with generated text for each field
+ */
+export async function generateTextGroup(
+    fields: { id: string; name: string }[],
+    userPrompt: string,
+    bu?: BusinessUnit,
+    preset?: TextGenPreset,
+): Promise<Record<string, string>> {
+    const buContext = bu ? getSystemPromptForBU(bu, "text") : "";
+    const presetInstr = preset ? PRESET_INSTRUCTIONS[preset] : "";
+
+    const fieldList = fields.map((f, i) => `${i + 1}. ${f.name}`).join("\n");
+
+    const systemPrompt = [
+        buContext,
+        presetInstr,
+        `Тебе нужно сгенерировать согласованный набор текстов для рекламного баннера.`,
+        `Все тексты должны быть тематически связаны между собой.`,
+        `Список полей:\n${fieldList}`,
+        `\nОтветь СТРОГО в формате:\nПОЛЕ_1: <текст>\nПОЛЕ_2: <текст>\n...`,
+        `Без кавычек, без дополнительных пояснений.`,
+    ].filter(Boolean).join("\n");
+
+    const result = await RemoteTextProvider.generate(
+        `${systemPrompt}\n\nЗапрос пользователя: ${userPrompt}`,
+        { model: "openai" },
+    );
+
+    // Parse "ПОЛЕ_N: text" format
+    const lines = result.content.split("\n").filter((s: string) => s.trim());
+    const output: Record<string, string> = {};
+
+    for (let i = 0; i < fields.length; i++) {
+        const line = lines[i];
+        if (line) {
+            // Remove "ПОЛЕ_N: " or "1. " prefix if present
+            const cleaned = line
+                .replace(/^ПОЛЕ_\d+:\s*/i, "")
+                .replace(/^\d+[\.\)]\s*/, "")
+                .replace(/^["«]|["»]$/g, "")
+                .trim();
+            output[fields[i].id] = cleaned;
+        } else {
+            output[fields[i].id] = fields[i].name; // fallback
+        }
+    }
+
+    return output;
+}
+

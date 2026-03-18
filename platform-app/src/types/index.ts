@@ -148,7 +148,20 @@ export interface FrameComponentProps extends BaseComponentProps {
     counterAxisAlignItems?: "flex-start" | "center" | "flex-end" | "stretch";
     primaryAxisSizingMode?: "fixed" | "auto";
     counterAxisSizingMode?: "fixed" | "auto";
+    /** Groups nested text slots for coordinated AI generation */
+    groupSlotId?: string;
 }
+
+/** Presets for AI text generation style */
+export type TextGenPreset = "selling" | "informational" | "emotional" | "short" | "long";
+
+export const TEXT_GEN_PRESET_LABELS: Record<TextGenPreset, string> = {
+    selling: "Продающий",
+    informational: "Информационный",
+    emotional: "Эмоциональный",
+    short: "Короткий",
+    long: "Развёрнутый",
+};
 
 export type ComponentProps = TextComponentProps | RectangleComponentProps | ImageComponentProps | BadgeComponentProps | FrameComponentProps;
 

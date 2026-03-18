@@ -14,7 +14,9 @@ import type { BusinessUnit } from "@/types";
 import { TextContentBlock } from "@/components/wizard/blocks/TextContentBlock";
 import { ImageContentBlock } from "@/components/wizard/blocks/ImageContentBlock";
 import { BadgeContentBlock } from "@/components/wizard/blocks/BadgeContentBlock";
+import { TextGroupSlot } from "@/components/wizard/blocks/TextGroupSlot";
 import { PreviewCanvas } from "@/components/editor/PreviewCanvas";
+import type { FrameComponentProps } from "@/types";
 
 interface WizardFlowProps {
     projectId: string;
@@ -474,50 +476,103 @@ export function WizardFlow({ projectId, onSwitchToStudio }: WizardFlowProps) {
                                 </p>
                             </div>
                             <div className="space-y-3">
-                                {selectedTemplate.masterComponents.filter(mc => ["text", "image", "badge"].includes(mc.type)).map(mc => {
-                                    if (mc.type === "text") {
-                                        return (
-                                            <TextContentBlock
-                                                key={mc.id}
-                                                id={mc.id}
-                                                name={mc.name}
-                                                props={mc.props as any}
-                                                value={textValues[mc.id] ?? ""}
-                                                onChange={(val) => setTextValues(prev => ({ ...prev, [mc.id]: val }))}
-                                                businessUnit={projectBU}
-                                                productDescription={productDescription}
-                                            />
+                                {(() => {
+                                    // Detect text groups: frames with groupSlotId that contain text children
+                                    const frameMasters = selectedTemplate.masterComponents.filter(
+                                        mc => mc.type === "frame" && (mc.props as FrameComponentProps).groupSlotId
+                                    );
+                                    const groupedTextIds = new Set<string>();
+                                    const groups: { groupId: string; members: typeof selectedTemplate.masterComponents }[] = [];
+
+                                    for (const frame of frameMasters) {
+                                        const frameProps = frame.props as FrameComponentProps;
+                                        const childIds = frameProps.childIds || [];
+                                        // Find text master components that are children of this frame
+                                        const textMembers = selectedTemplate.masterComponents.filter(
+                                            mc => mc.type === "text" && childIds.some(cid => {
+                                                // cid is a layer ID; match via masterComponent id convention
+                                                // In templates, masterComponent children are linked by their IDs
+                                                return mc.id === cid || mc.slotId === cid;
+                                            })
                                         );
+                                        if (textMembers.length > 0) {
+                                            groups.push({
+                                                groupId: frameProps.groupSlotId!,
+                                                members: textMembers,
+                                            });
+                                            textMembers.forEach(tm => groupedTextIds.add(tm.id));
+                                        }
                                     }
-                                    if (mc.type === "badge") {
-                                        return (
-                                            <BadgeContentBlock
-                                                key={mc.id}
-                                                id={mc.id}
-                                                name={mc.name}
-                                                props={mc.props as any}
-                                                value={textValues[mc.id] ?? ""}
-                                                onChange={(val) => setTextValues(prev => ({ ...prev, [mc.id]: val }))}
-                                                businessUnit={projectBU}
-                                            />
-                                        );
-                                    }
-                                    if (mc.type === "image") {
-                                        return (
-                                            <ImageContentBlock
-                                                key={mc.id}
-                                                id={mc.id}
-                                                name={mc.name}
-                                                props={mc.props as any}
-                                                value={imageValues[mc.id] ?? ""}
-                                                onChange={(val) => setImageValues(prev => ({ ...prev, [mc.id]: val }))}
-                                                businessUnit={projectBU}
-                                                productDescription={productDescription}
-                                            />
-                                        );
-                                    }
-                                    return null;
-                                })}
+
+                                    // Collect ungrouped content components
+                                    const ungrouped = selectedTemplate.masterComponents.filter(
+                                        mc => ["text", "image", "badge"].includes(mc.type) && !groupedTextIds.has(mc.id)
+                                    );
+
+                                    return (
+                                        <>
+                                            {/* Render text groups */}
+                                            {groups.map(group => (
+                                                <TextGroupSlot
+                                                    key={group.groupId}
+                                                    groupId={group.groupId}
+                                                    members={group.members}
+                                                    textValues={textValues}
+                                                    onTextChange={(mcId, val) => setTextValues(prev => ({ ...prev, [mcId]: val }))}
+                                                    onBatchTextChange={(updates) => setTextValues(prev => ({ ...prev, ...updates }))}
+                                                    businessUnit={projectBU}
+                                                    productDescription={productDescription}
+                                                />
+                                            ))}
+
+                                            {/* Render ungrouped content blocks */}
+                                            {ungrouped.map(mc => {
+                                                if (mc.type === "text") {
+                                                    return (
+                                                        <TextContentBlock
+                                                            key={mc.id}
+                                                            id={mc.id}
+                                                            name={mc.name}
+                                                            props={mc.props as any}
+                                                            value={textValues[mc.id] ?? ""}
+                                                            onChange={(val) => setTextValues(prev => ({ ...prev, [mc.id]: val }))}
+                                                            businessUnit={projectBU}
+                                                            productDescription={productDescription}
+                                                        />
+                                                    );
+                                                }
+                                                if (mc.type === "badge") {
+                                                    return (
+                                                        <BadgeContentBlock
+                                                            key={mc.id}
+                                                            id={mc.id}
+                                                            name={mc.name}
+                                                            props={mc.props as any}
+                                                            value={textValues[mc.id] ?? ""}
+                                                            onChange={(val) => setTextValues(prev => ({ ...prev, [mc.id]: val }))}
+                                                            businessUnit={projectBU}
+                                                        />
+                                                    );
+                                                }
+                                                if (mc.type === "image") {
+                                                    return (
+                                                        <ImageContentBlock
+                                                            key={mc.id}
+                                                            id={mc.id}
+                                                            name={mc.name}
+                                                            props={mc.props as any}
+                                                            value={imageValues[mc.id] ?? ""}
+                                                            onChange={(val) => setImageValues(prev => ({ ...prev, [mc.id]: val }))}
+                                                            businessUnit={projectBU}
+                                                            productDescription={productDescription}
+                                                        />
+                                                    );
+                                                }
+                                                return null;
+                                            })}
+                                        </>
+                                    );
+                                })()}
                                 <div>
                                     <label className="block text-xs font-medium text-text-secondary mb-1">
                                         Описание продукта / Тема
