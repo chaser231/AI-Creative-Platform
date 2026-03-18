@@ -314,6 +314,91 @@ function syncFrameChildIdsToInstances(
     });
 }
 
+/** Layout-geometry keys that auto-layout may change on any layer */
+const LAYOUT_GEOMETRY_KEYS: (keyof Layer)[] = ["x", "y", "width", "height"];
+
+/**
+ * Compare `oldLayers` with `newLayers` (post-auto-layout) and sync any
+ * positional / dimensional changes back to the active Source of Truth
+ * (masterComponents when on master resize, componentInstances otherwise).
+ *
+ * This ensures that derived changes from `applyAllAutoLayouts`
+ * (e.g. a Hug-frame expanding, siblings being repositioned)
+ * are persisted and survive format switching.
+ */
+function syncDerivedLayoutToSource(
+    oldLayers: Layer[],
+    newLayers: Layer[],
+    masters: MasterComponent[],
+    instances: ComponentInstance[],
+    activeResizeId: string,
+): { masterComponents: MasterComponent[]; componentInstances: ComponentInstance[] } {
+    // Build a map of old layers for quick lookup
+    const oldMap = new Map<string, Layer>();
+    oldLayers.forEach(l => oldMap.set(l.id, l));
+
+    // Collect per-layer geometry diffs (only layers that actually changed)
+    const diffs = new Map<string, Partial<Layer>>();
+    for (const nl of newLayers) {
+        const ol = oldMap.get(nl.id);
+        if (!ol || !nl.masterId) continue;
+        const diff: Record<string, unknown> = {};
+        let hasDiff = false;
+        for (const key of LAYOUT_GEOMETRY_KEYS) {
+            const oldVal = (ol as unknown as Record<string, unknown>)[key];
+            const newVal = (nl as unknown as Record<string, unknown>)[key];
+            if (oldVal !== newVal) {
+                diff[key] = newVal;
+                hasDiff = true;
+            }
+        }
+        // Also sync childIds for frames (auto-layout might not change them,
+        // but the frame's childIds could have been reordered in the same pass)
+        if (nl.type === "frame") {
+            const olFrame = ol as FrameLayer;
+            const nlFrame = nl as FrameLayer;
+            if (JSON.stringify(olFrame.childIds) !== JSON.stringify(nlFrame.childIds)) {
+                diff.childIds = [...nlFrame.childIds];
+                hasDiff = true;
+            }
+        }
+        if (hasDiff) {
+            diffs.set(nl.id, diff as Partial<Layer>);
+        }
+    }
+
+    if (diffs.size === 0) {
+        return { masterComponents: masters, componentInstances: instances };
+    }
+
+    // Build a layer.id → masterId map from newLayers
+    const layerToMaster = new Map<string, string>();
+    newLayers.forEach(l => { if (l.masterId) layerToMaster.set(l.id, l.masterId); });
+
+    if (activeResizeId === "master") {
+        // Write derived geometry back to master props
+        const updatedMasters = masters.map(m => {
+            const layerId = [...layerToMaster.entries()].find(([, mid]) => mid === m.id)?.[0];
+            if (!layerId) return m;
+            const diff = diffs.get(layerId);
+            if (!diff) return m;
+            return { ...m, props: { ...m.props, ...diff } as ComponentProps };
+        });
+        return { masterComponents: updatedMasters, componentInstances: instances };
+    } else {
+        // Write derived geometry back to instance localProps
+        const updatedInstances = instances.map(inst => {
+            if (inst.resizeId !== activeResizeId) return inst;
+            const layerId = [...layerToMaster.entries()].find(([, mid]) => mid === inst.masterId)?.[0];
+            if (!layerId) return inst;
+            const diff = diffs.get(layerId);
+            if (!diff) return inst;
+            return { ...inst, localProps: { ...inst.localProps, ...diff } as ComponentProps };
+        });
+        return { masterComponents: masters, componentInstances: updatedInstances };
+    }
+}
+
 export const useCanvasStore = create<CanvasStore>((set, get) => ({
     layers: [],
     selectedLayerIds: [],
@@ -818,10 +903,15 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
                     });
                 }
 
+                // Sync derived auto-layout changes (e.g. Hug-frame expansion) back to master props
+                const derivedSync = syncDerivedLayoutToSource(
+                    state.layers, newLayers, newMasters, newInstances, state.activeResizeId
+                );
+
                 return {
                     layers: newLayers,
-                    masterComponents: newMasters,
-                    componentInstances: newInstances,
+                    masterComponents: derivedSync.masterComponents,
+                    componentInstances: derivedSync.componentInstances,
                 };
             } else {
                 // ─── On instance resize: save all changes to instance localProps
@@ -835,9 +925,15 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
                     };
                 });
 
+                // Sync derived auto-layout changes back to instance localProps
+                const derivedSync = syncDerivedLayoutToSource(
+                    state.layers, newLayers, state.masterComponents, newInstances, state.activeResizeId
+                );
+
                 return {
                     layers: newLayers,
-                    componentInstances: newInstances,
+                    masterComponents: derivedSync.masterComponents,
+                    componentInstances: derivedSync.componentInstances,
                 };
             }
         });
@@ -1190,11 +1286,15 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
         const _s = get();
         const _snap: HistorySnapshot = { layers: _s.layers, masterComponents: _s.masterComponents, componentInstances: _s.componentInstances, selectedLayerIds: _s.selectedLayerIds };
         set({ history: [..._s.history, _snap].slice(-MAX_HISTORY), future: [] });
-        set((state) => {
+         set((state) => {
             const layers = [...state.layers];
             const [moved] = layers.splice(fromIndex, 1);
             layers.splice(toIndex, 0, moved);
-            return { layers: applyAllAutoLayouts(layers) };
+            const newLayers = applyAllAutoLayouts(layers);
+            const derivedSync = syncDerivedLayoutToSource(
+                state.layers, newLayers, state.masterComponents, state.componentInstances, state.activeResizeId
+            );
+            return { layers: newLayers, ...derivedSync };
         });
     },
 
@@ -1237,7 +1337,11 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
                 }
             }
 
-            return { layers: applyAllAutoLayouts(layers) };
+            const newLayers = applyAllAutoLayouts(layers);
+            const derivedSync = syncDerivedLayoutToSource(
+                state.layers, newLayers, state.masterComponents, state.componentInstances, state.activeResizeId
+            );
+            return { layers: newLayers, ...derivedSync };
         });
     },
 
@@ -1499,7 +1603,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
                     type: m.type, // Ensure type holds
                 } as Layer;
             });
-            set({ layers: newLayers });
+            set({ layers: applyAllAutoLayouts(newLayers) });
         } else {
             // On instance resize: use localProps from instance
             const resize = resizes.find((r) => r.id === activeResizeId);
@@ -1536,7 +1640,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
                     } as Layer;
                 }
             });
-            set({ layers: newLayers });
+            set({ layers: applyAllAutoLayouts(newLayers) });
         }
     },
 
