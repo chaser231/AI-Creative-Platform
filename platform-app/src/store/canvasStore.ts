@@ -1463,9 +1463,16 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
                     if (inst.masterId !== masterId) return inst;
                     const resize = state.resizes.find((r) => r.id === inst.resizeId);
                     if (!resize?.instancesEnabled) return inst;
+                    
+                    const localContentUpdates = { ...contentUpdates };
+                    if (inst.localProps.detachedSizeSync) {
+                        delete localContentUpdates.width;
+                        delete localContentUpdates.height;
+                    }
+
                     return {
                         ...inst,
-                        localProps: { ...inst.localProps, ...contentUpdates } as ComponentProps,
+                        localProps: { ...inst.localProps, ...localContentUpdates } as ComponentProps,
                     };
                 });
             }
@@ -1620,6 +1627,10 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
                     let props = { ...instance.localProps };
                     if (resize?.instancesEnabled) {
                         const contentUpdates = getContentSourceUpdates(m);
+                        if (props.detachedSizeSync) {
+                            delete contentUpdates.width;
+                            delete contentUpdates.height;
+                        }
                         props = { ...props, ...contentUpdates } as ComponentProps;
                     }
                     return {

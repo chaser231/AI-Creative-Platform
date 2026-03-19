@@ -56,12 +56,12 @@ export function NewProjectModal({ open, onClose }: NewProjectModalProps) {
     const createProject = useProjectStore((s) => s.createProject);
     const router = useRouter();
 
-    const handleCreate = () => {
+    const handleCreate = (mode: "wizard" | "studio") => {
         if (!name.trim()) return;
         const project = createProject({ name: name.trim(), businessUnit, goal });
         onClose();
         setName("");
-        router.push(`/editor/${project.id}`);
+        router.push(`/editor/${project.id}?mode=${mode}`);
     };
 
     return (
@@ -75,8 +75,11 @@ export function NewProjectModal({ open, onClose }: NewProjectModalProps) {
                     <Button variant="ghost" onClick={onClose}>
                         Отмена
                     </Button>
-                    <Button onClick={handleCreate} disabled={!name.trim()}>
-                        Создать
+                    <Button variant="secondary" onClick={() => handleCreate("wizard")} disabled={!name.trim()}>
+                        Создать пошагово
+                    </Button>
+                    <Button onClick={() => handleCreate("studio")} disabled={!name.trim()}>
+                        Создать в Студии
                     </Button>
                 </>
             }
