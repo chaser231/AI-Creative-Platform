@@ -117,7 +117,24 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult 
                         width: 600,
                     });
                 } else {
-                    addImageLayer(res.content, 512, 512);
+                    // Dynamically measure the new image to preserve aspect ratio
+                    const img = new Image();
+                    img.onload = () => {
+                        let w = img.naturalWidth;
+                        let h = img.naturalHeight;
+                        const MAX_DIM = 600;
+                        if (w > MAX_DIM || h > MAX_DIM) {
+                            const scale = MAX_DIM / Math.max(w, h);
+                            w *= scale;
+                            h *= scale;
+                        }
+                        addImageLayer(res.content, w, h);
+                    };
+                    img.onerror = () => {
+                        // Fallback in case of loading error
+                        addImageLayer(res.content, 512, 512);
+                    };
+                    img.src = res.content;
                 }
             }
 
