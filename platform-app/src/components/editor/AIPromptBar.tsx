@@ -286,28 +286,34 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult 
                     imageSrc={selectedImageLayer.src}
                     onApply={async (editedSrc) => {
                         try {
-                            // Measure new image dimensions to prevent aspect ratio stretching
-                            const img = new Image();
+                            // Load both old and new images to measure how much pixel dimensions changed
+                            const oldImg = new Image();
                             await new Promise((resolve, reject) => {
-                                img.onload = resolve;
-                                img.onerror = reject;
-                                img.src = editedSrc;
+                                oldImg.onload = resolve;
+                                oldImg.onerror = reject;
+                                oldImg.src = selectedImageLayer.src;
+                            });
+
+                            const newImg = new Image();
+                            await new Promise((resolve, reject) => {
+                                newImg.onload = resolve;
+                                newImg.onerror = reject;
+                                newImg.src = editedSrc;
                             });
                             
-                            // Scale the new width/height relative to the layer's original width
-                            // so it doesn't dramatically change size on canvas, only repositions/expands
-                            const currentAspect = selectedImageLayer.width / selectedImageLayer.height;
-                            const newAspect = img.naturalWidth / img.naturalHeight;
+                            // If the AI expanded the image from 1000px to 1500px, 
+                            // we must multiply the layer width on canvas by 1.5
+                            // This guarantees the original object stays the same visual size, 
+                            // and the layer simply grows outwards as expected.
+                            const scaleX = newImg.naturalWidth / oldImg.naturalWidth;
+                            const scaleY = newImg.naturalHeight / oldImg.naturalHeight;
                             
-                            let newWidth = selectedImageLayer.width;
-                            let newHeight = selectedImageLayer.height;
-                             
-                            if (Math.abs(currentAspect - newAspect) > 0.01) {
-                                // If aspect ratio changed (e.g. outpainting), adjust height based on original width 
-                                // (or width based on height). Let's base it on width for predictability:
-                                newHeight = newWidth / newAspect;
-                            }
+                            const newWidth = selectedImageLayer.width * scaleX;
+                            const newHeight = selectedImageLayer.height * scaleY;
                             
+                            // Calculate the central offset so it expands evenly around the center
+                            // (or just expand from top-left. For now, we'll keep it simple and expand from top-left, 
+                            // which is the origin, but users can move it afterwards)
                             updateLayer(selectedImageLayer.id, { 
                                 src: editedSrc,
                                 width: newWidth,
