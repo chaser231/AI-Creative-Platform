@@ -69,8 +69,7 @@ export const RemoteTextProvider: AIProvider = {
     name: "Remote Text API",
     type: "text",
     generate: async (prompt, params) => {
-        // Use params.model if specified, otherwise default
-        const model = (params?.model as string) || "openai";
+        const model = (params?.model as string) || "deepseek";
         return callAIApi(prompt, "text", model, params);
     },
 };
@@ -80,8 +79,7 @@ export const RemoteImageProvider: AIProvider = {
     name: "Remote Image API",
     type: "image",
     generate: async (prompt, params) => {
-        // Use params.model if specified, otherwise default
-        const model = (params?.model as string) || "flux-schnell";
+        const model = (params?.model as string) || "nano-banana-2";
         return callAIApi(prompt, "image", model, params);
     },
 };
@@ -193,7 +191,7 @@ export async function generateTextVariants(
 
     const result = await RemoteTextProvider.generate(
         `${systemPrompt}\n\nЗапрос пользователя: ${userPrompt}`,
-        { model: "openai" },
+        { model: "deepseek", systemPrompt },
     );
 
     const variants = result.content
@@ -241,7 +239,7 @@ export async function generateTextGroup(
 
     const result = await RemoteTextProvider.generate(
         `${systemPrompt}\n\nЗапрос пользователя: ${userPrompt}`,
-        { model: "openai" },
+        { model: "deepseek", systemPrompt },
     );
 
     // Parse "ПОЛЕ_N: text" format

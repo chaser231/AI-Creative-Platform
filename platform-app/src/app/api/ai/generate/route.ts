@@ -6,27 +6,28 @@ export async function POST(req: NextRequest) {
         const body = await req.json();
         const {
             prompt, type, model,
-            width, height, aspectRatio,
-            count, seed, scale, referenceImages,
+            aspectRatio, count, seed, scale,
+            referenceImages, systemPrompt,
+            imageBase64,
         } = body;
 
         if (!prompt) {
             return NextResponse.json({ error: "Prompt is required" }, { status: 400 });
         }
 
-        const provider = getProvider(model || "openai");
+        const provider = getProvider(model || "nano-banana-2");
 
         const result = await provider.generate({
             prompt,
             type: type || "image",
             model,
-            width,
-            height,
             aspectRatio,
             count,
             seed,
             scale,
             referenceImages,
+            systemPrompt,
+            imageBase64,
         });
 
         return NextResponse.json(result);

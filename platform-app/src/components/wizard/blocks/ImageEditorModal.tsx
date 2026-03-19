@@ -17,13 +17,16 @@ import type { BusinessUnit } from "@/types";
 type EditorTool = "remove-bg" | "inpaint" | "text-edit";
 
 // ─── AI Models for Image Editing ──────────────────────────
+// Only models with "edit" capability in MODEL_REGISTRY
 const IMAGE_EDIT_MODELS: { id: string; label: string; caps: EditorTool[] }[] = [
-    { id: "flux-fill", label: "Flux Fill", caps: ["remove-bg", "inpaint", "text-edit"] },
-    { id: "flux-dev", label: "Flux Dev", caps: ["remove-bg", "text-edit"] },
-    { id: "flux-schnell", label: "Flux Schnell", caps: ["remove-bg", "text-edit"] },
-    { id: "flux-1.1-pro", label: "Flux 1.1 Pro", caps: ["remove-bg", "text-edit"] },
-    { id: "seedream", label: "SD 3.5 Large", caps: ["remove-bg", "text-edit"] },
-    { id: "dall-e-3", label: "DALL-E 3", caps: ["text-edit"] },
+    { id: "nano-banana-2", label: "Nano Banana 2", caps: ["remove-bg", "inpaint", "text-edit"] },
+    { id: "nano-banana-pro", label: "Nano Banana Pro", caps: ["remove-bg", "inpaint", "text-edit"] },
+    { id: "nano-banana", label: "Nano Banana", caps: ["remove-bg", "inpaint", "text-edit"] },
+    { id: "flux-2-pro", label: "Flux 2 Pro", caps: ["remove-bg", "text-edit"] },
+    { id: "seedream", label: "Seedream 4.5", caps: ["remove-bg", "text-edit"] },
+    { id: "gpt-image", label: "GPT Image 1.5", caps: ["remove-bg", "text-edit"] },
+    { id: "qwen-image-edit", label: "Qwen Image Edit", caps: ["remove-bg", "text-edit"] },
+    { id: "flux-fill", label: "Flux Fill", caps: ["remove-bg", "inpaint"] },
 ];
 
 interface ImageEditorModalProps {
@@ -40,7 +43,7 @@ export function ImageEditorModal({ imageSrc, onApply, onClose }: ImageEditorModa
     const [activeTool, setActiveTool] = useState<EditorTool | null>(null);
     const [isProcessing, setIsProcessing] = useState(false);
     const [editPrompt, setEditPrompt] = useState("");
-    const [selectedModel, setSelectedModel] = useState("flux-fill");
+    const [selectedModel, setSelectedModel] = useState("nano-banana-2");
 
     // Inpaint mask state
     const canvasRef = useRef<HTMLCanvasElement>(null);

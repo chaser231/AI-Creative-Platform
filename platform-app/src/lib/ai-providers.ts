@@ -1,21 +1,190 @@
-import OpenAI from "openai";
+/**
+ * Unified AI Provider Layer
+ *
+ * SINGLE source of truth for all AI models across the platform:
+ * - Studio (AIPromptBar), Wizard (ImageContentBlock, TextContentBlock),
+ *   Editor (ImageEditorModal)
+ *
+ * MODEL_REGISTRY defines every model's capabilities.
+ * UI components import getModelsForCaps() to populate model selectors.
+ */
+
+// ─── Model Registry ─────────────────────────────────────────────────────────
+
+export type ModelCap = "generate" | "edit" | "remove-bg" | "inpaint" | "outpaint" | "text";
+
+export interface ModelEntry {
+    id: string;
+    label: string;
+    slug: string;             // Replicate slug or "openai-direct"
+    provider: "replicate" | "openai";
+    caps: ModelCap[];
+    /** Version hash (only for community models that need it) */
+    version?: string;
+    /** If true, requires OPENAI_API_KEY for BYOK billing */
+    byok?: boolean;
+}
+
+export const MODEL_REGISTRY: ModelEntry[] = [
+    // ── Image Generation + Editing ──────────────────────────────────────
+    {
+        id: "nano-banana",
+        label: "Nano Banana",
+        slug: "google/nano-banana",
+        provider: "replicate",
+        caps: ["generate", "edit", "remove-bg"],
+    },
+    {
+        id: "nano-banana-2",
+        label: "Nano Banana 2",
+        slug: "google/nano-banana-2",
+        provider: "replicate",
+        caps: ["generate", "edit", "remove-bg"],
+    },
+    {
+        id: "nano-banana-pro",
+        label: "Nano Banana Pro",
+        slug: "google/nano-banana-pro",
+        provider: "replicate",
+        caps: ["generate", "edit", "remove-bg"],
+    },
+    {
+        id: "flux-2-pro",
+        label: "Flux 2 Pro",
+        slug: "black-forest-labs/flux-2-pro",
+        provider: "replicate",
+        caps: ["generate", "edit"],
+    },
+    {
+        id: "gpt-image",
+        label: "GPT Image 1.5",
+        slug: "openai/gpt-image-1.5",
+        provider: "replicate",
+        caps: ["generate", "edit"],
+        byok: true,
+    },
+    {
+        id: "qwen-image",
+        label: "Qwen Image",
+        slug: "qwen/qwen-image",
+        provider: "replicate",
+        caps: ["generate"],
+    },
+    {
+        id: "qwen-image-edit",
+        label: "Qwen Image Edit",
+        slug: "qwen/qwen-image-edit",
+        provider: "replicate",
+        caps: ["edit"],
+    },
+    {
+        id: "seedream",
+        label: "Seedream 4.5",
+        slug: "bytedance/seedream-4.5",
+        provider: "replicate",
+        caps: ["generate", "edit"],
+    },
+
+    // ── Image Generation Only ───────────────────────────────────────────
+    {
+        id: "flux-schnell",
+        label: "Flux Schnell",
+        slug: "black-forest-labs/flux-schnell",
+        provider: "replicate",
+        caps: ["generate"],
+    },
+    {
+        id: "flux-dev",
+        label: "Flux Dev",
+        slug: "black-forest-labs/flux-dev",
+        provider: "replicate",
+        caps: ["generate"],
+    },
+    {
+        id: "flux-1.1-pro",
+        label: "Flux 1.1 Pro",
+        slug: "black-forest-labs/flux-1.1-pro",
+        provider: "replicate",
+        caps: ["generate"],
+    },
+    {
+        id: "dall-e-3",
+        label: "DALL-E 3",
+        slug: "openai-direct",
+        provider: "openai",
+        caps: ["generate"],
+    },
+
+    // ── Specialized Image Tools ─────────────────────────────────────────
+    {
+        id: "flux-fill",
+        label: "Flux Fill",
+        slug: "black-forest-labs/flux-fill-dev",
+        provider: "replicate",
+        caps: ["inpaint"],
+    },
+    {
+        id: "bria-expand",
+        label: "Bria Expand",
+        slug: "bria/expand-image",
+        provider: "replicate",
+        caps: ["outpaint"],
+    },
+    {
+        id: "rembg",
+        label: "RemBG",
+        slug: "cjwbw/rembg",
+        provider: "replicate",
+        caps: ["remove-bg"],
+        version: "fb8af171cfa1616ddcf1242c093f9c46bcada5ad4cf6f2fbe8b81b330ec5c003",
+    },
+
+    // ── Text LLMs ───────────────────────────────────────────────────────
+    {
+        id: "deepseek",
+        label: "DeepSeek V3",
+        slug: "deepseek-ai/deepseek-v3",
+        provider: "replicate",
+        caps: ["text"],
+    },
+    {
+        id: "gemini-flash",
+        label: "Gemini 2.5 Flash",
+        slug: "google/gemini-2.5-flash",
+        provider: "replicate",
+        caps: ["text"],
+    },
+];
+
+// ─── Helpers for UI ─────────────────────────────────────────────────────────
+
+/** Get all models that have ALL specified capabilities. */
+export function getModelsForCaps(...caps: ModelCap[]): ModelEntry[] {
+    return MODEL_REGISTRY.filter(m => caps.every(c => m.caps.includes(c)));
+}
+
+/** Lookup a single model by its ID. */
+export function getModelById(id: string): ModelEntry | undefined {
+    return MODEL_REGISTRY.find(m => m.id === id);
+}
 
 // ─── Interfaces ─────────────────────────────────────────────────────────────
 
 export interface AIRequestParams {
     prompt: string;
-    type: "text" | "image" | "inpainting" | "outpainting" | "remove-bg";
+    type: "text" | "image" | "inpainting" | "outpainting" | "remove-bg" | "edit";
     model?: string;
     context?: string;
     width?: number;
     height?: number;
-    aspectRatio?: string;   // e.g. "1:1", "16:9"
+    aspectRatio?: string;
     count?: number;
     seed?: number;
     scale?: string;
     referenceImages?: string[];
     imageBase64?: string;
     maskBase64?: string;
+    systemPrompt?: string;
 }
 
 export interface AIResponse {
@@ -31,11 +200,13 @@ export interface AIProviderImplementation {
     generate(params: AIRequestParams): Promise<AIResponse>;
 }
 
-// ─── OpenAI Provider ────────────────────────────────────────────────────────
+// ─── OpenAI Direct Provider (DALL-E 3 only) ─────────────────────────────────
 
-class OpenAIProvider implements AIProviderImplementation {
-    id = "openai";
-    name = "OpenAI";
+import OpenAI from "openai";
+
+class OpenAIDirectProvider implements AIProviderImplementation {
+    id = "openai-direct";
+    name = "OpenAI Direct";
     private client: OpenAI;
 
     constructor() {
@@ -50,29 +221,28 @@ class OpenAIProvider implements AIProviderImplementation {
             throw new Error("OpenAI API Key is not configured. Set OPENAI_API_KEY in .env.local");
         }
         if (params.type === "text") return this.generateText(params);
-        if (params.type === "image") return this.generateImage(params);
-        throw new Error(`OpenAI: unsupported type ${params.type}`);
+        return this.generateImage(params);
     }
 
     private async generateText(params: AIRequestParams): Promise<AIResponse> {
+        const messages: { role: "system" | "user"; content: string }[] = [];
+        if (params.systemPrompt) messages.push({ role: "system", content: params.systemPrompt });
+        if (params.context) messages.push({ role: "system", content: `Context: ${params.context}` });
+        messages.push({ role: "user", content: params.prompt });
+
         const completion = await this.client.chat.completions.create({
-            messages: [
-                { role: "system", content: "You are a creative copywriter assistant." },
-                ...(params.context ? [{ role: "system" as const, content: `Context: ${params.context}` }] : []),
-                { role: "user", content: params.prompt },
-            ],
-            model: params.model || "gpt-4o",
+            messages,
+            model: "gpt-4o",
         });
         return {
             content: completion.choices[0].message.content || "",
             format: "text",
-            model: completion.model,
+            model: "gpt-4o",
             provider: "openai",
         };
     }
 
     private async generateImage(params: AIRequestParams): Promise<AIResponse> {
-        // Map aspect ratio to DALL-E 3 size
         let size: "1024x1024" | "1024x1792" | "1792x1024" = "1024x1024";
         const ar = params.aspectRatio;
         if (ar === "9:16" || ar === "3:4") size = "1024x1792";
@@ -97,90 +267,130 @@ class ReplicateProvider implements AIProviderImplementation {
     id = "replicate";
     name = "Replicate";
 
-    // Actual Replicate model slugs
-    private readonly MODELS: Record<string, { slug: string; version?: string }> = {
-        // --- Generation ---
-        "flux-schnell":      { slug: "black-forest-labs/flux-schnell" },
-        "flux-dev":          { slug: "black-forest-labs/flux-dev" },
-        "flux-1.1-pro":      { slug: "black-forest-labs/flux-1.1-pro" },
-        "flux-pro":          { slug: "black-forest-labs/flux-pro" },
-        "seedream":          { slug: "stability-ai/stable-diffusion-3.5-large" },
-        "nano-banana":       { slug: "black-forest-labs/flux-schnell" },
-        "nano-banana-2":     { slug: "black-forest-labs/flux-dev" },
-        "nano-banana-pro":   { slug: "black-forest-labs/flux-1.1-pro" },
-        // --- Inpainting ---
-        "flux-fill":         { slug: "black-forest-labs/flux-fill-dev" },
-        // --- Background removal ---
-        "rembg":             { slug: "cjwbw/rembg", version: "fb8af171cfa1616ddcf1242c093f9c46bcada5ad4cf6f2fbe8b81b330ec5c003" },
-    };
-
-    private getModel(modelId: string) {
-        return this.MODELS[modelId] || this.MODELS["flux-schnell"];
-    }
-
     async generate(params: AIRequestParams): Promise<AIResponse> {
         const apiToken = process.env.REPLICATE_API_TOKEN;
         if (!apiToken) {
             throw new Error("Replicate API token not configured. Set REPLICATE_API_TOKEN in .env.local");
         }
 
-        const modelId = params.model || "flux-schnell";
-        const modelInfo = this.getModel(modelId);
+        const modelId = params.model || "nano-banana-2";
+        const entry = getModelById(modelId);
+        if (!entry) throw new Error(`Unknown model: ${modelId}`);
 
-        // Build input based on the type of operation
+        // Text LLMs go through a different path
+        if (entry.caps.includes("text")) {
+            return this.generateText(params, entry, apiToken);
+        }
+
+        // Image generation / editing / tools
+        return this.generateImage(params, entry, apiToken);
+    }
+
+    // ── Text LLM ────────────────────────────────────────────────────────
+
+    private async generateText(params: AIRequestParams, entry: ModelEntry, token: string): Promise<AIResponse> {
+        const input: Record<string, unknown> = {
+            prompt: params.prompt,
+        };
+        if (params.systemPrompt) {
+            input.system_prompt = params.systemPrompt;
+        }
+        // DeepSeek and Gemini expect max_tokens
+        input.max_tokens = 2048;
+
+        const result = await this.callReplicate(entry, input, token);
+        // LLMs return an array of strings or a single string
+        const text = Array.isArray(result) ? result.join("") : String(result);
+        return { content: text, format: "text", model: entry.slug, provider: "replicate" };
+    }
+
+    // ── Image Generation / Editing ──────────────────────────────────────
+
+    private async generateImage(params: AIRequestParams, entry: ModelEntry, token: string): Promise<AIResponse> {
         const input: Record<string, unknown> = {};
 
+        // ── Remove BG ───────────────────────────────────────────────
         if (params.type === "remove-bg") {
-            // Background removal model requires `image` input
             if (!params.imageBase64) throw new Error("Image is required for background removal");
-            input.image = params.imageBase64;
-        } else if (params.type === "inpainting") {
-            // Inpainting model (flux-fill) needs image + mask + prompt
+            // Use rembg regardless of selected model
+            const rembgEntry = getModelById("rembg")!;
+            const result = await this.callReplicate(rembgEntry, { image: params.imageBase64 }, token);
+            const output = Array.isArray(result) ? result[0] : result;
+            return { content: output as string, format: "url", model: rembgEntry.slug, provider: "replicate" };
+        }
+
+        // ── Outpaint ────────────────────────────────────────────────
+        if (params.type === "outpainting") {
+            if (!params.imageBase64) throw new Error("Image is required for outpainting");
+            const expandEntry = getModelById("bria-expand")!;
+            const expandInput: Record<string, unknown> = {
+                image: params.imageBase64,
+            };
+            if (params.aspectRatio) expandInput.aspect_ratio = params.aspectRatio;
+            const result = await this.callReplicate(expandEntry, expandInput, token);
+            const output = Array.isArray(result) ? result[0] : result;
+            return { content: output as string, format: "url", model: expandEntry.slug, provider: "replicate" };
+        }
+
+        // ── Inpaint ─────────────────────────────────────────────────
+        if (params.type === "inpainting") {
             if (!params.imageBase64) throw new Error("Image is required for inpainting");
             input.image = params.imageBase64;
             input.prompt = params.prompt;
             if (params.maskBase64) input.mask = params.maskBase64;
-        } else {
-            // Standard text-to-image generation
+            const result = await this.callReplicate(entry, input, token);
+            const output = Array.isArray(result) ? result[0] : result;
+            return { content: output as string, format: "url", model: entry.slug, provider: "replicate" };
+        }
+
+        // ── Edit (image + prompt → edited image) ────────────────────
+        if (params.type === "edit") {
+            if (!params.imageBase64) throw new Error("Image is required for editing");
             input.prompt = params.prompt;
-
-            // Aspect ratio (supported by Flux models)
-            if (params.aspectRatio) {
-                input.aspect_ratio = params.aspectRatio;
-            }
-
-            // Number of outputs
-            if (params.count && params.count > 1) {
-                input.num_outputs = Math.min(params.count, 4);
-            }
-
-            // Seed for reproducibility
-            if (params.seed) {
-                input.seed = params.seed;
-            }
-
-            // Quality/steps for some models
-            input.output_format = "webp";
-            input.output_quality = 90;
+            input.image = params.imageBase64;
+            if (params.aspectRatio) input.aspect_ratio = params.aspectRatio;
+            const result = await this.callReplicate(entry, input, token);
+            const output = Array.isArray(result) ? result[0] : result;
+            return { content: output as string, format: "url", model: entry.slug, provider: "replicate" };
         }
 
-        // Call Replicate API
+        // ── Standard text-to-image generation ───────────────────────
+        input.prompt = params.prompt;
+        if (params.aspectRatio) input.aspect_ratio = params.aspectRatio;
+        if (params.count && params.count > 1) input.num_outputs = Math.min(params.count, 4);
+        if (params.seed) input.seed = params.seed;
+        input.output_format = "webp";
+        input.output_quality = 90;
+
+        // Reference images (Flux 2 Pro, Nano Banana)
+        if (params.referenceImages && params.referenceImages.length > 0) {
+            input.reference_images = params.referenceImages;
+        }
+
+        const result = await this.callReplicate(entry, input, token);
+        const output = Array.isArray(result) ? result[0] : result;
+        return { content: output as string, format: "url", model: entry.slug, provider: "replicate" };
+    }
+
+    // ── Replicate API Call ───────────────────────────────────────────────
+
+    private async callReplicate(entry: ModelEntry, input: Record<string, unknown>, token: string): Promise<unknown> {
         let url: string;
-        if (modelInfo.version) {
-            url = "https://api.replicate.com/v1/predictions";
-        } else {
-            url = `https://api.replicate.com/v1/models/${modelInfo.slug}/predictions`;
-        }
-
         const body: Record<string, unknown> = { input };
-        if (modelInfo.version) {
-            body.version = modelInfo.version;
+
+        if (entry.version) {
+            // Community model with explicit version
+            url = "https://api.replicate.com/v1/predictions";
+            body.version = entry.version;
+        } else {
+            // Official model
+            url = `https://api.replicate.com/v1/models/${entry.slug}/predictions`;
         }
 
         const createRes = await fetch(url, {
             method: "POST",
             headers: {
-                "Authorization": `Bearer ${apiToken}`,
+                "Authorization": `Bearer ${token}`,
                 "Content-Type": "application/json",
                 "Prefer": "wait",
             },
@@ -188,17 +398,16 @@ class ReplicateProvider implements AIProviderImplementation {
         });
 
         if (!createRes.ok) {
-            const errText = await createRes.text();
-            console.error("Replicate API error:", errText);
-            throw new Error(`Replicate API error (${createRes.status}): ${errText.slice(0, 200)}`);
+            const errBody = await createRes.text();
+            console.error(`Replicate API error [${entry.slug}]:`, errBody);
+            throw new Error(`Replicate error (${createRes.status}): ${errBody.slice(0, 300)}`);
         }
 
         let prediction = await createRes.json();
 
-        // If result came back inline (Prefer: wait)
-        if (prediction.output) {
-            const output = Array.isArray(prediction.output) ? prediction.output[0] : prediction.output;
-            return { content: output as string, format: "url", model: modelInfo.slug, provider: "replicate" };
+        // If inline result (Prefer: wait succeeded)
+        if (prediction.output !== undefined && prediction.output !== null) {
+            return prediction.output;
         }
 
         // Poll for result (up to 120 seconds)
@@ -206,15 +415,15 @@ class ReplicateProvider implements AIProviderImplementation {
         for (let i = 0; i < 60; i++) {
             await new Promise(r => setTimeout(r, 2000));
             const pollRes = await fetch(`https://api.replicate.com/v1/predictions/${predictionId}`, {
-                headers: { "Authorization": `Bearer ${apiToken}` },
+                headers: { "Authorization": `Bearer ${token}` },
             });
             const poll = await pollRes.json();
+
             if (poll.status === "succeeded") {
-                const output = Array.isArray(poll.output) ? poll.output[0] : poll.output;
-                return { content: output as string, format: "url", model: modelInfo.slug, provider: "replicate" };
+                return poll.output;
             }
             if (poll.status === "failed" || poll.status === "canceled") {
-                throw new Error(`Replicate prediction ${poll.status}: ${poll.error || "unknown"}`);
+                throw new Error(`Replicate prediction ${poll.status}: ${poll.error || "unknown error"}`);
             }
         }
 
@@ -224,28 +433,12 @@ class ReplicateProvider implements AIProviderImplementation {
 
 // ─── Provider Factory ───────────────────────────────────────────────────────
 
-const openaiProvider = new OpenAIProvider();
-const replicateProvider = new ReplicateProvider();
-
-const registry: Record<string, AIProviderImplementation> = {
-    "openai": openaiProvider,
-    "dall-e": openaiProvider,
-    "dall-e-3": openaiProvider,
-};
-
-// All Replicate-backed model IDs
-const REPLICATE_MODEL_IDS = [
-    "flux-schnell", "flux-dev", "flux-1.1-pro", "flux-pro",
-    "seedream", "nano-banana", "nano-banana-2", "nano-banana-pro",
-    "flux-fill", "rembg",
-    // Aliases from UI
-    "flux", "seadream",
-];
+const openaiDirect = new OpenAIDirectProvider();
+const replicate = new ReplicateProvider();
 
 export function getProvider(modelId: string): AIProviderImplementation {
-    if (registry[modelId]) return registry[modelId];
-    if (REPLICATE_MODEL_IDS.includes(modelId)) return replicateProvider;
-    // Default: if the key mentions "gpt" → OpenAI, otherwise try Replicate
-    if (modelId.startsWith("gpt")) return openaiProvider;
-    return replicateProvider;
+    const entry = getModelById(modelId);
+    if (entry?.provider === "openai") return openaiDirect;
+    // Everything else goes through Replicate (including BYOK models like gpt-image)
+    return replicate;
 }

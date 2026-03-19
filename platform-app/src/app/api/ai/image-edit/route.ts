@@ -1,14 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getProvider } from "@/lib/ai-providers";
+import { getProvider, getModelById } from "@/lib/ai-providers";
 
 export async function POST(req: NextRequest) {
     try {
         const body = await req.json();
-        const { action, prompt, imageBase64, maskBase64, model } = body;
+        const { action, prompt, imageBase64, maskBase64, model, aspectRatio } = body;
 
         if (!action) {
             return NextResponse.json(
-                { error: "Action is required (remove-bg, inpaint, text-edit, generate)" },
+                { error: "Action is required (remove-bg, inpaint, text-edit, outpaint, generate)" },
                 { status: 400 }
             );
         }
@@ -17,7 +17,7 @@ export async function POST(req: NextRequest) {
 
         switch (action) {
             case "remove-bg": {
-                // Use dedicated rembg model on Replicate
+                // Always use rembg via Replicate, regardless of selected model
                 const provider = getProvider("rembg");
                 result = await provider.generate({
                     prompt: "",
@@ -29,12 +29,13 @@ export async function POST(req: NextRequest) {
             }
 
             case "inpaint": {
-                // Use flux-fill for inpainting
-                const provider = getProvider(model || "flux-fill");
+                // Use flux-fill or nano-banana models for inpainting
+                const inpaintModel = model || "flux-fill";
+                const provider = getProvider(inpaintModel);
                 result = await provider.generate({
                     prompt: prompt || "Fill in the masked area naturally",
                     type: "inpainting",
-                    model: model || "flux-fill",
+                    model: inpaintModel,
                     imageBase64,
                     maskBase64,
                 });
@@ -42,24 +43,53 @@ export async function POST(req: NextRequest) {
             }
 
             case "text-edit": {
-                // Use an image model to re-generate based on prompt + source image
-                // For now we use flux-dev which can take image input
-                const provider = getProvider(model || "flux-dev");
+                // Use models that support "edit" cap (nano-banana, flux-2-pro, gpt-image, seedream, qwen-image-edit)
+                const editModel = model || "nano-banana-2";
+                const entry = getModelById(editModel);
+                const supportsEdit = entry?.caps.includes("edit");
+
+                if (supportsEdit) {
+                    // Native image editing: pass image + text prompt → modified image
+                    const provider = getProvider(editModel);
+                    result = await provider.generate({
+                        prompt: prompt || "Edit this image",
+                        type: "edit",
+                        model: editModel,
+                        imageBase64,
+                        aspectRatio,
+                    });
+                } else {
+                    // Fallback: text-to-image with prompt (no editing, just regenerate)
+                    const provider = getProvider(editModel);
+                    result = await provider.generate({
+                        prompt: prompt || "Generate an image",
+                        type: "image",
+                        model: editModel,
+                    });
+                }
+                break;
+            }
+
+            case "outpaint": {
+                const provider = getProvider("bria-expand");
                 result = await provider.generate({
-                    prompt: prompt || "Edit this image",
-                    type: "image",
-                    model: model || "flux-dev",
-                    referenceImages: imageBase64 ? [imageBase64] : undefined,
+                    prompt: prompt || "",
+                    type: "outpainting",
+                    model: "bria-expand",
+                    imageBase64,
+                    aspectRatio,
                 });
                 break;
             }
 
             case "generate": {
-                const provider = getProvider(model || "flux-schnell");
+                const genModel = model || "nano-banana-2";
+                const provider = getProvider(genModel);
                 result = await provider.generate({
                     prompt: prompt || "Generate an image",
                     type: "image",
-                    model: model || "flux-schnell",
+                    model: genModel,
+                    aspectRatio,
                 });
                 break;
             }

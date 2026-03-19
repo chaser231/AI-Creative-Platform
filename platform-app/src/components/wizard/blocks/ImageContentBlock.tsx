@@ -19,22 +19,26 @@ import { ImageEditorModal } from "./ImageEditorModal";
 // ─── AI Models ───────────────────────────────────────────────────────────────
 
 const IMAGE_GEN_MODELS = [
-    { id: "dall-e", label: "DALL-E 3", provider: "openai" },
-    { id: "flux", label: "Flux Schnell", provider: "replicate" },
-    { id: "nano-banana", label: "Flux Dev", provider: "replicate" },
-    { id: "nano-banana-2", label: "Flux 1.1", provider: "replicate" },
-    { id: "nano-banana-pro", label: "Flux 1.1 Pro", provider: "replicate" },
-    { id: "gpt-image", label: "GPT Image 1.5", provider: "openai" },
-    { id: "seadream", label: "SD 3.5 Large", provider: "replicate" },
+    { id: "nano-banana-2", label: "Nano Banana 2" },
+    { id: "nano-banana-pro", label: "Nano Banana Pro" },
+    { id: "nano-banana", label: "Nano Banana" },
+    { id: "flux-2-pro", label: "Flux 2 Pro" },
+    { id: "seedream", label: "Seedream 4.5" },
+    { id: "gpt-image", label: "GPT Image 1.5" },
+    { id: "qwen-image", label: "Qwen Image" },
+    { id: "flux-schnell", label: "Flux Schnell" },
+    { id: "flux-dev", label: "Flux Dev" },
+    { id: "flux-1.1-pro", label: "Flux 1.1 Pro" },
+    { id: "dall-e-3", label: "DALL-E 3" },
 ];
 
 const ASPECT_RATIOS = [
-    { id: "1:1", label: "1:1", w: 1024, h: 1024 },
-    { id: "4:3", label: "4:3", w: 1024, h: 768 },
-    { id: "3:4", label: "3:4", w: 768, h: 1024 },
-    { id: "16:9", label: "16:9", w: 1024, h: 576 },
-    { id: "9:16", label: "9:16", w: 576, h: 1024 },
-    { id: "3:2", label: "3:2", w: 1024, h: 682 },
+    { id: "1:1", label: "1:1" },
+    { id: "4:3", label: "4:3" },
+    { id: "3:4", label: "3:4" },
+    { id: "16:9", label: "16:9" },
+    { id: "9:16", label: "9:16" },
+    { id: "3:2", label: "3:2" },
 ];
 
 const STYLE_PRESETS = [

@@ -6,21 +6,26 @@ import { RemoteTextProvider, RemoteImageProvider } from "@/services/aiService";
 
 // Helper models lists
 const TEXT_MODELS = [
-    { id: "openai", name: "GPT-4o" },
+    { id: "deepseek", name: "DeepSeek V3" },
+    { id: "gemini-flash", name: "Gemini 2.5 Flash" },
 ];
 
 const IMAGE_MODELS = [
+    { id: "nano-banana-2", name: "Nano Banana 2" },
+    { id: "nano-banana-pro", name: "Nano Banana Pro" },
+    { id: "nano-banana", name: "Nano Banana" },
+    { id: "flux-2-pro", name: "Flux 2 Pro" },
+    { id: "seedream", name: "Seedream 4.5" },
+    { id: "gpt-image", name: "GPT Image 1.5" },
+    { id: "qwen-image", name: "Qwen Image" },
     { id: "flux-schnell", name: "Flux Schnell" },
     { id: "flux-dev", name: "Flux Dev" },
     { id: "flux-1.1-pro", name: "Flux 1.1 Pro" },
-    { id: "seedream", name: "SD 3.5 Large" },
-    { id: "nano-banana", name: "Nano Banana" },
-    { id: "nano-banana-2", name: "Nano Banana 2" },
-    { id: "nano-banana-pro", name: "Nano Banana Pro" },
     { id: "dall-e-3", name: "DALL-E 3" },
 ];
 
 const OUTPAINT_MODELS = [
+    { id: "bria-expand", name: "Bria Expand" },
     { id: "flux-fill", name: "Flux Fill" },
 ];
 
