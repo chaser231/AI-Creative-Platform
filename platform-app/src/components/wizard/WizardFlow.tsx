@@ -250,7 +250,7 @@ export function WizardFlow({ projectId, onSwitchToStudio }: WizardFlowProps) {
 
     return (
         <div className="flex-1 flex items-center justify-center bg-bg-secondary p-8 overflow-hidden">
-            <div className="w-full max-w-2xl bg-bg-primary rounded-[var(--radius-xl)] shadow-[var(--shadow-lg)] border border-border-primary overflow-hidden flex flex-col max-h-full">
+            <div className="w-full max-w-5xl bg-bg-primary rounded-[var(--radius-xl)] shadow-[var(--shadow-lg)] border border-border-primary overflow-hidden flex flex-col max-h-full">
                 {/* Progress bar */}
                 <div className="flex items-center gap-0 border-b border-border-primary shrink-0">
                     {(["template", "content", "review"] as WizardStep[]).map((s, i) => (

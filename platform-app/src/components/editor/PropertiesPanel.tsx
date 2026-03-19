@@ -300,6 +300,21 @@ export function PropertiesPanel() {
                                 <option value="logo">Логотип (Logo)</option>
                             </select>
                         </div>
+
+                        {/* Group Slot ID (for frames — links child texts for coordinated AI generation) */}
+                        {selectedLayer.type === "frame" && (
+                            <div className="mt-2">
+                                <label className="text-[9px] text-text-tertiary uppercase tracking-wider font-medium mb-1.5 block">Группа текстов (Group Slot ID)</label>
+                                <input
+                                    type="text"
+                                    placeholder="например: hero, promo, footer"
+                                    value={(selectedLayer as any).groupSlotId || ""}
+                                    onChange={(e) => updateLayer(selectedLayer.id, { groupSlotId: e.target.value || undefined })}
+                                    className="w-full h-8 px-2 text-[11px] bg-bg-secondary border border-border-primary rounded-[var(--radius-md)] text-text-primary focus:outline-none focus:ring-1 focus:ring-border-focus placeholder:text-text-tertiary"
+                                />
+                                <p className="text-[9px] text-text-tertiary mt-1">Связывает вложенные текстовые слои для совместной AI-генерации</p>
+                            </div>
+                        )}
                     </div>
                 </Popover>
             </div>

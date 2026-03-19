@@ -317,6 +317,8 @@ export interface FrameLayer extends BaseLayer {
     counterAxisAlignItems?: "flex-start" | "center" | "flex-end" | "stretch";
     primaryAxisSizingMode?: "fixed" | "auto";
     counterAxisSizingMode?: "fixed" | "auto";
+    /** Groups nested text slots for coordinated AI generation */
+    groupSlotId?: string;
 }
 
 export type Layer = TextLayer | RectangleLayer | ImageLayer | BadgeLayer | FrameLayer;

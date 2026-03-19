@@ -30,19 +30,10 @@ export function TextContentBlock({ id, name, props, value, onChange, businessUni
         setIsGenerating(true);
         try {
             const { generateTextVariants } = await import("@/services/aiService");
-            const results = await generateTextVariants(
-                prompt,
-                name,
-                3,
-                businessUnit,
-                selectedPreset,
-            );
+            const results = await generateTextVariants(prompt, name, 3, businessUnit, selectedPreset);
             setVariants(results);
             setActiveVariantIdx(0);
-            // Auto-apply first variant
-            if (results.length > 0) {
-                onChange(results[0]);
-            }
+            if (results.length > 0) onChange(results[0]);
         } catch (e) {
             console.error("Failed to generate text variants:", e);
         } finally {
@@ -58,26 +49,24 @@ export function TextContentBlock({ id, name, props, value, onChange, businessUni
     const presetKeys = Object.keys(TEXT_GEN_PRESET_LABELS) as TextGenPreset[];
 
     return (
-        <div className="p-4 bg-bg-primary border border-border-primary rounded-[var(--radius-lg)] shadow-sm">
+        <div className="p-4 bg-bg-primary border border-border-primary rounded-[var(--radius-lg)] shadow-[var(--shadow-sm)]">
             {/* Header */}
             <div className="flex justify-between items-center mb-2">
                 <label className="flex items-center gap-2 text-sm font-medium text-text-primary">
                     <Type size={16} className="text-text-secondary" />
                     {name}
                 </label>
-                <Button
-                    variant="ghost"
-                    size="sm"
-                    icon={<Wand2 size={14} className={showAiPanel ? "text-purple-500" : "text-text-tertiary"} />}
+                <button
                     onClick={() => setShowAiPanel(!showAiPanel)}
-                    className={`text-xs h-7 px-2 transition-colors ${
+                    className={`flex items-center gap-1.5 px-2 py-1 text-[11px] font-medium rounded-[var(--radius-sm)] border transition-all cursor-pointer ${
                         showAiPanel
-                            ? "bg-purple-50 text-purple-600 border border-purple-200"
-                            : "hover:bg-bg-secondary text-text-secondary"
+                            ? "bg-accent-lime text-text-primary border-accent-lime-hover"
+                            : "bg-bg-secondary text-text-secondary border-border-primary hover:bg-bg-tertiary"
                     }`}
                 >
+                    <Wand2 size={12} />
                     AI
-                </Button>
+                </button>
             </div>
 
             {/* Text Input */}
@@ -91,7 +80,7 @@ export function TextContentBlock({ id, name, props, value, onChange, businessUni
 
             {/* AI Generation Panel */}
             {showAiPanel && (
-                <div className="mt-3 p-3 bg-gradient-to-br from-purple-50/80 to-indigo-50/60 border border-purple-100 rounded-[var(--radius-md)] space-y-3">
+                <div className="mt-3 p-3 bg-bg-secondary border border-border-primary rounded-[var(--radius-md)] space-y-3">
                     {/* Prompt input */}
                     <div className="flex gap-2">
                         <input
@@ -100,18 +89,20 @@ export function TextContentBlock({ id, name, props, value, onChange, businessUni
                             value={aiPrompt}
                             onChange={(e) => setAiPrompt(e.target.value)}
                             onKeyDown={(e) => e.key === "Enter" && handleGenerate()}
-                            className="flex-1 h-9 px-3 rounded-[var(--radius-md)] border border-purple-200/60 bg-white/80 text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-purple-300 placeholder:text-text-tertiary"
+                            className="flex-1 h-9 px-3 rounded-[var(--radius-md)] border border-border-primary bg-bg-primary text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-border-focus placeholder:text-text-tertiary"
                         />
-                        <Button
-                            variant="ai"
-                            size="sm"
-                            icon={isGenerating ? <div className="animate-spin text-white text-xs">⟳</div> : <Sparkles size={14} />}
+                        <button
                             onClick={handleGenerate}
                             disabled={isGenerating}
-                            className="h-9 px-3 shrink-0"
+                            className="h-9 px-4 rounded-[var(--radius-md)] bg-accent-lime text-accent-primary font-semibold text-xs hover:bg-accent-lime-hover disabled:opacity-50 transition-all cursor-pointer disabled:cursor-default shrink-0 flex items-center gap-1.5"
                         >
+                            {isGenerating ? (
+                                <div className="animate-spin text-xs">⟳</div>
+                            ) : (
+                                <Sparkles size={14} />
+                            )}
                             {isGenerating ? "..." : "Генерация"}
-                        </Button>
+                        </button>
                     </div>
 
                     {/* Presets */}
@@ -120,10 +111,10 @@ export function TextContentBlock({ id, name, props, value, onChange, businessUni
                             <button
                                 key={preset}
                                 onClick={() => setSelectedPreset(selectedPreset === preset ? undefined : preset)}
-                                className={`px-2 py-1 text-[11px] font-medium rounded-full border transition-all cursor-pointer ${
+                                className={`px-2.5 py-1 text-[11px] font-medium rounded-full border transition-all cursor-pointer ${
                                     selectedPreset === preset
-                                        ? "bg-purple-500 text-white border-purple-500"
-                                        : "bg-white/60 text-purple-600 border-purple-200 hover:bg-purple-100/50"
+                                        ? "bg-accent-primary text-text-inverse border-accent-primary"
+                                        : "bg-bg-primary text-text-secondary border-border-primary hover:bg-bg-tertiary"
                                 }`}
                             >
                                 {TEXT_GEN_PRESET_LABELS[preset]}
@@ -135,21 +126,21 @@ export function TextContentBlock({ id, name, props, value, onChange, businessUni
                     {variants.length > 0 && (
                         <div className="space-y-2">
                             <div className="flex items-center justify-between">
-                                <span className="text-[11px] font-medium text-purple-600">
+                                <span className="text-[11px] font-medium text-text-secondary">
                                     Варианты ({activeVariantIdx + 1}/{variants.length})
                                 </span>
                                 <div className="flex gap-1">
                                     <button
                                         onClick={() => handleSelectVariant(Math.max(0, activeVariantIdx - 1))}
                                         disabled={activeVariantIdx === 0}
-                                        className="w-6 h-6 flex items-center justify-center rounded-full border border-purple-200 text-purple-500 hover:bg-purple-100 disabled:opacity-30 cursor-pointer disabled:cursor-default transition-colors"
+                                        className="w-6 h-6 flex items-center justify-center rounded-full border border-border-primary text-text-secondary hover:bg-bg-tertiary disabled:opacity-30 cursor-pointer disabled:cursor-default transition-colors"
                                     >
                                         <ChevronLeft size={14} />
                                     </button>
                                     <button
                                         onClick={() => handleSelectVariant(Math.min(variants.length - 1, activeVariantIdx + 1))}
                                         disabled={activeVariantIdx === variants.length - 1}
-                                        className="w-6 h-6 flex items-center justify-center rounded-full border border-purple-200 text-purple-500 hover:bg-purple-100 disabled:opacity-30 cursor-pointer disabled:cursor-default transition-colors"
+                                        className="w-6 h-6 flex items-center justify-center rounded-full border border-border-primary text-text-secondary hover:bg-bg-tertiary disabled:opacity-30 cursor-pointer disabled:cursor-default transition-colors"
                                     >
                                         <ChevronRight size={14} />
                                     </button>
@@ -162,13 +153,13 @@ export function TextContentBlock({ id, name, props, value, onChange, businessUni
                                         onClick={() => handleSelectVariant(i)}
                                         className={`flex-1 text-left p-2.5 rounded-[var(--radius-md)] border text-xs leading-snug transition-all cursor-pointer ${
                                             activeVariantIdx === i
-                                                ? "bg-white border-purple-400 text-text-primary shadow-sm ring-1 ring-purple-200"
-                                                : "bg-white/50 border-purple-100 text-text-secondary hover:bg-white/80 hover:border-purple-200"
+                                                ? "bg-accent-lime/30 border-accent-lime-hover text-text-primary shadow-[var(--shadow-sm)]"
+                                                : "bg-bg-primary border-border-primary text-text-secondary hover:bg-bg-tertiary"
                                         }`}
                                     >
                                         <div className="flex items-start gap-1.5">
                                             {activeVariantIdx === i && (
-                                                <Check size={12} className="text-purple-500 shrink-0 mt-0.5" />
+                                                <Check size={12} className="text-accent-primary shrink-0 mt-0.5" />
                                             )}
                                             <span className="line-clamp-3">{v}</span>
                                         </div>
@@ -177,14 +168,6 @@ export function TextContentBlock({ id, name, props, value, onChange, businessUni
                             </div>
                         </div>
                     )}
-                </div>
-            )}
-
-            {/* BU TOV indicator */}
-            {businessUnit && (
-                <div className="mt-2 flex items-center gap-1.5 text-[10px] text-text-tertiary">
-                    <Sparkles size={10} />
-                    <span>TOV: {businessUnit}</span>
                 </div>
             )}
         </div>
