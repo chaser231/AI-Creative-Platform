@@ -1,6 +1,7 @@
 "use client";
 
-import { useRef, useState, use } from "react";
+import { useRef, useState, use, useEffect } from "react";
+import { useSearchParams } from "next/navigation";
 import dynamic from "next/dynamic";
 import { Download, Share2, Wand2, PenTool, Copy, Check, HelpCircle, Settings } from "lucide-react";
 import { TopBar } from "@/components/layout/TopBar";
@@ -18,6 +19,7 @@ import { WizardFlow } from "@/components/wizard/WizardFlow";
 import { useProjectStore } from "@/store/projectStore";
 import { useCanvasStore } from "@/store/canvasStore";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
+import { loadAllCustomFonts } from "@/lib/customFonts";
 import Konva from "konva";
 
 // Dynamic import for Canvas (Konva needs client-only, no SSR)
@@ -46,6 +48,20 @@ export default function EditorPage({ params }: EditorPageProps) {
     const updateProject = useProjectStore((s) => s.updateProject);
     const { editorMode, setEditorMode, undo, redo, history, future, artboardProps, updateArtboardProps } = useCanvasStore();
     useKeyboardShortcuts();
+    const searchParams = useSearchParams();
+
+    // Set editor mode from URL query parameters
+    useEffect(() => {
+        const queryMode = searchParams.get("mode");
+        if (queryMode === "wizard" || queryMode === "studio") {
+            setEditorMode(queryMode);
+        }
+    }, [searchParams, setEditorMode]);
+
+    // Load custom fonts once on app load
+    useEffect(() => {
+        loadAllCustomFonts();
+    }, []);
 
     const project = projects.find((p) => p.id === id);
 
