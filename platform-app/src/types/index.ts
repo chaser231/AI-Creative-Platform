@@ -105,6 +105,7 @@ export interface TextComponentProps extends BaseComponentProps {
     textAdjust?: "auto_width" | "auto_height" | "fixed";
     truncateText?: boolean;
     verticalTrim?: boolean;
+    textTransform?: "none" | "uppercase" | "lowercase";
 }
 
 export interface RectangleComponentProps extends BaseComponentProps {
@@ -275,6 +276,7 @@ export interface TextLayer extends BaseLayer {
     textAdjust?: "auto_width" | "auto_height" | "fixed";
     truncateText?: boolean;
     verticalTrim?: boolean;
+    textTransform?: "none" | "uppercase" | "lowercase";
 }
 
 export interface RectangleLayer extends BaseLayer {

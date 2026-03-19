@@ -626,37 +626,60 @@ function TextPropsGrouped({
                 </Popover>
             </div>
 
-            {/* Выравнивание — alignment buttons inline */}
-            <div className="flex items-center border border-border-primary rounded-[var(--radius-md)] overflow-hidden shrink-0">
-                <AlignButton
-                    icon={<AlignLeft size={12} />}
-                    isActive={layer.align === "left"}
-                    onClick={() => onChange({ align: "left" })}
-                    title="По левому краю"
+            {/* Стиль текста — color, alignment, transform */}
+            <div className="relative">
+                <PopoverButton
+                    icon={<Paintbrush size={12} />}
+                    label="Стиль"
+                    isActive={activePopover === "style"}
+                    onClick={() => togglePopover("style")}
                 />
-                <AlignButton
-                    icon={<AlignCenter size={12} />}
-                    isActive={layer.align === "center"}
-                    onClick={() => onChange({ align: "center" })}
-                    title="По центру"
-                />
-                <AlignButton
-                    icon={<AlignRight size={12} />}
-                    isActive={layer.align === "right"}
-                    onClick={() => onChange({ align: "right" })}
-                    title="По правому краю"
-                />
-            </div>
-
-            {/* Цвет — inline color, always clear */}
-            <div className="flex items-center gap-1.5 shrink-0">
-                <span className="text-[10px] text-text-tertiary font-light select-none">Цвет</span>
-                <input
-                    type="color"
-                    value={layer.fill}
-                    onChange={(e) => onChange({ fill: e.target.value })}
-                    className="w-6 h-6 rounded-[var(--radius-sm)] border border-border-primary cursor-pointer"
-                />
+                <Popover isOpen={activePopover === "style"} onClose={() => setActivePopover(null)}>
+                    <div className="space-y-4">
+                        <div>
+                            <label className="text-[9px] text-text-tertiary uppercase tracking-wider font-medium mb-1.5 block">Цвет текста</label>
+                            <ColorInput value={layer.fill} onChange={(v) => onChange({ fill: v })} />
+                        </div>
+                        <div>
+                            <label className="text-[9px] text-text-tertiary uppercase tracking-wider font-medium mb-1.5 block">Выравнивание</label>
+                            <div className="flex items-center border border-border-primary rounded-[var(--radius-md)] overflow-hidden w-fit">
+                                <AlignButton
+                                    icon={<AlignLeft size={12} />}
+                                    isActive={layer.align === "left"}
+                                    onClick={() => onChange({ align: "left" })}
+                                    title="По левому краю"
+                                />
+                                <AlignButton
+                                    icon={<AlignCenter size={12} />}
+                                    isActive={layer.align === "center"}
+                                    onClick={() => onChange({ align: "center" })}
+                                    title="По центру"
+                                />
+                                <AlignButton
+                                    icon={<AlignRight size={12} />}
+                                    isActive={layer.align === "right"}
+                                    onClick={() => onChange({ align: "right" })}
+                                    title="По правому краю"
+                                />
+                            </div>
+                        </div>
+                        <div>
+                            <label className="text-[9px] text-text-tertiary uppercase tracking-wider font-medium mb-1.5 block">Регистр</label>
+                            <label className="flex items-center gap-2 cursor-pointer group">
+                                <div className={`w-3.5 h-3.5 rounded-[var(--radius-sm)] border flex items-center justify-center transition-colors ${layer.textTransform === 'uppercase' ? 'bg-accent-primary border-accent-primary' : 'border-border-primary bg-bg-secondary group-hover:border-border-focus'}`}>
+                                    {layer.textTransform === 'uppercase' && <div className="w-1.5 h-1.5 bg-white rounded-sm" />}
+                                </div>
+                                <span className="text-[11px] text-text-primary">ВЕРХНИЙ РЕГИСТР</span>
+                                <input
+                                    type="checkbox"
+                                    className="hidden"
+                                    checked={layer.textTransform === 'uppercase'}
+                                    onChange={(e) => onChange({ textTransform: e.target.checked ? 'uppercase' : 'none' })}
+                                />
+                            </label>
+                        </div>
+                    </div>
+                </Popover>
             </div>
         </div>
     );

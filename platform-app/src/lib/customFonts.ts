@@ -1,3 +1,5 @@
+import { PREINSTALLED_FONT_FAMILIES } from "../config/preinstalledFonts";
+
 export interface CustomFont {
     name: string;
     buffer: ArrayBuffer;
@@ -5,14 +7,10 @@ export interface CustomFont {
 
 export interface PreinstalledFont {
     name: string;
-    url: string;
 }
 
 // Pre-installed fonts available via public/fonts
-// E.g., if you place "MyBrandFont.ttf" in public/fonts/, add it here.
-export const PREINSTALLED_FONTS: PreinstalledFont[] = [
-    // Example: { name: "MyBrandFont", url: "/fonts/MyBrandFont.ttf" }
-];
+export const PREINSTALLED_FONTS: PreinstalledFont[] = PREINSTALLED_FONT_FAMILIES.map(name => ({ name }));
 
 const DB_NAME = "CreativePlatformDB";
 const STORE_NAME = "customFonts";
@@ -71,17 +69,8 @@ export async function loadAllCustomFonts(): Promise<string[]> {
     
     const loadedFontNames: string[] = [];
 
-    // 1. Load Pre-installed fonts via CSS/URL
-    for (const font of PREINSTALLED_FONTS) {
-        try {
-            const f = new FontFace(font.name, `url(${font.url})`);
-            const loadedFace = await f.load();
-            document.fonts.add(loadedFace);
-            loadedFontNames.push(font.name);
-        } catch (e) {
-            console.error(`Failed to load pre-installed font ${font.name}:`, e);
-        }
-    }
+    // 1. Pre-installed fonts are loaded automatically via src/app/fonts.css
+    loadedFontNames.push(...PREINSTALLED_FONTS.map(f => f.name));
 
     // 2. Load User fonts from IndexedDB
     try {

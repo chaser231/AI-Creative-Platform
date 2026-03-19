@@ -186,7 +186,7 @@ function CanvasLayer({
                     {...commonProps}
                     width={layer.textAdjust === "auto_width" ? undefined : layer.width}
                     height={layer.textAdjust === "auto_width" || layer.textAdjust === "auto_height" ? undefined : layer.height}
-                    text={layer.text}
+                    text={layer.textTransform === "uppercase" ? layer.text.toUpperCase() : layer.textTransform === "lowercase" ? layer.text.toLowerCase() : layer.text}
                     fontSize={layer.fontSize}
                     fontFamily={layer.fontFamily}
                     fontStyle={layer.fontWeight === "700" || layer.fontWeight === "bold" ? "bold" : layer.fontWeight === "600" ? "600" : "normal"}
@@ -562,6 +562,7 @@ function InlineTextEditor({
                 fontWeight: layer.fontWeight,
                 color: layer.fill,
                 textAlign: layer.align,
+                textTransform: layer.textTransform === "uppercase" ? "uppercase" : layer.textTransform === "lowercase" ? "lowercase" : "none",
                 letterSpacing: layer.letterSpacing * zoom,
                 lineHeight: layer.lineHeight,
                 border: "2px solid var(--accent-primary)",
