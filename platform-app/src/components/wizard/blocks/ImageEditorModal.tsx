@@ -67,6 +67,18 @@ export function ImageEditorModal({ imageSrc, onApply, onClose }: ImageEditorModa
     const [outpaintRatio, setOutpaintRatio] = useState("16:9");
     const [outpaintMode, setOutpaintMode] = useState<"ratio" | "padding">("ratio");
     const [outpaintPadding, setOutpaintPadding] = useState({ top: 0, right: 0, bottom: 0, left: 0 });
+    const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+    const parseAiError = (e: Error) => {
+        const msg = String(e.message || "");
+        if (msg.includes("E003") || msg.includes("high demand") || msg.includes("fetch failed")) {
+            return "Слишком много запросов к модели. Пожалуйста, подождите 10-15 секунд и попробуйте снова, либо выберите другую модель.";
+        }
+        if (msg.includes("prompt is required")) {
+            return "Для этой функции необходимо ввести текстовый запрос (prompt).";
+        }
+        return `Ошибка обработки: ${msg}`;
+    };
 
     const currentModelCaps = IMAGE_EDIT_MODELS.find(m => m.id === selectedModel)?.caps || [];
 
@@ -86,6 +98,7 @@ export function ImageEditorModal({ imageSrc, onApply, onClose }: ImageEditorModa
 
     const callImageEdit = async (action: string, prompt?: string, maskB64?: string) => {
         setIsProcessing(true);
+        setErrorMsg(null);
         try {
             const response = await fetch("/api/ai/image-edit", {
                 method: "POST",
@@ -104,7 +117,7 @@ export function ImageEditorModal({ imageSrc, onApply, onClose }: ImageEditorModa
         } catch (e: unknown) {
             const error = e as Error;
             console.error(`Image edit (${action}) failed:`, error);
-            alert(`Ошибка: ${error.message || "Не удалось обработать изображение"}`);
+            setErrorMsg(parseAiError(error));
         } finally {
             setIsProcessing(false);
         }
@@ -120,6 +133,7 @@ export function ImageEditorModal({ imageSrc, onApply, onClose }: ImageEditorModa
     };
     const handleOutpaint = async () => {
         setIsProcessing(true);
+        setErrorMsg(null);
         try {
             let canvasSize, originalSize, originalLocation;
             if (outpaintMode === "padding") {
@@ -163,7 +177,7 @@ export function ImageEditorModal({ imageSrc, onApply, onClose }: ImageEditorModa
         } catch (e: unknown) {
             const error = e as Error;
             console.error("Outpaint failed:", error);
-            alert(`Ошибка: ${error.message || "Не удалось расширить изображение"}`);
+            setErrorMsg(parseAiError(error));
         } finally {
             setIsProcessing(false);
         }
@@ -299,6 +313,13 @@ export function ImageEditorModal({ imageSrc, onApply, onClose }: ImageEditorModa
                                 </button>
                             ))}
 
+                            {/* Error Banner */}
+                            {errorMsg && (
+                                <div className="bg-red-500/10 border border-red-500/20 rounded-[var(--radius-sm)] p-3 mb-3 animate-in fade-in zoom-in-95">
+                                    <p className="text-[11px] text-red-500 leading-relaxed font-medium">{errorMsg}</p>
+                                </div>
+                            )}
+
                             {/* Tool-specific UI */}
                             {activeTool === "remove-bg" && (
                                 <div className="pt-3 border-t border-border-primary">
@@ -336,6 +357,12 @@ export function ImageEditorModal({ imageSrc, onApply, onClose }: ImageEditorModa
                                         {isProcessing ? <Loader2 size={16} className="animate-spin" /> : <Paintbrush size={16} />}
                                         {isProcessing ? "Рисую..." : "Применить Inpaint"}
                                     </button>
+                                </div>
+                            )}
+                            
+                            {errorMsg && (
+                                <div className="bg-red-500/10 border border-red-500/20 rounded-[var(--radius-sm)] p-3 my-2 animate-in fade-in zoom-in-95">
+                                    <p className="text-xs text-red-500 leading-relaxed font-medium">{errorMsg}</p>
                                 </div>
                             )}
 
