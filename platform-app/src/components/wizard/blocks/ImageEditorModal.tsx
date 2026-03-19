@@ -30,14 +30,14 @@ const OUTPAINT_RATIOS = [
 // ─── AI Models for Image Editing ──────────────────────────
 // Only models with "edit" capability in MODEL_REGISTRY
 const IMAGE_EDIT_MODELS: { id: string; label: string; caps: EditorTool[] }[] = [
-    { id: "nano-banana-2", label: "Nano Banana 2", caps: ["remove-bg", "inpaint", "text-edit", "outpaint"] },
-    { id: "nano-banana-pro", label: "Nano Banana Pro", caps: ["remove-bg", "inpaint", "text-edit", "outpaint"] },
-    { id: "nano-banana", label: "Nano Banana", caps: ["remove-bg", "inpaint", "text-edit", "outpaint"] },
-    { id: "flux-2-pro", label: "Flux 2 Pro", caps: ["remove-bg", "text-edit", "outpaint"] },
-    { id: "seedream", label: "Seedream 4.5", caps: ["remove-bg", "text-edit", "outpaint"] },
-    { id: "gpt-image", label: "GPT Image 1.5", caps: ["remove-bg", "text-edit", "outpaint"] },
-    { id: "qwen-image-edit", label: "Qwen Image Edit", caps: ["remove-bg", "text-edit", "outpaint"] },
-    { id: "flux-fill", label: "Flux Fill", caps: ["remove-bg", "inpaint", "outpaint"] },
+    { id: "nano-banana-2", label: "Nano Banana 2", caps: ["remove-bg", "inpaint", "text-edit"] },
+    { id: "nano-banana-pro", label: "Nano Banana Pro", caps: ["remove-bg", "inpaint", "text-edit"] },
+    { id: "nano-banana", label: "Nano Banana", caps: ["remove-bg", "inpaint", "text-edit"] },
+    { id: "flux-2-pro", label: "Flux 2 Pro", caps: ["remove-bg", "text-edit"] },
+    { id: "seedream", label: "Seedream 4.5", caps: ["remove-bg", "text-edit"] },
+    { id: "gpt-image", label: "GPT Image 1.5", caps: ["remove-bg", "text-edit"] },
+    { id: "qwen-image-edit", label: "Qwen Image Edit", caps: ["remove-bg", "text-edit"] },
+    { id: "flux-fill", label: "Flux Fill", caps: ["remove-bg", "inpaint"] },
     { id: "bria-expand", label: "Bria Expand", caps: ["outpaint"] },
 ];
 

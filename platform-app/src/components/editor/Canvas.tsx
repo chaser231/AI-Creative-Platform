@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useCallback, useEffect, useState, useMemo } from "react";
+import { useRef, useCallback, useEffect, useState, useMemo, Fragment } from "react";
 import { ImageIcon } from "lucide-react";
 import { Stage, Layer, Rect, Text, Image as KonvaImage, Transformer, Group, Line } from "react-konva";
 import { useCanvasStore, computeConstrainedPosition } from "@/store/canvasStore";
@@ -1452,7 +1452,7 @@ export function Canvas({ stageRef }: CanvasProps) {
                         const labelX = isHz ? (dm.from + dm.to) / 2 : dm.position + 4;
                         const labelY = isHz ? dm.position - 14 : (dm.from + dm.to) / 2 - 6;
                         return (
-                            <>
+                            <Fragment key={`dist-group-${i}`}>
                                 <Line
                                     key={`dist-line-${i}`}
                                     points={points}
@@ -1462,10 +1462,10 @@ export function Canvas({ stageRef }: CanvasProps) {
                                 />
                                 {/* End caps */}
                                 {isHz ? (
-                                    <>
+                                    <Fragment key={`dist-caps-hz-${i}`}>
                                         <Line key={`dist-cap-a-${i}`} points={[dm.from, dm.position - 4, dm.from, dm.position + 4]} stroke="#F97316" strokeWidth={1} listening={false} />
                                         <Line key={`dist-cap-b-${i}`} points={[dm.to, dm.position - 4, dm.to, dm.position + 4]} stroke="#F97316" strokeWidth={1} listening={false} />
-                                    </>
+                                    </Fragment>
                                 ) : (
                                     <>
                                         <Line key={`dist-cap-a-${i}`} points={[dm.position - 4, dm.from, dm.position + 4, dm.from]} stroke="#F97316" strokeWidth={1} listening={false} />
@@ -1495,7 +1495,7 @@ export function Canvas({ stageRef }: CanvasProps) {
                                     align="center"
                                     listening={false}
                                 />
-                            </>
+                            </Fragment>
                         );
                     })}
 
@@ -1509,7 +1509,7 @@ export function Canvas({ stageRef }: CanvasProps) {
                             const labelX = isHz ? (seg.from + seg.to) / 2 : seg.crossPos + 4;
                             const labelY = isHz ? seg.crossPos - 14 : (seg.from + seg.to) / 2 - 6;
                             return (
-                                <>
+                                <Fragment key={`spc-group-${i}-${j}`}>
                                     <Line
                                         key={`spc-line-${i}-${j}`}
                                         points={points}
@@ -1540,7 +1540,7 @@ export function Canvas({ stageRef }: CanvasProps) {
                                         align="center"
                                         listening={false}
                                     />
-                                </>
+                                </Fragment>
                             );
                         })
                     )}
