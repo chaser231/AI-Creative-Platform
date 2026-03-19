@@ -102,7 +102,7 @@ export function ImageContentBlock({ id, name, props, value, onChange, businessUn
     const [genPrompt, setGenPrompt] = useState("");
 
     // Generation params
-    const [selectedModel, setSelectedModel] = useState("nano-banana-2");
+    const [selectedModel, setSelectedModel] = useState("flux-dev");
     const [aspectRatio, setAspectRatio] = useState("1:1");
     const [genCount, setGenCount] = useState(1);
     const [seed, setSeed] = useState("");
@@ -140,10 +140,9 @@ export function ImageContentBlock({ id, name, props, value, onChange, businessUn
         setIsGenerating(true);
         try {
             const style = STYLE_PRESETS.find(s => s.id === stylePreset);
-            const ratio = ASPECT_RATIOS.find(r => r.id === aspectRatio);
-            const styleInstr = style?.prompt ? style.prompt : "";
-
-            const finalPrompt = [styleInstr, basePrompt].filter(Boolean).join(" ").trim();
+            // User prompt is primary; style is appended as context, not prefix
+            const styleContext = style?.prompt ? `. Style: ${style.prompt}` : "";
+            const finalPrompt = `${basePrompt}${styleContext}`;
 
             const response = await fetch("/api/ai/generate", {
                 method: "POST",
@@ -152,8 +151,7 @@ export function ImageContentBlock({ id, name, props, value, onChange, businessUn
                     prompt: finalPrompt,
                     type: "image",
                     model: selectedModel,
-                    width: ratio?.w || 1024,
-                    height: ratio?.h || 1024,
+                    aspectRatio: aspectRatio,
                     count: genCount,
                     seed: seed ? Number(seed) : undefined,
                     scale,

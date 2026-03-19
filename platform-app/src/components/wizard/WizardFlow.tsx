@@ -475,12 +475,9 @@ export function WizardFlow({ projectId, onSwitchToStudio }: WizardFlowProps) {
                                     Добавьте тексты и изображения для «{selectedTemplate.name}».
                                 </p>
                             </div>
-                            <div className="grid grid-cols-3 gap-3">
+                            <div className="space-y-3">
                                 {(() => {
                                     // Use canvasStore layers to correctly resolve parent-child relationships
-                                    // A frame master is grouped if it has groupSlotId set
-                                    // Find corresponding frame layers via layer.masterId === frame.id
-                                    // Then check which text layers have parentId (or are in frame.childIds)
                                     const canvasLayers = useCanvasStore.getState().layers;
 
                                     const frameMasters = selectedTemplate.masterComponents.filter(
@@ -494,17 +491,14 @@ export function WizardFlow({ projectId, onSwitchToStudio }: WizardFlowProps) {
 
                                         // Find the runtime frame layer matching this master
                                         const frameLayer = canvasLayers.find(l => l.type === "frame" && l.masterId === frame.id) as FrameLayer | undefined;
-                                        // Child layer IDs in the runtime canvas
                                         const childLayerIds = new Set(frameLayer?.childIds || frameProps.childIds || []);
 
                                         // Find text masters that have a corresponding layer inside this frame
                                         const textMembers = selectedTemplate.masterComponents.filter(mc => {
                                             if (mc.type !== "text") return false;
-                                            // Option 1: canvas layer for this master is a direct child
                                             const isChildByLayer = canvasLayers.some(
                                                 l => l.masterId === mc.id && childLayerIds.has(l.id)
                                             );
-                                            // Option 2: master id or slotId directly in childIds (template-only case)
                                             const isChildBySlot = childLayerIds.has(mc.id) || childLayerIds.has(mc.slotId || "");
                                             return isChildByLayer || isChildBySlot;
                                         });
@@ -515,17 +509,15 @@ export function WizardFlow({ projectId, onSwitchToStudio }: WizardFlowProps) {
                                         }
                                     }
 
-                                    // Collect ungrouped content components
                                     const ungrouped = selectedTemplate.masterComponents.filter(
                                         mc => ["text", "image", "badge"].includes(mc.type) && !groupedTextIds.has(mc.id)
                                     );
 
                                     return (
                                         <>
-                                            {/* Text groups span all columns */}
                                             {groups.map(group => (
-                                                <div key={group.groupId} className="col-span-3">
-                                                    <TextGroupSlot
+                                                <TextGroupSlot
+                                                    key={group.groupId}
                                                         groupId={group.groupId}
                                                         members={group.members}
                                                         textValues={textValues}
@@ -534,7 +526,6 @@ export function WizardFlow({ projectId, onSwitchToStudio }: WizardFlowProps) {
                                                         businessUnit={projectBU}
                                                         productDescription={productDescription}
                                                     />
-                                                </div>
                                             ))}
 
                                             {/* Render ungrouped content blocks */}

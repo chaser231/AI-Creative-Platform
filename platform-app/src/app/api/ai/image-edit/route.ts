@@ -13,55 +13,60 @@ export async function POST(req: NextRequest) {
             );
         }
 
-        // Route to appropriate provider based on action
-        let providerId: string;
-        let type: string;
+        let result;
 
         switch (action) {
-            case "remove-bg":
-                // For remove-bg we use a dedicated provider or OpenAI with specific prompt
-                providerId = model || "openai";
-                type = "inpainting";
+            case "remove-bg": {
+                // Use dedicated rembg model on Replicate
+                const provider = getProvider("rembg");
+                result = await provider.generate({
+                    prompt: "",
+                    type: "remove-bg",
+                    model: "rembg",
+                    imageBase64,
+                });
                 break;
-            case "inpaint":
-                providerId = model || "flux-fill";
-                type = "inpainting";
+            }
+
+            case "inpaint": {
+                // Use flux-fill for inpainting
+                const provider = getProvider(model || "flux-fill");
+                result = await provider.generate({
+                    prompt: prompt || "Fill in the masked area naturally",
+                    type: "inpainting",
+                    model: model || "flux-fill",
+                    imageBase64,
+                    maskBase64,
+                });
                 break;
-            case "text-edit":
-                providerId = model || "openai";
-                type = "image";
+            }
+
+            case "text-edit": {
+                // Use an image model to re-generate based on prompt + source image
+                // For now we use flux-dev which can take image input
+                const provider = getProvider(model || "flux-dev");
+                result = await provider.generate({
+                    prompt: prompt || "Edit this image",
+                    type: "image",
+                    model: model || "flux-dev",
+                    referenceImages: imageBase64 ? [imageBase64] : undefined,
+                });
                 break;
-            case "generate":
-                providerId = model || "openai";
-                type = "image";
+            }
+
+            case "generate": {
+                const provider = getProvider(model || "flux-schnell");
+                result = await provider.generate({
+                    prompt: prompt || "Generate an image",
+                    type: "image",
+                    model: model || "flux-schnell",
+                });
                 break;
+            }
+
             default:
-                return NextResponse.json(
-                    { error: `Unknown action: ${action}` },
-                    { status: 400 }
-                );
+                return NextResponse.json({ error: `Unknown action: ${action}` }, { status: 400 });
         }
-
-        const provider = getProvider(providerId);
-
-        if (!provider) {
-            return NextResponse.json(
-                { error: `Provider not found for model: ${providerId}` },
-                { status: 400 }
-            );
-        }
-
-        const editPrompt = action === "remove-bg"
-            ? "Remove the background from this image, keep only the main subject on a transparent background"
-            : prompt || "Edit this image";
-
-        const result = await provider.generate({
-            prompt: editPrompt,
-            type: type as any,
-            model: providerId,
-            imageBase64,
-            maskBase64,
-        });
 
         return NextResponse.json({
             content: result.content,
@@ -71,11 +76,9 @@ export async function POST(req: NextRequest) {
             provider: result.provider,
         });
 
-    } catch (error: any) {
-        console.error("Image Edit API Error:", error);
-        return NextResponse.json(
-            { error: error.message || "Internal Server Error" },
-            { status: 500 }
-        );
+    } catch (error: unknown) {
+        const err = error as Error;
+        console.error("Image Edit API Error:", err);
+        return NextResponse.json({ error: err.message || "Internal Server Error" }, { status: 500 });
     }
 }

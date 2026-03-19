@@ -7,13 +7,17 @@ import { RemoteTextProvider, RemoteImageProvider } from "@/services/aiService";
 // Helper models lists
 const TEXT_MODELS = [
     { id: "openai", name: "GPT-4o" },
-    { id: "alice", name: "Yandex Alice" },
 ];
 
 const IMAGE_MODELS = [
+    { id: "flux-schnell", name: "Flux Schnell" },
+    { id: "flux-dev", name: "Flux Dev" },
+    { id: "flux-1.1-pro", name: "Flux 1.1 Pro" },
+    { id: "seedream", name: "SD 3.5 Large" },
+    { id: "nano-banana", name: "Nano Banana" },
+    { id: "nano-banana-2", name: "Nano Banana 2" },
+    { id: "nano-banana-pro", name: "Nano Banana Pro" },
     { id: "dall-e-3", name: "DALL-E 3" },
-    { id: "flux", name: "Flux 2.0" },
-    { id: "seadream", name: "SeaDream 4.5" },
 ];
 
 const OUTPAINT_MODELS = [
@@ -21,10 +25,12 @@ const OUTPAINT_MODELS = [
 ];
 
 const ASPECT_RATIOS = [
-    { id: "1:1", label: "1:1", width: 1024, height: 1024 },
-    { id: "16:9", label: "16:9", width: 1792, height: 1024 },
-    { id: "9:16", label: "9:16", width: 1024, height: 1792 },
-    { id: "4:3", label: "4:3", width: 1152, height: 896 },
+    { id: "1:1", label: "1:1" },
+    { id: "16:9", label: "16:9" },
+    { id: "9:16", label: "9:16" },
+    { id: "4:3", label: "4:3" },
+    { id: "3:4", label: "3:4" },
+    { id: "3:2", label: "3:2" },
 ];
 
 interface AIPromptBarProps {
@@ -71,8 +77,7 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult 
             } else {
                 res = await RemoteImageProvider.generate(prompt, {
                     model: selectedModel,
-                    width: aspectRatio.width,
-                    height: aspectRatio.height
+                    aspectRatio: aspectRatio.id,
                 });
             }
 
@@ -98,7 +103,7 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult 
                         width: 600,
                     });
                 } else {
-                    addImageLayer(res.content, aspectRatio.width / 2, aspectRatio.height / 2); // Divide by 2 to fit screen better
+                    addImageLayer(res.content, 512, 512);
                 }
             }
 

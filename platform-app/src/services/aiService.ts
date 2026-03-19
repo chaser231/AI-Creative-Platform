@@ -46,7 +46,7 @@ async function callAIApi(prompt: string, type: string, model: string, params: an
     const response = await fetch("/api/ai/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt, type, model, params }),
+        body: JSON.stringify({ prompt, type, model, ...params }),
     });
 
     if (!response.ok) {
@@ -81,7 +81,7 @@ export const RemoteImageProvider: AIProvider = {
     type: "image",
     generate: async (prompt, params) => {
         // Use params.model if specified, otherwise default
-        const model = (params?.model as string) || "gemini-nano";
+        const model = (params?.model as string) || "flux-schnell";
         return callAIApi(prompt, "image", model, params);
     },
 };
