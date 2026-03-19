@@ -23,19 +23,26 @@ export function TextContentBlock({ id, name, props, value, onChange, businessUni
     const [variants, setVariants] = useState<string[]>([]);
     const [activeVariantIdx, setActiveVariantIdx] = useState(0);
     const [selectedPreset, setSelectedPreset] = useState<TextGenPreset | undefined>(undefined);
+    const [genError, setGenError] = useState<string | null>(null);
 
     const handleGenerate = async () => {
         const prompt = aiPrompt.trim() || productDescription || "";
         if (!prompt) return;
         setIsGenerating(true);
+        setGenError(null);
         try {
             const { generateTextVariants } = await import("@/services/aiService");
             const results = await generateTextVariants(prompt, name, 3, businessUnit, selectedPreset);
             setVariants(results);
             setActiveVariantIdx(0);
             if (results.length > 0) onChange(results[0]);
-        } catch (e) {
+        } catch (e: any) {
             console.error("Failed to generate text variants:", e);
+            if (e?.message?.includes("fetch failed") || e?.message?.includes("E003")) {
+                setGenError("Слишком много запросов к модели текста или сервер перегружен. Попробуйте еще раз через несколько секунд.");
+            } else {
+                setGenError(e?.message || "Не удалось сгенерировать текст. Попробуйте позже.");
+            }
         } finally {
             setIsGenerating(false);
         }
@@ -81,6 +88,15 @@ export function TextContentBlock({ id, name, props, value, onChange, businessUni
             {/* AI Generation Panel */}
             {showAiPanel && (
                 <div className="mt-3 p-3 bg-bg-secondary border border-border-primary rounded-[var(--radius-md)] space-y-3">
+                    
+                    {/* Error Banner */}
+                    {genError && (
+                        <div className="flex items-center gap-2 p-2 bg-text-error/10 border border-text-error/20 rounded-[var(--radius-sm)] text-[11px] text-text-error">
+                            <span className="shrink-0 font-bold shrink-0">!</span>
+                            <span className="flex-1 leading-tight">{genError}</span>
+                        </div>
+                    )}
+
                     {/* Prompt input */}
                     <div className="flex gap-2">
                         <input

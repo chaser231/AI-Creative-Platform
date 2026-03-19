@@ -146,8 +146,13 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult 
             });
             setPrompt(""); // Clear prompt after success
         } catch (err: any) {
-            console.error("AI Generation Error", err);
-            alert("Error: " + err.message);
+            console.warn("AI Generation Error:", err.message);
+            
+            let message = err.message;
+            if (message.includes("fetch failed") || message.includes("E003")) {
+                message = "Сервер перегружен или недоступен (слишком много запросов). Попробуйте еще раз через 10 секунд.";
+            }
+            alert("Ошибка генерации: " + message);
         } finally {
             setIsGenerating(false);
         }
