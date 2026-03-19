@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from "react";
+import { createPortal } from "react-dom";
 import { Sparkles, Wand2, Image as ImageIcon, Send, MessageCircle, Settings2, Ratio, Type, Grip, CheckCircle2, Circle, X } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { useCanvasStore } from "@/store/canvasStore";
@@ -279,18 +280,17 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult 
                 </div>
             </div>
 
-            {/* ImageEditorModal for Magic Edit */}
-            {showEditorModal && selectedImageLayer && (
-                <div className="fixed inset-0 z-[9999]">
-                    <ImageEditorModal
-                        imageSrc={selectedImageLayer.src}
-                        onApply={(editedSrc) => {
-                            updateLayer(selectedImageLayer.id, { src: editedSrc } as any);
-                            setShowEditorModal(false);
-                        }}
-                        onClose={() => setShowEditorModal(false)}
-                    />
-                </div>
+            {/* ImageEditorModal via Portal — renders at document.body level */}
+            {showEditorModal && selectedImageLayer && createPortal(
+                <ImageEditorModal
+                    imageSrc={selectedImageLayer.src}
+                    onApply={(editedSrc) => {
+                        updateLayer(selectedImageLayer.id, { src: editedSrc } as any);
+                        setShowEditorModal(false);
+                    }}
+                    onClose={() => setShowEditorModal(false)}
+                />,
+                document.body
             )}
         </div>
     );
