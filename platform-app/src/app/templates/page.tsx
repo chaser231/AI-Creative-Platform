@@ -13,11 +13,14 @@ import {
     Star,
     Clock,
     Check,
+    Palette,
 } from "lucide-react";
 import { Popover, PopoverButton } from "@/components/ui/Popover";
 import { AppShell } from "@/components/layout/AppShell";
 import { TopBar } from "@/components/layout/TopBar";
 import { Button } from "@/components/ui/Button";
+import { Modal } from "@/components/ui/Modal";
+import { cn } from "@/lib/cn";
 import { useTemplateStore } from "@/store/templateStore";
 import { searchPacks, getAllTags, type CatalogSearchParams } from "@/services/templateCatalogService";
 import type { TemplatePackV2 } from "@/services/templateService";
@@ -142,6 +145,8 @@ export default function TemplateCatalogPage() {
     const [selectedContentType, setSelectedContentType] = useState<ContentType | null>(null);
     const [sortBy, setSortBy] = useState<"popularity" | "date" | "name">("popularity");
     const [activePopover, setActivePopover] = useState<string | null>(null);
+    const [selectedPackForMode, setSelectedPackForMode] = useState<TemplatePackV2 | null>(null);
+    const [mode, setMode] = useState<"wizard" | "studio">("wizard");
 
     const togglePopover = (name: string) => {
         setActivePopover((prev) => (prev === name ? null : name));
@@ -183,7 +188,7 @@ export default function TemplateCatalogPage() {
 
     const tags = useMemo(() => getAllTags(savedPacks), [savedPacks]);
 
-    const handleLoadPack = async (pack: TemplatePackV2) => {
+    const handleLoadPack = async (pack: TemplatePackV2, selectedMode: "wizard" | "studio") => {
         const { applyTemplatePack } = await import("@/services/templateService");
 
         applyTemplatePack(pack, {
@@ -197,7 +202,7 @@ export default function TemplateCatalogPage() {
                     goal: "banner",
                 });
                 store.setActiveProject(project.id);
-                router.push(`/editor/${project.id}`);
+                router.push(`/editor/${project.id}?mode=${selectedMode}`);
             }
         });
     };
@@ -395,12 +400,72 @@ export default function TemplateCatalogPage() {
                     ) : (
                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                             {results.items.map(pack => (
-                                <PackCard key={pack.id} pack={pack} onLoad={handleLoadPack} />
+                                <PackCard key={pack.id} pack={pack} onLoad={setSelectedPackForMode} />
                             ))}
                         </div>
                     )}
                 </div>
             </div>
+
+            {/* Mode Selection Modal */}
+            <Modal
+                open={!!selectedPackForMode}
+                onClose={() => setSelectedPackForMode(null)}
+                title="Режим работы"
+                maxWidth="max-w-md"
+                footer={
+                    <>
+                        <Button variant="ghost" onClick={() => setSelectedPackForMode(null)}>
+                            Отмена
+                        </Button>
+                        <Button 
+                            onClick={() => {
+                                if (selectedPackForMode) {
+                                    handleLoadPack(selectedPackForMode, mode);
+                                }
+                            }}
+                        >
+                            Продолжить
+                        </Button>
+                    </>
+                }
+            >
+                <div className="space-y-4">
+                    <p className="text-sm text-text-secondary">
+                        Выберите, как вы хотите продолжить работу с шаблоном <strong>{selectedPackForMode?.name}</strong>.
+                    </p>
+                    <div className="grid grid-cols-2 gap-3">
+                        <button
+                            onClick={() => setMode("wizard")}
+                            className={cn(
+                                "flex flex-col items-center gap-2 p-3 rounded-[var(--radius-md)] border text-center transition-all cursor-pointer",
+                                mode === "wizard"
+                                    ? "border-accent-primary bg-bg-tertiary"
+                                    : "border-border-primary hover:border-border-secondary hover:bg-bg-secondary"
+                            )}
+                        >
+                            <span className={cn("transition-colors", mode === "wizard" ? "text-text-primary" : "text-text-tertiary")}>
+                                <LayoutTemplate size={24} />
+                            </span>
+                            <span className="text-xs font-medium text-text-primary">Пошагово</span>
+                        </button>
+                        <button
+                            onClick={() => setMode("studio")}
+                            className={cn(
+                                "flex flex-col items-center gap-2 p-3 rounded-[var(--radius-md)] border text-center transition-all cursor-pointer",
+                                mode === "studio"
+                                    ? "border-accent-primary bg-bg-tertiary"
+                                    : "border-border-primary hover:border-border-secondary hover:bg-bg-secondary"
+                            )}
+                        >
+                            <span className={cn("transition-colors", mode === "studio" ? "text-text-primary" : "text-text-tertiary")}>
+                                <Palette size={24} />
+                            </span>
+                            <span className="text-xs font-medium text-text-primary">Студия</span>
+                        </button>
+                    </div>
+                </div>
+            </Modal>
         </AppShell>
     );
 }

@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { useProjectStore } from "@/store/projectStore";
 import { cn } from "@/lib/cn";
-import { ImageIcon, Type, PlayCircle } from "lucide-react";
+import { ImageIcon, Type, PlayCircle, LayoutTemplate, Palette } from "lucide-react";
 import type { ProjectGoal, BusinessUnit } from "@/types";
 
 interface NewProjectModalProps {
@@ -52,11 +52,12 @@ export function NewProjectModal({ open, onClose }: NewProjectModalProps) {
     const [name, setName] = useState("");
     const [businessUnit, setBusinessUnit] = useState<BusinessUnit>("yandex-market");
     const [goal, setGoal] = useState<ProjectGoal>("banner");
+    const [mode, setMode] = useState<"wizard" | "studio">("wizard");
 
     const createProject = useProjectStore((s) => s.createProject);
     const router = useRouter();
 
-    const handleCreate = (mode: "wizard" | "studio") => {
+    const handleCreate = () => {
         if (!name.trim()) return;
         const project = createProject({ name: name.trim(), businessUnit, goal });
         onClose();
@@ -75,11 +76,8 @@ export function NewProjectModal({ open, onClose }: NewProjectModalProps) {
                     <Button variant="ghost" onClick={onClose}>
                         Отмена
                     </Button>
-                    <Button variant="secondary" onClick={() => handleCreate("wizard")} disabled={!name.trim()}>
-                        Создать пошагово
-                    </Button>
-                    <Button onClick={() => handleCreate("studio")} disabled={!name.trim()}>
-                        Создать в Студии
+                    <Button onClick={handleCreate} disabled={!name.trim()}>
+                        Создать
                     </Button>
                 </>
             }
@@ -145,6 +143,43 @@ export function NewProjectModal({ open, onClose }: NewProjectModalProps) {
                                 </span>
                             </button>
                         ))}
+                    </div>
+                </div>
+
+                {/* Mode Selection */}
+                <div className="space-y-1.5">
+                    <label className="text-sm font-medium text-text-primary">
+                        Режим работы
+                    </label>
+                    <div className="grid grid-cols-2 gap-3">
+                        <button
+                            onClick={() => setMode("wizard")}
+                            className={cn(
+                                "flex flex-col items-center gap-2 p-3 rounded-[var(--radius-md)] border text-center transition-all cursor-pointer",
+                                mode === "wizard"
+                                    ? "border-accent-primary bg-bg-tertiary"
+                                    : "border-border-primary hover:border-border-secondary hover:bg-bg-secondary"
+                            )}
+                        >
+                            <span className={cn("transition-colors", mode === "wizard" ? "text-text-primary" : "text-text-tertiary")}>
+                                <LayoutTemplate size={24} />
+                            </span>
+                            <span className="text-xs font-medium text-text-primary">Пошагово</span>
+                        </button>
+                        <button
+                            onClick={() => setMode("studio")}
+                            className={cn(
+                                "flex flex-col items-center gap-2 p-3 rounded-[var(--radius-md)] border text-center transition-all cursor-pointer",
+                                mode === "studio"
+                                    ? "border-accent-primary bg-bg-tertiary"
+                                    : "border-border-primary hover:border-border-secondary hover:bg-bg-secondary"
+                            )}
+                        >
+                            <span className={cn("transition-colors", mode === "studio" ? "text-text-primary" : "text-text-tertiary")}>
+                                <Palette size={24} />
+                            </span>
+                            <span className="text-xs font-medium text-text-primary">Студия</span>
+                        </button>
                     </div>
                 </div>
             </div>
