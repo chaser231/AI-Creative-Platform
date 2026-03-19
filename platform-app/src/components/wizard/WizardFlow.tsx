@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/Button";
 import { DEFAULT_PACKS, type TemplatePackMeta } from "@/constants/defaultPacks";
 import { getRecommendedPacks, searchPacks } from "@/services/templateCatalogService";
 import type { TemplatePackV2 } from "@/services/templateService";
-import type { BusinessUnit } from "@/types";
+import type { BusinessUnit, FrameLayer } from "@/types";
 import { TextContentBlock } from "@/components/wizard/blocks/TextContentBlock";
 import { ImageContentBlock } from "@/components/wizard/blocks/ImageContentBlock";
 import { BadgeContentBlock } from "@/components/wizard/blocks/BadgeContentBlock";
@@ -250,7 +250,7 @@ export function WizardFlow({ projectId, onSwitchToStudio }: WizardFlowProps) {
 
     return (
         <div className="flex-1 flex items-center justify-center bg-bg-secondary p-8 overflow-hidden">
-            <div className="w-full max-w-2xl bg-bg-primary rounded-[var(--radius-xl)] shadow-[var(--shadow-lg)] border border-border-primary overflow-hidden flex flex-col max-h-full">
+            <div className="w-full max-w-5xl bg-bg-primary rounded-[var(--radius-xl)] shadow-[var(--shadow-lg)] border border-border-primary overflow-hidden flex flex-col max-h-full">
                 {/* Progress bar */}
                 <div className="flex items-center gap-0 border-b border-border-primary shrink-0">
                     {(["template", "content", "review"] as WizardStep[]).map((s, i) => (
@@ -477,7 +477,9 @@ export function WizardFlow({ projectId, onSwitchToStudio }: WizardFlowProps) {
                             </div>
                             <div className="space-y-3">
                                 {(() => {
-                                    // Detect text groups: frames with groupSlotId that contain text children
+                                    // Use canvasStore layers to correctly resolve parent-child relationships
+                                    const canvasLayers = useCanvasStore.getState().layers;
+
                                     const frameMasters = selectedTemplate.masterComponents.filter(
                                         mc => mc.type === "frame" && (mc.props as FrameComponentProps).groupSlotId
                                     );
@@ -486,43 +488,44 @@ export function WizardFlow({ projectId, onSwitchToStudio }: WizardFlowProps) {
 
                                     for (const frame of frameMasters) {
                                         const frameProps = frame.props as FrameComponentProps;
-                                        const childIds = frameProps.childIds || [];
-                                        // Find text master components that are children of this frame
-                                        const textMembers = selectedTemplate.masterComponents.filter(
-                                            mc => mc.type === "text" && childIds.some(cid => {
-                                                // cid is a layer ID; match via masterComponent id convention
-                                                // In templates, masterComponent children are linked by their IDs
-                                                return mc.id === cid || mc.slotId === cid;
-                                            })
-                                        );
+
+                                        // Find the runtime frame layer matching this master
+                                        const frameLayer = canvasLayers.find(l => l.type === "frame" && l.masterId === frame.id) as FrameLayer | undefined;
+                                        const childLayerIds = new Set(frameLayer?.childIds || frameProps.childIds || []);
+
+                                        // Find text masters that have a corresponding layer inside this frame
+                                        const textMembers = selectedTemplate.masterComponents.filter(mc => {
+                                            if (mc.type !== "text") return false;
+                                            const isChildByLayer = canvasLayers.some(
+                                                l => l.masterId === mc.id && childLayerIds.has(l.id)
+                                            );
+                                            const isChildBySlot = childLayerIds.has(mc.id) || childLayerIds.has(mc.slotId || "");
+                                            return isChildByLayer || isChildBySlot;
+                                        });
+
                                         if (textMembers.length > 0) {
-                                            groups.push({
-                                                groupId: frameProps.groupSlotId!,
-                                                members: textMembers,
-                                            });
+                                            groups.push({ groupId: frameProps.groupSlotId!, members: textMembers });
                                             textMembers.forEach(tm => groupedTextIds.add(tm.id));
                                         }
                                     }
 
-                                    // Collect ungrouped content components
                                     const ungrouped = selectedTemplate.masterComponents.filter(
                                         mc => ["text", "image", "badge"].includes(mc.type) && !groupedTextIds.has(mc.id)
                                     );
 
                                     return (
                                         <>
-                                            {/* Render text groups */}
                                             {groups.map(group => (
                                                 <TextGroupSlot
                                                     key={group.groupId}
-                                                    groupId={group.groupId}
-                                                    members={group.members}
-                                                    textValues={textValues}
-                                                    onTextChange={(mcId, val) => setTextValues(prev => ({ ...prev, [mcId]: val }))}
-                                                    onBatchTextChange={(updates) => setTextValues(prev => ({ ...prev, ...updates }))}
-                                                    businessUnit={projectBU}
-                                                    productDescription={productDescription}
-                                                />
+                                                        groupId={group.groupId}
+                                                        members={group.members}
+                                                        textValues={textValues}
+                                                        onTextChange={(mcId, val) => setTextValues(prev => ({ ...prev, [mcId]: val }))}
+                                                        onBatchTextChange={(updates) => setTextValues(prev => ({ ...prev, ...updates }))}
+                                                        businessUnit={projectBU}
+                                                        productDescription={productDescription}
+                                                    />
                                             ))}
 
                                             {/* Render ungrouped content blocks */}
@@ -573,32 +576,6 @@ export function WizardFlow({ projectId, onSwitchToStudio }: WizardFlowProps) {
                                         </>
                                     );
                                 })()}
-                                <div>
-                                    <label className="block text-xs font-medium text-text-secondary mb-1">
-                                        Описание продукта / Тема
-                                    </label>
-                                    <div className="flex gap-2">
-                                        <input
-                                            type="text"
-                                            placeholder="Напр. Кофейня со свежей выпечкой"
-                                            value={productDescription}
-                                            onChange={(e) => setProductDescription(e.target.value)}
-                                            className="flex-1 h-10 px-3 rounded-[var(--radius-md)] border border-border-primary bg-bg-secondary text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-border-focus"
-                                        />
-                                        <Button
-                                            onClick={handleGenerateContent}
-                                            disabled={isGenerating || !productDescription}
-                                            variant="ai"
-                                            icon={isGenerating ? <div className="animate-spin text-white">⟳</div> : <Sparkles size={16} />}
-                                            title="Сгенерировать варианты"
-                                        >
-                                            {isGenerating ? "..." : "Magically Fill"}
-                                        </Button>
-                                    </div>
-                                    <p className="text-[11px] text-text-tertiary mt-1.5">
-                                        ИИ придумает заголовок и кнопку на основе вашего описания.
-                                    </p>
-                                </div>
                             </div>
                             <div className="flex justify-between pt-2">
                                 <Button variant="ghost" onClick={() => setStep("template")}>Назад</Button>

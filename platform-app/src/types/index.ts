@@ -105,6 +105,7 @@ export interface TextComponentProps extends BaseComponentProps {
     textAdjust?: "auto_width" | "auto_height" | "fixed";
     truncateText?: boolean;
     verticalTrim?: boolean;
+    textTransform?: "none" | "uppercase" | "lowercase";
 }
 
 export interface RectangleComponentProps extends BaseComponentProps {
@@ -275,6 +276,7 @@ export interface TextLayer extends BaseLayer {
     textAdjust?: "auto_width" | "auto_height" | "fixed";
     truncateText?: boolean;
     verticalTrim?: boolean;
+    textTransform?: "none" | "uppercase" | "lowercase";
 }
 
 export interface RectangleLayer extends BaseLayer {
@@ -317,6 +319,8 @@ export interface FrameLayer extends BaseLayer {
     counterAxisAlignItems?: "flex-start" | "center" | "flex-end" | "stretch";
     primaryAxisSizingMode?: "fixed" | "auto";
     counterAxisSizingMode?: "fixed" | "auto";
+    /** Groups nested text slots for coordinated AI generation */
+    groupSlotId?: string;
 }
 
 export type Layer = TextLayer | RectangleLayer | ImageLayer | BadgeLayer | FrameLayer;

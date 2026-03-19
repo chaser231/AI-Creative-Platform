@@ -2,11 +2,15 @@
 
 import { useEffect } from "react";
 import { useThemeStore } from "@/store/themeStore";
+import { loadAllCustomFonts } from "@/lib/customFonts";
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
     const theme = useThemeStore((s) => s.theme);
 
     useEffect(() => {
+        // Load custom fonts entirely on the client side once on mount
+        loadAllCustomFonts().catch(err => console.error("Failed to inject custom fonts on load", err));
+
         const root = document.documentElement;
 
         const applyTheme = (dark: boolean) => {

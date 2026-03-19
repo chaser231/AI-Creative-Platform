@@ -1,30 +1,44 @@
 import { useState, useRef, useEffect } from "react";
+import { createPortal } from "react-dom";
 import { Sparkles, Wand2, Image as ImageIcon, Send, MessageCircle, Settings2, Ratio, Type, Grip, CheckCircle2, Circle, X } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { useCanvasStore } from "@/store/canvasStore";
 import { RemoteTextProvider, RemoteImageProvider } from "@/services/aiService";
+import { ImageEditorModal } from "@/components/wizard/blocks/ImageEditorModal";
+import type { ImageLayer } from "@/types";
 
 // Helper models lists
 const TEXT_MODELS = [
-    { id: "openai", name: "GPT-4o" },
-    { id: "alice", name: "Yandex Alice" },
+    { id: "deepseek", name: "DeepSeek V3" },
+    { id: "gemini-flash", name: "Gemini 2.5 Flash" },
 ];
 
 const IMAGE_MODELS = [
+    { id: "nano-banana-2", name: "Nano Banana 2" },
+    { id: "nano-banana-pro", name: "Nano Banana Pro" },
+    { id: "nano-banana", name: "Nano Banana" },
+    { id: "flux-2-pro", name: "Flux 2 Pro" },
+    { id: "seedream", name: "Seedream 4.5" },
+    { id: "gpt-image", name: "GPT Image 1.5" },
+    { id: "qwen-image", name: "Qwen Image" },
+    { id: "flux-schnell", name: "Flux Schnell" },
+    { id: "flux-dev", name: "Flux Dev" },
+    { id: "flux-1.1-pro", name: "Flux 1.1 Pro" },
     { id: "dall-e-3", name: "DALL-E 3" },
-    { id: "flux", name: "Flux 2.0" },
-    { id: "seadream", name: "SeaDream 4.5" },
 ];
 
 const OUTPAINT_MODELS = [
+    { id: "bria-expand", name: "Bria Expand" },
     { id: "flux-fill", name: "Flux Fill" },
 ];
 
 const ASPECT_RATIOS = [
-    { id: "1:1", label: "1:1", width: 1024, height: 1024 },
-    { id: "16:9", label: "16:9", width: 1792, height: 1024 },
-    { id: "9:16", label: "9:16", width: 1024, height: 1792 },
-    { id: "4:3", label: "4:3", width: 1152, height: 896 },
+    { id: "1:1", label: "1:1" },
+    { id: "16:9", label: "16:9" },
+    { id: "9:16", label: "9:16" },
+    { id: "4:3", label: "4:3" },
+    { id: "3:4", label: "3:4" },
+    { id: "3:2", label: "3:2" },
 ];
 
 interface AIPromptBarProps {
@@ -36,14 +50,20 @@ interface AIPromptBarProps {
 }
 
 export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult }: AIPromptBarProps) {
-    const { addTextLayer, addImageLayer, selectedLayerIds, updateLayer } = useCanvasStore();
+    const { addTextLayer, addImageLayer, selectedLayerIds, updateLayer, layers } = useCanvasStore();
     const [activeTab, setActiveTab] = useState<"text" | "image" | "outpaint">("text");
     const [prompt, setPrompt] = useState("");
     const [selectedModel, setSelectedModel] = useState(TEXT_MODELS[0].id);
     const [aspectRatio, setAspectRatio] = useState(ASPECT_RATIOS[0]);
     const [applyToSelection, setApplyToSelection] = useState(false);
     const [isGenerating, setIsGenerating] = useState(false);
+    const [showEditorModal, setShowEditorModal] = useState(false);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+    // Get selected image layer (if any)
+    const selectedImageLayer = selectedLayerIds.length > 0
+        ? layers.find(l => l.id === selectedLayerIds[0] && l.type === "image") as ImageLayer | undefined
+        : undefined;
 
     // Auto-resize textarea
     useEffect(() => {
@@ -71,8 +91,7 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult 
             } else {
                 res = await RemoteImageProvider.generate(prompt, {
                     model: selectedModel,
-                    width: aspectRatio.width,
-                    height: aspectRatio.height
+                    aspectRatio: aspectRatio.id,
                 });
             }
 
@@ -98,7 +117,24 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult 
                         width: 600,
                     });
                 } else {
-                    addImageLayer(res.content, aspectRatio.width / 2, aspectRatio.height / 2); // Divide by 2 to fit screen better
+                    // Dynamically measure the new image to preserve aspect ratio
+                    const img = new Image();
+                    img.onload = () => {
+                        let w = img.naturalWidth;
+                        let h = img.naturalHeight;
+                        const MAX_DIM = 600;
+                        if (w > MAX_DIM || h > MAX_DIM) {
+                            const scale = MAX_DIM / Math.max(w, h);
+                            w *= scale;
+                            h *= scale;
+                        }
+                        addImageLayer(res.content, w, h);
+                    };
+                    img.onerror = () => {
+                        // Fallback in case of loading error
+                        addImageLayer(res.content, 512, 512);
+                    };
+                    img.src = res.content;
                 }
             }
 
@@ -110,8 +146,13 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult 
             });
             setPrompt(""); // Clear prompt after success
         } catch (err: any) {
-            console.error("AI Generation Error", err);
-            alert("Error: " + err.message);
+            console.warn("AI Generation Error:", err.message);
+            
+            let message = err.message;
+            if (message.includes("fetch failed") || message.includes("E003")) {
+                message = "Сервер перегружен или недоступен (слишком много запросов). Попробуйте еще раз через 10 секунд.";
+            }
+            alert("Ошибка генерации: " + message);
         } finally {
             setIsGenerating(false);
         }
@@ -151,11 +192,22 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult 
                     <ImageIcon size={20} strokeWidth={activeTab === "image" ? 2.5 : 2} />
                 </button>
                 <button
-                    onClick={() => handleTabChange("outpaint")}
-                    className={`nav-button p-2.5 rounded-xl transition-all ${activeTab === "outpaint" ? "bg-bg-surface text-purple-500 shadow-sm" : "text-text-tertiary hover:text-text-primary"}`}
-                    title="Magic Edit"
+                    onClick={() => {
+                        if (selectedImageLayer) {
+                            setShowEditorModal(true);
+                        } else {
+                            alert("Выделите изображение на канвасе для AI-редактирования");
+                        }
+                    }}
+                    className={`nav-button p-2.5 rounded-xl transition-all ${
+                        selectedImageLayer
+                            ? "text-purple-500 hover:bg-purple-50 hover:text-purple-600"
+                            : "text-text-tertiary/40 cursor-not-allowed"
+                    }`}
+                    title={selectedImageLayer ? "AI-редактирование выбранного изображения" : "Выберите изображение на канвасе"}
+                    disabled={!selectedImageLayer}
                 >
-                    <Wand2 size={20} strokeWidth={activeTab === "outpaint" ? 2.5 : 2} />
+                    <Wand2 size={20} strokeWidth={2} />
                 </button>
                 <div className="flex-1" />
                 <button
@@ -249,6 +301,57 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult 
                     </Button>
                 </div>
             </div>
+
+            {/* ImageEditorModal via Portal — renders at document.body level */}
+            {showEditorModal && selectedImageLayer && createPortal(
+                <ImageEditorModal
+                    imageSrc={selectedImageLayer.src}
+                    onApply={async (editedSrc) => {
+                        try {
+                            // Load both old and new images to measure how much pixel dimensions changed
+                            const oldImg = new Image();
+                            await new Promise((resolve, reject) => {
+                                oldImg.onload = resolve;
+                                oldImg.onerror = reject;
+                                oldImg.src = selectedImageLayer.src;
+                            });
+
+                            const newImg = new Image();
+                            await new Promise((resolve, reject) => {
+                                newImg.onload = resolve;
+                                newImg.onerror = reject;
+                                newImg.src = editedSrc;
+                            });
+                            
+                            // If the AI expanded the image from 1000px to 1500px, 
+                            // we must multiply the layer width on canvas by 1.5
+                            // This guarantees the original object stays the same visual size, 
+                            // and the layer simply grows outwards as expected.
+                            const scaleX = newImg.naturalWidth / oldImg.naturalWidth;
+                            const scaleY = newImg.naturalHeight / oldImg.naturalHeight;
+                            
+                            const newWidth = selectedImageLayer.width * scaleX;
+                            const newHeight = selectedImageLayer.height * scaleY;
+                            
+                            // Calculate the central offset so it expands evenly around the center
+                            // (or just expand from top-left. For now, we'll keep it simple and expand from top-left, 
+                            // which is the origin, but users can move it afterwards)
+                            updateLayer(selectedImageLayer.id, { 
+                                src: editedSrc,
+                                width: newWidth,
+                                height: newHeight 
+                            } as any);
+                        } catch (e) {
+                            console.error("Failed to measure new image dimensions", e);
+                            updateLayer(selectedImageLayer.id, { src: editedSrc } as any);
+                        }
+                        
+                        setShowEditorModal(false);
+                    }}
+                    onClose={() => setShowEditorModal(false)}
+                />,
+                document.body
+            )}
         </div>
     );
 }
