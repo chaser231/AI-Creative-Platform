@@ -65,8 +65,6 @@ export function ImageEditorModal({ imageSrc, onApply, onClose }: ImageEditorModa
     
     // Outpaint state
     const [outpaintRatio, setOutpaintRatio] = useState("16:9");
-    const [outpaintMode, setOutpaintMode] = useState<"ratio" | "padding">("ratio");
-    const [outpaintPadding, setOutpaintPadding] = useState({ top: 0, right: 0, bottom: 0, left: 0 });
     const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
     const parseAiError = (e: Error) => {
@@ -135,40 +133,15 @@ export function ImageEditorModal({ imageSrc, onApply, onClose }: ImageEditorModa
         setIsProcessing(true);
         setErrorMsg(null);
         try {
-            let canvasSize, originalSize, originalLocation;
-            if (outpaintMode === "padding") {
-                const img = new Image();
-                await new Promise((resolve, reject) => {
-                    img.onload = resolve;
-                    img.onerror = reject;
-                    img.src = currentImage;
-                });
-                
-                originalSize = [img.naturalWidth, img.naturalHeight];
-                const padT = outpaintPadding.top || 0;
-                const padR = outpaintPadding.right || 0;
-                const padB = outpaintPadding.bottom || 0;
-                const padL = outpaintPadding.left || 0;
-                
-                canvasSize = [
-                    img.naturalWidth + padL + padR,
-                    img.naturalHeight + padT + padB
-                ];
-                originalLocation = [padL, padT];
-            }
-
             const response = await fetch("/api/ai/image-edit", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     action: "outpaint",
-                    prompt: editPrompt || "",
                     imageBase64: currentImage,
                     model: selectedModel,
-                    aspectRatio: outpaintMode === "ratio" ? outpaintRatio : undefined,
-                    canvasSize,
-                    originalSize,
-                    originalLocation
+                    aspectRatio: outpaintRatio,
+                    prompt: editPrompt
                 }),
             });
             const data = await response.json();
@@ -387,63 +360,24 @@ export function ImageEditorModal({ imageSrc, onApply, onClose }: ImageEditorModa
 
                             {activeTool === "outpaint" && (
                                 <div className="pt-3 border-t border-border-primary space-y-3">
-                                    <div className="flex bg-bg-primary rounded-[var(--radius-sm)] p-1 border border-border-primary">
-                                        <button 
-                                            onClick={() => setOutpaintMode("ratio")}
-                                            className={`flex-1 py-1 text-[11px] font-medium rounded-[var(--radius-sm)] transition-all ${outpaintMode === "ratio" ? "bg-bg-tertiary text-text-primary shadow-sm" : "text-text-secondary hover:text-text-primary"}`}
-                                        >
-                                            Формат
-                                        </button>
-                                        <button 
-                                            onClick={() => setOutpaintMode("padding")}
-                                            className={`flex-1 py-1 text-[11px] font-medium rounded-[var(--radius-sm)] transition-all ${outpaintMode === "padding" ? "bg-bg-tertiary text-text-primary shadow-sm" : "text-text-secondary hover:text-text-primary"}`}
-                                        >
-                                            Пиксели
-                                        </button>
+                                    <div>
+                                        <p className="text-[10px] font-medium text-text-secondary mb-1">Целевой формат пропорций</p>
+                                        <div className="flex flex-wrap gap-1.5">
+                                            {OUTPAINT_RATIOS.map(r => (
+                                                <button
+                                                    key={r.id}
+                                                    onClick={() => setOutpaintRatio(r.id)}
+                                                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all cursor-pointer ${
+                                                        outpaintRatio === r.id
+                                                            ? "bg-accent-lime text-accent-primary"
+                                                            : "bg-bg-primary border border-border-primary text-text-secondary hover:bg-bg-tertiary"
+                                                    }`}
+                                                >
+                                                    {r.label}
+                                                </button>
+                                            ))}
+                                        </div>
                                     </div>
-
-                                    {outpaintMode === "ratio" ? (
-                                        <div>
-                                            <p className="text-[10px] font-medium text-text-secondary mb-1">Целевой формат пропорций</p>
-                                            <div className="flex flex-wrap gap-1.5">
-                                                {OUTPAINT_RATIOS.map(r => (
-                                                    <button
-                                                        key={r.id}
-                                                        onClick={() => setOutpaintRatio(r.id)}
-                                                        className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all cursor-pointer ${
-                                                            outpaintRatio === r.id
-                                                                ? "bg-accent-lime text-accent-primary"
-                                                                : "bg-bg-primary border border-border-primary text-text-secondary hover:bg-bg-tertiary"
-                                                        }`}
-                                                    >
-                                                        {r.label}
-                                                    </button>
-                                                ))}
-                                            </div>
-                                        </div>
-                                    ) : (
-                                        <div className="space-y-2">
-                                            <p className="text-[10px] font-medium text-text-secondary mb-1">Добавить отступы для расширения (px)</p>
-                                            <div className="grid grid-cols-2 gap-2">
-                                                <div className="flex flex-col gap-1">
-                                                    <label className="text-[9px] text-text-tertiary uppercase text-center">Сверху</label>
-                                                    <input type="number" min="0" value={outpaintPadding.top} onChange={e => setOutpaintPadding(p => ({ ...p, top: parseInt(e.target.value) || 0 }))} className="bg-bg-primary border border-border-primary rounded px-2 py-1 text-xs text-center focus:outline-none focus:border-border-focus" />
-                                                </div>
-                                                <div className="flex flex-col gap-1">
-                                                    <label className="text-[9px] text-text-tertiary uppercase text-center">Снизу</label>
-                                                    <input type="number" min="0" value={outpaintPadding.bottom} onChange={e => setOutpaintPadding(p => ({ ...p, bottom: parseInt(e.target.value) || 0 }))} className="bg-bg-primary border border-border-primary rounded px-2 py-1 text-xs text-center focus:outline-none focus:border-border-focus" />
-                                                </div>
-                                                <div className="flex flex-col gap-1">
-                                                    <label className="text-[9px] text-text-tertiary uppercase text-center">Слева</label>
-                                                    <input type="number" min="0" value={outpaintPadding.left} onChange={e => setOutpaintPadding(p => ({ ...p, left: parseInt(e.target.value) || 0 }))} className="bg-bg-primary border border-border-primary rounded px-2 py-1 text-xs text-center focus:outline-none focus:border-border-focus" />
-                                                </div>
-                                                <div className="flex flex-col gap-1">
-                                                    <label className="text-[9px] text-text-tertiary uppercase text-center">Справа</label>
-                                                    <input type="number" min="0" value={outpaintPadding.right} onChange={e => setOutpaintPadding(p => ({ ...p, right: parseInt(e.target.value) || 0 }))} className="bg-bg-primary border border-border-primary rounded px-2 py-1 text-xs text-center focus:outline-none focus:border-border-focus" />
-                                                </div>
-                                            </div>
-                                        </div>
-                                    )}
                                     
                                     <textarea
                                         placeholder="Описание расширенной области (опционально)..."
@@ -453,11 +387,11 @@ export function ImageEditorModal({ imageSrc, onApply, onClose }: ImageEditorModa
                                     />
                                     <button
                                         onClick={handleOutpaint}
-                                        disabled={isProcessing || (outpaintMode === "padding" && Object.values(outpaintPadding).every(v => v === 0))}
+                                        disabled={isProcessing}
                                         className="w-full h-10 flex items-center justify-center gap-2 rounded-[var(--radius-md)] bg-accent-lime text-accent-primary font-semibold text-sm hover:bg-accent-lime-hover disabled:opacity-50 transition-all cursor-pointer disabled:cursor-default"
                                     >
                                         {isProcessing ? <Loader2 size={16} className="animate-spin" /> : <Expand size={16} />}
-                                        {isProcessing ? "Расширяю..." : (outpaintMode === "ratio" ? `Расширить до ${outpaintRatio}` : "Применить Padding")}
+                                        {isProcessing ? "Расширяю..." : `Расширить до ${outpaintRatio}`}
                                     </button>
                                 </div>
                             )}
