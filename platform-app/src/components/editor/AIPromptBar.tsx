@@ -284,8 +284,40 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult 
             {showEditorModal && selectedImageLayer && createPortal(
                 <ImageEditorModal
                     imageSrc={selectedImageLayer.src}
-                    onApply={(editedSrc) => {
-                        updateLayer(selectedImageLayer.id, { src: editedSrc } as any);
+                    onApply={async (editedSrc) => {
+                        try {
+                            // Measure new image dimensions to prevent aspect ratio stretching
+                            const img = new Image();
+                            await new Promise((resolve, reject) => {
+                                img.onload = resolve;
+                                img.onerror = reject;
+                                img.src = editedSrc;
+                            });
+                            
+                            // Scale the new width/height relative to the layer's original width
+                            // so it doesn't dramatically change size on canvas, only repositions/expands
+                            const currentAspect = selectedImageLayer.width / selectedImageLayer.height;
+                            const newAspect = img.naturalWidth / img.naturalHeight;
+                            
+                            let newWidth = selectedImageLayer.width;
+                            let newHeight = selectedImageLayer.height;
+                             
+                            if (Math.abs(currentAspect - newAspect) > 0.01) {
+                                // If aspect ratio changed (e.g. outpainting), adjust height based on original width 
+                                // (or width based on height). Let's base it on width for predictability:
+                                newHeight = newWidth / newAspect;
+                            }
+                            
+                            updateLayer(selectedImageLayer.id, { 
+                                src: editedSrc,
+                                width: newWidth,
+                                height: newHeight 
+                            } as any);
+                        } catch (e) {
+                            console.error("Failed to measure new image dimensions", e);
+                            updateLayer(selectedImageLayer.id, { src: editedSrc } as any);
+                        }
+                        
                         setShowEditorModal(false);
                     }}
                     onClose={() => setShowEditorModal(false)}

@@ -4,7 +4,7 @@ import { getProvider, getModelById } from "@/lib/ai-providers";
 export async function POST(req: NextRequest) {
     try {
         const body = await req.json();
-        const { action, prompt, imageBase64, maskBase64, model, aspectRatio } = body;
+        const { action, prompt, imageBase64, maskBase64, model, aspectRatio, canvasSize, originalSize, originalLocation } = body;
 
         if (!action) {
             return NextResponse.json(
@@ -71,13 +71,17 @@ export async function POST(req: NextRequest) {
             }
 
             case "outpaint": {
-                const provider = getProvider("bria-expand");
+                const outpaintModel = model || "bria-expand";
+                const provider = getProvider(outpaintModel);
                 result = await provider.generate({
                     prompt: prompt || "",
                     type: "outpainting",
-                    model: "bria-expand",
+                    model: outpaintModel,
                     imageBase64,
                     aspectRatio,
+                    canvasSize,
+                    originalSize,
+                    originalLocation
                 });
                 break;
             }

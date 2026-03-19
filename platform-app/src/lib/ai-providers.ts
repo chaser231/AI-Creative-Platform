@@ -185,6 +185,9 @@ export interface AIRequestParams {
     imageBase64?: string;
     maskBase64?: string;
     systemPrompt?: string;
+    canvasSize?: [number, number];
+    originalSize?: [number, number];
+    originalLocation?: [number, number];
 }
 
 export interface AIResponse {
@@ -322,11 +325,19 @@ class ReplicateProvider implements AIProviderImplementation {
         // ── Outpaint ────────────────────────────────────────────────
         if (params.type === "outpainting") {
             if (!params.imageBase64) throw new Error("Image is required for outpainting");
-            const expandEntry = getModelById("bria-expand")!;
+            const expandModel = params.model || "bria-expand";
+            const expandEntry = getModelById(expandModel);
+            if (!expandEntry) throw new Error(`Model ${expandModel} not found`);
+
             const expandInput: Record<string, unknown> = {
                 image: params.imageBase64,
             };
+            if (params.prompt) expandInput.prompt = params.prompt;
             if (params.aspectRatio) expandInput.aspect_ratio = params.aspectRatio;
+            if (params.canvasSize) expandInput.canvas_size = params.canvasSize;
+            if (params.originalSize) expandInput.original_image_size = params.originalSize;
+            if (params.originalLocation) expandInput.original_image_location = params.originalLocation;
+            
             const result = await this.callReplicate(expandEntry, expandInput, token);
             const output = Array.isArray(result) ? result[0] : result;
             return { content: output as string, format: "url", model: expandEntry.slug, provider: "replicate" };
