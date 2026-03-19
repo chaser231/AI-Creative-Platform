@@ -3,6 +3,8 @@ import { Sparkles, Wand2, Image as ImageIcon, Send, MessageCircle, Settings2, Ra
 import { Button } from "@/components/ui/Button";
 import { useCanvasStore } from "@/store/canvasStore";
 import { RemoteTextProvider, RemoteImageProvider } from "@/services/aiService";
+import { ImageEditorModal } from "@/components/wizard/blocks/ImageEditorModal";
+import type { ImageLayer } from "@/types";
 
 // Helper models lists
 const TEXT_MODELS = [
@@ -47,14 +49,20 @@ interface AIPromptBarProps {
 }
 
 export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult }: AIPromptBarProps) {
-    const { addTextLayer, addImageLayer, selectedLayerIds, updateLayer } = useCanvasStore();
+    const { addTextLayer, addImageLayer, selectedLayerIds, updateLayer, layers } = useCanvasStore();
     const [activeTab, setActiveTab] = useState<"text" | "image" | "outpaint">("text");
     const [prompt, setPrompt] = useState("");
     const [selectedModel, setSelectedModel] = useState(TEXT_MODELS[0].id);
     const [aspectRatio, setAspectRatio] = useState(ASPECT_RATIOS[0]);
     const [applyToSelection, setApplyToSelection] = useState(false);
     const [isGenerating, setIsGenerating] = useState(false);
+    const [showEditorModal, setShowEditorModal] = useState(false);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+    // Get selected image layer (if any)
+    const selectedImageLayer = selectedLayerIds.length > 0
+        ? layers.find(l => l.id === selectedLayerIds[0] && l.type === "image") as ImageLayer | undefined
+        : undefined;
 
     // Auto-resize textarea
     useEffect(() => {
@@ -161,11 +169,22 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult 
                     <ImageIcon size={20} strokeWidth={activeTab === "image" ? 2.5 : 2} />
                 </button>
                 <button
-                    onClick={() => handleTabChange("outpaint")}
-                    className={`nav-button p-2.5 rounded-xl transition-all ${activeTab === "outpaint" ? "bg-bg-surface text-purple-500 shadow-sm" : "text-text-tertiary hover:text-text-primary"}`}
-                    title="Magic Edit"
+                    onClick={() => {
+                        if (selectedImageLayer) {
+                            setShowEditorModal(true);
+                        } else {
+                            alert("Выделите изображение на канвасе для AI-редактирования");
+                        }
+                    }}
+                    className={`nav-button p-2.5 rounded-xl transition-all ${
+                        selectedImageLayer
+                            ? "text-purple-500 hover:bg-purple-50 hover:text-purple-600"
+                            : "text-text-tertiary/40 cursor-not-allowed"
+                    }`}
+                    title={selectedImageLayer ? "AI-редактирование выбранного изображения" : "Выберите изображение на канвасе"}
+                    disabled={!selectedImageLayer}
                 >
-                    <Wand2 size={20} strokeWidth={activeTab === "outpaint" ? 2.5 : 2} />
+                    <Wand2 size={20} strokeWidth={2} />
                 </button>
                 <div className="flex-1" />
                 <button
@@ -259,6 +278,20 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult 
                     </Button>
                 </div>
             </div>
+
+            {/* ImageEditorModal for Magic Edit */}
+            {showEditorModal && selectedImageLayer && (
+                <div className="fixed inset-0 z-[9999]">
+                    <ImageEditorModal
+                        imageSrc={selectedImageLayer.src}
+                        onApply={(editedSrc) => {
+                            updateLayer(selectedImageLayer.id, { src: editedSrc } as any);
+                            setShowEditorModal(false);
+                        }}
+                        onClose={() => setShowEditorModal(false)}
+                    />
+                </div>
+            )}
         </div>
     );
 }

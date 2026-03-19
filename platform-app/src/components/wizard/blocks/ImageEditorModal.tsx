@@ -10,23 +10,34 @@ import {
     Check,
     Loader2,
     ImageIcon,
+    Expand,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import type { BusinessUnit } from "@/types";
 
-type EditorTool = "remove-bg" | "inpaint" | "text-edit";
+type EditorTool = "remove-bg" | "inpaint" | "text-edit" | "outpaint";
+
+// Outpaint target aspect ratios
+const OUTPAINT_RATIOS = [
+    { id: "16:9", label: "16:9" },
+    { id: "9:16", label: "9:16" },
+    { id: "4:3", label: "4:3" },
+    { id: "3:4", label: "3:4" },
+    { id: "1:1", label: "1:1" },
+    { id: "21:9", label: "21:9" },
+];
 
 // ─── AI Models for Image Editing ──────────────────────────
 // Only models with "edit" capability in MODEL_REGISTRY
 const IMAGE_EDIT_MODELS: { id: string; label: string; caps: EditorTool[] }[] = [
-    { id: "nano-banana-2", label: "Nano Banana 2", caps: ["remove-bg", "inpaint", "text-edit"] },
-    { id: "nano-banana-pro", label: "Nano Banana Pro", caps: ["remove-bg", "inpaint", "text-edit"] },
-    { id: "nano-banana", label: "Nano Banana", caps: ["remove-bg", "inpaint", "text-edit"] },
-    { id: "flux-2-pro", label: "Flux 2 Pro", caps: ["remove-bg", "text-edit"] },
-    { id: "seedream", label: "Seedream 4.5", caps: ["remove-bg", "text-edit"] },
-    { id: "gpt-image", label: "GPT Image 1.5", caps: ["remove-bg", "text-edit"] },
-    { id: "qwen-image-edit", label: "Qwen Image Edit", caps: ["remove-bg", "text-edit"] },
-    { id: "flux-fill", label: "Flux Fill", caps: ["remove-bg", "inpaint"] },
+    { id: "nano-banana-2", label: "Nano Banana 2", caps: ["remove-bg", "inpaint", "text-edit", "outpaint"] },
+    { id: "nano-banana-pro", label: "Nano Banana Pro", caps: ["remove-bg", "inpaint", "text-edit", "outpaint"] },
+    { id: "nano-banana", label: "Nano Banana", caps: ["remove-bg", "inpaint", "text-edit", "outpaint"] },
+    { id: "flux-2-pro", label: "Flux 2 Pro", caps: ["remove-bg", "text-edit", "outpaint"] },
+    { id: "seedream", label: "Seedream 4.5", caps: ["remove-bg", "text-edit", "outpaint"] },
+    { id: "gpt-image", label: "GPT Image 1.5", caps: ["remove-bg", "text-edit", "outpaint"] },
+    { id: "qwen-image-edit", label: "Qwen Image Edit", caps: ["remove-bg", "text-edit", "outpaint"] },
+    { id: "flux-fill", label: "Flux Fill", caps: ["remove-bg", "inpaint", "outpaint"] },
 ];
 
 interface ImageEditorModalProps {
@@ -50,6 +61,7 @@ export function ImageEditorModal({ imageSrc, onApply, onClose }: ImageEditorModa
     const [isDrawing, setIsDrawing] = useState(false);
     const [brushSize, setBrushSize] = useState(20);
     const [maskDrawn, setMaskDrawn] = useState(false);
+    const [outpaintRatio, setOutpaintRatio] = useState("16:9");
 
     const currentModelCaps = IMAGE_EDIT_MODELS.find(m => m.id === selectedModel)?.caps || [];
 
@@ -101,6 +113,31 @@ export function ImageEditorModal({ imageSrc, onApply, onClose }: ImageEditorModa
         const maskB64 = canvas ? canvas.toDataURL("image/png") : undefined;
         callImageEdit("inpaint", editPrompt, maskB64);
     };
+    const handleOutpaint = async () => {
+        setIsProcessing(true);
+        try {
+            const response = await fetch("/api/ai/image-edit", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    action: "outpaint",
+                    prompt: editPrompt || "",
+                    imageBase64: currentImage,
+                    model: selectedModel,
+                    aspectRatio: outpaintRatio,
+                }),
+            });
+            const data = await response.json();
+            if (data.error) throw new Error(data.error);
+            if (data.content) pushHistory(data.content);
+        } catch (e: unknown) {
+            const error = e as Error;
+            console.error("Outpaint failed:", error);
+            alert(`Ошибка: ${error.message || "Не удалось расширить изображение"}`);
+        } finally {
+            setIsProcessing(false);
+        }
+    };
 
     // Canvas drawing
     const startDraw = (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -146,6 +183,7 @@ export function ImageEditorModal({ imageSrc, onApply, onClose }: ImageEditorModa
         { id: "remove-bg", label: "Удалить фон", icon: <Eraser size={18} />, description: "Автоматически удалить фон" },
         { id: "inpaint", label: "Inpaint", icon: <Paintbrush size={18} />, description: "Кисть + промпт для замены области" },
         { id: "text-edit", label: "Редактировать", icon: <Type size={18} />, description: "Текстовое описание изменений" },
+        { id: "outpaint", label: "Outpaint", icon: <Expand size={18} />, description: "Расширить изображение до нового формата" },
     ];
 
     return (
@@ -286,6 +324,43 @@ export function ImageEditorModal({ imageSrc, onApply, onClose }: ImageEditorModa
                                     >
                                         {isProcessing ? <Loader2 size={16} className="animate-spin" /> : <Type size={16} />}
                                         {isProcessing ? "Редактирую..." : "Применить"}
+                                    </button>
+                                </div>
+                            )}
+
+                            {activeTool === "outpaint" && (
+                                <div className="pt-3 border-t border-border-primary space-y-3">
+                                    <div>
+                                        <p className="text-[10px] font-medium text-text-secondary mb-1">Целевой формат</p>
+                                        <div className="flex flex-wrap gap-1.5">
+                                            {OUTPAINT_RATIOS.map(r => (
+                                                <button
+                                                    key={r.id}
+                                                    onClick={() => setOutpaintRatio(r.id)}
+                                                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all cursor-pointer ${
+                                                        outpaintRatio === r.id
+                                                            ? "bg-accent-lime text-accent-primary"
+                                                            : "bg-bg-primary border border-border-primary text-text-secondary hover:bg-bg-tertiary"
+                                                    }`}
+                                                >
+                                                    {r.label}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+                                    <textarea
+                                        placeholder="Описание расширенной области (опционально)..."
+                                        value={editPrompt}
+                                        onChange={(e) => setEditPrompt(e.target.value)}
+                                        className="w-full h-16 px-3 py-2 rounded-[var(--radius-md)] border border-border-primary bg-bg-primary text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-border-focus resize-none placeholder:text-text-tertiary"
+                                    />
+                                    <button
+                                        onClick={handleOutpaint}
+                                        disabled={isProcessing}
+                                        className="w-full h-10 flex items-center justify-center gap-2 rounded-[var(--radius-md)] bg-accent-lime text-accent-primary font-semibold text-sm hover:bg-accent-lime-hover disabled:opacity-50 transition-all cursor-pointer disabled:cursor-default"
+                                    >
+                                        {isProcessing ? <Loader2 size={16} className="animate-spin" /> : <Expand size={16} />}
+                                        {isProcessing ? "Расширяю..." : `Расширить до ${outpaintRatio}`}
                                     </button>
                                 </div>
                             )}

@@ -357,10 +357,25 @@ class ReplicateProvider implements AIProviderImplementation {
         // ── Standard text-to-image generation ───────────────────────
         input.prompt = params.prompt;
         if (params.aspectRatio) input.aspect_ratio = params.aspectRatio;
-        if (params.count && params.count > 1) input.num_outputs = Math.min(params.count, 4);
         if (params.seed) input.seed = params.seed;
-        input.output_format = "webp";
-        input.output_quality = 90;
+
+        // Model-family-specific params
+        const slug = entry.slug;
+        const isFlux = slug.startsWith("black-forest-labs/");
+        const isGoogle = slug.startsWith("google/");
+        const isQwen = slug.startsWith("qwen/");
+        const isSeedream = slug.startsWith("bytedance/");
+
+        if (isFlux) {
+            // Flux models support webp, num_outputs, output_quality
+            input.output_format = "webp";
+            input.output_quality = 90;
+            if (params.count && params.count > 1) input.num_outputs = Math.min(params.count, 4);
+        } else if (isGoogle) {
+            // Nano Banana models: only jpg or png
+            input.output_format = "png";
+        }
+        // Seedream, Qwen, GPT-Image: use model defaults (don't send output_format)
 
         // Reference images (Flux 2 Pro, Nano Banana)
         if (params.referenceImages && params.referenceImages.length > 0) {
