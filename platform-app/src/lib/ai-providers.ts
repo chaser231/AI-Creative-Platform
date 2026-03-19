@@ -335,20 +335,51 @@ class ReplicateProvider implements AIProviderImplementation {
         // ── Inpaint ─────────────────────────────────────────────────
         if (params.type === "inpainting") {
             if (!params.imageBase64) throw new Error("Image is required for inpainting");
-            input.image = params.imageBase64;
+            
+            const slug = entry.slug;
             input.prompt = params.prompt;
-            if (params.maskBase64) input.mask = params.maskBase64;
+            
+            if (slug.startsWith("google/")) {
+                input.image_input = params.maskBase64 ? [params.imageBase64, params.maskBase64] : [params.imageBase64];
+                input.output_format = "png";
+            } else if (slug.startsWith("black-forest-labs/")) {
+                input.image = params.imageBase64;
+                if (params.maskBase64) input.mask = params.maskBase64;
+                input.output_format = "webp";
+            } else {
+                input.image = params.imageBase64;
+                if (params.maskBase64) input.mask = params.maskBase64;
+            }
+            
             const result = await this.callReplicate(entry, input, token);
             const output = Array.isArray(result) ? result[0] : result;
             return { content: output as string, format: "url", model: entry.slug, provider: "replicate" };
         }
 
         // ── Edit (image + prompt → edited image) ────────────────────
+        // ── Edit (image + prompt → edited image) ────────────────────
         if (params.type === "edit") {
             if (!params.imageBase64) throw new Error("Image is required for editing");
+            
+            const slug = entry.slug;
             input.prompt = params.prompt;
-            input.image = params.imageBase64;
             if (params.aspectRatio) input.aspect_ratio = params.aspectRatio;
+
+            // Map image to the correct parameter based on model family
+            if (slug.startsWith("google/")) {
+                input.image_input = [params.imageBase64];
+                input.output_format = "png";
+            } else if (slug.startsWith("black-forest-labs/")) {
+                input.input_images = [params.imageBase64];
+                input.output_format = "webp";
+            } else if (slug.startsWith("bytedance/")) {
+                // Seedream expects image_input
+                input.image_input = [params.imageBase64];
+            } else {
+                // Default / Qwen expects image
+                input.image = params.imageBase64;
+            }
+
             const result = await this.callReplicate(entry, input, token);
             const output = Array.isArray(result) ? result[0] : result;
             return { content: output as string, format: "url", model: entry.slug, provider: "replicate" };
