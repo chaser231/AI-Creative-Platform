@@ -121,7 +121,7 @@ export const MODEL_REGISTRY: ModelEntry[] = [
         label: "Flux Fill",
         slug: "black-forest-labs/flux-fill-dev",
         provider: "replicate",
-        caps: ["inpaint"],
+        caps: ["inpaint", "outpaint"],
     },
     {
         id: "bria-expand",
