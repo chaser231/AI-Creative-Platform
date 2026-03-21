@@ -15,6 +15,7 @@ import {
     LayoutTemplate,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { UserMenu } from "@/components/auth/UserMenu";
 
 interface NavItem {
     label: string;
@@ -105,7 +106,8 @@ export function Sidebar() {
             </nav>
 
             {/* Footer */}
-            <div className="px-3 py-3 border-t border-border-primary">
+            <div className="px-3 py-3 border-t border-border-primary space-y-1">
+                <UserMenu />
                 <Link
                     href="/settings"
                     className="flex items-center gap-2.5 px-3 py-2 rounded-[var(--radius-xl)] text-[13px] text-text-secondary hover:text-text-primary hover:bg-bg-surface/60 transition-all"
