@@ -134,6 +134,8 @@ export const workflowRouter = createTRPCRouter({
             })
           )
           .optional(),
+        selectedTextModel: z.string().optional(),
+        selectedImageModel: z.string().optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -152,7 +154,11 @@ export const workflowRouter = createTRPCRouter({
           prisma: ctx.prisma,
         },
         workspace?.name,
-        input.history as any
+        input.history as any,
+        {
+          textModel: input.selectedTextModel,
+          imageModel: input.selectedImageModel,
+        }
       );
 
       return result;

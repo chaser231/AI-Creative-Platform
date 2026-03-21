@@ -22,6 +22,11 @@ export interface AgentStep {
   result?: ActionResult;
 }
 
+export interface ModelPreferences {
+  textModel?: string;
+  imageModel?: string;
+}
+
 export interface AgentPlan {
   reasoning: string;
   steps: AgentStep[];
@@ -678,7 +683,8 @@ export async function interpretAndExecute(
   userMessage: string,
   context: ActionContext,
   workspaceName?: string,
-  conversationHistory?: ChatMessage[]
+  conversationHistory?: ChatMessage[],
+  modelPreferences?: ModelPreferences
 ): Promise<AgentResponse> {
   const provider = getActiveProvider();
   const contextInfo = workspaceName
@@ -737,6 +743,11 @@ export async function interpretAndExecute(
         }
 
         step.parameters = { elements: JSON.stringify(elements) };
+      }
+
+      // Inject user's model preferences
+      if (step.actionId === "generate_image" && modelPreferences?.imageModel) {
+        step.parameters.model = modelPreferences.imageModel;
       }
 
       step.result = await executeAction(step.actionId, step.parameters, context);

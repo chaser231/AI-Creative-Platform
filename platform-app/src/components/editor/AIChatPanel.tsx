@@ -12,12 +12,14 @@
 
 import { useState, useRef, useEffect } from "react";
 import { useCanvasStore } from "@/store/canvasStore";
+import { getModelsForCaps } from "@/lib/ai-providers";
 import { Button } from "@/components/ui/Button";
 import { trpc } from "@/lib/trpc";
 import { useWorkspace } from "@/providers/WorkspaceProvider";
 import {
     Copy, Plus, X, Send, Loader2, Bot, User, Sparkles,
-    CheckCircle, AlertCircle, ChevronRight, Zap, LayoutTemplate, Search
+    CheckCircle, AlertCircle, ChevronRight, Zap, LayoutTemplate, Search,
+    Image as ImageIcon, Type, Settings2, ChevronDown
 } from "lucide-react";
 
 export interface AIChatMessage {
@@ -66,8 +68,15 @@ export function AIChatPanel({ open, onClose, messages, onAddMessages, projectId 
     const { currentWorkspace } = useWorkspace();
     const [input, setInput] = useState("");
     const [isThinking, setIsThinking] = useState(false);
+    const [selectedTextModel, setSelectedTextModel] = useState("auto");
+    const [selectedImageModel, setSelectedImageModel] = useState("auto");
+    const [showModelSettings, setShowModelSettings] = useState(false);
     const scrollRef = useRef<HTMLDivElement>(null);
     const inputRef = useRef<HTMLTextAreaElement>(null);
+
+    // Get available models from registry
+    const textModels = getModelsForCaps("text");
+    const imageModels = getModelsForCaps("generate");
 
     const agentMutation = trpc.workflow.interpretAndExecute.useMutation();
 
@@ -132,6 +141,8 @@ export function AIChatPanel({ open, onClose, messages, onAddMessages, projectId 
                 workspaceId: currentWorkspace.id,
                 projectId,
                 history,
+                selectedTextModel: selectedTextModel !== "auto" ? selectedTextModel : undefined,
+                selectedImageModel: selectedImageModel !== "auto" ? selectedImageModel : undefined,
             });
 
             const newMessages: AIChatMessage[] = [];
@@ -444,31 +455,121 @@ export function AIChatPanel({ open, onClose, messages, onAddMessages, projectId 
                 )}
             </div>
 
-            {/* Input */}
-            <div className="p-3 border-t border-border-primary bg-bg-secondary/30">
-                <div className="flex items-end gap-2">
-                    <textarea
-                        ref={inputRef}
-                        value={input}
-                        onChange={(e) => setInput(e.target.value)}
-                        onKeyDown={handleKeyDown}
-                        placeholder="Спросите что-нибудь..."
-                        rows={1}
-                        className="flex-1 resize-none bg-bg-surface border border-border-primary rounded-xl px-3.5 py-2.5 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-violet-500/50 transition-colors min-h-[40px] max-h-[100px]"
-                        style={{ height: "40px" }}
-                        onInput={(e) => {
-                            const t = e.target as HTMLTextAreaElement;
-                            t.style.height = "40px";
-                            t.style.height = Math.min(t.scrollHeight, 100) + "px";
-                        }}
-                    />
+            {/* Model Settings + Input */}
+            <div className="border-t border-border-primary bg-bg-secondary/30">
+                {/* Model selector bar */}
+                <div className="px-3 pt-2">
                     <button
-                        onClick={handleSend}
-                        disabled={!input.trim() || isThinking}
-                        className="p-2.5 bg-violet-500 hover:bg-violet-600 disabled:opacity-30 disabled:cursor-not-allowed text-white rounded-xl transition-colors shrink-0 cursor-pointer"
+                        onClick={() => setShowModelSettings(!showModelSettings)}
+                        className="flex items-center gap-1.5 text-[10px] text-text-tertiary hover:text-text-secondary transition-colors cursor-pointer"
                     >
-                        <Send size={16} />
+                        <Settings2 size={11} />
+                        <span>Модели:</span>
+                        <span className="text-text-secondary">
+                            {selectedTextModel === "auto" ? "Авто" : textModels.find(m => m.id === selectedTextModel)?.label || selectedTextModel}
+                            {" / "}
+                            {selectedImageModel === "auto" ? "Авто" : imageModels.find(m => m.id === selectedImageModel)?.label || selectedImageModel}
+                        </span>
+                        <ChevronDown size={10} className={`transition-transform ${showModelSettings ? "rotate-180" : ""}`} />
                     </button>
+
+                    {showModelSettings && (
+                        <div className="mt-1.5 mb-1 p-2 bg-bg-tertiary/50 rounded-lg border border-border-primary space-y-2">
+                            {/* Text model */}
+                            <div className="flex items-center gap-2">
+                                <div className="flex items-center gap-1 min-w-[56px]">
+                                    <Type size={11} className="text-blue-400" />
+                                    <span className="text-[10px] text-text-tertiary">Текст</span>
+                                </div>
+                                <div className="flex-1 flex flex-wrap gap-1">
+                                    <button
+                                        onClick={() => setSelectedTextModel("auto")}
+                                        className={`px-2 py-0.5 text-[10px] rounded-md border transition-all cursor-pointer ${
+                                            selectedTextModel === "auto"
+                                                ? "bg-blue-500/20 border-blue-500/40 text-blue-300"
+                                                : "border-border-primary text-text-tertiary hover:text-text-secondary hover:border-border-secondary"
+                                        }`}
+                                    >
+                                        Авто
+                                    </button>
+                                    {textModels.map(m => (
+                                        <button
+                                            key={m.id}
+                                            onClick={() => setSelectedTextModel(m.id)}
+                                            className={`px-2 py-0.5 text-[10px] rounded-md border transition-all cursor-pointer ${
+                                                selectedTextModel === m.id
+                                                    ? "bg-blue-500/20 border-blue-500/40 text-blue-300"
+                                                    : "border-border-primary text-text-tertiary hover:text-text-secondary hover:border-border-secondary"
+                                            }`}
+                                        >
+                                            {m.label}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            {/* Image model */}
+                            <div className="flex items-center gap-2">
+                                <div className="flex items-center gap-1 min-w-[56px]">
+                                    <ImageIcon size={11} className="text-violet-400" />
+                                    <span className="text-[10px] text-text-tertiary">Фото</span>
+                                </div>
+                                <div className="flex-1 flex flex-wrap gap-1">
+                                    <button
+                                        onClick={() => setSelectedImageModel("auto")}
+                                        className={`px-2 py-0.5 text-[10px] rounded-md border transition-all cursor-pointer ${
+                                            selectedImageModel === "auto"
+                                                ? "bg-violet-500/20 border-violet-500/40 text-violet-300"
+                                                : "border-border-primary text-text-tertiary hover:text-text-secondary hover:border-border-secondary"
+                                        }`}
+                                    >
+                                        Авто
+                                    </button>
+                                    {imageModels.map(m => (
+                                        <button
+                                            key={m.id}
+                                            onClick={() => setSelectedImageModel(m.id)}
+                                            className={`px-2 py-0.5 text-[10px] rounded-md border transition-all cursor-pointer ${
+                                                selectedImageModel === m.id
+                                                    ? "bg-violet-500/20 border-violet-500/40 text-violet-300"
+                                                    : "border-border-primary text-text-tertiary hover:text-text-secondary hover:border-border-secondary"
+                                            }`}
+                                        >
+                                            {m.label}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </div>
+
+                {/* Input */}
+                <div className="p-3 pt-1.5">
+                    <div className="flex items-end gap-2">
+                        <textarea
+                            ref={inputRef}
+                            value={input}
+                            onChange={(e) => setInput(e.target.value)}
+                            onKeyDown={handleKeyDown}
+                            placeholder="Спросите что-нибудь..."
+                            rows={1}
+                            className="flex-1 resize-none bg-bg-surface border border-border-primary rounded-xl px-3.5 py-2.5 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-violet-500/50 transition-colors min-h-[40px] max-h-[100px]"
+                            style={{ height: "40px" }}
+                            onInput={(e) => {
+                                const t = e.target as HTMLTextAreaElement;
+                                t.style.height = "40px";
+                                t.style.height = Math.min(t.scrollHeight, 100) + "px";
+                            }}
+                        />
+                        <button
+                            onClick={handleSend}
+                            disabled={!input.trim() || isThinking}
+                            className="p-2.5 bg-violet-500 hover:bg-violet-600 disabled:opacity-30 disabled:cursor-not-allowed text-white rounded-xl transition-colors shrink-0 cursor-pointer"
+                        >
+                            <Send size={16} />
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>
