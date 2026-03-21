@@ -7,18 +7,16 @@
 
 import NextAuth from "next-auth";
 import { PrismaAdapter } from "@auth/prisma-adapter";
-import type { NextAuthConfig } from "next-auth";
 import { prisma } from "./db";
 
-export const authConfig: NextAuthConfig = {
+export const { handlers, auth, signIn, signOut } = NextAuth({
   adapter: PrismaAdapter(prisma),
   providers: [
     // Yandex OAuth — requires YANDEX_CLIENT_ID and YANDEX_CLIENT_SECRET
     {
       id: "yandex",
       name: "Yandex",
-      type: "oidc",
-      issuer: "https://oauth.yandex.ru",
+      type: "oauth",
       clientId: process.env.YANDEX_CLIENT_ID,
       clientSecret: process.env.YANDEX_CLIENT_SECRET,
       authorization: {
@@ -26,8 +24,10 @@ export const authConfig: NextAuthConfig = {
         params: { scope: "login:email login:info login:avatar" },
       },
       token: "https://oauth.yandex.ru/token",
-      userinfo: "https://login.yandex.ru/info?format=json",
-      profile(profile) {
+      userinfo: {
+        url: "https://login.yandex.ru/info?format=json",
+      },
+      profile(profile: Record<string, string>) {
         return {
           id: profile.id,
           name: profile.display_name || profile.real_name || profile.login,
@@ -50,6 +50,4 @@ export const authConfig: NextAuthConfig = {
   pages: {
     signIn: "/auth/signin",
   },
-};
-
-export const { handlers, auth, signIn, signOut } = NextAuth(authConfig);
+});
