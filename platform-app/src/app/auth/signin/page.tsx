@@ -2,13 +2,25 @@
 
 import { signIn } from "next-auth/react";
 import { useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { Suspense } from "react";
 
-export default function SignInPage() {
+function SignInContent() {
     const [isLoading, setIsLoading] = useState(false);
+    const searchParams = useSearchParams();
+    const error = searchParams.get("error");
+    const callbackUrl = searchParams.get("callbackUrl") || "/";
+
+    const errorMessages: Record<string, string> = {
+        Configuration: "Ошибка конфигурации сервера. Проверьте env-переменные.",
+        AccessDenied: "Доступ запрещён. Обратитесь к администратору.",
+        Verification: "Ошибка верификации. Попробуйте ещё раз.",
+        Default: "Произошла ошибка при входе. Попробуйте ещё раз.",
+    };
 
     const handleSignIn = () => {
         setIsLoading(true);
-        signIn("yandex", { callbackUrl: "/" });
+        signIn("yandex", { callbackUrl });
     };
 
     return (
@@ -26,6 +38,15 @@ export default function SignInPage() {
                         Войдите, чтобы начать создавать креативы
                     </p>
                 </div>
+
+                {/* Error message */}
+                {error && (
+                    <div className="mb-4 p-3 rounded-xl border border-red-200 dark:border-red-800/30 bg-red-50 dark:bg-red-950/20">
+                        <p className="text-[12px] text-red-700 dark:text-red-400 text-center">
+                            ⚠️ {errorMessages[error] || errorMessages.Default}
+                        </p>
+                    </div>
+                )}
 
                 {/* Sign-in card */}
                 <div className="bg-bg-surface border border-border-primary rounded-2xl p-6 shadow-sm">
@@ -47,16 +68,15 @@ export default function SignInPage() {
                         </p>
                     </div>
                 </div>
-
-                {/* Dev mode hint */}
-                {process.env.NODE_ENV === "development" && (
-                    <div className="mt-4 p-3 rounded-xl border border-border-primary bg-amber-50 dark:bg-amber-950/20">
-                        <p className="text-[11px] text-amber-700 dark:text-amber-400 text-center">
-                            🔧 Dev mode: OAuth пропускается автоматически
-                        </p>
-                    </div>
-                )}
             </div>
         </div>
+    );
+}
+
+export default function SignInPage() {
+    return (
+        <Suspense>
+            <SignInContent />
+        </Suspense>
     );
 }

@@ -11,6 +11,8 @@ import { prisma } from "./db";
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
   adapter: PrismaAdapter(prisma),
+  trustHost: true, // Required for dev mode with custom ports
+  secret: process.env.AUTH_SECRET || process.env.NEXTAUTH_SECRET,
   providers: [
     // Yandex OAuth — requires YANDEX_CLIENT_ID and YANDEX_CLIENT_SECRET
     {
@@ -30,7 +32,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       profile(profile: Record<string, string>) {
         return {
           id: profile.id,
-          name: profile.display_name || profile.real_name || profile.login,
+          name: profile.display_name || profile.real_name || profile.login || profile.default_email || "User",
           email: profile.default_email,
           image: profile.default_avatar_id
             ? `https://avatars.yandex.net/get-yapic/${profile.default_avatar_id}/islands-200`
@@ -49,5 +51,6 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   },
   pages: {
     signIn: "/auth/signin",
+    error: "/auth/signin", // Redirect errors to sign-in page instead of default error page
   },
 });

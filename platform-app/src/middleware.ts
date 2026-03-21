@@ -24,11 +24,6 @@ const PUBLIC_ROUTES = [
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  // Skip auth check in development — dev auth bypass handles auth in tRPC
-  if (process.env.NODE_ENV === "development") {
-    return NextResponse.next();
-  }
-
   // Allow public routes
   if (PUBLIC_ROUTES.some((route) => pathname.startsWith(route))) {
     return NextResponse.next();
