@@ -12,6 +12,8 @@ interface ProjectCardProps {
     project: Project;
     onUpdate?: (id: string, data: { name?: string; status?: ProjectStatus }) => void;
     onDelete?: (id: string) => void;
+    onFavorite?: (id: string) => void;
+    isFavorite?: boolean;
 }
 
 const goalLabels: Record<string, string> = {
@@ -31,7 +33,7 @@ function timeAgo(date: Date): string {
     return `${days} дн. назад`;
 }
 
-export function ProjectCard({ project, onUpdate, onDelete }: ProjectCardProps) {
+export function ProjectCard({ project, onUpdate, onDelete, onFavorite, isFavorite }: ProjectCardProps) {
     const router = useRouter();
     const [menuOpen, setMenuOpen] = useState(false);
     const [isRenaming, setIsRenaming] = useState(false);
@@ -120,6 +122,8 @@ export function ProjectCard({ project, onUpdate, onDelete }: ProjectCardProps) {
                             onRename={() => setIsRenaming(true)}
                             onStatusChange={(status) => onUpdate?.(project.id, { status })}
                             onDelete={() => setShowDeleteConfirm(true)}
+                            onFavorite={onFavorite ? () => onFavorite(project.id) : undefined}
+                            isFavorite={isFavorite}
                         />
                     </div>
                 </div>

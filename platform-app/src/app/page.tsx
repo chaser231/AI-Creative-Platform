@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useEffect } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Plus, ImageIcon, Type, Camera, Video, Search, HelpCircle, LayoutTemplate, ArrowRight, Star, Loader2 } from "lucide-react";
 import { AppShell } from "@/components/layout/AppShell";
 import { TopBar } from "@/components/layout/TopBar";
@@ -74,21 +75,25 @@ function RecommendedTemplates() {
 }
 const generationTypes = [
   {
+    id: "banner" as const,
     icon: <ImageIcon size={28} strokeWidth={1.5} />,
     label: "Генерация\nбаннеров",
     gradient: "gradient-card-yellow",
   },
   {
+    id: "text" as const,
     icon: <Type size={28} strokeWidth={1.5} />,
     label: "Генерация\nтекстов",
     gradient: "gradient-card-blue",
   },
   {
+    id: "photo" as const,
     icon: <Camera size={28} strokeWidth={1.5} />,
     label: "Генерация\nфото",
     gradient: "gradient-card-green",
   },
   {
+    id: "video" as const,
     icon: <Video size={28} strokeWidth={1.5} />,
     label: "Генерация\nвидео",
     gradient: "gradient-card-pink",
@@ -96,7 +101,9 @@ const generationTypes = [
 ];
 
 export default function DashboardPage() {
+  const router = useRouter();
   const [modalOpen, setModalOpen] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
   const localProjects = useProjectStore((s) => s.projects);
   const { projects: backendProjects, isLoading, workspaceId, refetch } = useProjectListSync();
   const { currentWorkspace, needsOnboarding } = useWorkspace();
@@ -116,6 +123,63 @@ export default function DashboardPage() {
   const handleProjectDelete = useCallback((id: string) => {
     deleteMutation.mutate({ id });
   }, [deleteMutation]);
+
+  // Favorites
+  const favoritesQuery = trpc.project.listFavorites.useQuery(
+    { workspaceId: workspaceId ?? "" },
+    { enabled: !!workspaceId, refetchOnWindowFocus: false }
+  );
+  const favoriteIds = useMemo(
+    () => new Set((favoritesQuery.data ?? []).map((f: { id: string }) => f.id)),
+    [favoritesQuery.data]
+  );
+  const favoriteMutation = trpc.project.favorite.useMutation({ onSuccess: () => favoritesQuery.refetch() });
+  const unfavoriteMutation = trpc.project.unfavorite.useMutation({ onSuccess: () => favoritesQuery.refetch() });
+
+  const handleFavorite = useCallback((id: string) => {
+    if (favoriteIds.has(id)) {
+      unfavoriteMutation.mutate({ projectId: id });
+    } else {
+      favoriteMutation.mutate({ projectId: id });
+    }
+  }, [favoriteIds, favoriteMutation, unfavoriteMutation]);
+
+  // Create project for photo shortcut
+  const createProjectMutation = trpc.project.create.useMutation({
+    onSuccess: (data) => {
+      router.push(`/editor/${data.id}?panel=ai&tab=image`);
+    },
+  });
+
+  // Tile click handlers
+  const handleTileClick = useCallback((tileId: string) => {
+    switch (tileId) {
+      case "banner":
+        setModalOpen(true);
+        break;
+      case "text":
+      case "video":
+        setToast("В разработке");
+        break;
+      case "photo":
+        if (workspaceId) {
+          createProjectMutation.mutate({
+            name: "Генерация фото",
+            goal: "banner",
+            workspaceId,
+          });
+        }
+        break;
+    }
+  }, [workspaceId, createProjectMutation]);
+
+  // Auto-hide toast
+  useEffect(() => {
+    if (toast) {
+      const t = setTimeout(() => setToast(null), 2500);
+      return () => clearTimeout(t);
+    }
+  }, [toast]);
 
   // Merge: show local projects + backend projects (deduplicated)
   const projects = useMemo(() => {
@@ -161,7 +225,8 @@ export default function DashboardPage() {
           <div className="grid grid-cols-4 gap-4">
             {generationTypes.map((type) => (
               <button
-                key={type.label}
+                key={type.id}
+                onClick={() => handleTileClick(type.id)}
                 className={`flex flex-col items-center justify-center gap-3 p-6 rounded-[var(--radius-2xl)] border border-border-primary ${type.gradient} hover:shadow-[var(--shadow-lg)] hover:border-border-secondary transition-all duration-[var(--transition-base)] cursor-pointer group`}
               >
                 <div className="flex items-center justify-center w-14 h-14 rounded-[var(--radius-xl)] bg-bg-surface/80 text-text-primary group-hover:scale-105 transition-transform shadow-[var(--shadow-sm)]">
@@ -181,7 +246,7 @@ export default function DashboardPage() {
         {/* Projects section */}
         <div className="px-6 pt-8">
           <div className="flex items-center justify-between mb-5">
-            <h1 className="text-3xl text-text-primary">Проекты</h1>
+            <h1 className="text-3xl text-text-primary">Мои проекты</h1>
             <div className="flex items-center gap-3">
               {/* Search */}
               <div className="flex items-center gap-2 px-4 py-2.5 rounded-[var(--radius-full)] bg-bg-surface border border-border-primary text-text-tertiary hover:border-border-secondary transition-colors cursor-pointer">
@@ -212,6 +277,8 @@ export default function DashboardPage() {
                   project={project}
                   onUpdate={handleProjectUpdate}
                   onDelete={handleProjectDelete}
+                  onFavorite={handleFavorite}
+                  isFavorite={favoriteIds.has(project.id)}
                 />
               ))}
             </div>
@@ -221,6 +288,13 @@ export default function DashboardPage() {
 
       <NewProjectModal open={modalOpen} onClose={() => setModalOpen(false)} workspaceId={workspaceId} />
       {needsOnboarding && <WorkspaceOnboarding />}
+
+      {/* Toast notification */}
+      {toast && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[100] px-5 py-3 bg-bg-surface border border-border-primary rounded-[var(--radius-xl)] shadow-[var(--shadow-lg)] text-sm text-text-primary animate-in fade-in slide-in-from-bottom-2 duration-200">
+          {toast}
+        </div>
+      )}
     </AppShell>
   );
 }

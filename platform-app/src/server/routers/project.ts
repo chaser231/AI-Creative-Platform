@@ -240,4 +240,57 @@ export const projectRouter = createTRPCRouter({
 
       return { success: true };
     }),
+
+  /** Add project to favorites */
+  favorite: protectedProcedure
+    .input(z.object({ projectId: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      // Upsert to avoid duplicates
+      await ctx.prisma.favoriteProject.upsert({
+        where: {
+          userId_projectId: {
+            userId: ctx.user.id,
+            projectId: input.projectId,
+          },
+        },
+        update: {},
+        create: {
+          userId: ctx.user.id,
+          projectId: input.projectId,
+        },
+      });
+      return { success: true };
+    }),
+
+  /** Remove project from favorites */
+  unfavorite: protectedProcedure
+    .input(z.object({ projectId: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      await ctx.prisma.favoriteProject.deleteMany({
+        where: {
+          userId: ctx.user.id,
+          projectId: input.projectId,
+        },
+      });
+      return { success: true };
+    }),
+
+  /** List user's favorite projects */
+  listFavorites: protectedProcedure
+    .input(z.object({ workspaceId: z.string() }))
+    .query(async ({ ctx, input }) => {
+      const favorites = await ctx.prisma.favoriteProject.findMany({
+        where: {
+          userId: ctx.user.id,
+          project: { workspaceId: input.workspaceId },
+        },
+        include: {
+          project: {
+            select: { id: true, name: true, status: true, updatedAt: true },
+          },
+        },
+        orderBy: { createdAt: "desc" },
+      });
+      return favorites.map((f) => f.project);
+    }),
 });

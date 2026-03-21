@@ -6,12 +6,9 @@ import Link from "next/link";
 import {
     LayoutDashboard,
     FolderKanban,
-    Image,
     Users,
     Settings,
-    Palette,
     ChevronDown,
-    Plus,
     Star,
     LayoutTemplate,
     Check,
@@ -19,6 +16,7 @@ import {
 import { cn } from "@/lib/cn";
 import { UserMenu } from "@/components/auth/UserMenu";
 import { useWorkspace } from "@/providers/WorkspaceProvider";
+import { trpc } from "@/lib/trpc";
 
 interface NavItem {
     label: string;
@@ -29,16 +27,8 @@ interface NavItem {
 const navItems: NavItem[] = [
     { label: "Мои проекты", href: "/", icon: <LayoutDashboard size={18} /> },
     { label: "Все проекты", href: "/projects", icon: <FolderKanban size={18} /> },
-    { label: "Ассеты", href: "/assets", icon: <Image size={18} /> },
     { label: "Шаблоны", href: "/templates", icon: <LayoutTemplate size={18} /> },
-    { label: "Бренд-кит", href: "/settings/brand-kit", icon: <Palette size={18} /> },
     { label: "Команда", href: "/team", icon: <Users size={18} /> },
-];
-
-const favoriteProjects = [
-    { label: "Баннеры промокод Salton", href: "/editor/salton" },
-    { label: "Фото счастливой семьи", href: "/editor/happy-family" },
-    { label: "Товары для дома", href: "/editor/home-goods" },
 ];
 
 export function Sidebar() {
@@ -46,6 +36,16 @@ export function Sidebar() {
     const { workspaces, currentWorkspace, setWorkspaceId } = useWorkspace();
     const [wsDropdownOpen, setWsDropdownOpen] = useState(false);
     const dropdownRef = useRef<HTMLDivElement>(null);
+
+    // Fetch favorite projects from DB
+    const favoritesQuery = trpc.project.listFavorites.useQuery(
+        { workspaceId: currentWorkspace?.id ?? "" },
+        {
+            enabled: !!currentWorkspace?.id,
+            refetchOnWindowFocus: false,
+        }
+    );
+    const favorites = favoritesQuery.data ?? [];
 
     // Close dropdown on outside click
     useEffect(() => {
@@ -144,22 +144,24 @@ export function Sidebar() {
                     );
                 })}
 
-                {/* Favorites section */}
-                <div className="pt-4">
-                    <p className="px-3 text-[10px] font-medium text-text-tertiary uppercase tracking-widest mb-2">
-                        Избранные проекты
-                    </p>
-                    {favoriteProjects.map((project) => (
-                        <Link
-                            key={project.href}
-                            href={project.href}
-                            className="flex items-center gap-2.5 px-3 py-1.5 rounded-[var(--radius-lg)] text-[13px] text-text-secondary hover:text-text-primary hover:bg-bg-surface/60 transition-all duration-[var(--transition-fast)]"
-                        >
-                            <Star size={14} className="text-text-tertiary shrink-0" />
-                            <span className="truncate">{project.label}</span>
-                        </Link>
-                    ))}
-                </div>
+                {/* Favorites section — real data from DB */}
+                {favorites.length > 0 && (
+                    <div className="pt-4">
+                        <p className="px-3 text-[10px] font-medium text-text-tertiary uppercase tracking-widest mb-2">
+                            Избранные проекты
+                        </p>
+                        {favorites.map((project) => (
+                            <Link
+                                key={project.id}
+                                href={`/editor/${project.id}`}
+                                className="flex items-center gap-2.5 px-3 py-1.5 rounded-[var(--radius-lg)] text-[13px] text-text-secondary hover:text-text-primary hover:bg-bg-surface/60 transition-all duration-[var(--transition-fast)]"
+                            >
+                                <Star size={14} className="text-amber-400 shrink-0 fill-amber-400" />
+                                <span className="truncate">{project.name}</span>
+                            </Link>
+                        ))}
+                    </div>
+                )}
             </nav>
 
             {/* Footer */}

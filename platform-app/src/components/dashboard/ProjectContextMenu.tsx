@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { Pencil, Trash2, ChevronRight, FileText, Play, Eye, Globe, Archive } from "lucide-react";
+import { Pencil, Trash2, ChevronRight, FileText, Play, Eye, Globe, Archive, Star } from "lucide-react";
 
 type ProjectStatus = "DRAFT" | "IN_PROGRESS" | "REVIEW" | "PUBLISHED" | "ARCHIVED";
 
@@ -20,6 +20,8 @@ interface ProjectContextMenuProps {
     onRename: () => void;
     onStatusChange: (status: ProjectStatus) => void;
     onDelete: () => void;
+    onFavorite?: () => void;
+    isFavorite?: boolean;
     /** Position anchor: "left" or "right" */
     align?: "left" | "right";
 }
@@ -31,6 +33,8 @@ export function ProjectContextMenu({
     onRename,
     onStatusChange,
     onDelete,
+    onFavorite,
+    isFavorite = false,
     align = "right",
 }: ProjectContextMenuProps) {
     const [showStatusSub, setShowStatusSub] = useState(false);
@@ -76,6 +80,17 @@ export function ProjectContextMenu({
                 <Pencil size={14} />
                 Переименовать
             </button>
+
+            {/* Favorite */}
+            {onFavorite && (
+                <button
+                    onClick={() => { onFavorite(); onClose(); }}
+                    className="flex items-center gap-2.5 w-full px-3 py-2 text-xs text-text-secondary hover:text-text-primary hover:bg-bg-tertiary transition-colors cursor-pointer"
+                >
+                    <Star size={14} className={isFavorite ? "text-amber-400 fill-amber-400" : ""} />
+                    {isFavorite ? "Убрать из избранного" : "В избранное"}
+                </button>
+            )}
 
             {/* Status submenu */}
             <div
