@@ -54,24 +54,53 @@ export function NewProjectModal({ open, onClose }: NewProjectModalProps) {
     const [businessUnit, setBusinessUnit] = useState<BusinessUnit>("yandex-market");
     const [goal, setGoal] = useState<ProjectGoal>("banner");
     const [mode, setMode] = useState<"wizard" | "studio">("wizard");
+    const [isCreating, setIsCreating] = useState(false);
 
-    const createProject = useProjectStore((s) => s.createProject);
+    const addProject = useProjectStore((s) => s.addProject);
+    const createProjectLocal = useProjectStore((s) => s.createProject);
     const { createProject: createOnBackend } = useCreateProjectSync();
     const router = useRouter();
 
     const handleCreate = async () => {
-        if (!name.trim()) return;
+        if (!name.trim() || isCreating) return;
+        setIsCreating(true);
 
-        // Create locally for instant UI
-        const localProject = createProject({ name: name.trim(), businessUnit, goal });
+        try {
+            // Backend-first: create on PostgreSQL and get the canonical ID
+            const backendProject = await createOnBackend({
+                name: name.trim(),
+                goal,
+            });
 
-        // Also create on backend (async, non-blocking)
-        createOnBackend({ name: name.trim(), goal }).catch(() => {
-            // Silent fallback — project works locally
-        });
+            if (backendProject) {
+                // Use backend ID as the single source of truth
+                addProject({
+                    id: backendProject.id,
+                    name: backendProject.name,
+                    businessUnit,
+                    goal,
+                    status: "draft",
+                    createdAt: new Date(backendProject.createdAt),
+                    updatedAt: new Date(backendProject.updatedAt),
+                    resizes: [{ id: "master", name: "Master", width: 1080, height: 1080, label: "1080 × 1080", instancesEnabled: false }],
+                    activeResizeId: "master",
+                });
 
+                onClose();
+                setName("");
+                setIsCreating(false);
+                router.push(`/editor/${backendProject.id}?mode=${mode}`);
+                return;
+            }
+        } catch {
+            // Backend unavailable — fall through to local creation
+        }
+
+        // Fallback: create locally if backend fails
+        const localProject = createProjectLocal({ name: name.trim(), businessUnit, goal });
         onClose();
         setName("");
+        setIsCreating(false);
         router.push(`/editor/${localProject.id}?mode=${mode}`);
     };
 
@@ -86,8 +115,8 @@ export function NewProjectModal({ open, onClose }: NewProjectModalProps) {
                     <Button variant="ghost" onClick={onClose}>
                         Отмена
                     </Button>
-                    <Button onClick={handleCreate} disabled={!name.trim()}>
-                        Создать
+                    <Button onClick={handleCreate} disabled={!name.trim() || isCreating}>
+                        {isCreating ? "Создание..." : "Создать"}
                     </Button>
                 </>
             }
