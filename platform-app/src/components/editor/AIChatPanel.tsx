@@ -354,13 +354,18 @@ function MessageBubble({
 
     // Error message
     if (msg.type === "error") {
+        // Show a user-friendly truncated error
+        const shortError = msg.content.length > 120
+            ? msg.content.slice(0, 120) + "…"
+            : msg.content;
+
         return (
-            <div className="flex items-start gap-2">
+            <div className="flex items-start gap-2 min-w-0">
                 <div className="w-7 h-7 rounded-full bg-red-500/10 flex items-center justify-center shrink-0">
                     <AlertCircle size={14} className="text-red-400" />
                 </div>
-                <div className="bg-red-500/10 text-red-400 text-xs px-3.5 py-2.5 rounded-2xl rounded-tl-sm border border-red-500/20">
-                    {msg.content}
+                <div className="min-w-0 flex-1 bg-red-500/10 text-red-400 text-xs px-3.5 py-2.5 rounded-2xl rounded-tl-sm border border-red-500/20 break-words overflow-hidden">
+                    {shortError}
                 </div>
             </div>
         );

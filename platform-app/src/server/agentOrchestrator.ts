@@ -263,30 +263,32 @@ async function callReplicateLlama(messages: ChatMessage[]): Promise<string> {
   const token = process.env.REPLICATE_API_TOKEN!;
 
   // Format messages into a single prompt for Llama
-  const prompt = messages
-    .map((m) => {
-      if (m.role === "system") return `<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n${m.content}<|eot_id|>`;
-      if (m.role === "user") return `<|start_header_id|>user<|end_header_id|>\n\n${m.content}<|eot_id|>`;
-      return `<|start_header_id|>assistant<|end_header_id|>\n\n${m.content}<|eot_id|>`;
-    })
-    .join("\n") + "\n<|start_header_id|>assistant<|end_header_id|>\n\n";
+  const systemMsg = messages.find((m) => m.role === "system")?.content || "";
+  const convMessages = messages.filter((m) => m.role !== "system");
+  const prompt = convMessages
+    .map((m) => (m.role === "user" ? `User: ${m.content}` : `Assistant: ${m.content}`))
+    .join("\n\n") + "\n\nAssistant:";
 
-  // Create prediction
-  const createRes = await fetch("https://api.replicate.com/v1/predictions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify({
-      model: REPLICATE_LLAMA_MODEL,
-      input: {
-        prompt,
-        max_tokens: 2048,
-        temperature: 0.7,
+  // Use the models endpoint (auto-resolves latest version)
+  const createRes = await fetch(
+    `https://api.replicate.com/v1/models/${REPLICATE_LLAMA_MODEL}/predictions`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+        Prefer: "wait",
       },
-    }),
-  });
+      body: JSON.stringify({
+        input: {
+          prompt,
+          system_prompt: systemMsg,
+          max_tokens: 2048,
+          temperature: 0.7,
+        },
+      }),
+    }
+  );
 
   if (!createRes.ok) {
     const err = await createRes.text();
