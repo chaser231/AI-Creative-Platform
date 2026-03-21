@@ -106,9 +106,10 @@ export function useAISessionSync(projectId: string) {
       // Update local state immediately
       setMessages((prev) => [...prev, ...newMessages]);
 
-      // Persist to DB (non-blocking)
+      // Persist to DB (non-blocking, skip plan-type messages)
       if (sessionId) {
         for (const msg of newMessages) {
+          if (msg.type === "plan" || msg.type === "template_choices" || msg.type === "fallback_actions") continue; // ephemeral UI messages
           addMessageMutation
             .mutateAsync({
               sessionId,

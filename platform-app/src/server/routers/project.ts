@@ -8,6 +8,22 @@ import { z } from "zod";
 import { createTRPCRouter, protectedProcedure } from "../trpc";
 import { TRPCError } from "@trpc/server";
 
+/** Role hierarchy for comparisons */
+const ROLE_RANK: Record<string, number> = { VIEWER: 0, USER: 1, CREATOR: 2, ADMIN: 3 };
+
+async function checkRole(prisma: any, userId: string, workspaceId: string, minRole: string) {
+  const membership = await prisma.workspaceMember.findUnique({
+    where: { userId_workspaceId: { userId, workspaceId } },
+  });
+  if (!membership) {
+    throw new TRPCError({ code: "FORBIDDEN", message: "Вы не являетесь участником этого воркспейса" });
+  }
+  if ((ROLE_RANK[membership.role] ?? 0) < (ROLE_RANK[minRole] ?? 0)) {
+    throw new TRPCError({ code: "FORBIDDEN", message: `Требуется роль ${minRole} или выше` });
+  }
+  return membership;
+}
+
 export const projectRouter = createTRPCRouter({
   /** List projects in a workspace */
   list: protectedProcedure
@@ -20,6 +36,9 @@ export const projectRouter = createTRPCRouter({
       })
     )
     .query(async ({ ctx, input }) => {
+      // Must be at least VIEWER in this workspace
+      await checkRole(ctx.prisma, ctx.user.id, input.workspaceId, "VIEWER");
+
       const projects = await ctx.prisma.project.findMany({
         where: {
           workspaceId: input.workspaceId,
@@ -73,6 +92,9 @@ export const projectRouter = createTRPCRouter({
       })
     )
     .mutation(async ({ ctx, input }) => {
+      // Must be at least CREATOR to create projects
+      await checkRole(ctx.prisma, ctx.user.id, input.workspaceId, "CREATOR");
+
       const project = await ctx.prisma.project.create({
         data: {
           name: input.name,
@@ -99,18 +121,34 @@ export const projectRouter = createTRPCRouter({
     )
     .mutation(async ({ ctx, input }) => {
       const { id, ...data } = input;
-      const project = await ctx.prisma.project.update({
+      // Check: must be CREATOR in workspace, OR the project owner
+      const project = await ctx.prisma.project.findUnique({ where: { id } });
+      if (!project) throw new TRPCError({ code: "NOT_FOUND" });
+
+      if (project.createdById !== ctx.user.id) {
+        await checkRole(ctx.prisma, ctx.user.id, project.workspaceId, "CREATOR");
+      }
+
+      const updated = await ctx.prisma.project.update({
         where: { id },
         data,
       });
 
-      return project;
+      return updated;
     }),
 
   /** Delete a project */
   delete: protectedProcedure
     .input(z.object({ id: z.string() }))
     .mutation(async ({ ctx, input }) => {
+      // Check: must be CREATOR in workspace, OR the project owner
+      const project = await ctx.prisma.project.findUnique({ where: { id: input.id } });
+      if (!project) throw new TRPCError({ code: "NOT_FOUND" });
+
+      if (project.createdById !== ctx.user.id) {
+        await checkRole(ctx.prisma, ctx.user.id, project.workspaceId, "CREATOR");
+      }
+
       await ctx.prisma.project.delete({
         where: { id: input.id },
       });
