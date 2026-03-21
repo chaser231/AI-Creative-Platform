@@ -45,7 +45,7 @@ function getActiveProvider(): "openai" | "replicate" {
 
 // ─── Action Executors ────────────────────────────────────
 
-async function executeAction(
+export async function executeAction(
   actionId: string,
   params: Record<string, unknown>,
   context: ActionContext
@@ -269,7 +269,7 @@ RULES:
 
       const searchTerms = serviceMap[service] || [service];
 
-      // Search by name, categories, or tags
+      // Search by name, categories, or tags (deduplicated by name)
       const templates = await context.prisma.template.findMany({
         where: {
           workspaceId: context.workspaceId,
@@ -284,7 +284,9 @@ RULES:
           description: true,
           thumbnailUrl: true,
         },
-        take: 6,
+        distinct: ["name"],
+        orderBy: { popularity: "desc" },
+        take: 5,
       });
 
       if (templates.length === 0) {

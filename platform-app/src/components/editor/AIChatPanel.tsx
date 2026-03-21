@@ -241,36 +241,29 @@ export function AIChatPanel({ open, onClose, messages, onAddMessages, projectId 
         }
     };
 
-    // Handle template selection — sends a follow-up to the agent
+    // ─── Direct template apply mutation (bypasses LLM) ────────
+    const applyTemplateMutation = trpc.workflow.applyTemplate.useMutation();
+
+    // Handle template selection — bypasses LLM, directly applies
     const handleTemplateSelect = (templateId: string, templateName: string, topic: string) => {
         if (isThinking || !currentWorkspace) return;
 
-        const followUpMsg = `Применить шаблон '${templateName}' для: ${topic}`;
-        setInput("");
         setIsThinking(true);
 
-        const userMsg: AIChatMessage = {
+        // Show user message
+        onAddMessages?.([{
             id: `user-${Date.now()}`,
             role: "user",
             type: "text",
-            content: followUpMsg,
+            content: `Применить шаблон «${templateName}»`,
             timestamp: Date.now(),
-        };
+        }]);
 
-        onAddMessages?.([userMsg]);
-
-        // Directly call apply_and_fill_template via the agent mutation
-        agentMutation.mutateAsync({
-            message: `apply_and_fill_template templateId=${templateId} topic="${topic}"`,
+        // Direct call — no LLM needed
+        applyTemplateMutation.mutateAsync({
+            templateId,
+            topic,
             workspaceId: currentWorkspace.id,
-            projectId,
-            history: messages
-                .filter((m) => m.type !== "plan" && m.type !== "template_choices")
-                .slice(-10)
-                .map((m) => ({
-                    role: m.role as "user" | "assistant",
-                    content: m.content,
-                })),
         }).then(async (result) => {
             // Execute canvas actions
             if (result.canvasActions && result.canvasActions.length > 0) {
@@ -280,12 +273,21 @@ export function AIChatPanel({ open, onClose, messages, onAddMessages, projectId 
                         await applyTemplatePack(ca.params.templateData);
                     } else if (ca.action === "update_layer") {
                         const { slotId, updates } = ca.params as { slotId: string; updates: Record<string, unknown> };
-                        // Wait a tick for template to load
-                        await new Promise(r => setTimeout(r, 100));
+                        // Wait for template to finish loading
+                        await new Promise(r => setTimeout(r, 200));
                         const currentLayers = useCanvasStore.getState().layers;
                         const targetLayer = currentLayers.find((l: any) => l.slotId === slotId);
                         if (targetLayer) {
                             updateLayer(targetLayer.id, updates as any);
+                        }
+                        // Check masterComponents
+                        const masters = useCanvasStore.getState().masterComponents;
+                        const targetMaster = masters?.find((mc: any) => mc.slotId === slotId);
+                        if (targetMaster && !targetLayer) {
+                            const masterLayer = currentLayers.find((l: any) => l.masterId === targetMaster.id);
+                            if (masterLayer) {
+                                updateLayer(masterLayer.id, updates as any);
+                            }
                         }
                     } else if (ca.action === "add_text") {
                         addTextLayer(ca.params as any);
@@ -296,6 +298,7 @@ export function AIChatPanel({ open, onClose, messages, onAddMessages, projectId 
                 }
             }
 
+            // Show result
             const newMessages: AIChatMessage[] = [];
             if (result.plan.steps.length > 0) {
                 newMessages.push({

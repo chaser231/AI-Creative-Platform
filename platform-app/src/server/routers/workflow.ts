@@ -7,7 +7,7 @@
 import { z } from "zod";
 import { createTRPCRouter, protectedProcedure } from "../trpc";
 import { TRPCError } from "@trpc/server";
-import { interpretAndExecute } from "../agentOrchestrator";
+import { interpretAndExecute, executeAction } from "../agentOrchestrator";
 
 export const workflowRouter = createTRPCRouter({
   /** List workflows for a workspace (user's + templates) */
@@ -156,5 +156,46 @@ export const workflowRouter = createTRPCRouter({
       );
 
       return result;
+    }),
+
+  /**
+   * 🎨 Apply template directly (bypasses LLM interpretation)
+   *
+   * Called when user clicks a template card.
+   */
+  applyTemplate: protectedProcedure
+    .input(
+      z.object({
+        templateId: z.string(),
+        topic: z.string(),
+        workspaceId: z.string(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const result = await executeAction(
+        "apply_and_fill_template",
+        { templateId: input.templateId, topic: input.topic },
+        {
+          userId: ctx.user.id,
+          workspaceId: input.workspaceId,
+          prisma: ctx.prisma,
+        }
+      );
+
+      return {
+        plan: {
+          reasoning: result.content,
+          steps: [{
+            actionId: "apply_and_fill_template",
+            actionName: "Применение и заполнение шаблона",
+            parameters: { templateId: input.templateId, topic: input.topic },
+            status: result.success ? "done" as const : "error" as const,
+            result,
+          }],
+        },
+        textResponse: result.content,
+        provider: "direct" as const,
+        canvasActions: result.canvasActions || [],
+      };
     }),
 });
