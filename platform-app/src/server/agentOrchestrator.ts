@@ -77,23 +77,30 @@ async function executeAction(
 
     case "generate_image": {
       const prompt = params.prompt as string;
-      const res = await fetch(`${getBaseUrl()}/api/ai/generate`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt, type: "image", model: "flux-schnell" }),
-      });
+      // Call Replicate directly via our provider layer (no self-fetch)
+      const { getProvider: getAIProvider } = await import("@/lib/ai-providers");
+      const imageProvider = getAIProvider("flux-schnell");
 
-      if (!res.ok) {
-        return { success: false, type: "error", content: "Ошибка генерации изображения" };
+      try {
+        const aiResult = await imageProvider.generate({
+          prompt,
+          type: "image",
+          model: "flux-schnell",
+        });
+
+        return {
+          success: true,
+          type: "image",
+          content: aiResult.content,
+          metadata: { model: "flux-schnell", format: aiResult.format },
+        };
+      } catch (e) {
+        return {
+          success: false,
+          type: "error",
+          content: `Ошибка генерации изображения: ${e instanceof Error ? e.message : "unknown"}`,
+        };
       }
-
-      const data = await res.json();
-      return {
-        success: true,
-        type: "image",
-        content: data.result || data.url || "",
-        metadata: { model: "flux-schnell" },
-      };
     }
 
     case "create_project": {
