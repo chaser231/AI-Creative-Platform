@@ -12,7 +12,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { useCanvasStore } from "@/store/canvasStore";
-import { getModelsForCaps } from "@/lib/ai-providers";
+import { getModelsForCaps } from "@/lib/ai-models";
 import { Button } from "@/components/ui/Button";
 import { trpc } from "@/lib/trpc";
 import { useWorkspace } from "@/providers/WorkspaceProvider";
