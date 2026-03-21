@@ -19,6 +19,7 @@ model User {
   emailVerified DateTime?
   name          String
   avatarUrl     String?
+  image         String?   // Required by @auth/prisma-adapter (NextAuth v5)
   role          GlobalRole @default(USER)
   createdAt     DateTime   @default(now())
   updatedAt     DateTime   @updatedAt
