@@ -3,7 +3,7 @@
 import { useRef, useState, use, useEffect } from "react";
 import { useSearchParams } from "next/navigation";
 import dynamic from "next/dynamic";
-import { Download, Share2, Wand2, PenTool, Copy, Check, HelpCircle, Settings } from "lucide-react";
+import { Download, Share2, Wand2, PenTool, Copy, Check, HelpCircle, Settings, History } from "lucide-react";
 import { TopBar } from "@/components/layout/TopBar";
 import { Button } from "@/components/ui/Button";
 import { Dialog } from "@/components/ui/Dialog";
@@ -15,6 +15,7 @@ import { ResizePanel } from "@/components/editor/ResizePanel";
 import { TemplatePanel } from "@/components/editor/TemplatePanel";
 import { AIPromptBar } from "@/components/editor/AIPromptBar";
 import { AIChatPanel, AIChatMessage } from "@/components/editor/AIChatPanel";
+import { VersionHistoryPanel } from "@/components/editor/VersionHistoryPanel";
 import { WizardFlow } from "@/components/wizard/WizardFlow";
 import { useProjectStore } from "@/store/projectStore";
 import { useCanvasStore } from "@/store/canvasStore";
@@ -45,6 +46,7 @@ export default function EditorPage({ params }: EditorPageProps) {
     const [helpOpen, setHelpOpen] = useState(false);
     const [settingsOpen, setSettingsOpen] = useState(false);
     const [linkCopied, setLinkCopied] = useState(false);
+    const [versionPanelOpen, setVersionPanelOpen] = useState(false);
     const projects = useProjectStore((s) => s.projects);
     const updateProject = useProjectStore((s) => s.updateProject);
     const { editorMode, setEditorMode, undo, redo, history, future, artboardProps, updateArtboardProps } = useCanvasStore();
@@ -117,6 +119,14 @@ export default function EditorPage({ params }: EditorPageProps) {
                     }
                     actions={
                         <div className="flex items-center gap-2">
+                            <Button
+                                variant="ghost"
+                                size="sm"
+                                icon={<History size={14} />}
+                                onClick={() => setVersionPanelOpen(true)}
+                            >
+                                Версии
+                            </Button>
                             <Button
                                 variant="secondary"
                                 size="sm"
@@ -350,6 +360,17 @@ export default function EditorPage({ params }: EditorPageProps) {
                     )}
                 </div>
             </Dialog>
+
+            {/* Version History Panel */}
+            <VersionHistoryPanel
+                projectId={id}
+                isOpen={versionPanelOpen}
+                onClose={() => setVersionPanelOpen(false)}
+                onVersionRestored={() => {
+                    // Reload canvas state from DB after restore
+                    window.location.reload();
+                }}
+            />
         </div>
     );
 }
