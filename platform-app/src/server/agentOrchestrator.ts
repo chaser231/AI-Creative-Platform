@@ -1,18 +1,22 @@
 /**
  * Agent Orchestrator
  *
- * Uses OpenAI function calling to interpret natural language requests
- * from the user and decompose them into Action Registry actions.
+ * Interprets natural language requests and decomposes them into
+ * Action Registry actions.
+ *
+ * Provider strategy:
+ *   1. OpenAI (gpt-4o-mini) — native function calling, preferred
+ *   2. Replicate (Llama 3) — JSON prompting fallback
  *
  * Flow:
  * 1. User sends a natural language message in the AI chat
- * 2. Orchestrator sends message + Action Registry to OpenAI
- * 3. OpenAI returns a plan (function calls)
+ * 2. Orchestrator sends message + Action Registry to LLM
+ * 3. LLM returns a plan (function calls / JSON actions)
  * 4. Orchestrator executes actions sequentially
  * 5. Results are returned as chat messages
  */
 
-import { actionsToOpenAITools, ACTIONS } from "./actionRegistry";
+import { actionsToOpenAITools, ACTIONS, actionsDescription } from "./actionRegistry";
 import type { ActionResult, ActionContext } from "./actionRegistry";
 
 // ─── Types ───────────────────────────────────────────────
@@ -33,14 +37,19 @@ export interface AgentPlan {
 export interface AgentResponse {
   plan: AgentPlan;
   textResponse: string;
+  provider: "openai" | "replicate";
+}
+
+// ─── Provider Detection ──────────────────────────────────
+
+function getProvider(): "openai" | "replicate" {
+  if (process.env.OPENAI_API_KEY) return "openai";
+  if (process.env.REPLICATE_API_TOKEN) return "replicate";
+  throw new Error("Ни OPENAI_API_KEY, ни REPLICATE_API_TOKEN не настроены. Добавьте хотя бы один API ключ.");
 }
 
 // ─── Action Executors ────────────────────────────────────
 
-/**
- * Execute a single action by its ID.
- * This bridges the Action Registry definitions to actual API calls.
- */
 async function executeAction(
   actionId: string,
   params: Record<string, unknown>,
@@ -52,7 +61,8 @@ async function executeAction(
       const style = (params.style as string) || "marketing";
       const systemPrompt = `Ты — креативный копирайтер. Стиль: ${style}. Пиши на русском языке.`;
 
-      const response = await callOpenAI([
+      // For text generation, use whichever LLM is available
+      const response = await callLLM([
         { role: "system", content: systemPrompt },
         { role: "user", content: prompt },
       ]);
@@ -61,21 +71,16 @@ async function executeAction(
         success: true,
         type: "text",
         content: response,
-        metadata: { model: "gpt-4o-mini", style },
+        metadata: { model: getProvider() === "openai" ? "gpt-4o-mini" : "llama-3", style },
       };
     }
 
     case "generate_image": {
       const prompt = params.prompt as string;
-      // Call the internal AI generation API
       const res = await fetch(`${getBaseUrl()}/api/ai/generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          prompt,
-          type: "image",
-          model: "flux-schnell",
-        }),
+        body: JSON.stringify({ prompt, type: "image", model: "flux-schnell" }),
       });
 
       if (!res.ok) {
@@ -114,7 +119,6 @@ async function executeAction(
 
     case "apply_template": {
       const templateName = params.templateName as string;
-      // Search for matching template
       const templates = await context.prisma.template.findMany({
         where: {
           workspaceId: context.workspaceId,
@@ -124,11 +128,7 @@ async function executeAction(
       });
 
       if (templates.length === 0) {
-        return {
-          success: false,
-          type: "error",
-          content: `Шаблон «${templateName}» не найден`,
-        };
+        return { success: false, type: "error", content: `Шаблон «${templateName}» не найден` };
       }
 
       return {
@@ -164,7 +164,7 @@ async function executeAction(
   }
 }
 
-// ─── OpenAI Integration ──────────────────────────────────
+// ─── Shared Utilities ────────────────────────────────────
 
 function getBaseUrl(): string {
   if (typeof window !== "undefined") return "";
@@ -176,23 +176,20 @@ interface ChatMessage {
   content: string;
 }
 
-async function callOpenAI(messages: ChatMessage[], tools?: any[]): Promise<string> {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) {
-    throw new Error("OPENAI_API_KEY не настроен");
-  }
+// ─── Unified LLM Call (text-only, no tools) ──────────────
 
-  const body: any = {
-    model: "gpt-4o-mini",
-    messages,
-    temperature: 0.7,
-    max_tokens: 2048,
-  };
-
-  if (tools && tools.length > 0) {
-    body.tools = tools;
-    body.tool_choice = "auto";
+async function callLLM(messages: ChatMessage[]): Promise<string> {
+  const provider = getProvider();
+  if (provider === "openai") {
+    return callOpenAI(messages);
   }
+  return callReplicateLlama(messages);
+}
+
+// ─── OpenAI Integration ──────────────────────────────────
+
+async function callOpenAI(messages: ChatMessage[]): Promise<string> {
+  const apiKey = process.env.OPENAI_API_KEY!;
 
   const response = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
@@ -200,7 +197,12 @@ async function callOpenAI(messages: ChatMessage[], tools?: any[]): Promise<strin
       "Content-Type": "application/json",
       Authorization: `Bearer ${apiKey}`,
     },
-    body: JSON.stringify(body),
+    body: JSON.stringify({
+      model: "gpt-4o-mini",
+      messages,
+      temperature: 0.7,
+      max_tokens: 2048,
+    }),
   });
 
   if (!response.ok) {
@@ -216,11 +218,7 @@ async function callOpenAIWithTools(messages: ChatMessage[]): Promise<{
   content: string | null;
   toolCalls: Array<{ id: string; name: string; arguments: string }>;
 }> {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) {
-    throw new Error("OPENAI_API_KEY не настроен");
-  }
-
+  const apiKey = process.env.OPENAI_API_KEY!;
   const tools = actionsToOpenAITools();
 
   const response = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -257,6 +255,144 @@ async function callOpenAIWithTools(messages: ChatMessage[]): Promise<{
   };
 }
 
+// ─── Replicate Llama Integration ─────────────────────────
+
+const REPLICATE_LLAMA_MODEL = "meta/meta-llama-3-70b-instruct";
+
+async function callReplicateLlama(messages: ChatMessage[]): Promise<string> {
+  const token = process.env.REPLICATE_API_TOKEN!;
+
+  // Format messages into a single prompt for Llama
+  const prompt = messages
+    .map((m) => {
+      if (m.role === "system") return `<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n${m.content}<|eot_id|>`;
+      if (m.role === "user") return `<|start_header_id|>user<|end_header_id|>\n\n${m.content}<|eot_id|>`;
+      return `<|start_header_id|>assistant<|end_header_id|>\n\n${m.content}<|eot_id|>`;
+    })
+    .join("\n") + "\n<|start_header_id|>assistant<|end_header_id|>\n\n";
+
+  // Create prediction
+  const createRes = await fetch("https://api.replicate.com/v1/predictions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({
+      model: REPLICATE_LLAMA_MODEL,
+      input: {
+        prompt,
+        max_tokens: 2048,
+        temperature: 0.7,
+      },
+    }),
+  });
+
+  if (!createRes.ok) {
+    const err = await createRes.text();
+    throw new Error(`Replicate API error: ${createRes.status} — ${err}`);
+  }
+
+  const prediction = await createRes.json();
+
+  // Poll for completion
+  let result = prediction;
+  while (result.status !== "succeeded" && result.status !== "failed") {
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    const pollRes = await fetch(`https://api.replicate.com/v1/predictions/${result.id}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    result = await pollRes.json();
+  }
+
+  if (result.status === "failed") {
+    throw new Error(`Replicate prediction failed: ${result.error || "unknown error"}`);
+  }
+
+  // Replicate returns output as array of strings
+  const output = Array.isArray(result.output) ? result.output.join("") : String(result.output || "");
+  return output;
+}
+
+/**
+ * Replicate Llama fallback for tool calling.
+ * Uses structured JSON prompting instead of native function calling.
+ */
+async function callReplicateWithTools(messages: ChatMessage[]): Promise<{
+  content: string | null;
+  toolCalls: Array<{ id: string; name: string; arguments: string }>;
+}> {
+  const actionsList = ACTIONS.map((a) => {
+    const params = Object.entries(a.parameters)
+      .map(([key, p]) => `    "${key}": "${p.description}"${p.enum ? ` (варианты: ${p.enum.join(", ")})` : ""}`)
+      .join(",\n");
+    return `  - ${a.id}: ${a.description}\n    Параметры: {\n${params}\n    }\n    Обязательные: [${a.required.join(", ")}]`;
+  }).join("\n");
+
+  const jsonPrompt = `\n\nВАЖНО: Проанализируй запрос пользователя и ответь СТРОГО в формате JSON:
+{
+  "response": "Твой текстовый ответ пользователю",
+  "actions": [
+    {"action_id": "id_действия", "parameters": {"param1": "value1"}}
+  ]
+}
+
+Если действия не нужны — верни пустой массив actions.
+Доступные действия (action_id):
+${actionsList}
+
+ОТВЕЧАЙ ТОЛЬКО ВАЛИДНЫМ JSON, без markdown-блоков, без пояснений вне JSON.`;
+
+  // Inject JSON instruction into the last system message
+  const augmentedMessages = messages.map((m, i) => {
+    if (m.role === "system" && i === 0) {
+      return { ...m, content: m.content + jsonPrompt };
+    }
+    return m;
+  });
+
+  const rawResponse = await callReplicateLlama(augmentedMessages);
+
+  // Parse JSON from response
+  try {
+    // Try to extract JSON from the response (model might wrap it in ```json blocks)
+    let jsonStr = rawResponse.trim();
+
+    // Remove markdown code blocks if present
+    const jsonMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (jsonMatch) {
+      jsonStr = jsonMatch[1].trim();
+    }
+
+    // Try to find JSON object in the response
+    const braceStart = jsonStr.indexOf("{");
+    const braceEnd = jsonStr.lastIndexOf("}");
+    if (braceStart !== -1 && braceEnd !== -1) {
+      jsonStr = jsonStr.slice(braceStart, braceEnd + 1);
+    }
+
+    const parsed = JSON.parse(jsonStr);
+    const actions = Array.isArray(parsed.actions) ? parsed.actions : [];
+
+    return {
+      content: parsed.response || null,
+      toolCalls: actions
+        .filter((a: any) => a.action_id && ACTIONS.some((def) => def.id === a.action_id))
+        .map((a: any, i: number) => ({
+          id: `replicate-${i}`,
+          name: a.action_id,
+          arguments: JSON.stringify(a.parameters || {}),
+        })),
+    };
+  } catch {
+    // If JSON parsing fails, treat entire response as text
+    return {
+      content: rawResponse,
+      toolCalls: [],
+    };
+  }
+}
+
 // ─── Main Orchestrator ───────────────────────────────────
 
 const SYSTEM_PROMPT = `Ты — AI-ассистент платформы AI Creative Platform.
@@ -275,6 +411,7 @@ const SYSTEM_PROMPT = `Ты — AI-ассистент платформы AI Crea
 
 /**
  * Main entry point: interpret a natural language request and execute actions.
+ * Automatically selects OpenAI (preferred) or Replicate Llama (fallback).
  */
 export async function interpretAndExecute(
   userMessage: string,
@@ -282,6 +419,7 @@ export async function interpretAndExecute(
   workspaceName?: string,
   conversationHistory?: ChatMessage[]
 ): Promise<AgentResponse> {
+  const provider = getProvider();
   const contextInfo = workspaceName
     ? `\n\nКонтекст: Воркспейс «${workspaceName}»`
     : "";
@@ -292,8 +430,10 @@ export async function interpretAndExecute(
     { role: "user", content: userMessage },
   ];
 
-  // Step 1: Ask OpenAI to interpret the request
-  const aiResponse = await callOpenAIWithTools(messages);
+  // Step 1: Ask LLM to interpret the request
+  const aiResponse = provider === "openai"
+    ? await callOpenAIWithTools(messages)
+    : await callReplicateWithTools(messages);
 
   // Step 2: Build the plan from tool calls
   const steps: AgentStep[] = aiResponse.toolCalls.map((tc) => {
@@ -342,12 +482,12 @@ export async function interpretAndExecute(
       steps,
     },
     textResponse,
+    provider,
   };
 }
 
 /**
  * Simple text-only response (no tool calls).
- * Used for conversational messages that don't need actions.
  */
 export async function chatResponse(
   userMessage: string,
@@ -359,5 +499,5 @@ export async function chatResponse(
     { role: "user", content: userMessage },
   ];
 
-  return callOpenAI(messages);
+  return callLLM(messages);
 }
