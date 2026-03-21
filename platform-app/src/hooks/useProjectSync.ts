@@ -117,7 +117,7 @@ export function useCanvasAutoSave(projectId: string, enabled: boolean = true) {
       if (timeoutRef.current) {
         clearTimeout(timeoutRef.current);
       }
-      timeoutRef.current = setTimeout(saveNow, 3000); // Save 3s after last change
+      timeoutRef.current = setTimeout(saveNow, 1500); // Save 1.5s after last change
     });
 
     return () => {
@@ -128,13 +128,46 @@ export function useCanvasAutoSave(projectId: string, enabled: boolean = true) {
     };
   }, [saveNow, enabled]);
 
-  // Save on unmount (leaving editor)
+  // Save on unmount (leaving editor via React navigation)
   useEffect(() => {
     return () => {
       saveNow();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Save on page unload (refresh, close tab).
+  // tRPC mutations get aborted during page unload, so we use
+  // navigator.sendBeacon which guarantees delivery.
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      if (!enabledRef.current) return;
+
+      const store = useCanvasStore.getState();
+      const canvasState = {
+        layers: store.layers,
+        masterComponents: store.masterComponents,
+        componentInstances: store.componentInstances,
+        resizes: store.resizes,
+        artboardProps: store.artboardProps,
+        canvasWidth: store.canvasWidth,
+        canvasHeight: store.canvasHeight,
+      };
+
+      const serialized = JSON.stringify(canvasState);
+      if (serialized === lastSavedRef.current) return;
+
+      // sendBeacon survives page unload unlike fetch/tRPC
+      const blob = new Blob(
+        [JSON.stringify({ projectId, canvasState })],
+        { type: "application/json" }
+      );
+      navigator.sendBeacon("/api/canvas/save", blob);
+    };
+
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [projectId]);
 
   return {
     isSaving: saveStateMutation.isPending,
