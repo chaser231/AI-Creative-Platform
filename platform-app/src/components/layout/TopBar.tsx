@@ -19,6 +19,7 @@ interface TopBarProps {
     canUndo?: boolean;
     canRedo?: boolean;
     centerContent?: React.ReactNode;
+    customLeftContent?: React.ReactNode;
     showBackToProjects?: boolean;
     showHistoryNavigation?: boolean;
 }
@@ -32,6 +33,7 @@ export function TopBar({
     canUndo = false,
     canRedo = false,
     centerContent,
+    customLeftContent,
     showBackToProjects = true,
     showHistoryNavigation = false,
 }: TopBarProps) {
@@ -102,6 +104,9 @@ export function TopBar({
                         </span>
                     ))}
                 </nav>
+
+                {/* Custom left content (e.g. editable project name + status) */}
+                {customLeftContent}
             </div>
 
             {/* Center: undo/redo + mode switcher */}

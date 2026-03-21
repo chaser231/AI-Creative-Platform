@@ -1,7 +1,7 @@
 "use client";
 
-import { useRef, useState, use, useEffect } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRef, useState, use, useEffect, useCallback } from "react";
+import { useSearchParams, useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import { Download, Share2, Wand2, PenTool, Copy, Check, HelpCircle, Settings, History } from "lucide-react";
 import { TopBar } from "@/components/layout/TopBar";
@@ -74,12 +74,68 @@ export default function EditorPage({ params }: EditorPageProps) {
 
     const project = projects.find((p) => p.id === id);
 
-    // Fetch project name from backend (in case local store is empty after refresh)
+    // Fetch project from backend (always, to stay in sync)
     const projectQuery = trpc.project.getById.useQuery(
         { id },
-        { retry: false, refetchOnWindowFocus: false, enabled: !project }
+        { retry: false, refetchOnWindowFocus: false }
     );
     const projectName = project?.name || projectQuery.data?.name || "Без названия";
+    const projectStatus = (projectQuery.data?.status || project?.status || "DRAFT").toUpperCase();
+
+    // Inline rename state
+    const [isRenaming, setIsRenaming] = useState(false);
+    const [editName, setEditName] = useState(projectName);
+    const nameInputRef = useRef<HTMLInputElement>(null);
+    const router = useRouter();
+
+    // Status dropdown
+    const [statusDropdownOpen, setStatusDropdownOpen] = useState(false);
+
+    // Update mutation
+    const updateMutation = trpc.project.update.useMutation({
+        onSuccess: () => { projectQuery.refetch(); },
+    });
+    const deleteMutation = trpc.project.delete.useMutation({
+        onSuccess: () => { router.push("/"); },
+    });
+
+    useEffect(() => {
+        if (isRenaming && nameInputRef.current) {
+            nameInputRef.current.focus();
+            nameInputRef.current.select();
+        }
+    }, [isRenaming]);
+
+    // Keep editName in sync with loaded name
+    useEffect(() => {
+        setEditName(projectName);
+    }, [projectName]);
+
+    const handleRenameSubmit = useCallback(() => {
+        const trimmed = editName.trim();
+        if (trimmed && trimmed !== projectName) {
+            updateMutation.mutate({ id, name: trimmed });
+        }
+        setIsRenaming(false);
+    }, [editName, projectName, id, updateMutation]);
+
+    const statusOptions = [
+        { value: "DRAFT", label: "Черновик" },
+        { value: "IN_PROGRESS", label: "В работе" },
+        { value: "REVIEW", label: "На ревью" },
+        { value: "PUBLISHED", label: "Опубликован" },
+        { value: "ARCHIVED", label: "Архив" },
+    ];
+
+    const statusColors: Record<string, string> = {
+        DRAFT: "bg-gray-500/20 text-gray-400",
+        IN_PROGRESS: "bg-blue-500/20 text-blue-400",
+        REVIEW: "bg-amber-500/20 text-amber-400",
+        PUBLISHED: "bg-green-500/20 text-green-400",
+        ARCHIVED: "bg-gray-500/20 text-gray-500",
+    };
+
+    const currentStatusLabel = statusOptions.find(o => o.value === projectStatus)?.label || projectStatus;
 
     return (
         <div className="flex flex-col h-screen overflow-hidden bg-bg-canvas">
@@ -87,9 +143,78 @@ export default function EditorPage({ params }: EditorPageProps) {
             <div className="border-b border-border-primary bg-bg-surface">
                 <TopBar
                     breadcrumbs={[
-                        { label: projectName },
-                        ...(isSaving ? [{ label: "💾 Сохранение..." }] : []),
+                        { label: "" }, // We'll use custom left content instead
                     ]}
+                    customLeftContent={
+                        <div className="flex items-center gap-2">
+                            {/* Editable project name */}
+                            {isRenaming ? (
+                                <input
+                                    ref={nameInputRef}
+                                    value={editName}
+                                    onChange={(e) => setEditName(e.target.value)}
+                                    onBlur={handleRenameSubmit}
+                                    onKeyDown={(e) => {
+                                        if (e.key === "Enter") handleRenameSubmit();
+                                        if (e.key === "Escape") { setEditName(projectName); setIsRenaming(false); }
+                                    }}
+                                    className="text-sm font-semibold text-text-primary bg-bg-tertiary border border-border-focus rounded-[var(--radius-md)] px-2 py-0.5 outline-none min-w-[120px]"
+                                />
+                            ) : (
+                                <button
+                                    onClick={() => setIsRenaming(true)}
+                                    className="text-sm font-semibold text-text-primary hover:text-accent-primary transition-colors cursor-pointer"
+                                    title="Нажмите, чтобы переименовать"
+                                >
+                                    {projectName}
+                                </button>
+                            )}
+
+                            {/* Status badge dropdown */}
+                            <div className="relative">
+                                <button
+                                    onClick={() => setStatusDropdownOpen(!statusDropdownOpen)}
+                                    className={`px-2 py-0.5 rounded-[var(--radius-full)] text-[10px] font-medium cursor-pointer transition-opacity hover:opacity-80 ${statusColors[projectStatus] || statusColors.DRAFT}`}
+                                >
+                                    {currentStatusLabel}
+                                </button>
+                                {statusDropdownOpen && (
+                                    <div className="absolute top-full mt-1 left-0 z-50 w-40 bg-bg-surface border border-border-primary rounded-[var(--radius-lg)] shadow-[var(--shadow-lg)] py-1">
+                                        {statusOptions.map((opt) => (
+                                            <button
+                                                key={opt.value}
+                                                onClick={() => {
+                                                    updateMutation.mutate({ id, status: opt.value as "DRAFT" | "IN_PROGRESS" | "REVIEW" | "PUBLISHED" | "ARCHIVED" });
+                                                    setStatusDropdownOpen(false);
+                                                }}
+                                                className={`w-full px-3 py-1.5 text-xs text-left cursor-pointer transition-colors ${
+                                                    projectStatus === opt.value
+                                                        ? "text-accent-primary bg-bg-tertiary font-medium"
+                                                        : "text-text-secondary hover:text-text-primary hover:bg-bg-tertiary"
+                                                }`}
+                                            >
+                                                {opt.label}
+                                            </button>
+                                        ))}
+                                        <div className="my-1 border-t border-border-primary" />
+                                        <button
+                                            onClick={() => {
+                                                if (confirm(`Удалить проект «${projectName}»? Это действие необратимо.`)) {
+                                                    deleteMutation.mutate({ id });
+                                                }
+                                                setStatusDropdownOpen(false);
+                                            }}
+                                            className="w-full px-3 py-1.5 text-xs text-left text-red-400 hover:text-red-300 hover:bg-red-500/10 cursor-pointer transition-colors"
+                                        >
+                                            Удалить проект
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
+
+                            {isSaving && <span className="text-[10px] text-text-tertiary">💾 Сохранение...</span>}
+                        </div>
+                    }
                     onUndo={undo}
                     onRedo={redo}
                     canUndo={history.length > 0}

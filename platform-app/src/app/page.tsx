@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback } from "react";
 import Link from "next/link";
 import { Plus, ImageIcon, Type, Camera, Video, Search, HelpCircle, LayoutTemplate, ArrowRight, Star, Loader2 } from "lucide-react";
 import { AppShell } from "@/components/layout/AppShell";
@@ -12,6 +12,7 @@ import { NewProjectModal } from "@/components/dashboard/NewProjectModal";
 import { useProjectStore } from "@/store/projectStore";
 import { useProjectListSync } from "@/hooks/useProjectSync";
 import { useTemplateStore } from "@/store/templateStore";
+import { trpc } from "@/lib/trpc";
 import { getRecommendedPacks } from "@/services/templateCatalogService";
 import type { TemplatePackV2 } from "@/services/templateService";
 
@@ -95,7 +96,23 @@ const generationTypes = [
 export default function DashboardPage() {
   const [modalOpen, setModalOpen] = useState(false);
   const localProjects = useProjectStore((s) => s.projects);
-  const { projects: backendProjects, isLoading, workspaceId } = useProjectListSync();
+  const { projects: backendProjects, isLoading, workspaceId, refetch } = useProjectListSync();
+
+  // tRPC mutations for project management
+  const updateMutation = trpc.project.update.useMutation({
+    onSuccess: () => { refetch(); },
+  });
+  const deleteMutation = trpc.project.delete.useMutation({
+    onSuccess: () => { refetch(); },
+  });
+
+  const handleProjectUpdate = useCallback((id: string, data: { name?: string; status?: "DRAFT" | "IN_PROGRESS" | "REVIEW" | "PUBLISHED" | "ARCHIVED" }) => {
+    updateMutation.mutate({ id, ...data });
+  }, [updateMutation]);
+
+  const handleProjectDelete = useCallback((id: string) => {
+    deleteMutation.mutate({ id });
+  }, [deleteMutation]);
 
   // Merge: show local projects + backend projects (deduplicated)
   const projects = useMemo(() => {
@@ -187,7 +204,12 @@ export default function DashboardPage() {
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
               {projects.map((project) => (
-                <ProjectCard key={project.id} project={project} />
+                <ProjectCard
+                  key={project.id}
+                  project={project}
+                  onUpdate={handleProjectUpdate}
+                  onDelete={handleProjectDelete}
+                />
               ))}
             </div>
           )}
