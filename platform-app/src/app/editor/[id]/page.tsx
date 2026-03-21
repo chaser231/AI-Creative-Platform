@@ -14,13 +14,14 @@ import { ExportModal } from "@/components/editor/ExportModal";
 import { ResizePanel } from "@/components/editor/ResizePanel";
 import { TemplatePanel } from "@/components/editor/TemplatePanel";
 import { AIPromptBar } from "@/components/editor/AIPromptBar";
-import { AIChatPanel, AIChatMessage } from "@/components/editor/AIChatPanel";
+import { AIChatPanel } from "@/components/editor/AIChatPanel";
 import { VersionHistoryPanel } from "@/components/editor/VersionHistoryPanel";
 import { WizardFlow } from "@/components/wizard/WizardFlow";
 import { useProjectStore } from "@/store/projectStore";
 import { useCanvasStore } from "@/store/canvasStore";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { useCanvasAutoSave, useLoadCanvasState } from "@/hooks/useProjectSync";
+import { useAISessionSync } from "@/hooks/useAISessionSync";
 import { loadAllCustomFonts } from "@/lib/customFonts";
 import Konva from "konva";
 
@@ -41,7 +42,7 @@ export default function EditorPage({ params }: EditorPageProps) {
     const [templatesOpen, setTemplatesOpen] = useState(false);
     const [aiPanelOpen, setAiPanelOpen] = useState(false);
     const [aiChatOpen, setAiChatOpen] = useState(false);
-    const [aiMessages, setAiMessages] = useState<AIChatMessage[]>([]);
+    const { messages: aiMessages, addMessages: addAiMessages } = useAISessionSync(id);
     const [shareOpen, setShareOpen] = useState(false);
     const [helpOpen, setHelpOpen] = useState(false);
     const [settingsOpen, setSettingsOpen] = useState(false);
@@ -183,7 +184,7 @@ export default function EditorPage({ params }: EditorPageProps) {
                                 onClose={() => setAiPanelOpen(false)}
                                 onToggleChat={() => setAiChatOpen(!aiChatOpen)}
                                 isChatOpen={aiChatOpen}
-                                onResult={(res) => setAiMessages(prev => [...prev, {
+                                onResult={(res) => addAiMessages([{
                                     id: Date.now().toString(),
                                     role: "user",
                                     content: res.prompt,
@@ -193,7 +194,7 @@ export default function EditorPage({ params }: EditorPageProps) {
                                     id: (Date.now() + 1).toString(),
                                     role: "assistant",
                                     content: res.content,
-                                    type: res.type as any,
+                                    type: res.type as "text" | "image" | "outpaint",
                                     timestamp: Date.now()
                                 }])}
                             />
