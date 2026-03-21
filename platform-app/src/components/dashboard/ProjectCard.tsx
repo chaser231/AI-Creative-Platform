@@ -68,10 +68,10 @@ export function ProjectCard({ project, onUpdate, onDelete }: ProjectCardProps) {
                     if (!isRenaming && !showDeleteConfirm) router.push(`/editor/${project.id}`);
                 }}
                 onKeyDown={(e) => { if (e.key === "Enter" && !isRenaming) router.push(`/editor/${project.id}`); }}
-                className="group relative flex flex-col bg-bg-surface border border-border-primary rounded-[var(--radius-xl)] overflow-hidden hover:shadow-[var(--shadow-lg)] hover:border-border-secondary transition-all duration-[var(--transition-base)] cursor-pointer text-left"
+                className="group relative flex flex-col bg-bg-surface border border-border-primary rounded-[var(--radius-xl)] hover:shadow-[var(--shadow-lg)] hover:border-border-secondary transition-all duration-[var(--transition-base)] cursor-pointer text-left"
             >
                 {/* Thumbnail */}
-                <div className="relative aspect-[4/3] bg-bg-tertiary flex items-center justify-center overflow-hidden">
+                <div className="relative aspect-[4/3] bg-bg-tertiary flex items-center justify-center overflow-hidden rounded-t-[var(--radius-xl)]">
                     <FolderKanban
                         size={40}
                         className="text-text-tertiary/50 group-hover:scale-110 transition-transform duration-[var(--transition-slow)]"
