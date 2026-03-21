@@ -11,13 +11,41 @@ import { TRPCError } from "@trpc/server";
 export const workspaceRouter = createTRPCRouter({
   /** List workspaces the current user is a member of */
   list: protectedProcedure.query(async ({ ctx }) => {
-    const memberships = await ctx.prisma.workspaceMember.findMany({
+    let memberships = await ctx.prisma.workspaceMember.findMany({
       where: { userId: ctx.user.id },
       include: {
         workspace: true,
       },
       orderBy: { workspace: { name: "asc" } },
     });
+
+    // Auto-create a default workspace for users without any
+    if (memberships.length === 0) {
+      const workspace = await ctx.prisma.workspace.create({
+        data: {
+          name: "Мой воркспейс",
+          slug: `ws-${ctx.user.id.slice(0, 8)}`,
+          businessUnit: "other",
+          members: {
+            create: {
+              userId: ctx.user.id,
+              role: "ADMIN",
+            },
+          },
+        },
+      });
+
+      memberships = [
+        {
+          id: "",
+          userId: ctx.user.id,
+          workspaceId: workspace.id,
+          role: "ADMIN" as const,
+          joinedAt: new Date(),
+          workspace,
+        },
+      ];
+    }
 
     return memberships.map((m) => ({
       ...m.workspace,
