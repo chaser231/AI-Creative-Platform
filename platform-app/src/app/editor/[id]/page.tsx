@@ -22,6 +22,7 @@ import { useCanvasStore } from "@/store/canvasStore";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { useCanvasAutoSave, useLoadCanvasState } from "@/hooks/useProjectSync";
 import { useAISessionSync } from "@/hooks/useAISessionSync";
+import { trpc } from "@/lib/trpc";
 import { loadAllCustomFonts } from "@/lib/customFonts";
 import Konva from "konva";
 
@@ -71,13 +72,20 @@ export default function EditorPage({ params }: EditorPageProps) {
 
     const project = projects.find((p) => p.id === id);
 
+    // Fetch project name from backend (in case local store is empty after refresh)
+    const projectQuery = trpc.project.getById.useQuery(
+        { id },
+        { retry: false, refetchOnWindowFocus: false, enabled: !project }
+    );
+    const projectName = project?.name || projectQuery.data?.name || "Без названия";
+
     return (
         <div className="flex flex-col h-screen overflow-hidden bg-bg-canvas">
             {/* Top Bar with border */}
             <div className="border-b border-border-primary bg-bg-surface">
                 <TopBar
                     breadcrumbs={[
-                        { label: project?.name || "Без названия" },
+                        { label: projectName },
                         ...(isSaving ? [{ label: "💾 Сохранение..." }] : []),
                     ]}
                     onUndo={undo}

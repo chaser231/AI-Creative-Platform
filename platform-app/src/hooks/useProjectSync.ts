@@ -133,26 +133,22 @@ export function useCanvasAutoSave(projectId: string) {
 /**
  * Hook to load canvas state from backend when entering the editor.
  * Restores the full canvas state into canvasStore.
- * IMPORTANT: Always resets canvas when projectId changes to prevent
- * showing stale content from a previous project.
+ * IMPORTANT: Always clears canvas on mount to prevent stale data
+ * from a previous project (canvasStore is a global singleton).
  */
 export function useLoadCanvasState(projectId: string) {
-  const prevProjectIdRef = useRef<string | null>(null);
-
-  // Clear canvas immediately when switching to a different project
+  // Clear canvas immediately on mount — before any render.
+  // canvasStore is a global singleton, so it retains data from previously
+  // opened projects. We must wipe it before loading the new project's state.
   useEffect(() => {
-    if (prevProjectIdRef.current && prevProjectIdRef.current !== projectId) {
-      // Reset canvas to empty state
-      useCanvasStore.setState({
-        layers: [],
-        selectedLayerIds: [],
-        masterComponents: [],
-        componentInstances: [],
-        history: [],
-        future: [],
-      });
-    }
-    prevProjectIdRef.current = projectId;
+    useCanvasStore.setState({
+      layers: [],
+      selectedLayerIds: [],
+      masterComponents: [],
+      componentInstances: [],
+      history: [],
+      future: [],
+    });
   }, [projectId]);
 
   const canvasQuery = trpc.project.loadState.useQuery(
