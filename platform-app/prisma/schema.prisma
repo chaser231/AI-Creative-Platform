@@ -31,6 +31,7 @@ model User {
   aiSessions  AISession[]
   uploads     Asset[]     @relation("AssetUploader")
   favorites   FavoriteProject[]
+  aiWorkflows AIWorkflow[] @relation("WorkflowCreator")
 }
 
 model Account {
@@ -97,6 +98,7 @@ model Workspace {
   assets        Asset[]
   systemPrompts SystemPrompt[]
   aiPresets     AIPreset[]
+  aiWorkflows   AIWorkflow[]
 }
 
 model WorkspaceMember {
@@ -293,6 +295,26 @@ model AISession {
   messages AIMessage[]
 
   @@index([projectId])
+}
+
+// ─── AI WORKFLOWS ────────────────────────────────────────
+
+model AIWorkflow {
+  id          String  @id @default(cuid())
+  name        String
+  description String  @default("")
+  steps       Json    // AIStep[] — ordered list of actions
+  isTemplate  Boolean @default(false) // preset workflow for BU
+
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  workspaceId String
+  createdBy   User      @relation("WorkflowCreator", fields: [createdById], references: [id])
+  createdById String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([workspaceId])
 }
 
 model AIMessage {

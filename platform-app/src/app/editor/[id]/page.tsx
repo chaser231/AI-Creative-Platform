@@ -340,6 +340,8 @@ export default function EditorPage({ params }: EditorPageProps) {
                         open={aiChatOpen && aiPanelOpen}
                         onClose={() => setAiChatOpen(false)}
                         messages={aiMessages}
+                        onAddMessages={addAiMessages}
+                        projectId={id}
                     />
 
                     {/* Floating Resize Panel — right */}
