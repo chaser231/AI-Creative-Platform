@@ -22,6 +22,9 @@ import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
 import { cn } from "@/lib/cn";
 import { useTemplateStore } from "@/store/templateStore";
+import { useTemplateListSync, useTemplatePushSync } from "@/hooks/useTemplateSync";
+import { useCreateProjectSync } from "@/hooks/useProjectSync";
+import { useProjectStore } from "@/store/projectStore";
 import { searchPacks, getAllTags, type CatalogSearchParams } from "@/services/templateCatalogService";
 import type { TemplatePackV2 } from "@/services/templateService";
 import type { BusinessUnit, TemplateCategory, ContentType } from "@/types";
@@ -139,6 +142,10 @@ function PackCard({ pack, onLoad }: { pack: TemplatePackV2; onLoad: (pack: Templ
 export default function TemplateCatalogPage() {
     const router = useRouter();
     const { savedPacks } = useTemplateStore();
+    const { backendTemplates, isLoading: isLoadingBackend } = useTemplateListSync();
+    const { createProject: createOnBackend } = useCreateProjectSync();
+    const addProject = useProjectStore((s) => s.addProject);
+    useTemplatePushSync(); // Auto-push local templates to backend
     const [search, setSearch] = useState("");
     const [selectedBUs, setSelectedBUs] = useState<BusinessUnit[]>([]);
     const [selectedCategories, setSelectedCategories] = useState<TemplateCategory[]>([]);
@@ -173,6 +180,13 @@ export default function TemplateCatalogPage() {
 
     const hasFilters = selectedBUs.length > 0 || selectedCategories.length > 0 || selectedContentType !== null || search !== "";
 
+    // Merge local + backend templates, deduplicate by ID
+    const allPacks = useMemo(() => {
+        const localIds = new Set(savedPacks.map(p => p.id));
+        const uniqueBackend = backendTemplates.filter(bt => !localIds.has(bt.id));
+        return [...savedPacks, ...uniqueBackend];
+    }, [savedPacks, backendTemplates]);
+
     // Search results
     const results = useMemo(() => {
         const params: CatalogSearchParams = {
@@ -183,19 +197,45 @@ export default function TemplateCatalogPage() {
             sortBy,
             sortOrder: sortBy === "name" ? "asc" : "desc",
         };
-        return searchPacks(params, savedPacks);
-    }, [search, selectedBUs, selectedCategories, selectedContentType, sortBy, savedPacks]);
+        return searchPacks(params, allPacks);
+    }, [search, selectedBUs, selectedCategories, selectedContentType, sortBy, allPacks]);
 
-    const tags = useMemo(() => getAllTags(savedPacks), [savedPacks]);
+    const tags = useMemo(() => getAllTags(allPacks), [allPacks]);
 
     const handleLoadPack = async (pack: TemplatePackV2, selectedMode: "wizard" | "studio") => {
         const { applyTemplatePack } = await import("@/services/templateService");
 
         applyTemplatePack(pack, {
             onSuccess: async () => {
-                // Navigate to editor with the latest project
-                const { useProjectStore } = await import("@/store/projectStore");
-                const store = useProjectStore.getState();
+                // Backend-first project creation
+                try {
+                    const backendProject = await createOnBackend({
+                        name: pack.name,
+                        goal: "banner",
+                    });
+
+                    if (backendProject) {
+                        addProject({
+                            id: backendProject.id,
+                            name: backendProject.name,
+                            businessUnit: pack.businessUnits?.[0] || "other",
+                            goal: "banner",
+                            status: "draft",
+                            createdAt: new Date(backendProject.createdAt),
+                            updatedAt: new Date(backendProject.updatedAt),
+                            resizes: [{ id: "master", name: "Master", width: 1080, height: 1080, label: "1080 × 1080", instancesEnabled: false }],
+                            activeResizeId: "master",
+                        });
+                        router.push(`/editor/${backendProject.id}?mode=${selectedMode}`);
+                        return;
+                    }
+                } catch {
+                    // Fallback to local
+                }
+
+                // Fallback: create locally
+                const { useProjectStore: getProjectStore } = await import("@/store/projectStore");
+                const store = getProjectStore.getState();
                 const project = store.createProject({
                     name: pack.name,
                     businessUnit: pack.businessUnits?.[0] || "other",
