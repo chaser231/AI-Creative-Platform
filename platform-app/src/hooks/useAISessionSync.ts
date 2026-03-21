@@ -27,16 +27,25 @@ export function useAISessionSync(projectId: string) {
   const createSessionMutation = trpc.ai.createSession.useMutation();
   const addMessageMutation = trpc.ai.addMessage.useMutation();
 
-  // List existing sessions
+  // List existing sessions — if project doesn't exist in DB, this will error
   const sessionsQuery = trpc.ai.listSessions.useQuery(
     { projectId },
-    { retry: 1, refetchOnWindowFocus: false }
+    {
+      retry: false, // Don't retry if project doesn't exist in DB
+      refetchOnWindowFocus: false,
+    }
   );
 
-  // Initialize session
+  // Initialize session — only if project exists in DB
   useEffect(() => {
     if (sessionInitRef.current) return;
     if (sessionsQuery.isLoading) return;
+
+    // If query errored (project not in DB), stay in local-only mode
+    if (sessionsQuery.isError) {
+      sessionInitRef.current = true;
+      return;
+    }
 
     sessionInitRef.current = true;
 
@@ -45,18 +54,18 @@ export function useAISessionSync(projectId: string) {
       // Use latest session
       setSessionId(sessions[0].id);
     } else {
-      // Create new session
+      // Create new session — may fail if project is local-only
       createSessionMutation
         .mutateAsync({ projectId })
         .then((session: { id: string }) => {
           setSessionId(session.id);
         })
-        .catch((err: unknown) => {
-          console.error("Failed to create AI session:", err);
+        .catch(() => {
+          // Project doesn't exist in DB — stay in local-only mode (messages in memory)
         });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionsQuery.isLoading, sessionsQuery.data]);
+  }, [sessionsQuery.isLoading, sessionsQuery.isError, sessionsQuery.data]);
 
   // Load messages when session is ready
   const messagesQuery = trpc.ai.getMessages.useQuery(

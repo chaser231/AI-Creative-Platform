@@ -20,7 +20,7 @@ export function useProjectVersions(projectId: string | null) {
     { projectId: projectId! },
     {
       enabled: !!projectId,
-      retry: 1,
+      retry: false, // Don't retry if project not in DB
       refetchOnWindowFocus: false,
     }
   );
@@ -28,6 +28,7 @@ export function useProjectVersions(projectId: string | null) {
   return {
     versions: versionsQuery.data ?? [],
     isLoading: versionsQuery.isLoading,
+    isError: versionsQuery.isError,
     refetch: versionsQuery.refetch,
   };
 }
@@ -39,16 +40,23 @@ export function useCreateVersion() {
   const createMutation = trpc.project.createVersion.useMutation();
 
   const createVersion = useCallback(
-    async (projectId: string, label?: string) => {
+    async (projectId: string, label?: string): Promise<{ version: unknown; error: string | null }> => {
       try {
         const version = await createMutation.mutateAsync({
           projectId,
           label,
         });
-        return version;
-      } catch (err) {
-        console.error("Failed to create version:", err);
-        return null;
+        return { version, error: null };
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : "Unknown error";
+        // Map known errors to user-friendly messages
+        if (message.includes("No canvas state")) {
+          return { version: null, error: "Сначала внесите изменения на холсте, затем сохраните версию" };
+        }
+        if (message.includes("NOT_FOUND") || message.includes("Foreign key")) {
+          return { version: null, error: "Проект ещё не сохранён на сервере. Внесите изменения и подождите авто-сохранение" };
+        }
+        return { version: null, error: `Ошибка: ${message}` };
       }
     },
     [createMutation]

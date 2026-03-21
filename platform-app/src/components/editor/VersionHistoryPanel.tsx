@@ -43,7 +43,7 @@ export function VersionHistoryPanel({
   onClose,
   onVersionRestored,
 }: VersionHistoryPanelProps) {
-  const { versions, isLoading, refetch } = useProjectVersions(
+  const { versions, isLoading, isError, refetch } = useProjectVersions(
     isOpen ? projectId : null
   );
   const { createVersion, isPending: isCreating } = useCreateVersion();
@@ -51,15 +51,19 @@ export function VersionHistoryPanel({
   const [showLabelInput, setShowLabelInput] = useState(false);
   const [versionLabel, setVersionLabel] = useState("");
   const [confirmRestore, setConfirmRestore] = useState<string | null>(null);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const handleCreateVersion = async () => {
+    setErrorMsg(null);
     const label = versionLabel.trim() || undefined;
-    const version = await createVersion(projectId, label);
-    if (version) {
-      setVersionLabel("");
-      setShowLabelInput(false);
-      refetch();
+    const result = await createVersion(projectId, label);
+    if (result.error) {
+      setErrorMsg(result.error);
+      return;
     }
+    setVersionLabel("");
+    setShowLabelInput(false);
+    refetch();
   };
 
   const handleRestore = async (versionId: string) => {
@@ -144,9 +148,28 @@ export function VersionHistoryPanel({
           )}
         </div>
 
+        {/* Error message */}
+        {errorMsg && (
+          <div className="mx-4 mt-2 p-2.5 rounded-lg bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800/30">
+            <p className="text-[11px] text-amber-700 dark:text-amber-400">{errorMsg}</p>
+          </div>
+        )}
+
         {/* Version list */}
         <div className="flex-1 overflow-y-auto px-4 py-3 space-y-2">
-          {isLoading ? (
+          {isError ? (
+            <div className="flex flex-col items-center justify-center py-12 text-center">
+              <div className="w-12 h-12 rounded-xl bg-bg-secondary flex items-center justify-center mb-3">
+                <History size={20} className="text-text-tertiary" />
+              </div>
+              <p className="text-xs text-text-tertiary">
+                Проект ещё не сохранён на сервере
+              </p>
+              <p className="text-[10px] text-text-tertiary mt-1">
+                Внесите изменения на холсте — авто-сохранение создаст проект в БД
+              </p>
+            </div>
+          ) : isLoading ? (
             <div className="flex flex-col items-center justify-center py-12">
               <div className="w-6 h-6 border-2 border-accent-primary/30 border-t-accent-primary rounded-full animate-spin" />
               <p className="text-xs text-text-tertiary mt-3">Загрузка…</p>
