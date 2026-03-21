@@ -19,6 +19,7 @@ import { WizardFlow } from "@/components/wizard/WizardFlow";
 import { useProjectStore } from "@/store/projectStore";
 import { useCanvasStore } from "@/store/canvasStore";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
+import { useCanvasAutoSave, useLoadCanvasState } from "@/hooks/useProjectSync";
 import { loadAllCustomFonts } from "@/lib/customFonts";
 import Konva from "konva";
 
@@ -48,6 +49,8 @@ export default function EditorPage({ params }: EditorPageProps) {
     const updateProject = useProjectStore((s) => s.updateProject);
     const { editorMode, setEditorMode, undo, redo, history, future, artboardProps, updateArtboardProps } = useCanvasStore();
     useKeyboardShortcuts();
+    const { isSaving } = useCanvasAutoSave(id);
+    useLoadCanvasState(id);
     const searchParams = useSearchParams();
 
     // Set editor mode from URL query parameters
@@ -72,6 +75,7 @@ export default function EditorPage({ params }: EditorPageProps) {
                 <TopBar
                     breadcrumbs={[
                         { label: project?.name || "Без названия" },
+                        ...(isSaving ? [{ label: "💾 Сохранение..." }] : []),
                     ]}
                     onUndo={undo}
                     onRedo={redo}

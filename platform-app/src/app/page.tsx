@@ -2,7 +2,7 @@
 
 import { useState, useMemo } from "react";
 import Link from "next/link";
-import { Plus, ImageIcon, Type, Camera, Video, Search, HelpCircle, LayoutTemplate, ArrowRight, Star } from "lucide-react";
+import { Plus, ImageIcon, Type, Camera, Video, Search, HelpCircle, LayoutTemplate, ArrowRight, Star, Loader2 } from "lucide-react";
 import { AppShell } from "@/components/layout/AppShell";
 import { TopBar } from "@/components/layout/TopBar";
 import { Button } from "@/components/ui/Button";
@@ -10,6 +10,7 @@ import { ProjectCard } from "@/components/dashboard/ProjectCard";
 import { EmptyState } from "@/components/dashboard/EmptyState";
 import { NewProjectModal } from "@/components/dashboard/NewProjectModal";
 import { useProjectStore } from "@/store/projectStore";
+import { useProjectListSync } from "@/hooks/useProjectSync";
 import { useTemplateStore } from "@/store/templateStore";
 import { getRecommendedPacks } from "@/services/templateCatalogService";
 import type { TemplatePackV2 } from "@/services/templateService";
@@ -93,7 +94,28 @@ const generationTypes = [
 
 export default function DashboardPage() {
   const [modalOpen, setModalOpen] = useState(false);
-  const projects = useProjectStore((s) => s.projects);
+  const localProjects = useProjectStore((s) => s.projects);
+  const { projects: backendProjects, isLoading, workspaceId } = useProjectListSync();
+
+  // Merge: show local projects + backend projects (deduplicated)
+  const projects = useMemo(() => {
+    const localIds = new Set(localProjects.map(p => p.id));
+    // Backend projects that aren't in local store
+    type BackendProject = { id: string; name: string; status: string; goal: string | null; createdAt: Date; updatedAt: Date; thumbnail: string | null };
+    const backendOnly = ((backendProjects || []) as BackendProject[]).map((bp: BackendProject) => ({
+      id: bp.id,
+      name: bp.name,
+      status: bp.status.toLowerCase() as "draft" | "in-progress" | "review" | "published",
+      goal: (bp.goal || "banner") as "banner" | "text" | "video",
+      businessUnit: "yandex-market" as const,
+      createdAt: new Date(bp.createdAt),
+      updatedAt: new Date(bp.updatedAt),
+      thumbnail: bp.thumbnail ?? undefined,
+      resizes: [],
+      activeResizeId: "master",
+    })).filter((bp: { id: string }) => !localIds.has(bp.id));
+    return [...localProjects, ...backendOnly];
+  }, [localProjects, backendProjects]);
 
   return (
     <AppShell>
@@ -156,7 +178,11 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          {projects.length === 0 ? (
+          {isLoading ? (
+            <div className="flex items-center justify-center py-20">
+              <Loader2 size={24} className="animate-spin text-text-tertiary" />
+            </div>
+          ) : projects.length === 0 ? (
             <EmptyState onCreateProject={() => setModalOpen(true)} />
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">

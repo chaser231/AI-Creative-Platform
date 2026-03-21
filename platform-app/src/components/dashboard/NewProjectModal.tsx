@@ -6,6 +6,7 @@ import { Modal } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { useProjectStore } from "@/store/projectStore";
+import { useCreateProjectSync } from "@/hooks/useProjectSync";
 import { cn } from "@/lib/cn";
 import { ImageIcon, Type, PlayCircle, LayoutTemplate, Palette } from "lucide-react";
 import type { ProjectGoal, BusinessUnit } from "@/types";
@@ -55,14 +56,23 @@ export function NewProjectModal({ open, onClose }: NewProjectModalProps) {
     const [mode, setMode] = useState<"wizard" | "studio">("wizard");
 
     const createProject = useProjectStore((s) => s.createProject);
+    const { createProject: createOnBackend } = useCreateProjectSync();
     const router = useRouter();
 
-    const handleCreate = () => {
+    const handleCreate = async () => {
         if (!name.trim()) return;
-        const project = createProject({ name: name.trim(), businessUnit, goal });
+
+        // Create locally for instant UI
+        const localProject = createProject({ name: name.trim(), businessUnit, goal });
+
+        // Also create on backend (async, non-blocking)
+        createOnBackend({ name: name.trim(), goal }).catch(() => {
+            // Silent fallback — project works locally
+        });
+
         onClose();
         setName("");
-        router.push(`/editor/${project.id}?mode=${mode}`);
+        router.push(`/editor/${localProject.id}?mode=${mode}`);
     };
 
     return (
