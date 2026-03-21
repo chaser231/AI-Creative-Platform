@@ -18,22 +18,20 @@
 import { useEffect, useRef, useCallback } from "react";
 import { trpc } from "@/lib/trpc";
 import { useCanvasStore } from "@/store/canvasStore";
+import { useWorkspace } from "@/providers/WorkspaceProvider";
 
 // Default workspace ID — will be replaced by WorkspaceProvider later
 // For now, we use a hardcoded fallback that gets resolved on first load
 let cachedWorkspaceId: string | null = null;
 
 /**
- * Hook to sync project list from backend to local store.
+ * Synchronize the project list from backend.
  * Use on the dashboard page.
+ * @param onlyMine - if true, filters by createdById (for "Мои проекты")
  */
-export function useProjectListSync() {
-  const workspaceQuery = trpc.workspace.list.useQuery(undefined, {
-    retry: 1,
-    refetchOnWindowFocus: false,
-  });
-
-  const workspaceId = workspaceQuery.data?.[0]?.id ?? null;
+export function useProjectListSync(onlyMine?: boolean) {
+  const { currentWorkspace } = useWorkspace();
+  const workspaceId = currentWorkspace?.id ?? null;
 
   const projectsQuery = trpc.project.list.useQuery(
     { workspaceId: workspaceId! },
@@ -54,8 +52,8 @@ export function useProjectListSync() {
   return {
     workspaceId,
     projects: projectsQuery.data ?? [],
-    isLoading: workspaceQuery.isLoading || projectsQuery.isLoading,
-    isError: workspaceQuery.isError || projectsQuery.isError,
+    isLoading: !workspaceId || projectsQuery.isLoading,
+    isError: projectsQuery.isError,
     refetch: projectsQuery.refetch,
   };
 }

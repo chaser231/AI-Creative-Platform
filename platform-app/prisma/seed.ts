@@ -20,9 +20,9 @@ async function main() {
 
   const workspace = await prisma.workspace.upsert({
     where: { slug: "yandex-market" },
-    update: {},
+    update: { name: "Яндекс Маркет" },
     create: {
-      name: "Yandex Market",
+      name: "Яндекс Маркет",
       slug: "yandex-market",
       businessUnit: "yandex-market",
       colors: [
@@ -52,9 +52,9 @@ async function main() {
 
   const wsFood = await prisma.workspace.upsert({
     where: { slug: "yandex-food" },
-    update: {},
+    update: { name: "Яндекс Еда" },
     create: {
-      name: "Yandex Food",
+      name: "Яндекс Еда",
       slug: "yandex-food",
       businessUnit: "yandex-food",
       colors: [
@@ -76,9 +76,9 @@ async function main() {
 
   const wsGo = await prisma.workspace.upsert({
     where: { slug: "yandex-go" },
-    update: {},
+    update: { name: "Яндекс Go" },
     create: {
-      name: "Yandex Go",
+      name: "Яндекс Go",
       slug: "yandex-go",
       businessUnit: "yandex-go",
       colors: [
@@ -97,6 +97,32 @@ async function main() {
   });
 
   console.log(`✅ Workspace: ${wsGo.name} (${wsGo.slug})`);
+
+  // ─── Yandex Lavka ──────────────────────────────────────
+
+  const wsLavka = await prisma.workspace.upsert({
+    where: { slug: "yandex-lavka" },
+    update: { name: "Яндекс Лавка" },
+    create: {
+      name: "Яндекс Лавка",
+      slug: "yandex-lavka",
+      businessUnit: "yandex-lavka",
+      colors: [
+        { id: "c1", name: "Primary", hex: "#111827", usage: "Headlines" },
+        { id: "c2", name: "Accent", hex: "#00C853", usage: "CTA, highlights" },
+        { id: "c3", name: "Background", hex: "#FFFFFF", usage: "Backgrounds" },
+      ],
+      fonts: [
+        { id: "f1", name: "Inter", weights: ["400", "500", "600", "700"], usage: "All text" },
+      ],
+      toneOfVoice:
+        "Ты копирайтер Яндекс Лавки. " +
+        "Пиши про свежие продукты, быструю доставку и удобство. " +
+        "Тон: заботливый и практичный.",
+    },
+  });
+
+  console.log(`✅ Workspace: ${wsLavka.name} (${wsLavka.slug})`);
 
   // ─── System Prompts ──────────────────────────────────────
 
@@ -174,7 +200,12 @@ async function main() {
   ];
 
   for (const preset of presets) {
-    await prisma.aIPreset.create({ data: preset });
+    const existing = await prisma.aIPreset.findFirst({
+      where: { workspaceId: preset.workspaceId, name: preset.name, type: preset.type },
+    });
+    if (!existing) {
+      await prisma.aIPreset.create({ data: preset });
+    }
   }
 
   console.log(`✅ AI presets: ${presets.length} created`);

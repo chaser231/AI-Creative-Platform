@@ -1,7 +1,7 @@
 /**
  * Workspace Router
  *
- * CRUD operations for workspaces and brand identity management.
+ * CRUD operations for workspaces, membership management, and brand identity.
  */
 
 import { z } from "zod";
@@ -11,7 +11,7 @@ import { TRPCError } from "@trpc/server";
 export const workspaceRouter = createTRPCRouter({
   /** List workspaces the current user is a member of */
   list: protectedProcedure.query(async ({ ctx }) => {
-    let memberships = await ctx.prisma.workspaceMember.findMany({
+    const memberships = await ctx.prisma.workspaceMember.findMany({
       where: { userId: ctx.user.id },
       include: {
         workspace: true,
@@ -19,39 +19,82 @@ export const workspaceRouter = createTRPCRouter({
       orderBy: { workspace: { name: "asc" } },
     });
 
-    // Auto-create a default workspace for users without any
-    if (memberships.length === 0) {
-      const workspace = await ctx.prisma.workspace.create({
-        data: {
-          name: "Мой воркспейс",
-          slug: `ws-${ctx.user.id.slice(0, 8)}`,
-          businessUnit: "other",
-          members: {
-            create: {
-              userId: ctx.user.id,
-              role: "ADMIN",
-            },
-          },
-        },
-      });
-
-      memberships = [
-        {
-          id: "",
-          userId: ctx.user.id,
-          workspaceId: workspace.id,
-          role: "ADMIN" as const,
-          joinedAt: new Date(),
-          workspace,
-        },
-      ];
-    }
-
     return memberships.map((m) => ({
       ...m.workspace,
       role: m.role,
     }));
   }),
+
+  /** List ALL workspaces (for onboarding / team selection) */
+  listAll: protectedProcedure.query(async ({ ctx }) => {
+    const workspaces = await ctx.prisma.workspace.findMany({
+      orderBy: { name: "asc" },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        businessUnit: true,
+        _count: { select: { members: true, projects: true } },
+      },
+    });
+
+    // Also get user's current memberships to mark joined ones
+    const memberships = await ctx.prisma.workspaceMember.findMany({
+      where: { userId: ctx.user.id },
+      select: { workspaceId: true },
+    });
+    const joinedIds = new Set(memberships.map((m) => m.workspaceId));
+
+    return workspaces.map((ws) => ({
+      ...ws,
+      memberCount: ws._count.members,
+      projectCount: ws._count.projects,
+      isJoined: joinedIds.has(ws.id),
+    }));
+  }),
+
+  /** Join a workspace */
+  join: protectedProcedure
+    .input(z.object({ workspaceId: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      // Check if already a member
+      const existing = await ctx.prisma.workspaceMember.findUnique({
+        where: {
+          userId_workspaceId: {
+            userId: ctx.user.id,
+            workspaceId: input.workspaceId,
+          },
+        },
+      });
+
+      if (existing) {
+        return { success: true, alreadyMember: true };
+      }
+
+      await ctx.prisma.workspaceMember.create({
+        data: {
+          userId: ctx.user.id,
+          workspaceId: input.workspaceId,
+          role: "CREATOR",
+        },
+      });
+
+      return { success: true, alreadyMember: false };
+    }),
+
+  /** Leave a workspace */
+  leave: protectedProcedure
+    .input(z.object({ workspaceId: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      await ctx.prisma.workspaceMember.deleteMany({
+        where: {
+          userId: ctx.user.id,
+          workspaceId: input.workspaceId,
+        },
+      });
+
+      return { success: true };
+    }),
 
   /** Get workspace by ID (with membership check) */
   getById: protectedProcedure

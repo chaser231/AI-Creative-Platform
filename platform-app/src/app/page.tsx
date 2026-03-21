@@ -13,6 +13,8 @@ import { useProjectStore } from "@/store/projectStore";
 import { useProjectListSync } from "@/hooks/useProjectSync";
 import { useTemplateStore } from "@/store/templateStore";
 import { trpc } from "@/lib/trpc";
+import { useWorkspace } from "@/providers/WorkspaceProvider";
+import { WorkspaceOnboarding } from "@/components/workspace/WorkspaceOnboarding";
 import { getRecommendedPacks } from "@/services/templateCatalogService";
 import type { TemplatePackV2 } from "@/services/templateService";
 
@@ -97,6 +99,7 @@ export default function DashboardPage() {
   const [modalOpen, setModalOpen] = useState(false);
   const localProjects = useProjectStore((s) => s.projects);
   const { projects: backendProjects, isLoading, workspaceId, refetch } = useProjectListSync();
+  const { currentWorkspace, needsOnboarding } = useWorkspace();
 
   // tRPC mutations for project management
   const updateMutation = trpc.project.update.useMutation({
@@ -137,7 +140,7 @@ export default function DashboardPage() {
   return (
     <AppShell>
       <TopBar
-        breadcrumbs={[{ label: "Yandex Market" }, { label: "Последние проекты" }]}
+        breadcrumbs={[{ label: currentWorkspace?.name || "AI Creative" }, { label: "Мои проекты" }]}
         showBackToProjects={false}
         showHistoryNavigation={true}
         actions={
@@ -217,6 +220,7 @@ export default function DashboardPage() {
       </div>
 
       <NewProjectModal open={modalOpen} onClose={() => setModalOpen(false)} workspaceId={workspaceId} />
+      {needsOnboarding && <WorkspaceOnboarding />}
     </AppShell>
   );
 }
