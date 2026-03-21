@@ -109,7 +109,7 @@ export function useAISessionSync(projectId: string) {
       // Persist to DB (non-blocking, skip plan-type messages)
       if (sessionId) {
         for (const msg of newMessages) {
-          if (msg.type === "plan") continue; // plan steps are ephemeral UI
+          if (msg.type === "plan" || msg.type === "template_choices") continue; // ephemeral UI messages
           addMessageMutation
             .mutateAsync({
               sessionId,

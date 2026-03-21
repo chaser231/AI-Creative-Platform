@@ -35,16 +35,23 @@ export interface ActionContext {
 
 export interface ActionResult {
   success: boolean;
-  type: "text" | "image" | "data" | "error" | "canvas_action";
+  type: "text" | "image" | "data" | "error" | "canvas_action" | "template_choices";
   content: string;
   metadata?: Record<string, unknown>;
   /** Instructions for the client-side canvas */
   canvasActions?: CanvasInstruction[];
+  /** Template choices for user to select */
+  templateChoices?: Array<{
+    id: string;
+    name: string;
+    description: string;
+    thumbnailUrl?: string;
+  }>;
 }
 
 /** Instruction for the client to execute on the canvas */
 export interface CanvasInstruction {
-  action: "add_text" | "add_image" | "add_rectangle";
+  action: "add_text" | "add_image" | "add_rectangle" | "load_template" | "update_layer";
   params: Record<string, unknown>;
 }
 
@@ -94,6 +101,25 @@ export const ACTIONS: ActionDefinition[] = [
     required: ["elements"],
   },
   {
+    id: "search_templates",
+    name: "Поиск шаблонов",
+    description: "Ищет шаблоны баннеров по сервису или ключевому слову. Используй КОГДА пользователь просит баннер для конкретного сервиса (Маркет, Лавка, Еда, Go). Возвращает список шаблонов для выбора.",
+    parameters: {
+      service: { type: "string", description: "Сервис: market, food, go, lavka, или произвольный текст для поиска" },
+    },
+    required: ["service"],
+  },
+  {
+    id: "apply_and_fill_template",
+    name: "Применение и заполнение шаблона",
+    description: "Применяет выбранный шаблон на холст и генерирует контент для всех слотов шаблона (заголовок, подзаголовок, изображение). Вызывай ПОСЛЕ того, как пользователь выбрал шаблон.",
+    parameters: {
+      templateId: { type: "string", description: "ID выбранного шаблона" },
+      topic: { type: "string", description: "Тема для генерации контента" },
+    },
+    required: ["templateId", "topic"],
+  },
+  {
     id: "create_project",
     name: "Создание проекта",
     description: "Создаёт новый проект в текущем воркспейсе.",
@@ -102,15 +128,6 @@ export const ACTIONS: ActionDefinition[] = [
       goal: { type: "string", description: "Цель: banner, text, video", enum: ["banner", "text", "video"] },
     },
     required: ["name"],
-  },
-  {
-    id: "apply_template",
-    name: "Применение шаблона",
-    description: "Находит подходящий шаблон и размещает его на холсте. Затем можно заменить контент шаблона сгенерированными данными.",
-    parameters: {
-      templateName: { type: "string", description: "Название или описание нужного шаблона" },
-    },
-    required: ["templateName"],
   },
 ];
 

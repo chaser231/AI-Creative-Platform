@@ -17,13 +17,13 @@ import { trpc } from "@/lib/trpc";
 import { useWorkspace } from "@/providers/WorkspaceProvider";
 import {
     Copy, Plus, X, Send, Loader2, Bot, User, Sparkles,
-    CheckCircle, AlertCircle, ChevronRight, Zap
+    CheckCircle, AlertCircle, ChevronRight, Zap, LayoutTemplate
 } from "lucide-react";
 
 export interface AIChatMessage {
     id: string;
     role: "user" | "assistant";
-    type: "text" | "image" | "outpaint" | "plan" | "error";
+    type: "text" | "image" | "outpaint" | "plan" | "error" | "template_choices";
     content: string;
     prompt?: string;
     timestamp: number;
@@ -34,6 +34,15 @@ export interface AIChatMessage {
         status: "pending" | "running" | "done" | "error";
         result?: { type: string; content: string };
     }>;
+    /** Template choices (only for template_choices-type messages) */
+    templateChoices?: Array<{
+        id: string;
+        name: string;
+        description: string;
+        thumbnailUrl?: string;
+    }>;
+    /** Original topic for template application */
+    templateTopic?: string;
 }
 
 interface AIChatPanelProps {
@@ -47,7 +56,7 @@ interface AIChatPanelProps {
 }
 
 export function AIChatPanel({ open, onClose, messages, onAddMessages, projectId }: AIChatPanelProps) {
-    const { addTextLayer, addImageLayer } = useCanvasStore();
+    const { addTextLayer, addImageLayer, layers, updateLayer } = useCanvasStore();
     const { currentWorkspace } = useWorkspace();
     const [input, setInput] = useState("");
     const [isThinking, setIsThinking] = useState(false);
@@ -129,6 +138,28 @@ export function AIChatPanel({ open, onClose, messages, onAddMessages, projectId 
                     } else if (ca.action === "add_image") {
                         const p = ca.params as { src: string; width: number; height: number };
                         addImageLayer(p.src, p.width, p.height);
+                    } else if (ca.action === "load_template") {
+                        // Load template onto canvas
+                        const { applyTemplatePack } = await import("@/services/templateService");
+                        await applyTemplatePack(ca.params.templateData);
+                    } else if (ca.action === "update_layer") {
+                        // Find layer by slotId and update
+                        const { slotId, updates } = ca.params as { slotId: string; updates: Record<string, unknown> };
+                        const currentLayers = useCanvasStore.getState().layers;
+                        const targetLayer = currentLayers.find((l: any) => l.slotId === slotId);
+                        if (targetLayer) {
+                            updateLayer(targetLayer.id, updates as any);
+                        }
+                        // Also check masterComponents
+                        const masters = useCanvasStore.getState().masterComponents;
+                        const targetMaster = masters?.find((mc: any) => mc.slotId === slotId);
+                        if (targetMaster && !targetLayer) {
+                            // Update via master if no direct layer found
+                            const masterLayer = currentLayers.find((l: any) => l.masterId === targetMaster.id);
+                            if (masterLayer) {
+                                updateLayer(masterLayer.id, updates as any);
+                            }
+                        }
                     }
                 }
             }
@@ -151,16 +182,29 @@ export function AIChatPanel({ open, onClose, messages, onAddMessages, projectId 
                     })),
                 });
 
-                // Add individual results as separate messages (skip canvas_action and data types)
+                // Add individual results as separate messages (skip canvas_action, data, template_choices types)
                 for (const step of result.plan.steps) {
                     if (step.result?.success && step.result.type !== "error" && step.result.type !== "data" && step.result.type !== "canvas_action") {
-                        newMessages.push({
-                            id: `result-${step.actionId}-${Date.now()}-${Math.random()}`,
-                            role: "assistant",
-                            type: step.result.type as "text" | "image",
-                            content: step.result.content,
-                            timestamp: Date.now(),
-                        });
+                        // Template choices get their own special message
+                        if (step.result.type === "template_choices" && step.result.templateChoices) {
+                            newMessages.push({
+                                id: `templates-${Date.now()}`,
+                                role: "assistant",
+                                type: "template_choices",
+                                content: step.result.content,
+                                timestamp: Date.now(),
+                                templateChoices: step.result.templateChoices,
+                                templateTopic: trimmed, // save original request as topic
+                            });
+                        } else {
+                            newMessages.push({
+                                id: `result-${step.actionId}-${Date.now()}-${Math.random()}`,
+                                role: "assistant",
+                                type: step.result.type as "text" | "image",
+                                content: step.result.content,
+                                timestamp: Date.now(),
+                            });
+                        }
                     }
                 }
             }
@@ -195,6 +239,101 @@ export function AIChatPanel({ open, onClose, messages, onAddMessages, projectId 
             e.preventDefault();
             handleSend();
         }
+    };
+
+    // Handle template selection — sends a follow-up to the agent
+    const handleTemplateSelect = (templateId: string, templateName: string, topic: string) => {
+        if (isThinking || !currentWorkspace) return;
+
+        const followUpMsg = `Применить шаблон '${templateName}' для: ${topic}`;
+        setInput("");
+        setIsThinking(true);
+
+        const userMsg: AIChatMessage = {
+            id: `user-${Date.now()}`,
+            role: "user",
+            type: "text",
+            content: followUpMsg,
+            timestamp: Date.now(),
+        };
+
+        onAddMessages?.([userMsg]);
+
+        // Directly call apply_and_fill_template via the agent mutation
+        agentMutation.mutateAsync({
+            message: `apply_and_fill_template templateId=${templateId} topic="${topic}"`,
+            workspaceId: currentWorkspace.id,
+            projectId,
+            history: messages
+                .filter((m) => m.type !== "plan" && m.type !== "template_choices")
+                .slice(-10)
+                .map((m) => ({
+                    role: m.role as "user" | "assistant",
+                    content: m.content,
+                })),
+        }).then(async (result) => {
+            // Execute canvas actions
+            if (result.canvasActions && result.canvasActions.length > 0) {
+                for (const ca of result.canvasActions) {
+                    if (ca.action === "load_template") {
+                        const { applyTemplatePack } = await import("@/services/templateService");
+                        await applyTemplatePack(ca.params.templateData);
+                    } else if (ca.action === "update_layer") {
+                        const { slotId, updates } = ca.params as { slotId: string; updates: Record<string, unknown> };
+                        // Wait a tick for template to load
+                        await new Promise(r => setTimeout(r, 100));
+                        const currentLayers = useCanvasStore.getState().layers;
+                        const targetLayer = currentLayers.find((l: any) => l.slotId === slotId);
+                        if (targetLayer) {
+                            updateLayer(targetLayer.id, updates as any);
+                        }
+                    } else if (ca.action === "add_text") {
+                        addTextLayer(ca.params as any);
+                    } else if (ca.action === "add_image") {
+                        const p = ca.params as { src: string; width: number; height: number };
+                        addImageLayer(p.src, p.width, p.height);
+                    }
+                }
+            }
+
+            const newMessages: AIChatMessage[] = [];
+            if (result.plan.steps.length > 0) {
+                newMessages.push({
+                    id: `plan-${Date.now()}`,
+                    role: "assistant",
+                    type: "plan",
+                    content: result.textResponse,
+                    timestamp: Date.now(),
+                    steps: result.plan.steps.map((s) => ({
+                        actionId: s.actionId,
+                        actionName: s.actionName,
+                        status: s.status,
+                        result: s.result
+                            ? { type: s.result.type, content: s.result.content }
+                            : undefined,
+                    })),
+                });
+            } else if (result.textResponse) {
+                newMessages.push({
+                    id: `response-${Date.now()}`,
+                    role: "assistant",
+                    type: "text",
+                    content: result.textResponse,
+                    timestamp: Date.now(),
+                });
+            }
+            onAddMessages?.(newMessages);
+        }).catch((e) => {
+            onAddMessages?.([{
+                id: `error-${Date.now()}`,
+                role: "assistant",
+                type: "error",
+                content: e instanceof Error ? e.message : "Ошибка применения шаблона",
+                timestamp: Date.now(),
+            }]);
+        }).finally(() => {
+            setIsThinking(false);
+        });
     };
 
     if (!open) return null;
@@ -248,6 +387,8 @@ export function AIChatPanel({ open, onClose, messages, onAddMessages, projectId 
                             key={msg.id}
                             msg={msg}
                             onAddToCanvas={() => handleAddToCanvas(msg)}
+                            onTemplateSelect={handleTemplateSelect}
+                            isThinking={isThinking}
                         />
                     ))
                 )}
@@ -304,9 +445,13 @@ export function AIChatPanel({ open, onClose, messages, onAddMessages, projectId 
 function MessageBubble({
     msg,
     onAddToCanvas,
+    onTemplateSelect,
+    isThinking,
 }: {
     msg: AIChatMessage;
     onAddToCanvas: () => void;
+    onTemplateSelect?: (templateId: string, templateName: string, topic: string) => void;
+    isThinking?: boolean;
 }) {
     if (msg.role === "user") {
         return (
@@ -357,6 +502,40 @@ function MessageBubble({
                                     {step.actionName}
                                 </span>
                             </div>
+                        ))}
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    // Template choices — show template selection cards
+    if (msg.type === "template_choices" && msg.templateChoices) {
+        return (
+            <div className="flex items-start gap-2">
+                <div className="w-7 h-7 rounded-full bg-gradient-to-br from-violet-500/20 to-blue-500/20 flex items-center justify-center shrink-0">
+                    <LayoutTemplate size={14} className="text-violet-400" />
+                </div>
+                <div className="flex-1 space-y-2 min-w-0">
+                    <p className="text-xs text-text-secondary">{msg.content}</p>
+                    <div className="space-y-1.5">
+                        {msg.templateChoices.map((tpl, i) => (
+                            <button
+                                key={tpl.id}
+                                onClick={() => onTemplateSelect?.(tpl.id, tpl.name, msg.templateTopic || "")}
+                                disabled={isThinking}
+                                className="w-full text-left bg-bg-tertiary/50 hover:bg-violet-500/10 rounded-xl border border-border-primary hover:border-violet-500/30 p-2.5 transition-all cursor-pointer group disabled:opacity-50"
+                            >
+                                <div className="flex items-center gap-2">
+                                    <span className="text-xs font-medium text-text-primary group-hover:text-violet-300">
+                                        {i + 1}. {tpl.name}
+                                    </span>
+                                    <ChevronRight size={12} className="text-text-tertiary group-hover:text-violet-400 ml-auto shrink-0" />
+                                </div>
+                                {tpl.description && (
+                                    <p className="text-[10px] text-text-tertiary mt-0.5 line-clamp-2">{tpl.description}</p>
+                                )}
+                            </button>
                         ))}
                     </div>
                 </div>

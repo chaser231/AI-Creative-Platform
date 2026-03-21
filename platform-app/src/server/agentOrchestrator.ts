@@ -253,25 +253,174 @@ RULES:
       };
     }
 
-    case "apply_template": {
-      const templateName = params.templateName as string;
+    case "search_templates": {
+      const service = (params.service as string).toLowerCase();
+
+      // Map user-friendly names to DB search terms
+      const serviceMap: Record<string, string[]> = {
+        "market": ["yandex-market", "маркет", "market"],
+        "маркет": ["yandex-market", "маркет", "market"],
+        "food": ["yandex-food", "еда", "food"],
+        "еда": ["yandex-food", "еда", "food"],
+        "go": ["yandex-go", "go", "такси"],
+        "lavka": ["yandex-lavka", "лавка", "lavka"],
+        "лавка": ["yandex-lavka", "лавка", "lavka"],
+      };
+
+      const searchTerms = serviceMap[service] || [service];
+
+      // Search by name, categories, or tags
       const templates = await context.prisma.template.findMany({
         where: {
           workspaceId: context.workspaceId,
-          name: { contains: templateName, mode: "insensitive" },
+          OR: [
+            { name: { contains: service, mode: "insensitive" } },
+            { categories: { hasSome: searchTerms } },
+          ],
         },
-        take: 1,
+        select: {
+          id: true,
+          name: true,
+          description: true,
+          thumbnailUrl: true,
+        },
+        take: 6,
       });
 
       if (templates.length === 0) {
-        return { success: false, type: "error", content: `Шаблон «${templateName}» не найден` };
+        return {
+          success: false,
+          type: "error",
+          content: `Шаблоны для «${service}» не найдены. Попробуйте другой запрос.`,
+        };
       }
 
       return {
         success: true,
-        type: "data",
-        content: `Шаблон «${templates[0].name}» найден и готов к применению`,
-        metadata: { templateId: templates[0].id, templateName: templates[0].name },
+        type: "template_choices",
+        content: `Найдено ${templates.length} шаблонов. Выберите один:`,
+        templateChoices: templates.map((t: any) => ({
+          id: t.id,
+          name: t.name,
+          description: t.description || "",
+          thumbnailUrl: t.thumbnailUrl,
+        })),
+      };
+    }
+
+    case "apply_and_fill_template": {
+      const templateId = params.templateId as string;
+      const topic = params.topic as string;
+
+      // Fetch the full template
+      const template = await context.prisma.template.findUnique({
+        where: { id: templateId },
+      });
+
+      if (!template) {
+        return { success: false, type: "error", content: "Шаблон не найден" };
+      }
+
+      const templateData = (template.data as any)?.data || template.data;
+
+      // Scan template layers to find slots
+      const slots: Array<{ id: string; type: string; slotId: string }> = [];
+
+      function scanLayers(layers: any[]) {
+        for (const node of layers) {
+          const layer = node.layer || node;
+          if (layer.slotId && layer.slotId !== "none") {
+            slots.push({
+              id: layer.id,
+              type: layer.type,
+              slotId: layer.slotId,
+            });
+          }
+          if (node.children) scanLayers(node.children);
+        }
+      }
+
+      // Scan both layerTree and masterComponents
+      if (templateData.layerTree) scanLayers(templateData.layerTree);
+      if (templateData.masterComponents) {
+        for (const mc of templateData.masterComponents) {
+          if (mc.slotId && mc.slotId !== "none") {
+            slots.push({ id: mc.id, type: mc.type, slotId: mc.slotId });
+          }
+        }
+      }
+
+      const canvasActions: CanvasInstruction[] = [];
+
+      // First: load the template
+      canvasActions.push({
+        action: "load_template",
+        params: { templateData: template.data },
+      });
+
+      // Generate content for each slot
+      for (const slot of slots) {
+        if (slot.slotId === "headline" && slot.type === "text") {
+          const headline = await callLLM([
+            { role: "system", content: "Ты — копирайтер. Напиши ОДИН заголовок для баннера. Максимум 5 слов. Без кавычек, без точки. Только текст." },
+            { role: "user", content: `Заголовок для: ${topic}` },
+          ]);
+          canvasActions.push({
+            action: "update_layer",
+            params: { slotId: "headline", updates: { text: headline.trim().replace(/^["«]|["»]$/g, "").replace(/\.$/, "") } },
+          });
+        } else if (slot.slotId === "subhead" && slot.type === "text") {
+          const subtitle = await callLLM([
+            { role: "system", content: "Ты — копирайтер. Напиши подзаголовок для баннера. 8-15 слов. Без кавычек. Только текст." },
+            { role: "user", content: `Подзаголовок для: ${topic}` },
+          ]);
+          canvasActions.push({
+            action: "update_layer",
+            params: { slotId: "subhead", updates: { text: subtitle.trim().replace(/^["«]|["»]$/g, "") } },
+          });
+        } else if (slot.slotId === "cta" && slot.type === "text") {
+          const cta = await callLLM([
+            { role: "system", content: "Ты — копирайтер. Напиши текст для кнопки призыва к действию (CTA). 1-3 слова. Без кавычек. Только текст." },
+            { role: "user", content: `CTA для: ${topic}` },
+          ]);
+          canvasActions.push({
+            action: "update_layer",
+            params: { slotId: "cta", updates: { text: cta.trim().replace(/^["«]|["»]$/g, "") } },
+          });
+        } else if ((slot.slotId === "background" || slot.slotId === "image-primary") && (slot.type === "image")) {
+          // Generate image for image slots
+          const imagePrompt = await callLLM([
+            { role: "system", content: "You are an expert prompt engineer. Convert the request into a detailed English prompt for AI image generation. Include: high quality, commercial, professional. Max 40 words. Return ONLY the prompt." },
+            { role: "user", content: `Image for banner about: ${topic}` },
+          ]);
+
+          try {
+            const { getProvider: getAIProvider } = await import("@/lib/ai-providers");
+            const imgProvider = getAIProvider("flux-schnell");
+            const imgResult = await imgProvider.generate({
+              prompt: imagePrompt.trim(),
+              type: "image",
+              model: "flux-schnell",
+            });
+            canvasActions.push({
+              action: "update_layer",
+              params: { slotId: slot.slotId, updates: { src: imgResult.content } },
+            });
+          } catch {
+            // Image generation failed, skip this slot
+          }
+        }
+      }
+
+      const filledSlots = canvasActions.length - 1; // minus load_template
+      return {
+        success: true,
+        type: "canvas_action",
+        content: slots.length > 0
+          ? `Шаблон «${template.name}» применён. Заполнено ${filledSlots} элементов.`
+          : `Шаблон «${template.name}» применён. Слоты не найдены — добавляю новые элементы.`,
+        canvasActions,
+        metadata: { templateId, templateName: template.name, slotsFound: slots.length },
       };
     }
 
@@ -486,33 +635,33 @@ const SYSTEM_PROMPT = `Ты — AI-ассистент платформы для 
 
 КЛЮЧЕВЫЕ ПРАВИЛА:
 
-1. БАННЕРЫ: Когда просят баннер, ВСЕГДА вызывай ВСЕ 4 действия по порядку:
+1. БАННЕРЫ С ШАБЛОНОМ: Когда пользователь просит баннер для конкретного сервиса (Маркет, Лавка, Еда, Go):
+   a) СНАЧАЛА вызови search_templates с названием сервиса
+   b) Покажи найденные шаблоны пользователю для выбора
+   c) КОГДА пользователь выберет шаблон — вызови apply_and_fill_template
+
+2. БАННЕРЫ БЕЗ ШАБЛОНА: Если нет шаблонов или пользователь не уточняет сервис:
    a) generate_headline — короткий заголовок (3-7 слов)
    b) generate_subtitle — подзаголовок с деталями (10-20 слов)
    c) generate_image — фоновое изображение
    d) place_on_canvas — размести всё на холсте
 
    Для place_on_canvas передай elements как JSON-строку:
-   [
-     {"type":"text","content":"ЗАГОЛОВОК","role":"headline"},
-     {"type":"text","content":"Подзаголовок","role":"subtitle"},
-     {"type":"image","content":"URL_ИЗОБРАЖЕНИЯ","role":"background"}
-   ]
+   [{"type":"text","content":"ЗАГОЛОВОК","role":"headline"},
+    {"type":"text","content":"Подзаголовок","role":"subtitle"},
+    {"type":"image","content":"URL","role":"background"}]
 
-2. ТЕКСТЫ: Для текста вызывай generate_headline и/или generate_subtitle
+3. ВЫБОР ШАБЛОНА: Когда пользователь пишет "Шаблон 1", "Второй" или название шаблона — вызови apply_and_fill_template с ID шаблона из предыдущего ответа.
 
-3. ИЗОБРАЖЕНИЯ: Для картинки вызывай generate_image
+4. ТЕКСТЫ: Для текста вызывай generate_headline и/или generate_subtitle
 
-4. КОНТЕКСТ: Учитывай контекст сервиса из запроса:
-   - "Лавка" = сервис доставки продуктов, свежие продукты
-   - "Маркет" = маркетплейс, товары, электроника
-   - "Еда" = доставка еды из ресторанов
-   - "Go" = такси, доставка, быстрое перемещение
+5. КОНТЕКСТ СЕРВИСОВ:
+   - "Лавка" / "lavka" = доставка продуктов
+   - "Маркет" / "market" = маркетплейс
+   - "Еда" / "food" = доставка еды
+   - "Go" = такси
 
-5. СТИЛЬ ИЗОБРАЖЕНИЙ: Выбирай стиль по контексту:
-   - Продукты, еда → "photo"
-   - Скидки, акции → "3d" или "illustration"
-   - Абстрактный фон → "gradient"
+6. СТИЛЬ ИЗОБРАЖЕНИЙ: photo (еда, продукты), 3d/illustration (скидки), gradient (фон)
 
 ОТВЕЧАЙ КРАТКО на русском.`;
 
