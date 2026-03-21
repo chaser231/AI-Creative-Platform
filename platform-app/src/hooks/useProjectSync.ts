@@ -133,36 +133,61 @@ export function useCanvasAutoSave(projectId: string) {
 /**
  * Hook to load canvas state from backend when entering the editor.
  * Restores the full canvas state into canvasStore.
+ * IMPORTANT: Always resets canvas when projectId changes to prevent
+ * showing stale content from a previous project.
  */
 export function useLoadCanvasState(projectId: string) {
+  const prevProjectIdRef = useRef<string | null>(null);
+
+  // Clear canvas immediately when switching to a different project
+  useEffect(() => {
+    if (prevProjectIdRef.current && prevProjectIdRef.current !== projectId) {
+      // Reset canvas to empty state
+      useCanvasStore.setState({
+        layers: [],
+        selectedLayerIds: [],
+        masterComponents: [],
+        componentInstances: [],
+        history: [],
+        future: [],
+      });
+    }
+    prevProjectIdRef.current = projectId;
+  }, [projectId]);
+
   const canvasQuery = trpc.project.loadState.useQuery(
     { id: projectId },
     {
-      retry: 1,
+      retry: false,
       refetchOnWindowFocus: false,
+      refetchOnMount: "always", // Always fetch fresh data
     }
   );
 
   useEffect(() => {
     if (canvasQuery.data && typeof canvasQuery.data === "object") {
       const state = canvasQuery.data as Record<string, unknown>;
-      const store = useCanvasStore.getState();
 
-      // Only restore if we have data and the canvas is empty
-      if (state.layers && Array.isArray(state.layers) && store.layers.length === 0) {
-        // Restore canvas state
+      if (state.layers && Array.isArray(state.layers)) {
+        // Restore canvas state from DB — always overwrite
         useCanvasStore.setState({
-          layers: state.layers as typeof store.layers,
-          masterComponents: (state.masterComponents ?? []) as typeof store.masterComponents,
-          componentInstances: (state.componentInstances ?? []) as typeof store.componentInstances,
-          resizes: (state.resizes ?? store.resizes) as typeof store.resizes,
-          artboardProps: (state.artboardProps ?? store.artboardProps) as typeof store.artboardProps,
-          canvasWidth: (state.canvasWidth ?? store.canvasWidth) as number,
-          canvasHeight: (state.canvasHeight ?? store.canvasHeight) as number,
+          layers: state.layers as ReturnType<typeof useCanvasStore.getState>["layers"],
+          masterComponents: (state.masterComponents ?? []) as ReturnType<typeof useCanvasStore.getState>["masterComponents"],
+          componentInstances: (state.componentInstances ?? []) as ReturnType<typeof useCanvasStore.getState>["componentInstances"],
+          resizes: (state.resizes ?? useCanvasStore.getState().resizes) as ReturnType<typeof useCanvasStore.getState>["resizes"],
+          artboardProps: (state.artboardProps ?? useCanvasStore.getState().artboardProps) as ReturnType<typeof useCanvasStore.getState>["artboardProps"],
+          canvasWidth: (state.canvasWidth ?? useCanvasStore.getState().canvasWidth) as number,
+          canvasHeight: (state.canvasHeight ?? useCanvasStore.getState().canvasHeight) as number,
         });
       }
+    } else if (canvasQuery.isError || (canvasQuery.isFetched && !canvasQuery.data)) {
+      // Project not in DB or no state saved — start with clean canvas
+      useCanvasStore.setState({
+        layers: [],
+        selectedLayerIds: [],
+      });
     }
-  }, [canvasQuery.data]);
+  }, [canvasQuery.data, canvasQuery.isError, canvasQuery.isFetched]);
 
   return {
     isLoading: canvasQuery.isLoading,
