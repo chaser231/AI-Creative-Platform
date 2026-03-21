@@ -121,6 +121,18 @@ export function AIChatPanel({ open, onClose, messages, onAddMessages, projectId 
 
             const newMessages: AIChatMessage[] = [];
 
+            // Execute canvas actions (place content on canvas)
+            if (result.canvasActions && result.canvasActions.length > 0) {
+                for (const ca of result.canvasActions) {
+                    if (ca.action === "add_text") {
+                        addTextLayer(ca.params as any);
+                    } else if (ca.action === "add_image") {
+                        const p = ca.params as { src: string; width: number; height: number };
+                        addImageLayer(p.src, p.width, p.height);
+                    }
+                }
+            }
+
             // Add plan message if there are steps
             if (result.plan.steps.length > 0) {
                 newMessages.push({
@@ -139,11 +151,11 @@ export function AIChatPanel({ open, onClose, messages, onAddMessages, projectId 
                     })),
                 });
 
-                // Add individual results as separate messages
+                // Add individual results as separate messages (skip canvas_action and data types)
                 for (const step of result.plan.steps) {
-                    if (step.result?.success && step.result.type !== "error" && step.result.type !== "data") {
+                    if (step.result?.success && step.result.type !== "error" && step.result.type !== "data" && step.result.type !== "canvas_action") {
                         newMessages.push({
-                            id: `result-${step.actionId}-${Date.now()}`,
+                            id: `result-${step.actionId}-${Date.now()}-${Math.random()}`,
                             role: "assistant",
                             type: step.result.type as "text" | "image",
                             content: step.result.content,

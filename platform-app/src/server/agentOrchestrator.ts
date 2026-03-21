@@ -1,23 +1,16 @@
 /**
- * Agent Orchestrator
+ * Agent Orchestrator V2
  *
- * Interprets natural language requests and decomposes them into
- * Action Registry actions.
+ * Smart creative agent that:
+ * 1. Interprets natural language requests
+ * 2. Generates appropriate content (short headlines, subtitles, images)
+ * 3. Returns canvas instructions for client-side placement
  *
- * Provider strategy:
- *   1. OpenAI (gpt-4o-mini) — native function calling, preferred
- *   2. Replicate (Llama 3) — JSON prompting fallback
- *
- * Flow:
- * 1. User sends a natural language message in the AI chat
- * 2. Orchestrator sends message + Action Registry to LLM
- * 3. LLM returns a plan (function calls / JSON actions)
- * 4. Orchestrator executes actions sequentially
- * 5. Results are returned as chat messages
+ * Provider: OpenAI (primary) → Replicate Llama (fallback)
  */
 
-import { actionsToOpenAITools, ACTIONS, actionsDescription } from "./actionRegistry";
-import type { ActionResult, ActionContext } from "./actionRegistry";
+import { actionsToOpenAITools, ACTIONS } from "./actionRegistry";
+import type { ActionResult, ActionContext, CanvasInstruction } from "./actionRegistry";
 
 // ─── Types ───────────────────────────────────────────────
 
@@ -38,14 +31,16 @@ export interface AgentResponse {
   plan: AgentPlan;
   textResponse: string;
   provider: "openai" | "replicate";
+  /** All canvas instructions from all steps, aggregated for client execution */
+  canvasActions: CanvasInstruction[];
 }
 
 // ─── Provider Detection ──────────────────────────────────
 
-function getProvider(): "openai" | "replicate" {
+function getActiveProvider(): "openai" | "replicate" {
   if (process.env.OPENAI_API_KEY) return "openai";
   if (process.env.REPLICATE_API_TOKEN) return "replicate";
-  throw new Error("Ни OPENAI_API_KEY, ни REPLICATE_API_TOKEN не настроены. Добавьте хотя бы один API ключ.");
+  throw new Error("Ни OPENAI_API_KEY, ни REPLICATE_API_TOKEN не настроены.");
 }
 
 // ─── Action Executors ────────────────────────────────────
@@ -56,34 +51,107 @@ async function executeAction(
   context: ActionContext
 ): Promise<ActionResult> {
   switch (actionId) {
-    case "generate_text": {
-      const prompt = params.prompt as string;
-      const style = (params.style as string) || "marketing";
-      const systemPrompt = `Ты — креативный копирайтер. Стиль: ${style}. Пиши на русском языке.`;
+    case "generate_headline": {
+      const topic = params.topic as string;
+      const tone = (params.tone as string) || "bold";
 
-      // For text generation, use whichever LLM is available
+      const toneMap: Record<string, string> = {
+        bold: "Коротко и мощно. Энергичный, призывный стиль.",
+        playful: "Игривый, лёгкий тон. С юмором или каламбуром.",
+        formal: "Деловой, солидный стиль.",
+        urgent: "Срочность и дефицит. FOMO.",
+      };
+
       const response = await callLLM([
-        { role: "system", content: systemPrompt },
-        { role: "user", content: prompt },
+        {
+          role: "system",
+          content: `Ты — копирайтер для рекламных баннеров. ${toneMap[tone] || toneMap.bold}
+
+ПРАВИЛА:
+- Придумай ОДИН заголовок
+- Максимум 3-7 слов
+- Без кавычек, без точки
+- Только текст заголовка, ничего больше
+- Пиши на русском`,
+        },
+        { role: "user", content: `Заголовок для: ${topic}` },
       ]);
+
+      const headline = response.trim().replace(/^["«]|["»]$/g, "").replace(/\.$/, "");
 
       return {
         success: true,
         type: "text",
-        content: response,
-        metadata: { model: getProvider() === "openai" ? "gpt-4o-mini" : "llama-3", style },
+        content: headline,
+        metadata: { role: "headline", tone },
+      };
+    }
+
+    case "generate_subtitle": {
+      const topic = params.topic as string;
+      const headline = (params.headline as string) || "";
+
+      const response = await callLLM([
+        {
+          role: "system",
+          content: `Ты — копирайтер. Напиши подзаголовок для баннера.
+
+ПРАВИЛА:
+- Одно предложение, 10-20 слов
+- Дополняет заголовок деталями или призывом к действию
+- Без кавычек
+- Только текст подзаголовка, ничего больше
+- Пиши на русском`,
+        },
+        {
+          role: "user",
+          content: headline
+            ? `Заголовок: "${headline}". Тема: ${topic}. Напиши подзаголовок.`
+            : `Подзаголовок для: ${topic}`,
+        },
+      ]);
+
+      const subtitle = response.trim().replace(/^["«]|["»]$/g, "");
+
+      return {
+        success: true,
+        type: "text",
+        content: subtitle,
+        metadata: { role: "subtitle" },
       };
     }
 
     case "generate_image": {
-      const prompt = params.prompt as string;
-      // Call Replicate directly via our provider layer (no self-fetch)
+      const subject = params.subject as string;
+      const style = (params.style as string) || "photo";
+
+      // Build an English prompt for the image model
+      const imagePrompt = await callLLM([
+        {
+          role: "system",
+          content: `You are an expert prompt engineer for AI image generation (Flux model).
+Convert the user's request into a detailed English prompt for image generation.
+
+RULES:
+- Write in ENGLISH only
+- Include style keywords: ${style}, high quality, commercial
+- For photo style: "professional product photography, studio lighting"
+- For illustration: "modern digital illustration, flat design"
+- For 3d: "3D render, isometric, soft shadows"
+- For gradient: "abstract gradient background, vibrant colors"
+- Keep it under 50 words
+- Return ONLY the prompt text`,
+        },
+        { role: "user", content: `Generate prompt for: ${subject}, style: ${style}` },
+      ]);
+
+      // Call Replicate via our provider layer
       const { getProvider: getAIProvider } = await import("@/lib/ai-providers");
       const imageProvider = getAIProvider("flux-schnell");
 
       try {
         const aiResult = await imageProvider.generate({
-          prompt,
+          prompt: imagePrompt.trim(),
           type: "image",
           model: "flux-schnell",
         });
@@ -92,15 +160,76 @@ async function executeAction(
           success: true,
           type: "image",
           content: aiResult.content,
-          metadata: { model: "flux-schnell", format: aiResult.format },
+          metadata: { model: "flux-schnell", style, prompt: imagePrompt.trim() },
         };
       } catch (e) {
         return {
           success: false,
           type: "error",
-          content: `Ошибка генерации изображения: ${e instanceof Error ? e.message : "unknown"}`,
+          content: `Ошибка генерации: ${e instanceof Error ? e.message : "unknown"}`,
         };
       }
+    }
+
+    case "place_on_canvas": {
+      const elementsStr = params.elements as string;
+      let elements: Array<{ type: string; content: string; role: string }> = [];
+
+      try {
+        elements = JSON.parse(elementsStr);
+      } catch {
+        return { success: false, type: "error", content: "Невалидный JSON в параметре elements" };
+      }
+
+      const canvasActions: CanvasInstruction[] = [];
+      for (const el of elements) {
+        if (el.type === "text" && el.role === "headline") {
+          canvasActions.push({
+            action: "add_text",
+            params: {
+              text: el.content,
+              fontSize: 64,
+              fontWeight: "700",
+              fill: "#FFFFFF",
+              align: "center",
+              x: 100,
+              y: 200,
+              width: 800,
+              textTransform: "uppercase",
+            },
+          });
+        } else if (el.type === "text" && el.role === "subtitle") {
+          canvasActions.push({
+            action: "add_text",
+            params: {
+              text: el.content,
+              fontSize: 28,
+              fontWeight: "400",
+              fill: "#FFFFFF",
+              align: "center",
+              x: 150,
+              y: 300,
+              width: 700,
+            },
+          });
+        } else if (el.type === "image") {
+          canvasActions.push({
+            action: "add_image",
+            params: {
+              src: el.content,
+              width: 1024,
+              height: 1024,
+            },
+          });
+        }
+      }
+
+      return {
+        success: true,
+        type: "canvas_action",
+        content: `Размещено ${canvasActions.length} элементов на холсте`,
+        canvasActions,
+      };
     }
 
     case "create_project": {
@@ -146,54 +275,25 @@ async function executeAction(
       };
     }
 
-    case "edit_image": {
-      const action = params.action as string;
-      return {
-        success: true,
-        type: "data",
-        content: `Действие «${action}» запланировано. Выберите изображение в редакторе для применения.`,
-        metadata: { editAction: action },
-      };
-    }
-
-    case "export_project": {
-      const format = (params.format as string) || "png";
-      return {
-        success: true,
-        type: "data",
-        content: `Экспорт в формате ${format.toUpperCase()} запланирован. Используйте кнопку экспорта в редакторе.`,
-        metadata: { format },
-      };
-    }
-
     default:
       return { success: false, type: "error", content: `Неизвестное действие: ${actionId}` };
   }
 }
 
-// ─── Shared Utilities ────────────────────────────────────
-
-function getBaseUrl(): string {
-  if (typeof window !== "undefined") return "";
-  return process.env.NEXTAUTH_URL || process.env.AUTH_URL || "http://localhost:3000";
-}
+// ─── LLM Utilities ───────────────────────────────────────
 
 interface ChatMessage {
   role: "system" | "user" | "assistant";
   content: string;
 }
 
-// ─── Unified LLM Call (text-only, no tools) ──────────────
-
 async function callLLM(messages: ChatMessage[]): Promise<string> {
-  const provider = getProvider();
-  if (provider === "openai") {
-    return callOpenAI(messages);
-  }
+  const provider = getActiveProvider();
+  if (provider === "openai") return callOpenAI(messages);
   return callReplicateLlama(messages);
 }
 
-// ─── OpenAI Integration ──────────────────────────────────
+// ─── OpenAI ──────────────────────────────────────────────
 
 async function callOpenAI(messages: ChatMessage[]): Promise<string> {
   const apiKey = process.env.OPENAI_API_KEY!;
@@ -208,7 +308,7 @@ async function callOpenAI(messages: ChatMessage[]): Promise<string> {
       model: "gpt-4o-mini",
       messages,
       temperature: 0.7,
-      max_tokens: 2048,
+      max_tokens: 1024,
     }),
   });
 
@@ -262,21 +362,19 @@ async function callOpenAIWithTools(messages: ChatMessage[]): Promise<{
   };
 }
 
-// ─── Replicate Llama Integration ─────────────────────────
+// ─── Replicate Llama ─────────────────────────────────────
 
 const REPLICATE_LLAMA_MODEL = "meta/meta-llama-3-70b-instruct";
 
 async function callReplicateLlama(messages: ChatMessage[]): Promise<string> {
   const token = process.env.REPLICATE_API_TOKEN!;
 
-  // Format messages into a single prompt for Llama
   const systemMsg = messages.find((m) => m.role === "system")?.content || "";
   const convMessages = messages.filter((m) => m.role !== "system");
   const prompt = convMessages
     .map((m) => (m.role === "user" ? `User: ${m.content}` : `Assistant: ${m.content}`))
     .join("\n\n") + "\n\nAssistant:";
 
-  // Use the models endpoint (auto-resolves latest version)
   const createRes = await fetch(
     `https://api.replicate.com/v1/models/${REPLICATE_LLAMA_MODEL}/predictions`,
     {
@@ -304,7 +402,6 @@ async function callReplicateLlama(messages: ChatMessage[]): Promise<string> {
 
   const prediction = await createRes.json();
 
-  // Poll for completion
   let result = prediction;
   while (result.status !== "succeeded" && result.status !== "failed") {
     await new Promise((resolve) => setTimeout(resolve, 1000));
@@ -315,18 +412,13 @@ async function callReplicateLlama(messages: ChatMessage[]): Promise<string> {
   }
 
   if (result.status === "failed") {
-    throw new Error(`Replicate prediction failed: ${result.error || "unknown error"}`);
+    throw new Error(`Replicate prediction failed: ${result.error || "unknown"}`);
   }
 
-  // Replicate returns output as array of strings
   const output = Array.isArray(result.output) ? result.output.join("") : String(result.output || "");
   return output;
 }
 
-/**
- * Replicate Llama fallback for tool calling.
- * Uses structured JSON prompting instead of native function calling.
- */
 async function callReplicateWithTools(messages: ChatMessage[]): Promise<{
   content: string | null;
   toolCalls: Array<{ id: string; name: string; arguments: string }>;
@@ -338,21 +430,20 @@ async function callReplicateWithTools(messages: ChatMessage[]): Promise<{
     return `  - ${a.id}: ${a.description}\n    Параметры: {\n${params}\n    }\n    Обязательные: [${a.required.join(", ")}]`;
   }).join("\n");
 
-  const jsonPrompt = `\n\nВАЖНО: Проанализируй запрос пользователя и ответь СТРОГО в формате JSON:
+  const jsonPrompt = `\n\nОТВЕЧАЙ СТРОГО в формате JSON:
 {
-  "response": "Твой текстовый ответ пользователю",
+  "response": "Текстовый ответ пользователю",
   "actions": [
-    {"action_id": "id_действия", "parameters": {"param1": "value1"}}
+    {"action_id": "id_действия", "parameters": {"param": "value"}}
   ]
 }
 
-Если действия не нужны — верни пустой массив actions.
-Доступные действия (action_id):
+Доступные действия:
 ${actionsList}
 
-ОТВЕЧАЙ ТОЛЬКО ВАЛИДНЫМ JSON, без markdown-блоков, без пояснений вне JSON.`;
+ВАЖНО: для баннера используй generate_headline, generate_subtitle, generate_image, place_on_canvas
+ОТВЕЧАЙ ТОЛЬКО JSON.`;
 
-  // Inject JSON instruction into the last system message
   const augmentedMessages = messages.map((m, i) => {
     if (m.role === "system" && i === 0) {
       return { ...m, content: m.content + jsonPrompt };
@@ -362,23 +453,13 @@ ${actionsList}
 
   const rawResponse = await callReplicateLlama(augmentedMessages);
 
-  // Parse JSON from response
   try {
-    // Try to extract JSON from the response (model might wrap it in ```json blocks)
     let jsonStr = rawResponse.trim();
-
-    // Remove markdown code blocks if present
     const jsonMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
-    if (jsonMatch) {
-      jsonStr = jsonMatch[1].trim();
-    }
-
-    // Try to find JSON object in the response
+    if (jsonMatch) jsonStr = jsonMatch[1].trim();
     const braceStart = jsonStr.indexOf("{");
     const braceEnd = jsonStr.lastIndexOf("}");
-    if (braceStart !== -1 && braceEnd !== -1) {
-      jsonStr = jsonStr.slice(braceStart, braceEnd + 1);
-    }
+    if (braceStart !== -1 && braceEnd !== -1) jsonStr = jsonStr.slice(braceStart, braceEnd + 1);
 
     const parsed = JSON.parse(jsonStr);
     const actions = Array.isArray(parsed.actions) ? parsed.actions : [];
@@ -394,43 +475,58 @@ ${actionsList}
         })),
     };
   } catch {
-    // If JSON parsing fails, treat entire response as text
-    return {
-      content: rawResponse,
-      toolCalls: [],
-    };
+    return { content: rawResponse, toolCalls: [] };
   }
 }
 
+// ─── System Prompt ───────────────────────────────────────
+
+const SYSTEM_PROMPT = `Ты — AI-ассистент платформы для создания рекламных креативов.
+Ты помогаешь пользователям создавать баннеры, генерировать тексты и изображения.
+
+КЛЮЧЕВЫЕ ПРАВИЛА:
+
+1. БАННЕРЫ: Когда просят баннер, ВСЕГДА вызывай ВСЕ 4 действия по порядку:
+   a) generate_headline — короткий заголовок (3-7 слов)
+   b) generate_subtitle — подзаголовок с деталями (10-20 слов)
+   c) generate_image — фоновое изображение
+   d) place_on_canvas — размести всё на холсте
+
+   Для place_on_canvas передай elements как JSON-строку:
+   [
+     {"type":"text","content":"ЗАГОЛОВОК","role":"headline"},
+     {"type":"text","content":"Подзаголовок","role":"subtitle"},
+     {"type":"image","content":"URL_ИЗОБРАЖЕНИЯ","role":"background"}
+   ]
+
+2. ТЕКСТЫ: Для текста вызывай generate_headline и/или generate_subtitle
+
+3. ИЗОБРАЖЕНИЯ: Для картинки вызывай generate_image
+
+4. КОНТЕКСТ: Учитывай контекст сервиса из запроса:
+   - "Лавка" = сервис доставки продуктов, свежие продукты
+   - "Маркет" = маркетплейс, товары, электроника
+   - "Еда" = доставка еды из ресторанов
+   - "Go" = такси, доставка, быстрое перемещение
+
+5. СТИЛЬ ИЗОБРАЖЕНИЙ: Выбирай стиль по контексту:
+   - Продукты, еда → "photo"
+   - Скидки, акции → "3d" или "illustration"
+   - Абстрактный фон → "gradient"
+
+ОТВЕЧАЙ КРАТКО на русском.`;
+
 // ─── Main Orchestrator ───────────────────────────────────
 
-const SYSTEM_PROMPT = `Ты — AI-ассистент платформы AI Creative Platform.
-Ты помогаешь пользователям создавать рекламные креативы: баннеры, тексты, фото.
-
-У тебя есть набор инструментов (actions), которые ты можешь вызывать.
-Всегда анализируй запрос пользователя и вызывай нужные инструменты.
-
-Правила:
-- Если пользователь просит создать баннер — сначала сгенерируй текст, потом изображение
-- Если просит написать текст — используй generate_text
-- Если просит картинку — используй generate_image
-- Можешь вызывать несколько инструментов для сложных запросов
-- Отвечай на русском языке
-- Будь кратким, но информативным в своих ответах`;
-
-/**
- * Main entry point: interpret a natural language request and execute actions.
- * Automatically selects OpenAI (preferred) or Replicate Llama (fallback).
- */
 export async function interpretAndExecute(
   userMessage: string,
   context: ActionContext,
   workspaceName?: string,
   conversationHistory?: ChatMessage[]
 ): Promise<AgentResponse> {
-  const provider = getProvider();
+  const provider = getActiveProvider();
   const contextInfo = workspaceName
-    ? `\n\nКонтекст: Воркспейс «${workspaceName}»`
+    ? `\n\nВоркспейс: «${workspaceName}»`
     : "";
 
   const messages: ChatMessage[] = [
@@ -439,19 +535,19 @@ export async function interpretAndExecute(
     { role: "user", content: userMessage },
   ];
 
-  // Step 1: Ask LLM to interpret the request
+  // Step 1: Interpret via LLM
   const aiResponse = provider === "openai"
     ? await callOpenAIWithTools(messages)
     : await callReplicateWithTools(messages);
 
-  // Step 2: Build the plan from tool calls
+  // Step 2: Build plan
   const steps: AgentStep[] = aiResponse.toolCalls.map((tc) => {
     const action = ACTIONS.find((a) => a.id === tc.name);
     let parsedArgs: Record<string, unknown> = {};
     try {
       parsedArgs = JSON.parse(tc.arguments);
     } catch {
-      // ignore parse errors
+      // ignore
     }
 
     return {
@@ -462,12 +558,49 @@ export async function interpretAndExecute(
     };
   });
 
-  // Step 3: Execute each step sequentially
+  // Step 3: Execute sequentially, passing results between steps
+  const allCanvasActions: CanvasInstruction[] = [];
+  const generatedContent: Record<string, string> = {};
+
   for (const step of steps) {
     step.status = "running";
+
     try {
+      // Inject content from previous steps into place_on_canvas
+      if (step.actionId === "place_on_canvas") {
+        const elements: Array<{ type: string; content: string; role: string }> = [];
+
+        if (generatedContent.headline) {
+          elements.push({ type: "text", content: generatedContent.headline, role: "headline" });
+        }
+        if (generatedContent.subtitle) {
+          elements.push({ type: "text", content: generatedContent.subtitle, role: "subtitle" });
+        }
+        if (generatedContent.image) {
+          elements.push({ type: "image", content: generatedContent.image, role: "background" });
+        }
+
+        step.parameters = { elements: JSON.stringify(elements) };
+      }
+
       step.result = await executeAction(step.actionId, step.parameters, context);
       step.status = "done";
+
+      // Track generated content for later steps
+      if (step.result.success) {
+        if (step.result.metadata?.role === "headline") {
+          generatedContent.headline = step.result.content;
+        } else if (step.result.metadata?.role === "subtitle") {
+          generatedContent.subtitle = step.result.content;
+        } else if (step.result.type === "image") {
+          generatedContent.image = step.result.content;
+        }
+
+        // Collect canvas actions
+        if (step.result.canvasActions) {
+          allCanvasActions.push(...step.result.canvasActions);
+        }
+      }
     } catch (e) {
       step.status = "error";
       step.result = {
@@ -478,7 +611,7 @@ export async function interpretAndExecute(
     }
   }
 
-  // Step 4: Build the response
+  // Step 4: Response
   const textResponse =
     aiResponse.content ||
     (steps.length > 0
@@ -486,18 +619,13 @@ export async function interpretAndExecute(
       : "Я не понял запрос. Попробуйте переформулировать.");
 
   return {
-    plan: {
-      reasoning: textResponse,
-      steps,
-    },
+    plan: { reasoning: textResponse, steps },
     textResponse,
     provider,
+    canvasActions: allCanvasActions,
   };
 }
 
-/**
- * Simple text-only response (no tool calls).
- */
 export async function chatResponse(
   userMessage: string,
   conversationHistory?: ChatMessage[]

@@ -3,7 +3,10 @@
  *
  * Typed catalog of all atomic actions that the AI Agent can perform.
  * Each action has a JSON Schema for its parameters and an execute function.
- * This is the foundation for both saved workflows and the AI orchestrator.
+ *
+ * V2: Creative-aware actions designed for banner/creative production.
+ * Actions are granular: separate headline, subtitle, image generation.
+ * Agent returns canvas instructions that the client executes.
  */
 
 // ─── Types ───────────────────────────────────────────────
@@ -20,7 +23,6 @@ export interface ActionDefinition {
   name: string;
   description: string;
   parameters: Record<string, ActionParameter>;
-  /** Which parameters are required */
   required: string[];
 }
 
@@ -28,39 +30,68 @@ export interface ActionContext {
   userId: string;
   workspaceId: string;
   projectId?: string;
-  /** Prisma client */
   prisma: any;
 }
 
 export interface ActionResult {
   success: boolean;
-  type: "text" | "image" | "data" | "error";
+  type: "text" | "image" | "data" | "error" | "canvas_action";
   content: string;
   metadata?: Record<string, unknown>;
+  /** Instructions for the client-side canvas */
+  canvasActions?: CanvasInstruction[];
 }
 
-// ─── Action Definitions (for OpenAI function calling) ────
+/** Instruction for the client to execute on the canvas */
+export interface CanvasInstruction {
+  action: "add_text" | "add_image" | "add_rectangle";
+  params: Record<string, unknown>;
+}
+
+// ─── Action Definitions ──────────────────────────────────
 
 export const ACTIONS: ActionDefinition[] = [
   {
-    id: "generate_text",
-    name: "Генерация текста",
-    description: "Генерирует текст (рекламный копирайт, заголовки, описания) с помощью AI-модели. Используй для создания текстового контента.",
+    id: "generate_headline",
+    name: "Генерация заголовка",
+    description: "Генерирует КОРОТКИЙ заголовок для баннера (3-7 слов). Используй для основного текста баннера.",
     parameters: {
-      prompt: { type: "string", description: "Текстовый промпт — что нужно сгенерировать" },
-      style: { type: "string", description: "Стиль текста: formal, casual, creative, marketing", enum: ["formal", "casual", "creative", "marketing"] },
+      topic: { type: "string", description: "Тема заголовка (акция, продукт, событие)" },
+      tone: { type: "string", description: "Тон: bold, playful, formal, urgent", enum: ["bold", "playful", "formal", "urgent"] },
     },
-    required: ["prompt"],
+    required: ["topic"],
+  },
+  {
+    id: "generate_subtitle",
+    name: "Генерация подзаголовка",
+    description: "Генерирует подзаголовок/описание для баннера (10-20 слов). Дополняет заголовок деталями.",
+    parameters: {
+      topic: { type: "string", description: "Тема подзаголовка" },
+      headline: { type: "string", description: "Заголовок, к которому нужен подзаголовок" },
+    },
+    required: ["topic"],
   },
   {
     id: "generate_image",
     name: "Генерация изображения",
-    description: "Генерирует изображение (баннер, фото, иллюстрацию) с помощью AI-модели. Используй для визуального контента.",
+    description: "Генерирует фоновое изображение для баннера. Автоматически формирует промпт на английском для модели.",
     parameters: {
-      prompt: { type: "string", description: "Описание изображения для генерации" },
-      style: { type: "string", description: "Стиль: photo, illustration, 3d, flat", enum: ["photo", "illustration", "3d", "flat"] },
+      subject: { type: "string", description: "Что изобразить (продукт, сцена, фон)" },
+      style: { type: "string", description: "Стиль: photo, illustration, 3d, flat, gradient", enum: ["photo", "illustration", "3d", "flat", "gradient"] },
     },
-    required: ["prompt"],
+    required: ["subject"],
+  },
+  {
+    id: "place_on_canvas",
+    name: "Размещение на холсте",
+    description: "Размещает сгенерированный контент (текст, изображение) на холсте редактора. Вызывай ПОСЛЕ генерации.",
+    parameters: {
+      elements: {
+        type: "string",
+        description: "JSON-массив элементов для размещения. Каждый элемент: {type: 'text'|'image', content: '...', role: 'headline'|'subtitle'|'background'}",
+      },
+    },
+    required: ["elements"],
   },
   {
     id: "create_project",
@@ -75,30 +106,11 @@ export const ACTIONS: ActionDefinition[] = [
   {
     id: "apply_template",
     name: "Применение шаблона",
-    description: "Применяет шаблон из библиотеки к текущему проекту.",
+    description: "Находит подходящий шаблон и размещает его на холсте. Затем можно заменить контент шаблона сгенерированными данными.",
     parameters: {
       templateName: { type: "string", description: "Название или описание нужного шаблона" },
     },
     required: ["templateName"],
-  },
-  {
-    id: "edit_image",
-    name: "Редактирование изображения",
-    description: "Редактирует изображение: inpaint (замена части), remove-bg (удаление фона), outpaint (расширение).",
-    parameters: {
-      action: { type: "string", description: "Действие: inpaint, remove-bg, outpaint", enum: ["inpaint", "remove-bg", "outpaint"] },
-      prompt: { type: "string", description: "Описание редактирования" },
-    },
-    required: ["action"],
-  },
-  {
-    id: "export_project",
-    name: "Экспорт проекта",
-    description: "Экспортирует текущий проект в указанный формат.",
-    parameters: {
-      format: { type: "string", description: "Формат экспорта: png, jpg, webp, pdf", enum: ["png", "jpg", "webp", "pdf"] },
-    },
-    required: [],
   },
 ];
 
