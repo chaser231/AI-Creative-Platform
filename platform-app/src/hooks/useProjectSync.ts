@@ -180,14 +180,10 @@ export function useLoadCanvasState(projectId: string) {
           canvasHeight: (state.canvasHeight ?? useCanvasStore.getState().canvasHeight) as number,
         });
       }
-    } else if (canvasQuery.isError || (canvasQuery.isFetched && !canvasQuery.data)) {
-      // Project not in DB or no state saved — start with clean canvas
-      useCanvasStore.setState({
-        layers: [],
-        selectedLayerIds: [],
-      });
     }
-  }, [canvasQuery.data, canvasQuery.isError, canvasQuery.isFetched]);
+    // If load fails (project not in DB), keep the current canvas state.
+    // The projectId-change reset above already handles clearing between projects.
+  }, [canvasQuery.data]);
 
   return {
     isLoading: canvasQuery.isLoading,

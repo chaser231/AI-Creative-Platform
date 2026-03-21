@@ -14,6 +14,7 @@ import type { ProjectGoal, BusinessUnit } from "@/types";
 interface NewProjectModalProps {
     open: boolean;
     onClose: () => void;
+    workspaceId?: string | null;
 }
 
 const goals: Array<{
@@ -49,7 +50,7 @@ const businessUnits: Array<{ value: BusinessUnit; label: string }> = [
     { value: "other", label: "Other" },
 ];
 
-export function NewProjectModal({ open, onClose }: NewProjectModalProps) {
+export function NewProjectModal({ open, onClose, workspaceId }: NewProjectModalProps) {
     const [name, setName] = useState("");
     const [businessUnit, setBusinessUnit] = useState<BusinessUnit>("yandex-market");
     const [goal, setGoal] = useState<ProjectGoal>("banner");
@@ -70,6 +71,7 @@ export function NewProjectModal({ open, onClose }: NewProjectModalProps) {
             const backendProject = await createOnBackend({
                 name: name.trim(),
                 goal,
+                workspaceId: workspaceId ?? undefined,
             });
 
             if (backendProject) {

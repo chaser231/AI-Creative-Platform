@@ -194,7 +194,7 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      <NewProjectModal open={modalOpen} onClose={() => setModalOpen(false)} />
+      <NewProjectModal open={modalOpen} onClose={() => setModalOpen(false)} workspaceId={workspaceId} />
     </AppShell>
   );
 }
