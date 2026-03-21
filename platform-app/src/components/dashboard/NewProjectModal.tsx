@@ -6,13 +6,15 @@ import { Modal } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { useProjectStore } from "@/store/projectStore";
+import { useCreateProjectSync } from "@/hooks/useProjectSync";
 import { cn } from "@/lib/cn";
-import { ImageIcon, Type, PlayCircle } from "lucide-react";
+import { ImageIcon, Type, PlayCircle, LayoutTemplate, Palette } from "lucide-react";
 import type { ProjectGoal, BusinessUnit } from "@/types";
 
 interface NewProjectModalProps {
     open: boolean;
     onClose: () => void;
+    workspaceId?: string | null;
 }
 
 const goals: Array<{
@@ -48,20 +50,60 @@ const businessUnits: Array<{ value: BusinessUnit; label: string }> = [
     { value: "other", label: "Other" },
 ];
 
-export function NewProjectModal({ open, onClose }: NewProjectModalProps) {
+export function NewProjectModal({ open, onClose, workspaceId }: NewProjectModalProps) {
     const [name, setName] = useState("");
     const [businessUnit, setBusinessUnit] = useState<BusinessUnit>("yandex-market");
     const [goal, setGoal] = useState<ProjectGoal>("banner");
+    const [mode, setMode] = useState<"wizard" | "studio">("wizard");
+    const [isCreating, setIsCreating] = useState(false);
 
-    const createProject = useProjectStore((s) => s.createProject);
+    const addProject = useProjectStore((s) => s.addProject);
+    const createProjectLocal = useProjectStore((s) => s.createProject);
+    const { createProject: createOnBackend } = useCreateProjectSync();
     const router = useRouter();
 
-    const handleCreate = () => {
-        if (!name.trim()) return;
-        const project = createProject({ name: name.trim(), businessUnit, goal });
+    const handleCreate = async () => {
+        if (!name.trim() || isCreating) return;
+        setIsCreating(true);
+
+        try {
+            // Backend-first: create on PostgreSQL and get the canonical ID
+            const backendProject = await createOnBackend({
+                name: name.trim(),
+                goal,
+                workspaceId: workspaceId ?? undefined,
+            });
+
+            if (backendProject) {
+                // Use backend ID as the single source of truth
+                addProject({
+                    id: backendProject.id,
+                    name: backendProject.name,
+                    businessUnit,
+                    goal,
+                    status: "draft",
+                    createdAt: new Date(backendProject.createdAt),
+                    updatedAt: new Date(backendProject.updatedAt),
+                    resizes: [{ id: "master", name: "Master", width: 1080, height: 1080, label: "1080 × 1080", instancesEnabled: false }],
+                    activeResizeId: "master",
+                });
+
+                onClose();
+                setName("");
+                setIsCreating(false);
+                router.push(`/editor/${backendProject.id}?mode=${mode}`);
+                return;
+            }
+        } catch {
+            // Backend unavailable — fall through to local creation
+        }
+
+        // Fallback: create locally if backend fails
+        const localProject = createProjectLocal({ name: name.trim(), businessUnit, goal });
         onClose();
         setName("");
-        router.push(`/editor/${project.id}`);
+        setIsCreating(false);
+        router.push(`/editor/${localProject.id}?mode=${mode}`);
     };
 
     return (
@@ -75,8 +117,8 @@ export function NewProjectModal({ open, onClose }: NewProjectModalProps) {
                     <Button variant="ghost" onClick={onClose}>
                         Отмена
                     </Button>
-                    <Button onClick={handleCreate} disabled={!name.trim()}>
-                        Создать
+                    <Button onClick={handleCreate} disabled={!name.trim() || isCreating}>
+                        {isCreating ? "Создание..." : "Создать"}
                     </Button>
                 </>
             }
@@ -142,6 +184,43 @@ export function NewProjectModal({ open, onClose }: NewProjectModalProps) {
                                 </span>
                             </button>
                         ))}
+                    </div>
+                </div>
+
+                {/* Mode Selection */}
+                <div className="space-y-1.5">
+                    <label className="text-sm font-medium text-text-primary">
+                        Режим работы
+                    </label>
+                    <div className="grid grid-cols-2 gap-3">
+                        <button
+                            onClick={() => setMode("wizard")}
+                            className={cn(
+                                "flex flex-col items-center gap-2 p-3 rounded-[var(--radius-md)] border text-center transition-all cursor-pointer",
+                                mode === "wizard"
+                                    ? "border-accent-primary bg-bg-tertiary"
+                                    : "border-border-primary hover:border-border-secondary hover:bg-bg-secondary"
+                            )}
+                        >
+                            <span className={cn("transition-colors", mode === "wizard" ? "text-text-primary" : "text-text-tertiary")}>
+                                <LayoutTemplate size={24} />
+                            </span>
+                            <span className="text-xs font-medium text-text-primary">Пошагово</span>
+                        </button>
+                        <button
+                            onClick={() => setMode("studio")}
+                            className={cn(
+                                "flex flex-col items-center gap-2 p-3 rounded-[var(--radius-md)] border text-center transition-all cursor-pointer",
+                                mode === "studio"
+                                    ? "border-accent-primary bg-bg-tertiary"
+                                    : "border-border-primary hover:border-border-secondary hover:bg-bg-secondary"
+                            )}
+                        >
+                            <span className={cn("transition-colors", mode === "studio" ? "text-text-primary" : "text-text-tertiary")}>
+                                <Palette size={24} />
+                            </span>
+                            <span className="text-xs font-medium text-text-primary">Студия</span>
+                        </button>
                     </div>
                 </div>
             </div>

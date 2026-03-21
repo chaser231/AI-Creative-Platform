@@ -1,0 +1,313 @@
+// ─── Prisma Schema for AI Creative Platform ─────────────────
+// Database: Yandex Managed PostgreSQL
+// ORM: Prisma
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── AUTH & USERS ────────────────────────────────────────
+
+model User {
+  id            String     @id @default(cuid())
+  email         String     @unique
+  emailVerified DateTime?
+  name          String
+  avatarUrl     String?
+  image         String?   // Required by @auth/prisma-adapter (NextAuth v5)
+  role          GlobalRole @default(USER)
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  accounts    Account[]
+  sessions    Session[]
+  memberships WorkspaceMember[]
+  projects    Project[]   @relation("ProjectCreator")
+  aiSessions  AISession[]
+  uploads     Asset[]     @relation("AssetUploader")
+  favorites   FavoriteProject[]
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+enum GlobalRole {
+  SUPER_ADMIN
+  USER
+}
+
+// ─── WORKSPACES ──────────────────────────────────────────
+
+model Workspace {
+  id           String @id @default(cuid())
+  name         String
+  slug         String @unique
+  businessUnit String // "yandex-market", "yandex-go", "yandex-food", "other"
+
+  // Brand Identity (embedded, no separate BrandKit entity)
+  colors      Json   @default("[]")
+  fonts       Json   @default("[]")
+  toneOfVoice String @default("")
+  logoUrl     String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  members       WorkspaceMember[]
+  projects      Project[]
+  templates     Template[]
+  assets        Asset[]
+  systemPrompts SystemPrompt[]
+  aiPresets     AIPreset[]
+}
+
+model WorkspaceMember {
+  id       String        @id @default(cuid())
+  role     WorkspaceRole @default(CREATOR)
+  joinedAt DateTime      @default(now())
+
+  user        User      @relation(fields: [userId], references: [id])
+  userId      String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  workspaceId String
+
+  @@unique([userId, workspaceId])
+}
+
+enum WorkspaceRole {
+  ADMIN
+  CREATOR
+  USER
+  VIEWER
+}
+
+// ─── PROJECTS ────────────────────────────────────────────
+
+model Project {
+  id     String        @id @default(cuid())
+  name   String
+  status ProjectStatus @default(DRAFT)
+  goal   String // "banner", "text", "video"
+
+  // Canvas state — full JSON blob (MVP approach)
+  canvasState Json?
+
+  thumbnail String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  workspaceId String
+  createdBy   User      @relation("ProjectCreator", fields: [createdById], references: [id])
+  createdById String
+
+  versions   ProjectVersion[]
+  aiSessions AISession[]
+  favorites  FavoriteProject[]
+
+  @@index([workspaceId, updatedAt])
+}
+
+model FavoriteProject {
+  id        String   @id @default(cuid())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  projectId String
+  createdAt DateTime @default(now())
+
+  @@unique([userId, projectId])
+  @@index([userId])
+}
+
+enum ProjectStatus {
+  DRAFT
+  IN_PROGRESS
+  REVIEW
+  PUBLISHED
+  ARCHIVED
+}
+
+model ProjectVersion {
+  id      String @id @default(cuid())
+  version Int
+  label   String?
+
+  canvasState Json
+
+  createdAt DateTime @default(now())
+
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  projectId String
+  createdBy String // User ID
+
+  @@unique([projectId, version])
+  @@index([projectId])
+}
+
+// ─── TEMPLATES ───────────────────────────────────────────
+
+model Template {
+  id          String @id @default(cuid())
+  name        String
+  description String @default("")
+  version     String @default("1.0.0")
+
+  // Catalogization
+  categories  String[]
+  contentType String   @default("visual")
+  occasion    String   @default("default")
+  tags        Json     @default("[]")
+
+  // Template data — full TemplatePack as JSON
+  data Json
+
+  // Metadata
+  isOfficial   Boolean @default(false)
+  thumbnailUrl String?
+  popularity   Int     @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  workspaceId String
+  author      String // User ID or "system"
+
+  @@index([workspaceId])
+}
+
+// ─── ASSETS ──────────────────────────────────────────────
+
+model Asset {
+  id       String    @id @default(cuid())
+  type     AssetType
+  filename String
+  url      String
+  mimeType String
+  sizeBytes Int
+  metadata  Json?
+
+  createdAt DateTime @default(now())
+
+  workspace    Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  workspaceId  String
+  uploadedBy   User      @relation("AssetUploader", fields: [uploadedById], references: [id])
+  uploadedById String
+
+  @@index([workspaceId, type])
+}
+
+enum AssetType {
+  IMAGE
+  VIDEO
+  AUDIO
+  FONT
+  LOGO
+  OTHER
+}
+
+// ─── AI ──────────────────────────────────────────────────
+
+model SystemPrompt {
+  id       String  @id @default(cuid())
+  name     String
+  type     String // "text", "image"
+  content  String
+  isActive Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  workspaceId String
+
+  @@unique([workspaceId, name, type])
+}
+
+model AIPreset {
+  id          String  @id @default(cuid())
+  name        String
+  description String  @default("")
+  type        String // "text", "image"
+  config      Json
+  isActive    Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  workspaceId String
+}
+
+model AISession {
+  id String @id @default(cuid())
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  projectId String
+  user      User    @relation(fields: [userId], references: [id])
+  userId    String
+
+  messages AIMessage[]
+
+  @@index([projectId])
+}
+
+model AIMessage {
+  id        String  @id @default(cuid())
+  role      String // "user", "assistant", "system"
+  content   String
+  type      String // "text", "image", "error"
+  model     String?
+  costUnits Float?
+  metadata  Json?
+
+  createdAt DateTime @default(now())
+
+  session   AISession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  sessionId String
+
+  @@index([sessionId])
+}

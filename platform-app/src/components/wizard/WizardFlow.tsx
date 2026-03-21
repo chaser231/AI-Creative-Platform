@@ -477,9 +477,6 @@ export function WizardFlow({ projectId, onSwitchToStudio }: WizardFlowProps) {
                             </div>
                             <div className="space-y-3">
                                 {(() => {
-                                    // Use canvasStore layers to correctly resolve parent-child relationships
-                                    const canvasLayers = useCanvasStore.getState().layers;
-
                                     const frameMasters = selectedTemplate.masterComponents.filter(
                                         mc => mc.type === "frame" && (mc.props as FrameComponentProps).groupSlotId
                                     );
@@ -489,18 +486,35 @@ export function WizardFlow({ projectId, onSwitchToStudio }: WizardFlowProps) {
                                     for (const frame of frameMasters) {
                                         const frameProps = frame.props as FrameComponentProps;
 
-                                        // Find the runtime frame layer matching this master
-                                        const frameLayer = canvasLayers.find(l => l.type === "frame" && l.masterId === frame.id) as FrameLayer | undefined;
-                                        const childLayerIds = new Set(frameLayer?.childIds || frameProps.childIds || []);
+                                        // Discover child master components based on layerTree
+                                        let childMasterIds = new Set<string>();
+                                        
+                                        if (selectedTemplate.layerTree && selectedTemplate.layerTree.length > 0) {
+                                            const findNode = (nodes: any[], mId: string): any => {
+                                                for (const n of nodes) {
+                                                    if (n.masterId === mId || n.layer?.masterId === mId) return n;
+                                                    if (n.children) {
+                                                        const found = findNode(n.children, mId);
+                                                        if (found) return found;
+                                                    }
+                                                }
+                                                return null;
+                                            };
+                                            const frameNode = findNode(selectedTemplate.layerTree, frame.id);
+                                            if (frameNode && frameNode.children) {
+                                                frameNode.children.forEach((c: any) => {
+                                                    if (c.masterId) childMasterIds.add(c.masterId);
+                                                    if (c.layer?.masterId) childMasterIds.add(c.layer.masterId);
+                                                });
+                                            }
+                                        } else {
+                                            // Fallback for legacy templates without layerTree
+                                            (frameProps.childIds || []).forEach((cid: string) => childMasterIds.add(cid));
+                                        }
 
-                                        // Find text masters that have a corresponding layer inside this frame
                                         const textMembers = selectedTemplate.masterComponents.filter(mc => {
                                             if (mc.type !== "text") return false;
-                                            const isChildByLayer = canvasLayers.some(
-                                                l => l.masterId === mc.id && childLayerIds.has(l.id)
-                                            );
-                                            const isChildBySlot = childLayerIds.has(mc.id) || childLayerIds.has(mc.slotId || "");
-                                            return isChildByLayer || isChildBySlot;
+                                            return childMasterIds.has(mc.id) || (mc.slotId && childMasterIds.has(mc.slotId));
                                         });
 
                                         if (textMembers.length > 0) {

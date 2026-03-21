@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback, useEffect } from "react";
 import Link from "next/link";
-import { Plus, ImageIcon, Type, Camera, Video, Search, HelpCircle, LayoutTemplate, ArrowRight, Star } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { Plus, ImageIcon, Type, Camera, Video, Search, HelpCircle, LayoutTemplate, ArrowRight, Star, Loader2 } from "lucide-react";
 import { AppShell } from "@/components/layout/AppShell";
 import { TopBar } from "@/components/layout/TopBar";
 import { Button } from "@/components/ui/Button";
@@ -10,7 +11,11 @@ import { ProjectCard } from "@/components/dashboard/ProjectCard";
 import { EmptyState } from "@/components/dashboard/EmptyState";
 import { NewProjectModal } from "@/components/dashboard/NewProjectModal";
 import { useProjectStore } from "@/store/projectStore";
+import { useProjectListSync } from "@/hooks/useProjectSync";
 import { useTemplateStore } from "@/store/templateStore";
+import { trpc } from "@/lib/trpc";
+import { useWorkspace } from "@/providers/WorkspaceProvider";
+import { WorkspaceOnboarding } from "@/components/workspace/WorkspaceOnboarding";
 import { getRecommendedPacks } from "@/services/templateCatalogService";
 import type { TemplatePackV2 } from "@/services/templateService";
 
@@ -70,21 +75,25 @@ function RecommendedTemplates() {
 }
 const generationTypes = [
   {
+    id: "banner" as const,
     icon: <ImageIcon size={28} strokeWidth={1.5} />,
     label: "Генерация\nбаннеров",
     gradient: "gradient-card-yellow",
   },
   {
+    id: "text" as const,
     icon: <Type size={28} strokeWidth={1.5} />,
     label: "Генерация\nтекстов",
     gradient: "gradient-card-blue",
   },
   {
+    id: "photo" as const,
     icon: <Camera size={28} strokeWidth={1.5} />,
     label: "Генерация\nфото",
     gradient: "gradient-card-green",
   },
   {
+    id: "video" as const,
     icon: <Video size={28} strokeWidth={1.5} />,
     label: "Генерация\nвидео",
     gradient: "gradient-card-pink",
@@ -92,13 +101,110 @@ const generationTypes = [
 ];
 
 export default function DashboardPage() {
+  const router = useRouter();
   const [modalOpen, setModalOpen] = useState(false);
-  const projects = useProjectStore((s) => s.projects);
+  const [toast, setToast] = useState<string | null>(null);
+  const localProjects = useProjectStore((s) => s.projects);
+  const { projects: backendProjects, isLoading, workspaceId, refetch } = useProjectListSync();
+  const { currentWorkspace, needsOnboarding } = useWorkspace();
+
+  // tRPC mutations for project management
+  const updateMutation = trpc.project.update.useMutation({
+    onSuccess: () => { refetch(); },
+  });
+  const deleteMutation = trpc.project.delete.useMutation({
+    onSuccess: () => { refetch(); },
+  });
+
+  const handleProjectUpdate = useCallback((id: string, data: { name?: string; status?: "DRAFT" | "IN_PROGRESS" | "REVIEW" | "PUBLISHED" | "ARCHIVED" }) => {
+    updateMutation.mutate({ id, ...data });
+  }, [updateMutation]);
+
+  const handleProjectDelete = useCallback((id: string) => {
+    deleteMutation.mutate({ id });
+  }, [deleteMutation]);
+
+  // Favorites
+  const favoritesQuery = trpc.project.listFavorites.useQuery(
+    { workspaceId: workspaceId ?? "" },
+    { enabled: !!workspaceId, refetchOnWindowFocus: false }
+  );
+  const favoriteIds = useMemo(
+    () => new Set((favoritesQuery.data ?? []).map((f: { id: string }) => f.id)),
+    [favoritesQuery.data]
+  );
+  const favoriteMutation = trpc.project.favorite.useMutation({ onSuccess: () => favoritesQuery.refetch() });
+  const unfavoriteMutation = trpc.project.unfavorite.useMutation({ onSuccess: () => favoritesQuery.refetch() });
+
+  const handleFavorite = useCallback((id: string) => {
+    if (favoriteIds.has(id)) {
+      unfavoriteMutation.mutate({ projectId: id });
+    } else {
+      favoriteMutation.mutate({ projectId: id });
+    }
+  }, [favoriteIds, favoriteMutation, unfavoriteMutation]);
+
+  // Create project for photo shortcut
+  const createProjectMutation = trpc.project.create.useMutation({
+    onSuccess: (data) => {
+      router.push(`/editor/${data.id}?panel=ai&tab=image`);
+    },
+  });
+
+  // Tile click handlers
+  const handleTileClick = useCallback((tileId: string) => {
+    switch (tileId) {
+      case "banner":
+        setModalOpen(true);
+        break;
+      case "text":
+      case "video":
+        setToast("В разработке");
+        break;
+      case "photo":
+        if (workspaceId) {
+          createProjectMutation.mutate({
+            name: "Генерация фото",
+            goal: "banner",
+            workspaceId,
+          });
+        }
+        break;
+    }
+  }, [workspaceId, createProjectMutation]);
+
+  // Auto-hide toast
+  useEffect(() => {
+    if (toast) {
+      const t = setTimeout(() => setToast(null), 2500);
+      return () => clearTimeout(t);
+    }
+  }, [toast]);
+
+  // Merge: show local projects + backend projects (deduplicated)
+  const projects = useMemo(() => {
+    const localIds = new Set(localProjects.map(p => p.id));
+    // Backend projects that aren't in local store
+    type BackendProject = { id: string; name: string; status: string; goal: string | null; createdAt: Date; updatedAt: Date; thumbnail: string | null };
+    const backendOnly = ((backendProjects || []) as BackendProject[]).map((bp: BackendProject) => ({
+      id: bp.id,
+      name: bp.name,
+      status: bp.status.toLowerCase() as "draft" | "in-progress" | "review" | "published",
+      goal: (bp.goal || "banner") as "banner" | "text" | "video",
+      businessUnit: "yandex-market" as const,
+      createdAt: new Date(bp.createdAt),
+      updatedAt: new Date(bp.updatedAt),
+      thumbnail: bp.thumbnail ?? undefined,
+      resizes: [],
+      activeResizeId: "master",
+    })).filter((bp: { id: string }) => !localIds.has(bp.id));
+    return [...localProjects, ...backendOnly];
+  }, [localProjects, backendProjects]);
 
   return (
     <AppShell>
       <TopBar
-        breadcrumbs={[{ label: "Yandex Market" }, { label: "Последние проекты" }]}
+        breadcrumbs={[{ label: currentWorkspace?.name || "AI Creative" }, { label: "Мои проекты" }]}
         showBackToProjects={false}
         showHistoryNavigation={true}
         actions={
@@ -119,7 +225,8 @@ export default function DashboardPage() {
           <div className="grid grid-cols-4 gap-4">
             {generationTypes.map((type) => (
               <button
-                key={type.label}
+                key={type.id}
+                onClick={() => handleTileClick(type.id)}
                 className={`flex flex-col items-center justify-center gap-3 p-6 rounded-[var(--radius-2xl)] border border-border-primary ${type.gradient} hover:shadow-[var(--shadow-lg)] hover:border-border-secondary transition-all duration-[var(--transition-base)] cursor-pointer group`}
               >
                 <div className="flex items-center justify-center w-14 h-14 rounded-[var(--radius-xl)] bg-bg-surface/80 text-text-primary group-hover:scale-105 transition-transform shadow-[var(--shadow-sm)]">
@@ -139,7 +246,7 @@ export default function DashboardPage() {
         {/* Projects section */}
         <div className="px-6 pt-8">
           <div className="flex items-center justify-between mb-5">
-            <h1 className="text-3xl text-text-primary">Проекты</h1>
+            <h1 className="text-3xl text-text-primary">Мои проекты</h1>
             <div className="flex items-center gap-3">
               {/* Search */}
               <div className="flex items-center gap-2 px-4 py-2.5 rounded-[var(--radius-full)] bg-bg-surface border border-border-primary text-text-tertiary hover:border-border-secondary transition-colors cursor-pointer">
@@ -156,19 +263,38 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          {projects.length === 0 ? (
+          {isLoading ? (
+            <div className="flex items-center justify-center py-20">
+              <Loader2 size={24} className="animate-spin text-text-tertiary" />
+            </div>
+          ) : projects.length === 0 ? (
             <EmptyState onCreateProject={() => setModalOpen(true)} />
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
               {projects.map((project) => (
-                <ProjectCard key={project.id} project={project} />
+                <ProjectCard
+                  key={project.id}
+                  project={project}
+                  onUpdate={handleProjectUpdate}
+                  onDelete={handleProjectDelete}
+                  onFavorite={handleFavorite}
+                  isFavorite={favoriteIds.has(project.id)}
+                />
               ))}
             </div>
           )}
         </div>
       </div>
 
-      <NewProjectModal open={modalOpen} onClose={() => setModalOpen(false)} />
+      <NewProjectModal open={modalOpen} onClose={() => setModalOpen(false)} workspaceId={workspaceId} />
+      {needsOnboarding && <WorkspaceOnboarding />}
+
+      {/* Toast notification */}
+      {toast && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[100] px-5 py-3 bg-bg-surface border border-border-primary rounded-[var(--radius-xl)] shadow-[var(--shadow-lg)] text-sm text-text-primary animate-in fade-in slide-in-from-bottom-2 duration-200">
+          {toast}
+        </div>
+      )}
     </AppShell>
   );
 }

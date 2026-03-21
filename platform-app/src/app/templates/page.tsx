@@ -13,12 +13,18 @@ import {
     Star,
     Clock,
     Check,
+    Palette,
 } from "lucide-react";
 import { Popover, PopoverButton } from "@/components/ui/Popover";
 import { AppShell } from "@/components/layout/AppShell";
 import { TopBar } from "@/components/layout/TopBar";
 import { Button } from "@/components/ui/Button";
+import { Modal } from "@/components/ui/Modal";
+import { cn } from "@/lib/cn";
 import { useTemplateStore } from "@/store/templateStore";
+import { useTemplateListSync, useTemplatePushSync } from "@/hooks/useTemplateSync";
+import { useCreateProjectSync } from "@/hooks/useProjectSync";
+import { useProjectStore } from "@/store/projectStore";
 import { searchPacks, getAllTags, type CatalogSearchParams } from "@/services/templateCatalogService";
 import type { TemplatePackV2 } from "@/services/templateService";
 import type { BusinessUnit, TemplateCategory, ContentType } from "@/types";
@@ -136,12 +142,18 @@ function PackCard({ pack, onLoad }: { pack: TemplatePackV2; onLoad: (pack: Templ
 export default function TemplateCatalogPage() {
     const router = useRouter();
     const { savedPacks } = useTemplateStore();
+    const { backendTemplates, isLoading: isLoadingBackend } = useTemplateListSync();
+    const { createProject: createOnBackend } = useCreateProjectSync();
+    const addProject = useProjectStore((s) => s.addProject);
+    useTemplatePushSync(); // Auto-push local templates to backend
     const [search, setSearch] = useState("");
     const [selectedBUs, setSelectedBUs] = useState<BusinessUnit[]>([]);
     const [selectedCategories, setSelectedCategories] = useState<TemplateCategory[]>([]);
     const [selectedContentType, setSelectedContentType] = useState<ContentType | null>(null);
     const [sortBy, setSortBy] = useState<"popularity" | "date" | "name">("popularity");
     const [activePopover, setActivePopover] = useState<string | null>(null);
+    const [selectedPackForMode, setSelectedPackForMode] = useState<TemplatePackV2 | null>(null);
+    const [mode, setMode] = useState<"wizard" | "studio">("wizard");
 
     const togglePopover = (name: string) => {
         setActivePopover((prev) => (prev === name ? null : name));
@@ -168,6 +180,13 @@ export default function TemplateCatalogPage() {
 
     const hasFilters = selectedBUs.length > 0 || selectedCategories.length > 0 || selectedContentType !== null || search !== "";
 
+    // Merge local + backend templates, deduplicate by ID
+    const allPacks = useMemo(() => {
+        const localIds = new Set(savedPacks.map(p => p.id));
+        const uniqueBackend = backendTemplates.filter(bt => !localIds.has(bt.id));
+        return [...savedPacks, ...uniqueBackend];
+    }, [savedPacks, backendTemplates]);
+
     // Search results
     const results = useMemo(() => {
         const params: CatalogSearchParams = {
@@ -178,26 +197,52 @@ export default function TemplateCatalogPage() {
             sortBy,
             sortOrder: sortBy === "name" ? "asc" : "desc",
         };
-        return searchPacks(params, savedPacks);
-    }, [search, selectedBUs, selectedCategories, selectedContentType, sortBy, savedPacks]);
+        return searchPacks(params, allPacks);
+    }, [search, selectedBUs, selectedCategories, selectedContentType, sortBy, allPacks]);
 
-    const tags = useMemo(() => getAllTags(savedPacks), [savedPacks]);
+    const tags = useMemo(() => getAllTags(allPacks), [allPacks]);
 
-    const handleLoadPack = async (pack: TemplatePackV2) => {
+    const handleLoadPack = async (pack: TemplatePackV2, selectedMode: "wizard" | "studio") => {
         const { applyTemplatePack } = await import("@/services/templateService");
 
         applyTemplatePack(pack, {
             onSuccess: async () => {
-                // Navigate to editor with the latest project
-                const { useProjectStore } = await import("@/store/projectStore");
-                const store = useProjectStore.getState();
+                // Backend-first project creation
+                try {
+                    const backendProject = await createOnBackend({
+                        name: pack.name,
+                        goal: "banner",
+                    });
+
+                    if (backendProject) {
+                        addProject({
+                            id: backendProject.id,
+                            name: backendProject.name,
+                            businessUnit: pack.businessUnits?.[0] || "other",
+                            goal: "banner",
+                            status: "draft",
+                            createdAt: new Date(backendProject.createdAt),
+                            updatedAt: new Date(backendProject.updatedAt),
+                            resizes: [{ id: "master", name: "Master", width: 1080, height: 1080, label: "1080 × 1080", instancesEnabled: false }],
+                            activeResizeId: "master",
+                        });
+                        router.push(`/editor/${backendProject.id}?mode=${selectedMode}`);
+                        return;
+                    }
+                } catch {
+                    // Fallback to local
+                }
+
+                // Fallback: create locally
+                const { useProjectStore: getProjectStore } = await import("@/store/projectStore");
+                const store = getProjectStore.getState();
                 const project = store.createProject({
                     name: pack.name,
                     businessUnit: pack.businessUnits?.[0] || "other",
                     goal: "banner",
                 });
                 store.setActiveProject(project.id);
-                router.push(`/editor/${project.id}`);
+                router.push(`/editor/${project.id}?mode=${selectedMode}`);
             }
         });
     };
@@ -395,12 +440,72 @@ export default function TemplateCatalogPage() {
                     ) : (
                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                             {results.items.map(pack => (
-                                <PackCard key={pack.id} pack={pack} onLoad={handleLoadPack} />
+                                <PackCard key={pack.id} pack={pack} onLoad={setSelectedPackForMode} />
                             ))}
                         </div>
                     )}
                 </div>
             </div>
+
+            {/* Mode Selection Modal */}
+            <Modal
+                open={!!selectedPackForMode}
+                onClose={() => setSelectedPackForMode(null)}
+                title="Режим работы"
+                maxWidth="max-w-md"
+                footer={
+                    <>
+                        <Button variant="ghost" onClick={() => setSelectedPackForMode(null)}>
+                            Отмена
+                        </Button>
+                        <Button 
+                            onClick={() => {
+                                if (selectedPackForMode) {
+                                    handleLoadPack(selectedPackForMode, mode);
+                                }
+                            }}
+                        >
+                            Продолжить
+                        </Button>
+                    </>
+                }
+            >
+                <div className="space-y-4">
+                    <p className="text-sm text-text-secondary">
+                        Выберите, как вы хотите продолжить работу с шаблоном <strong>{selectedPackForMode?.name}</strong>.
+                    </p>
+                    <div className="grid grid-cols-2 gap-3">
+                        <button
+                            onClick={() => setMode("wizard")}
+                            className={cn(
+                                "flex flex-col items-center gap-2 p-3 rounded-[var(--radius-md)] border text-center transition-all cursor-pointer",
+                                mode === "wizard"
+                                    ? "border-accent-primary bg-bg-tertiary"
+                                    : "border-border-primary hover:border-border-secondary hover:bg-bg-secondary"
+                            )}
+                        >
+                            <span className={cn("transition-colors", mode === "wizard" ? "text-text-primary" : "text-text-tertiary")}>
+                                <LayoutTemplate size={24} />
+                            </span>
+                            <span className="text-xs font-medium text-text-primary">Пошагово</span>
+                        </button>
+                        <button
+                            onClick={() => setMode("studio")}
+                            className={cn(
+                                "flex flex-col items-center gap-2 p-3 rounded-[var(--radius-md)] border text-center transition-all cursor-pointer",
+                                mode === "studio"
+                                    ? "border-accent-primary bg-bg-tertiary"
+                                    : "border-border-primary hover:border-border-secondary hover:bg-bg-secondary"
+                            )}
+                        >
+                            <span className={cn("transition-colors", mode === "studio" ? "text-text-primary" : "text-text-tertiary")}>
+                                <Palette size={24} />
+                            </span>
+                            <span className="text-xs font-medium text-text-primary">Студия</span>
+                        </button>
+                    </div>
+                </div>
+            </Modal>
         </AppShell>
     );
 }

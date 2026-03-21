@@ -1,6 +1,9 @@
 import type { Metadata } from "next";
 import { Plus_Jakarta_Sans } from "next/font/google";
 import { ThemeProvider } from "@/components/providers/ThemeProvider";
+import { TRPCProvider } from "@/components/providers/TRPCProvider";
+import { WorkspaceProvider } from "@/providers/WorkspaceProvider";
+import { SessionProvider } from "next-auth/react";
 import "./globals.css";
 import "./fonts.css";
 
@@ -24,8 +27,15 @@ export default function RootLayout({
   return (
     <html lang="ru" suppressHydrationWarning>
       <body className={`${plusJakarta.variable} font-sans antialiased`}>
-        <ThemeProvider>{children}</ThemeProvider>
+        <SessionProvider>
+          <TRPCProvider>
+            <WorkspaceProvider>
+              <ThemeProvider>{children}</ThemeProvider>
+            </WorkspaceProvider>
+          </TRPCProvider>
+        </SessionProvider>
       </body>
     </html>
   );
 }
+

@@ -1,20 +1,22 @@
 "use client";
 
+import { useState, useRef, useEffect } from "react";
 import { usePathname } from "next/navigation";
 import Link from "next/link";
 import {
     LayoutDashboard,
     FolderKanban,
-    Image,
     Users,
     Settings,
-    Palette,
     ChevronDown,
-    Plus,
     Star,
     LayoutTemplate,
+    Check,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { UserMenu } from "@/components/auth/UserMenu";
+import { useWorkspace } from "@/providers/WorkspaceProvider";
+import { trpc } from "@/lib/trpc";
 
 interface NavItem {
     label: string;
@@ -23,40 +25,96 @@ interface NavItem {
 }
 
 const navItems: NavItem[] = [
-    { label: "Последние проекты", href: "/", icon: <LayoutDashboard size={18} /> },
+    { label: "Мои проекты", href: "/", icon: <LayoutDashboard size={18} /> },
     { label: "Все проекты", href: "/projects", icon: <FolderKanban size={18} /> },
-    { label: "Ассеты", href: "/assets", icon: <Image size={18} /> },
     { label: "Шаблоны", href: "/templates", icon: <LayoutTemplate size={18} /> },
-    { label: "Бренд-кит", href: "/settings/brand-kit", icon: <Palette size={18} /> },
     { label: "Команда", href: "/team", icon: <Users size={18} /> },
-];
-
-const favoriteProjects = [
-    { label: "Баннеры промокод Salton", href: "/editor/salton" },
-    { label: "Фото счастливой семьи", href: "/editor/happy-family" },
-    { label: "Товары для дома", href: "/editor/home-goods" },
 ];
 
 export function Sidebar() {
     const pathname = usePathname();
+    const { workspaces, currentWorkspace, setWorkspaceId } = useWorkspace();
+    const [wsDropdownOpen, setWsDropdownOpen] = useState(false);
+    const dropdownRef = useRef<HTMLDivElement>(null);
+
+    // Fetch favorite projects from DB
+    const favoritesQuery = trpc.project.listFavorites.useQuery(
+        { workspaceId: currentWorkspace?.id ?? "" },
+        {
+            enabled: !!currentWorkspace?.id,
+            refetchOnWindowFocus: false,
+        }
+    );
+    const favorites = favoritesQuery.data ?? [];
+
+    // Close dropdown on outside click
+    useEffect(() => {
+        if (!wsDropdownOpen) return;
+        const handler = (e: MouseEvent) => {
+            if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+                setWsDropdownOpen(false);
+            }
+        };
+        document.addEventListener("mousedown", handler);
+        return () => document.removeEventListener("mousedown", handler);
+    }, [wsDropdownOpen]);
 
     return (
         <aside className="flex flex-col w-[240px] min-w-[240px] h-screen bg-bg-secondary">
-            {/* Logo + New button */}
-            <div className="flex items-center justify-between px-4 h-16">
-                <div className="flex items-center gap-2.5">
-                    <div className="flex items-center justify-center w-9 h-9 rounded-[var(--radius-xl)] bg-gradient-to-br from-orange-400 via-red-400 to-yellow-400">
-                        <span className="text-white text-lg">🔥</span>
+            {/* Workspace Switcher */}
+            <div className="px-3 pt-3 pb-1" ref={dropdownRef}>
+                <button
+                    onClick={() => setWsDropdownOpen(!wsDropdownOpen)}
+                    className="flex items-center justify-between w-full px-3 py-2.5 rounded-[var(--radius-xl)] hover:bg-bg-surface/60 transition-colors cursor-pointer group"
+                >
+                    <div className="flex items-center gap-2.5 min-w-0">
+                        <div className="flex items-center justify-center w-8 h-8 rounded-[var(--radius-lg)] bg-gradient-to-br from-orange-400 via-red-400 to-yellow-400 shrink-0">
+                            <span className="text-white text-sm">🔥</span>
+                        </div>
+                        <div className="min-w-0 text-left">
+                            <p className="text-[13px] font-semibold text-text-primary truncate leading-tight">
+                                {currentWorkspace?.name || "AI Creative"}
+                            </p>
+                            <p className="text-[10px] text-text-tertiary truncate">
+                                Команда
+                            </p>
+                        </div>
                     </div>
-                    <div>
-                        <p className="text-sm font-semibold text-text-primary leading-tight">
-                            AI Creative
-                        </p>
-                    </div>
-                </div>
-                <button className="flex items-center justify-center w-8 h-8 rounded-[var(--radius-lg)] bg-bg-surface border border-border-primary hover:bg-bg-tertiary transition-colors cursor-pointer shadow-[var(--shadow-sm)]">
-                    <Plus size={16} className="text-text-secondary" />
+                    <ChevronDown
+                        size={14}
+                        className={cn(
+                            "text-text-tertiary shrink-0 transition-transform",
+                            wsDropdownOpen && "rotate-180"
+                        )}
+                    />
                 </button>
+
+                {/* Workspace dropdown */}
+                {wsDropdownOpen && (
+                    <div className="mt-1 bg-bg-surface border border-border-primary rounded-[var(--radius-xl)] shadow-[var(--shadow-lg)] py-1 overflow-hidden">
+                        <p className="px-3 py-1.5 text-[10px] font-medium text-text-tertiary uppercase tracking-widest">
+                            Команды
+                        </p>
+                        {workspaces.map((ws) => (
+                            <button
+                                key={ws.id}
+                                onClick={() => {
+                                    setWorkspaceId(ws.id);
+                                    setWsDropdownOpen(false);
+                                }}
+                                className={cn(
+                                    "flex items-center justify-between w-full px-3 py-2 text-xs transition-colors cursor-pointer",
+                                    ws.id === currentWorkspace?.id
+                                        ? "text-accent-primary bg-bg-tertiary font-medium"
+                                        : "text-text-secondary hover:text-text-primary hover:bg-bg-tertiary"
+                                )}
+                            >
+                                <span className="truncate">{ws.name}</span>
+                                {ws.id === currentWorkspace?.id && <Check size={14} />}
+                            </button>
+                        ))}
+                    </div>
+                )}
             </div>
 
             {/* Navigation */}
@@ -86,26 +144,29 @@ export function Sidebar() {
                     );
                 })}
 
-                {/* Favorites section */}
-                <div className="pt-4">
-                    <p className="px-3 text-[10px] font-medium text-text-tertiary uppercase tracking-widest mb-2">
-                        Избранные проекты
-                    </p>
-                    {favoriteProjects.map((project) => (
-                        <Link
-                            key={project.href}
-                            href={project.href}
-                            className="flex items-center gap-2.5 px-3 py-1.5 rounded-[var(--radius-lg)] text-[13px] text-text-secondary hover:text-text-primary hover:bg-bg-surface/60 transition-all duration-[var(--transition-fast)]"
-                        >
-                            <Star size={14} className="text-text-tertiary shrink-0" />
-                            <span className="truncate">{project.label}</span>
-                        </Link>
-                    ))}
-                </div>
+                {/* Favorites section — real data from DB */}
+                {favorites.length > 0 && (
+                    <div className="pt-4">
+                        <p className="px-3 text-[10px] font-medium text-text-tertiary uppercase tracking-widest mb-2">
+                            Избранные проекты
+                        </p>
+                        {favorites.map((project) => (
+                            <Link
+                                key={project.id}
+                                href={`/editor/${project.id}`}
+                                className="flex items-center gap-2.5 px-3 py-1.5 rounded-[var(--radius-lg)] text-[13px] text-text-secondary hover:text-text-primary hover:bg-bg-surface/60 transition-all duration-[var(--transition-fast)]"
+                            >
+                                <Star size={14} className="text-amber-400 shrink-0 fill-amber-400" />
+                                <span className="truncate">{project.name}</span>
+                            </Link>
+                        ))}
+                    </div>
+                )}
             </nav>
 
             {/* Footer */}
-            <div className="px-3 py-3 border-t border-border-primary">
+            <div className="px-3 py-3 border-t border-border-primary space-y-1">
+                <UserMenu />
                 <Link
                     href="/settings"
                     className="flex items-center gap-2.5 px-3 py-2 rounded-[var(--radius-xl)] text-[13px] text-text-secondary hover:text-text-primary hover:bg-bg-surface/60 transition-all"

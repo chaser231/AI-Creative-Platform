@@ -29,7 +29,9 @@ const statusConfig: Record<BadgeStatus, { label: string; classes: string }> = {
 };
 
 export function Badge({ status, className }: BadgeProps) {
-    const config = statusConfig[status];
+    // Normalize: DB may return "DRAFT", "IN_PROGRESS" etc.
+    const normalized = status.toLowerCase().replace(/_/g, "-") as BadgeStatus;
+    const config = statusConfig[normalized] ?? statusConfig.draft;
     return (
         <span
             className={cn(

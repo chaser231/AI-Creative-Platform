@@ -15,6 +15,8 @@ interface ProjectStore {
         businessUnit: BusinessUnit;
         goal: ProjectGoal;
     }) => Project;
+    /** Add an existing project (e.g. from backend) with a pre-set ID */
+    addProject: (project: Project) => void;
     deleteProject: (id: string) => void;
     setActiveProject: (id: string | null) => void;
     updateProjectStatus: (id: string, status: Project["status"]) => void;
@@ -39,6 +41,14 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         };
         set((state) => ({ projects: [...state.projects, project] }));
         return project;
+    },
+
+    addProject: (project) => {
+        set((state) => {
+            // Skip if already exists
+            if (state.projects.some((p) => p.id === project.id)) return state;
+            return { projects: [...state.projects, project] };
+        });
     },
 
     deleteProject: (id) => {

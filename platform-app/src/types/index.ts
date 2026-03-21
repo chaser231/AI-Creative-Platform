@@ -90,6 +90,7 @@ export interface BaseComponentProps {
     layoutSizingWidth?: "fixed" | "fill" | "hug";
     layoutSizingHeight?: "fixed" | "fill" | "hug";
     isAbsolutePositioned?: boolean;
+    detachedSizeSync?: boolean;
 }
 
 export interface TextComponentProps extends BaseComponentProps {
@@ -261,6 +262,7 @@ export interface BaseLayer {
     layoutSizingWidth?: "fixed" | "fill" | "hug";
     layoutSizingHeight?: "fixed" | "fill" | "hug";
     isAbsolutePositioned?: boolean;
+    detachedSizeSync?: boolean;
 }
 
 export interface TextLayer extends BaseLayer {

@@ -28,6 +28,8 @@ import {
     RotateCw,
     Anchor,
     LayoutDashboard,
+    Link,
+    Unlink,
 } from "lucide-react";
 import { Popover, PopoverButton } from "@/components/ui/Popover";
 import { useState, useRef, useEffect } from "react";
@@ -177,6 +179,20 @@ export function PropertiesPanel() {
                                     className="w-full h-8 px-2 rounded-[var(--radius-md)] border border-border-primary bg-bg-secondary text-[11px] text-text-primary text-center focus:outline-none focus:ring-1 focus:ring-border-focus" />
                             </div>
                         </div>
+                        
+                        {/* Size Sync Toggle (only for instances) */}
+                        {activeResizeId !== "master" && selectedLayer.masterId && selectedLayer.type === "image" && (
+                            <div className="mt-2 flex items-center justify-between bg-bg-secondary p-2 rounded-[var(--radius-md)] border border-border-primary">
+                                <span className="text-[10px] text-text-secondary">Привязка размера к мастеру</span>
+                                <button
+                                    onClick={() => updateLayer(selectedLayer.id, { detachedSizeSync: !selectedLayer.detachedSizeSync })}
+                                    className={`p-1 rounded-[var(--radius-sm)] transition-colors ${!selectedLayer.detachedSizeSync ? 'bg-accent-primary/20 text-accent-primary' : 'bg-bg-tertiary text-text-tertiary hover:bg-bg-tertiary/80 hover:text-text-primary'}`}
+                                    title={!selectedLayer.detachedSizeSync ? "Размер синхронизируется" : "Размер отвязан. Ширина и высота этого слоя больше не будут меняться при изменении мастера."}
+                                >
+                                    {!selectedLayer.detachedSizeSync ? <Link size={12} /> : <Unlink size={12} />}
+                                </button>
+                            </div>
+                        )}
 
                         {/* Auto-Layout Child Sizing (if applicable) */}
                         {(() => {
