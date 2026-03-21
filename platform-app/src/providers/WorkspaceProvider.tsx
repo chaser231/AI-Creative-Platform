@@ -5,6 +5,7 @@
  *
  * React Context for the currently selected workspace.
  * Persists selection in localStorage. Used across dashboard, sidebar, etc.
+ * Provides currentRole and isAdmin for RBAC-aware UI.
  */
 
 import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from "react";
@@ -31,6 +32,10 @@ interface WorkspaceContextValue {
   needsOnboarding: boolean;
   /** Refetch workspace list (after join/leave) */
   refetch: () => void;
+  /** Current user's role in the active workspace */
+  currentRole: string | null;
+  /** Shortcut: is the current user an admin? */
+  isAdmin: boolean;
 }
 
 const WorkspaceContext = createContext<WorkspaceContextValue>({
@@ -40,6 +45,8 @@ const WorkspaceContext = createContext<WorkspaceContextValue>({
   isLoading: true,
   needsOnboarding: false,
   refetch: () => {},
+  currentRole: null,
+  isAdmin: false,
 });
 
 const LS_KEY = "acp_workspace_id";
@@ -65,6 +72,10 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     workspaces.find((ws) => ws.id === selectedId) ??
     workspaces[0] ??
     null;
+
+  // Derived role info
+  const currentRole = currentWorkspace?.role ?? null;
+  const isAdmin = currentRole === "ADMIN";
 
   // If selectedId doesn't match any workspace, auto-select first
   useEffect(() => {
@@ -96,6 +107,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         isLoading: workspaceQuery.isLoading,
         needsOnboarding,
         refetch,
+        currentRole,
+        isAdmin,
       }}
     >
       {children}

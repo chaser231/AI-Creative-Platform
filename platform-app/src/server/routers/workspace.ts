@@ -1,12 +1,59 @@
 /**
  * Workspace Router
  *
- * CRUD operations for workspaces, membership management, and brand identity.
+ * CRUD operations for workspaces, membership management, brand identity,
+ * and RBAC (Role-Based Access Control).
  */
 
 import { z } from "zod";
-import { createTRPCRouter, protectedProcedure } from "../trpc";
+import { createTRPCRouter, protectedProcedure, publicProcedure } from "../trpc";
 import { TRPCError } from "@trpc/server";
+
+// ─── RBAC HELPERS ────────────────────────────────────────
+
+/** Role hierarchy: higher index = higher privilege */
+const ROLE_HIERARCHY = ["VIEWER", "USER", "CREATOR", "ADMIN"] as const;
+type Role = (typeof ROLE_HIERARCHY)[number];
+
+function roleIndex(role: string): number {
+  return ROLE_HIERARCHY.indexOf(role as Role);
+}
+
+/**
+ * Check that the current user has at least `minRole` in the given workspace.
+ * Returns the membership record.
+ * Throws FORBIDDEN if insufficient role or NOT a member.
+ */
+async function requireRole(
+  prisma: any,
+  userId: string,
+  workspaceId: string,
+  minRole: Role
+) {
+  const membership = await prisma.workspaceMember.findUnique({
+    where: {
+      userId_workspaceId: { userId, workspaceId },
+    },
+  });
+
+  if (!membership) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "Вы не являетесь участником этого воркспейса",
+    });
+  }
+
+  if (roleIndex(membership.role) < roleIndex(minRole)) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: `Требуется роль ${minRole} или выше`,
+    });
+  }
+
+  return membership;
+}
+
+// ─── ROUTER ──────────────────────────────────────────────
 
 export const workspaceRouter = createTRPCRouter({
   /** List workspaces the current user is a member of */
@@ -19,7 +66,7 @@ export const workspaceRouter = createTRPCRouter({
       orderBy: { workspace: { name: "asc" } },
     });
 
-    return memberships.map((m) => ({
+    return memberships.map((m: { workspace: any; role: string }) => ({
       ...m.workspace,
       role: m.role,
     }));
@@ -43,9 +90,9 @@ export const workspaceRouter = createTRPCRouter({
       where: { userId: ctx.user.id },
       select: { workspaceId: true },
     });
-    const joinedIds = new Set(memberships.map((m) => m.workspaceId));
+    const joinedIds = new Set(memberships.map((m: { workspaceId: string }) => m.workspaceId));
 
-    return workspaces.map((ws) => ({
+    return workspaces.map((ws: any) => ({
       ...ws,
       memberCount: ws._count.members,
       projectCount: ws._count.projects,
@@ -174,7 +221,7 @@ export const workspaceRouter = createTRPCRouter({
       return workspace;
     }),
 
-  /** Update brand identity (colors, fonts, TOV, logo) */
+  /** Update brand identity (colors, fonts, TOV, logo) — ADMIN only */
   updateBrandIdentity: protectedProcedure
     .input(
       z.object({
@@ -186,22 +233,7 @@ export const workspaceRouter = createTRPCRouter({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      // Check admin role
-      const membership = await ctx.prisma.workspaceMember.findUnique({
-        where: {
-          userId_workspaceId: {
-            userId: ctx.user.id,
-            workspaceId: input.workspaceId,
-          },
-        },
-      });
-
-      if (!membership || membership.role !== "ADMIN") {
-        throw new TRPCError({
-          code: "FORBIDDEN",
-          message: "Only workspace admins can update brand identity",
-        });
-      }
+      await requireRole(ctx.prisma, ctx.user.id, input.workspaceId, "ADMIN");
 
       const { workspaceId, ...data } = input;
       const workspace = await ctx.prisma.workspace.update({
@@ -216,6 +248,9 @@ export const workspaceRouter = createTRPCRouter({
   listMembers: protectedProcedure
     .input(z.object({ workspaceId: z.string() }))
     .query(async ({ ctx, input }) => {
+      // Any member can view the team
+      await requireRole(ctx.prisma, ctx.user.id, input.workspaceId, "VIEWER");
+
       const members = await ctx.prisma.workspaceMember.findMany({
         where: { workspaceId: input.workspaceId },
         include: {
@@ -232,5 +267,101 @@ export const workspaceRouter = createTRPCRouter({
       });
 
       return members;
+    }),
+
+  /** Update a member's role — ADMIN only */
+  updateMemberRole: protectedProcedure
+    .input(
+      z.object({
+        workspaceId: z.string(),
+        memberId: z.string(),
+        role: z.enum(["ADMIN", "CREATOR", "USER", "VIEWER"]),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      await requireRole(ctx.prisma, ctx.user.id, input.workspaceId, "ADMIN");
+
+      // Prevent self-demotion (so there's always at least one admin)
+      const target = await ctx.prisma.workspaceMember.findUnique({
+        where: { id: input.memberId },
+      });
+
+      if (!target || target.workspaceId !== input.workspaceId) {
+        throw new TRPCError({ code: "NOT_FOUND" });
+      }
+
+      if (target.userId === ctx.user.id && input.role !== "ADMIN") {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Нельзя понизить свою собственную роль",
+        });
+      }
+
+      await ctx.prisma.workspaceMember.update({
+        where: { id: input.memberId },
+        data: { role: input.role },
+      });
+
+      return { success: true };
+    }),
+
+  /** Remove a member from workspace — ADMIN only */
+  removeMember: protectedProcedure
+    .input(
+      z.object({
+        workspaceId: z.string(),
+        memberId: z.string(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      await requireRole(ctx.prisma, ctx.user.id, input.workspaceId, "ADMIN");
+
+      const target = await ctx.prisma.workspaceMember.findUnique({
+        where: { id: input.memberId },
+      });
+
+      if (!target || target.workspaceId !== input.workspaceId) {
+        throw new TRPCError({ code: "NOT_FOUND" });
+      }
+
+      // Can't remove yourself
+      if (target.userId === ctx.user.id) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Нельзя удалить самого себя. Используйте «Покинуть команду»",
+        });
+      }
+
+      await ctx.prisma.workspaceMember.delete({
+        where: { id: input.memberId },
+      });
+
+      return { success: true };
+    }),
+
+  /** Get public workspace info for invite page (no auth required) */
+  getInviteInfo: publicProcedure
+    .input(z.object({ slug: z.string() }))
+    .query(async ({ ctx, input }) => {
+      const workspace = await ctx.prisma.workspace.findUnique({
+        where: { slug: input.slug },
+        select: {
+          id: true,
+          name: true,
+          slug: true,
+          businessUnit: true,
+          _count: { select: { members: true, projects: true } },
+        },
+      });
+
+      if (!workspace) {
+        throw new TRPCError({ code: "NOT_FOUND" });
+      }
+
+      return {
+        ...workspace,
+        memberCount: workspace._count.members,
+        projectCount: workspace._count.projects,
+      };
     }),
 });
