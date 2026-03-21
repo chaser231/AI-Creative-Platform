@@ -53,8 +53,10 @@ export default function EditorPage({ params }: EditorPageProps) {
     const updateProject = useProjectStore((s) => s.updateProject);
     const { editorMode, setEditorMode, undo, redo, history, future, artboardProps, updateArtboardProps } = useCanvasStore();
     useKeyboardShortcuts();
-    const { isSaving } = useCanvasAutoSave(id);
-    useLoadCanvasState(id);
+    // IMPORTANT: Load canvas state FIRST, then enable auto-save AFTER load completes.
+    // This prevents the canvas-clear-on-mount from triggering an empty save.
+    const { isLoaded: canvasLoaded } = useLoadCanvasState(id);
+    const { isSaving } = useCanvasAutoSave(id, canvasLoaded);
     const searchParams = useSearchParams();
 
     // Set editor mode from URL query parameters

@@ -63,13 +63,22 @@ export function useProjectListSync() {
 /**
  * Hook to auto-save canvas state to the backend.
  * Use in the editor page.
+ *
+ * @param projectId - CUID of the project
+ * @param enabled   - Set to true only AFTER the initial canvas load completes.
+ *                    This prevents the clear-on-mount from triggering an empty save.
  */
-export function useCanvasAutoSave(projectId: string) {
+export function useCanvasAutoSave(projectId: string, enabled: boolean = true) {
   const saveStateMutation = trpc.project.saveState.useMutation();
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
   const lastSavedRef = useRef<string>("");
+  const enabledRef = useRef(enabled);
+  enabledRef.current = enabled;
 
   const saveNow = useCallback(() => {
+    // Guard: don't save until initial load is complete
+    if (!enabledRef.current) return;
+
     const store = useCanvasStore.getState();
 
     // Serialize current canvas state
@@ -101,6 +110,9 @@ export function useCanvasAutoSave(projectId: string) {
 
   // Subscribe to canvas store changes and debounce saves
   useEffect(() => {
+    // Don't subscribe until enabled
+    if (!enabled) return;
+
     const unsubscribe = useCanvasStore.subscribe(() => {
       if (timeoutRef.current) {
         clearTimeout(timeoutRef.current);
@@ -114,7 +126,7 @@ export function useCanvasAutoSave(projectId: string) {
         clearTimeout(timeoutRef.current);
       }
     };
-  }, [saveNow]);
+  }, [saveNow, enabled]);
 
   // Save on unmount (leaving editor)
   useEffect(() => {
@@ -135,6 +147,9 @@ export function useCanvasAutoSave(projectId: string) {
  * Restores the full canvas state into canvasStore.
  * IMPORTANT: Always clears canvas on mount to prevent stale data
  * from a previous project (canvasStore is a global singleton).
+ *
+ * Returns `isLoaded` which is true once the initial load attempt completes
+ * (success, error, or empty). Use this to gate auto-save.
  */
 export function useLoadCanvasState(projectId: string) {
   // Clear canvas immediately on mount — before any render.
@@ -184,6 +199,8 @@ export function useLoadCanvasState(projectId: string) {
   return {
     isLoading: canvasQuery.isLoading,
     isError: canvasQuery.isError,
+    // True once the query has completed (success or error)
+    isLoaded: canvasQuery.isFetched,
   };
 }
 
