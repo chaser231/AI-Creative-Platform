@@ -65,6 +65,7 @@ export function ProjectContextMenu({
     return (
         <div
             ref={menuRef}
+            onClick={(e) => e.stopPropagation()}
             className={`absolute z-50 top-full mt-1 ${align === "right" ? "right-0" : "left-0"} w-48 bg-bg-surface border border-border-primary rounded-[var(--radius-lg)] shadow-[var(--shadow-lg)] py-1 animate-in fade-in slide-in-from-top-1 duration-150`}
         >
             {/* Rename */}

@@ -3,7 +3,7 @@
 import { useRef, useState, use, useEffect, useCallback } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
-import { Download, Share2, Wand2, PenTool, Copy, Check, HelpCircle, Settings, History } from "lucide-react";
+import { Download, Share2, Wand2, PenTool, Copy, Check, HelpCircle, Settings, History, AlertTriangle } from "lucide-react";
 import { TopBar } from "@/components/layout/TopBar";
 import { Button } from "@/components/ui/Button";
 import { Dialog } from "@/components/ui/Dialog";
@@ -90,13 +90,14 @@ export default function EditorPage({ params }: EditorPageProps) {
 
     // Status dropdown
     const [statusDropdownOpen, setStatusDropdownOpen] = useState(false);
+    const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
     // Update mutation
     const updateMutation = trpc.project.update.useMutation({
         onSuccess: () => { projectQuery.refetch(); },
     });
     const deleteMutation = trpc.project.delete.useMutation({
-        onSuccess: () => { router.push("/"); },
+        onSuccess: () => { window.location.href = "/"; },
     });
 
     useEffect(() => {
@@ -199,10 +200,8 @@ export default function EditorPage({ params }: EditorPageProps) {
                                         <div className="my-1 border-t border-border-primary" />
                                         <button
                                             onClick={() => {
-                                                if (confirm(`Удалить проект «${projectName}»? Это действие необратимо.`)) {
-                                                    deleteMutation.mutate({ id });
-                                                }
                                                 setStatusDropdownOpen(false);
+                                                setShowDeleteConfirm(true);
                                             }}
                                             className="w-full px-3 py-1.5 text-xs text-left text-red-400 hover:text-red-300 hover:bg-red-500/10 cursor-pointer transition-colors"
                                         >
@@ -507,6 +506,48 @@ export default function EditorPage({ params }: EditorPageProps) {
                     window.location.reload();
                 }}
             />
+
+            {/* Delete confirmation dialog */}
+            {showDeleteConfirm && (
+                <div
+                    className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50"
+                    onClick={() => setShowDeleteConfirm(false)}
+                >
+                    <div
+                        className="bg-bg-surface border border-border-primary rounded-[var(--radius-xl)] p-6 max-w-sm w-full mx-4 shadow-[var(--shadow-lg)]"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <div className="flex items-center gap-3 mb-4">
+                            <div className="p-2 rounded-[var(--radius-lg)] bg-red-500/10">
+                                <AlertTriangle size={20} className="text-red-400" />
+                            </div>
+                            <div>
+                                <h3 className="text-sm font-semibold text-text-primary">Удалить проект?</h3>
+                                <p className="text-xs text-text-tertiary mt-0.5">
+                                    «{projectName}» будет удалён безвозвратно
+                                </p>
+                            </div>
+                        </div>
+                        <div className="flex justify-end gap-2">
+                            <button
+                                onClick={() => setShowDeleteConfirm(false)}
+                                className="px-4 py-2 text-xs font-medium text-text-secondary hover:text-text-primary bg-bg-tertiary rounded-[var(--radius-md)] transition-colors cursor-pointer"
+                            >
+                                Отмена
+                            </button>
+                            <button
+                                onClick={() => {
+                                    deleteMutation.mutate({ id });
+                                    setShowDeleteConfirm(false);
+                                }}
+                                className="px-4 py-2 text-xs font-medium text-white bg-red-500 hover:bg-red-600 rounded-[var(--radius-md)] transition-colors cursor-pointer"
+                            >
+                                Удалить
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }
