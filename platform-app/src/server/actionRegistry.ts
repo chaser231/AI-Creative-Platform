@@ -33,9 +33,15 @@ export interface ActionContext {
   prisma: any;
 }
 
+export interface FallbackAction {
+  id: string;
+  label: string;
+  icon: string;
+}
+
 export interface ActionResult {
   success: boolean;
-  type: "text" | "image" | "data" | "error" | "canvas_action" | "template_choices";
+  type: "text" | "image" | "data" | "error" | "canvas_action" | "template_choices" | "fallback_actions";
   content: string;
   metadata?: Record<string, unknown>;
   /** Instructions for the client-side canvas */
@@ -47,6 +53,8 @@ export interface ActionResult {
     description: string;
     thumbnailUrl?: string;
   }>;
+  /** Fallback actions when templates not found */
+  fallbackActions?: FallbackAction[];
 }
 
 /** Instruction for the client to execute on the canvas */
@@ -85,6 +93,7 @@ export const ACTIONS: ActionDefinition[] = [
     parameters: {
       subject: { type: "string", description: "Что изобразить (продукт, сцена, фон)" },
       style: { type: "string", description: "Стиль: photo, illustration, 3d, flat, gradient", enum: ["photo", "illustration", "3d", "flat", "gradient"] },
+      model: { type: "string", description: "Модель для генерации (по умолчанию flux-schnell). Варианты: flux-schnell, flux-dev, flux-1.1-pro, flux-2-pro, dall-e-3, nano-banana, seedream" },
     },
     required: ["subject"],
   },

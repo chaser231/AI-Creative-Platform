@@ -17,13 +17,13 @@ import { trpc } from "@/lib/trpc";
 import { useWorkspace } from "@/providers/WorkspaceProvider";
 import {
     Copy, Plus, X, Send, Loader2, Bot, User, Sparkles,
-    CheckCircle, AlertCircle, ChevronRight, Zap, LayoutTemplate
+    CheckCircle, AlertCircle, ChevronRight, Zap, LayoutTemplate, Search
 } from "lucide-react";
 
 export interface AIChatMessage {
     id: string;
     role: "user" | "assistant";
-    type: "text" | "image" | "outpaint" | "plan" | "error" | "template_choices";
+    type: "text" | "image" | "outpaint" | "plan" | "error" | "template_choices" | "fallback_actions";
     content: string;
     prompt?: string;
     timestamp: number;
@@ -43,6 +43,12 @@ export interface AIChatMessage {
     }>;
     /** Original topic for template application */
     templateTopic?: string;
+    /** Fallback action buttons */
+    fallbackActions?: Array<{
+        id: string;
+        label: string;
+        icon: string;
+    }>;
 }
 
 interface AIChatPanelProps {
@@ -196,6 +202,16 @@ export function AIChatPanel({ open, onClose, messages, onAddMessages, projectId 
                                 templateChoices: step.result.templateChoices,
                                 templateTopic: trimmed, // save original request as topic
                             });
+                        } else if (step.result.type === "fallback_actions" && step.result.fallbackActions) {
+                            newMessages.push({
+                                id: `fallback-${Date.now()}`,
+                                role: "assistant",
+                                type: "fallback_actions",
+                                content: step.result.content,
+                                timestamp: Date.now(),
+                                fallbackActions: step.result.fallbackActions,
+                                templateTopic: trimmed,
+                            });
                         } else {
                             newMessages.push({
                                 id: `result-${step.actionId}-${Date.now()}-${Math.random()}`,
@@ -238,6 +254,21 @@ export function AIChatPanel({ open, onClose, messages, onAddMessages, projectId 
         if (e.key === "Enter" && !e.shiftKey) {
             e.preventDefault();
             handleSend();
+        }
+    };
+
+    // Handle fallback action buttons (when no templates found)
+    const handleFallbackAction = (actionId: string, topic: string) => {
+        if (isThinking || !currentWorkspace) return;
+
+        if (actionId === "create_from_scratch") {
+            // Send a request to create banner without templates
+            setInput(`Создай баннер с нуля для: ${topic}`);
+            setTimeout(() => handleSend(), 50);
+        } else if (actionId === "refine_query") {
+            // Focus input for user to type a refined query
+            setInput("");
+            inputRef.current?.focus();
         }
     };
 
@@ -391,6 +422,7 @@ export function AIChatPanel({ open, onClose, messages, onAddMessages, projectId 
                             msg={msg}
                             onAddToCanvas={() => handleAddToCanvas(msg)}
                             onTemplateSelect={handleTemplateSelect}
+                            onFallbackAction={handleFallbackAction}
                             isThinking={isThinking}
                         />
                     ))
@@ -449,11 +481,13 @@ function MessageBubble({
     msg,
     onAddToCanvas,
     onTemplateSelect,
+    onFallbackAction,
     isThinking,
 }: {
     msg: AIChatMessage;
     onAddToCanvas: () => void;
     onTemplateSelect?: (templateId: string, templateName: string, topic: string) => void;
+    onFallbackAction?: (actionId: string, topic: string) => void;
     isThinking?: boolean;
 }) {
     if (msg.role === "user") {
@@ -538,6 +572,37 @@ function MessageBubble({
                                 {tpl.description && (
                                     <p className="text-[10px] text-text-tertiary mt-0.5 line-clamp-2">{tpl.description}</p>
                                 )}
+                            </button>
+                        ))}
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    // Fallback actions — no templates found, show alternatives
+    if (msg.type === "fallback_actions" && msg.fallbackActions) {
+        const iconMap: Record<string, React.ReactNode> = {
+            plus: <Plus size={14} className="text-violet-400" />,
+            search: <Search size={14} className="text-blue-400" />,
+        };
+        return (
+            <div className="flex items-start gap-2">
+                <div className="w-7 h-7 rounded-full bg-gradient-to-br from-amber-500/20 to-orange-500/20 flex items-center justify-center shrink-0">
+                    <AlertCircle size={14} className="text-amber-400" />
+                </div>
+                <div className="flex-1 space-y-2 min-w-0">
+                    <p className="text-xs text-text-secondary">{msg.content}</p>
+                    <div className="flex gap-2">
+                        {msg.fallbackActions.map((action) => (
+                            <button
+                                key={action.id}
+                                onClick={() => onFallbackAction?.(action.id, msg.templateTopic || "")}
+                                disabled={isThinking}
+                                className="flex items-center gap-1.5 text-xs font-medium px-3 py-2 rounded-xl border border-border-primary hover:border-violet-500/30 bg-bg-tertiary/50 hover:bg-violet-500/10 transition-all cursor-pointer disabled:opacity-50"
+                            >
+                                {iconMap[action.icon] || <ChevronRight size={14} />}
+                                {action.label}
                             </button>
                         ))}
                     </div>

@@ -10,7 +10,7 @@
  */
 
 import { actionsToOpenAITools, ACTIONS } from "./actionRegistry";
-import type { ActionResult, ActionContext, CanvasInstruction } from "./actionRegistry";
+import type { ActionResult, ActionContext, CanvasInstruction, FallbackAction } from "./actionRegistry";
 
 // ─── Types ───────────────────────────────────────────────
 
@@ -145,15 +145,16 @@ RULES:
         { role: "user", content: `Generate prompt for: ${subject}, style: ${style}` },
       ]);
 
-      // Call Replicate via our provider layer
+      // Call AI provider (use specified model or default to flux-schnell)
+      const selectedModel = (params.model as string) || "flux-schnell";
       const { getProvider: getAIProvider } = await import("@/lib/ai-providers");
-      const imageProvider = getAIProvider("flux-schnell");
+      const imageProvider = getAIProvider(selectedModel);
 
       try {
         const aiResult = await imageProvider.generate({
           prompt: imagePrompt.trim(),
           type: "image",
-          model: "flux-schnell",
+          model: selectedModel,
         });
 
         return {
@@ -291,9 +292,13 @@ RULES:
 
       if (templates.length === 0) {
         return {
-          success: false,
-          type: "error",
-          content: `Шаблоны для «${service}» не найдены. Попробуйте другой запрос.`,
+          success: true,
+          type: "fallback_actions",
+          content: `Шаблоны для «${service}» не найдены в библиотеке. Что хотите сделать?`,
+          fallbackActions: [
+            { id: "create_from_scratch", label: "Создать баннер с нуля", icon: "plus" },
+            { id: "refine_query", label: "Уточнить запрос", icon: "search" },
+          ],
         };
       }
 
