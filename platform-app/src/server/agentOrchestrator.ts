@@ -323,6 +323,7 @@ RULES:
     case "apply_and_fill_template": {
       const templateId = params.templateId as string;
       const topic = params.topic as string;
+      const imageModel = (params.imageModel as string) || "flux-schnell";
 
       // Fetch the full template
       const template = await context.prisma.template.findUnique({
@@ -466,11 +467,11 @@ RULES:
             ]);
             try {
               const { getProvider: getAIProvider } = await import("@/lib/ai-providers");
-              const imgProvider = getAIProvider("flux-schnell");
+              const imgProvider = getAIProvider(imageModel);
               const imgResult = await imgProvider.generate({
                 prompt: imagePrompt.trim(),
                 type: "image",
-                model: "flux-schnell",
+                model: imageModel,
               });
               canvasActions.push({
                 action: "update_layer",
@@ -536,11 +537,11 @@ RULES:
           ]);
           try {
             const { getProvider: getAIProvider } = await import("@/lib/ai-providers");
-            const imgProvider = getAIProvider("flux-schnell");
+            const imgProvider = getAIProvider(imageModel);
             const imgResult = await imgProvider.generate({
               prompt: imagePrompt.trim(),
               type: "image",
-              model: "flux-schnell",
+              model: imageModel,
             });
             canvasActions.push({
               action: "update_layer",

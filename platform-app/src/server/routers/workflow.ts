@@ -175,12 +175,17 @@ export const workflowRouter = createTRPCRouter({
         templateId: z.string(),
         topic: z.string(),
         workspaceId: z.string(),
+        selectedImageModel: z.string().optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
       const result = await executeAction(
         "apply_and_fill_template",
-        { templateId: input.templateId, topic: input.topic },
+        {
+          templateId: input.templateId,
+          topic: input.topic,
+          ...(input.selectedImageModel ? { imageModel: input.selectedImageModel } : {}),
+        },
         {
           userId: ctx.user.id,
           workspaceId: input.workspaceId,
@@ -202,6 +207,7 @@ export const workflowRouter = createTRPCRouter({
         textResponse: result.content,
         provider: "direct" as const,
         canvasActions: result.canvasActions || [],
+        metadata: result.metadata || null,
       };
     }),
 });

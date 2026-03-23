@@ -375,6 +375,7 @@ export function AIChatPanel({ open, onClose, messages, onAddMessages, projectId 
             templateId,
             topic,
             workspaceId: currentWorkspace.id,
+            selectedImageModel: selectedImageModel !== "auto" ? selectedImageModel : undefined,
         }).then(async (result) => {
             // Execute canvas actions
             if (result.canvasActions && result.canvasActions.length > 0) {
@@ -427,7 +428,21 @@ export function AIChatPanel({ open, onClose, messages, onAddMessages, projectId 
                             : undefined,
                     })),
                 });
-            } else if (result.textResponse) {
+            }
+
+            // Check for text variants (Market templates)
+            const variants = (result.metadata as any)?.textVariants;
+            if (variants && Array.isArray(variants) && variants.length > 1) {
+                newMessages.push({
+                    id: `variants-${Date.now()}`,
+                    role: "assistant",
+                    type: "text_variants",
+                    content: result.textResponse,
+                    timestamp: Date.now(),
+                    textVariants: variants,
+                    activeVariantIndex: 0,
+                });
+            } else if (!result.plan.steps.length && result.textResponse) {
                 newMessages.push({
                     id: `response-${Date.now()}`,
                     role: "assistant",
@@ -436,6 +451,7 @@ export function AIChatPanel({ open, onClose, messages, onAddMessages, projectId 
                     timestamp: Date.now(),
                 });
             }
+
             onAddMessages?.(newMessages);
         }).catch((e) => {
             onAddMessages?.([{
