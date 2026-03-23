@@ -333,3 +333,17 @@ model AIMessage {
 
   @@index([sessionId])
 }
+
+// ─── PLATFORM EVENTS (Analytics Foundation) ──────────────
+model PlatformEvent {
+  id          String   @id @default(cuid())
+  type        String   // "project_created", "template_applied", "ai_generation", "user_login", etc.
+  userId      String?
+  workspaceId String?
+  metadata    Json?    // arbitrary event data
+  createdAt   DateTime @default(now())
+
+  @@index([type, createdAt])
+  @@index([userId])
+  @@index([workspaceId])
+}

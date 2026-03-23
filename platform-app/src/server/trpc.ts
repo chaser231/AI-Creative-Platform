@@ -105,3 +105,20 @@ export const protectedProcedure = t.procedure.use(async ({ ctx, next }) => {
     },
   });
 });
+
+/** Super-admin procedure — requires SUPER_ADMIN global role */
+export const superAdminProcedure = protectedProcedure.use(async ({ ctx, next }) => {
+  const dbUser = await prisma.user.findUnique({
+    where: { id: ctx.user.id },
+    select: { role: true },
+  });
+
+  if (!dbUser || dbUser.role !== "SUPER_ADMIN") {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "Требуются права супер-администратора",
+    });
+  }
+
+  return next({ ctx });
+});
