@@ -202,13 +202,17 @@ export default function AdminDashboardPage() {
                                                 {new Date(user.createdAt).toLocaleDateString("ru-RU")}
                                             </td>
                                             <td className="px-2 py-3">
-                                                <button
-                                                    onClick={() => handleToggleRole(user.id, user.role)}
-                                                    className="p-1.5 rounded-lg hover:bg-bg-secondary text-text-tertiary hover:text-text-primary transition-colors cursor-pointer"
-                                                    title={user.role === "SUPER_ADMIN" ? "Понизить до User" : "Повысить до Super Admin"}
-                                                >
-                                                    <MoreHorizontal size={14} />
-                                                </button>
+                                                {user.id === me?.id ? (
+                                                    <span className="text-[10px] text-text-tertiary px-1.5" title="Это вы">Вы</span>
+                                                ) : (
+                                                    <button
+                                                        onClick={() => handleToggleRole(user.id, user.role)}
+                                                        className="p-1.5 rounded-lg hover:bg-bg-secondary text-text-tertiary hover:text-text-primary transition-colors cursor-pointer"
+                                                        title={user.role === "SUPER_ADMIN" ? "Понизить до User" : "Повысить до Super Admin"}
+                                                    >
+                                                        <MoreHorizontal size={14} />
+                                                    </button>
+                                                )}
                                             </td>
                                         </tr>
                                     ))}

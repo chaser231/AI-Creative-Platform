@@ -115,6 +115,25 @@ export const adminRouter = createTRPCRouter({
       })
     )
     .mutation(async ({ ctx, input }) => {
+      // Prevent self-demotion
+      if (input.userId === ctx.user.id && input.role !== "SUPER_ADMIN") {
+        throw new (await import("@trpc/server")).TRPCError({
+          code: "BAD_REQUEST",
+          message: "Нельзя снять роль супер-администратора с самого себя",
+        });
+      }
+
+      // Ensure at least one SUPER_ADMIN remains
+      if (input.role === "USER") {
+        const adminCount = await ctx.prisma.user.count({ where: { role: "SUPER_ADMIN" } });
+        if (adminCount <= 1) {
+          throw new (await import("@trpc/server")).TRPCError({
+            code: "BAD_REQUEST",
+            message: "Должен остаться хотя бы один супер-администратор",
+          });
+        }
+      }
+
       const user = await ctx.prisma.user.update({
         where: { id: input.userId },
         data: { role: input.role },
