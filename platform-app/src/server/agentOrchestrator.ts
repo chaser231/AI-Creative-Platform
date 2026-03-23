@@ -719,13 +719,19 @@ async function callReplicateWithTools(messages: ChatMessage[]): Promise<{
     return `  - ${a.id}: ${a.description}\n    Параметры: {\n${params}\n    }\n    Обязательные: [${a.required.join(", ")}]`;
   }).join("\n");
 
-  const jsonPrompt = `\n\nОТВЕЧАЙ СТРОГО в формате JSON:
+  const jsonPrompt = `\n\nОТВЕЧАЙ СТРОГО в формате JSON — ОДИН объект, без комментариев до или после:
 {
   "response": "Текстовый ответ пользователю",
   "actions": [
     {"action_id": "id_действия", "parameters": {"param": "value"}}
   ]
 }
+
+КРИТИЧНО:
+- Верни РОВНО ОДИН JSON-объект. НЕ пиши несколько JSON-блоков.
+- НЕ планируй многошаговые сценарии. Выполни только ТЕКУЩИЙ шаг.
+- Если нужно сначала search_templates — верни ТОЛЬКО search_templates.
+- НЕ пиши текст вне JSON (никаких "(ожидание...)", пояснений и т.д.)
 
 Доступные действия:
 ${actionsList}
@@ -744,11 +750,25 @@ ${actionsList}
 
   try {
     let jsonStr = rawResponse.trim();
+
+    // Strip markdown code fences
     const jsonMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
     if (jsonMatch) jsonStr = jsonMatch[1].trim();
-    const braceStart = jsonStr.indexOf("{");
-    const braceEnd = jsonStr.lastIndexOf("}");
-    if (braceStart !== -1 && braceEnd !== -1) jsonStr = jsonStr.slice(braceStart, braceEnd + 1);
+
+    // Extract the FIRST balanced JSON object (handles multi-block responses)
+    const firstBrace = jsonStr.indexOf("{");
+    if (firstBrace !== -1) {
+      let depth = 0;
+      let end = -1;
+      for (let i = firstBrace; i < jsonStr.length; i++) {
+        if (jsonStr[i] === "{") depth++;
+        else if (jsonStr[i] === "}") {
+          depth--;
+          if (depth === 0) { end = i; break; }
+        }
+      }
+      if (end !== -1) jsonStr = jsonStr.slice(firstBrace, end + 1);
+    }
 
     const parsed = JSON.parse(jsonStr);
     const actions = Array.isArray(parsed.actions) ? parsed.actions : [];
@@ -763,7 +783,8 @@ ${actionsList}
           arguments: JSON.stringify(a.parameters || {}),
         })),
     };
-  } catch {
+  } catch (e) {
+    console.error("[Agent] JSON parse failed:", e, "Raw:", rawResponse.slice(0, 200));
     return { content: rawResponse, toolCalls: [] };
   }
 }
