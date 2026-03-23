@@ -19,13 +19,13 @@ import { useWorkspace } from "@/providers/WorkspaceProvider";
 import {
     Copy, Plus, X, Send, Loader2, Bot, User, Sparkles,
     CheckCircle, AlertCircle, ChevronRight, Zap, LayoutTemplate, Search,
-    Image as ImageIcon, Type, Settings2, ChevronDown
+    Image as ImageIcon, Type, Settings2, ChevronDown, Repeat
 } from "lucide-react";
 
 export interface AIChatMessage {
     id: string;
     role: "user" | "assistant";
-    type: "text" | "image" | "outpaint" | "plan" | "error" | "template_choices" | "fallback_actions";
+    type: "text" | "image" | "outpaint" | "plan" | "error" | "template_choices" | "fallback_actions" | "text_variants";
     content: string;
     prompt?: string;
     timestamp: number;
@@ -51,6 +51,13 @@ export interface AIChatMessage {
         label: string;
         icon: string;
     }>;
+    /** Text variant options (Market templates) */
+    textVariants?: Array<{
+        title: string;
+        subtitle: string;
+    }>;
+    /** Currently active variant index */
+    activeVariantIndex?: number;
 }
 
 interface AIChatPanelProps {
@@ -201,7 +208,7 @@ export function AIChatPanel({ open, onClose, messages, onAddMessages, projectId 
 
                 // Add individual results as separate messages (skip canvas_action, data, template_choices types)
                 for (const step of result.plan.steps) {
-                    if (step.result?.success && step.result.type !== "error" && step.result.type !== "data" && step.result.type !== "canvas_action") {
+                    if (step.result?.success && step.result.type !== "error" && step.result.type !== "data") {
                         // Template choices get their own special message
                         if (step.result.type === "template_choices" && step.result.templateChoices) {
                             newMessages.push({
@@ -223,6 +230,28 @@ export function AIChatPanel({ open, onClose, messages, onAddMessages, projectId 
                                 fallbackActions: step.result.fallbackActions,
                                 templateTopic: trimmed,
                             });
+                        } else if (step.result.type === "canvas_action") {
+                            // Check if Market template with text variants
+                            const variants = (step.result.metadata as any)?.textVariants;
+                            if (variants && Array.isArray(variants) && variants.length > 1) {
+                                newMessages.push({
+                                    id: `variants-${Date.now()}`,
+                                    role: "assistant",
+                                    type: "text_variants",
+                                    content: step.result.content,
+                                    timestamp: Date.now(),
+                                    textVariants: variants,
+                                    activeVariantIndex: 0,
+                                });
+                            } else {
+                                newMessages.push({
+                                    id: `result-${step.actionId}-${Date.now()}-${Math.random()}`,
+                                    role: "assistant",
+                                    type: "text",
+                                    content: step.result.content,
+                                    timestamp: Date.now(),
+                                });
+                            }
                         } else {
                             newMessages.push({
                                 id: `result-${step.actionId}-${Date.now()}-${Math.random()}`,
@@ -281,6 +310,46 @@ export function AIChatPanel({ open, onClose, messages, onAddMessages, projectId 
             setInput("");
             inputRef.current?.focus();
         }
+    };
+
+    // Handle variant selection (Market text variants)
+    const handleVariantSelect = (msgId: string, variantIndex: number, variant: { title: string; subtitle: string }) => {
+        // Update canvas layers
+        const currentLayers = useCanvasStore.getState().layers;
+        const masters = useCanvasStore.getState().masterComponents;
+
+        // Find and update headline
+        const headlineLayer = currentLayers.find((l: any) => l.slotId === "headline");
+        if (headlineLayer) {
+            updateLayer(headlineLayer.id, { text: variant.title } as any);
+        } else {
+            const headlineMaster = masters?.find((mc: any) => mc.slotId === "headline");
+            if (headlineMaster) {
+                const ml = currentLayers.find((l: any) => l.masterId === headlineMaster.id);
+                if (ml) updateLayer(ml.id, { text: variant.title } as any);
+            }
+        }
+
+        // Find and update subhead
+        const subheadLayer = currentLayers.find((l: any) => l.slotId === "subhead");
+        if (subheadLayer) {
+            updateLayer(subheadLayer.id, { text: variant.subtitle } as any);
+        } else {
+            const subheadMaster = masters?.find((mc: any) => mc.slotId === "subhead");
+            if (subheadMaster) {
+                const ml = currentLayers.find((l: any) => l.masterId === subheadMaster.id);
+                if (ml) updateLayer(ml.id, { text: variant.subtitle } as any);
+            }
+        }
+
+        // Update active variant in the message
+        const updated = messages.map(m =>
+            m.id === msgId ? { ...m, activeVariantIndex: variantIndex } : m
+        );
+        onAddMessages?.(updated.filter(m => !messages.some(old => old.id === m.id)));
+        // Use a simple approach: mutate message in place (since messages is passed by reference)
+        const targetMsg = messages.find(m => m.id === msgId);
+        if (targetMsg) targetMsg.activeVariantIndex = variantIndex;
     };
 
     // ─── Direct template apply mutation (bypasses LLM) ────────
@@ -434,6 +503,7 @@ export function AIChatPanel({ open, onClose, messages, onAddMessages, projectId 
                             onAddToCanvas={() => handleAddToCanvas(msg)}
                             onTemplateSelect={handleTemplateSelect}
                             onFallbackAction={handleFallbackAction}
+                            onVariantSelect={handleVariantSelect}
                             isThinking={isThinking}
                         />
                     ))
@@ -583,12 +653,14 @@ function MessageBubble({
     onAddToCanvas,
     onTemplateSelect,
     onFallbackAction,
+    onVariantSelect,
     isThinking,
 }: {
     msg: AIChatMessage;
     onAddToCanvas: () => void;
     onTemplateSelect?: (templateId: string, templateName: string, topic: string) => void;
     onFallbackAction?: (actionId: string, topic: string) => void;
+    onVariantSelect?: (msgId: string, variantIndex: number, variant: { title: string; subtitle: string }) => void;
     isThinking?: boolean;
 }) {
     if (msg.role === "user") {
@@ -704,6 +776,55 @@ function MessageBubble({
                             >
                                 {iconMap[action.icon] || <ChevronRight size={14} />}
                                 {action.label}
+                            </button>
+                        ))}
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    // Text variants — Market template title+subtitle options
+    if (msg.type === "text_variants" && msg.textVariants) {
+        const activeIdx = msg.activeVariantIndex ?? 0;
+        return (
+            <div className="flex items-start gap-2">
+                <div className="w-7 h-7 rounded-full bg-gradient-to-br from-emerald-500/20 to-teal-500/20 flex items-center justify-center shrink-0">
+                    <Repeat size={14} className="text-emerald-400" />
+                </div>
+                <div className="flex-1 space-y-2 min-w-0">
+                    <p className="text-xs text-text-secondary">{msg.content}</p>
+                    <div className="space-y-1.5">
+                        {msg.textVariants.map((variant, idx) => (
+                            <button
+                                key={idx}
+                                onClick={() => onVariantSelect?.(msg.id, idx, variant)}
+                                className={`w-full text-left p-2.5 rounded-xl border transition-all cursor-pointer ${
+                                    idx === activeIdx
+                                        ? "bg-emerald-500/10 border-emerald-500/40 ring-1 ring-emerald-500/20"
+                                        : "bg-bg-tertiary/50 border-border-primary hover:border-emerald-500/30 hover:bg-emerald-500/5"
+                                }`}
+                            >
+                                <div className="flex items-center justify-between mb-1">
+                                    <span className={`text-[10px] font-medium ${
+                                        idx === activeIdx ? "text-emerald-400" : "text-text-tertiary"
+                                    }`}>
+                                        Вариант {idx + 1}{idx === activeIdx ? " ✓" : ""}
+                                    </span>
+                                    <span className="text-[9px] text-text-tertiary">
+                                        {variant.title.length} / {variant.subtitle.length} симв.
+                                    </span>
+                                </div>
+                                <p className={`text-xs font-bold leading-tight ${
+                                    idx === activeIdx ? "text-text-primary" : "text-text-secondary"
+                                }`}>
+                                    {variant.title}
+                                </p>
+                                <p className={`text-[11px] mt-0.5 leading-tight ${
+                                    idx === activeIdx ? "text-text-secondary" : "text-text-tertiary"
+                                }`}>
+                                    {variant.subtitle}
+                                </p>
                             </button>
                         ))}
                     </div>
