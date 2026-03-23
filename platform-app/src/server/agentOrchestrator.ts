@@ -144,6 +144,7 @@ RULES:
 - For illustration: "modern digital illustration, flat design"
 - For 3d: "3D render, isometric, soft shadows"
 - For gradient: "abstract gradient background, vibrant colors"
+- ALWAYS include: "no text, no letters, no words, no logos, no watermarks, no graphics, no UI elements"
 - Keep it under 50 words
 - Return ONLY the prompt text`,
         },
@@ -462,7 +463,7 @@ RULES:
             });
           } else if ((slot.slotId === "background" || slot.slotId === "image-primary") && slot.type === "image") {
             const imagePrompt = await callLLM([
-              { role: "system", content: "You are an expert prompt engineer. Convert the request into a detailed English prompt for AI image generation. Include: high quality, commercial, professional. Max 40 words. Return ONLY the prompt." },
+              { role: "system", content: "You are an expert prompt engineer. Convert the request into a detailed English prompt for AI image generation. Include: high quality, commercial, professional. CRITICAL: always add 'no text, no letters, no words, no logos, no watermarks, no graphics, no UI elements' to the prompt. Max 40 words. Return ONLY the prompt." },
               { role: "user", content: `Image for banner about: ${topic}` },
             ]);
             try {
@@ -532,7 +533,7 @@ RULES:
           });
         } else if ((slot.slotId === "background" || slot.slotId === "image-primary") && (slot.type === "image")) {
           const imagePrompt = await callLLM([
-            { role: "system", content: "You are an expert prompt engineer. Convert the request into a detailed English prompt for AI image generation. Include: high quality, commercial, professional. Max 40 words. Return ONLY the prompt." },
+            { role: "system", content: "You are an expert prompt engineer. Convert the request into a detailed English prompt for AI image generation. Include: high quality, commercial, professional. CRITICAL: always add 'no text, no letters, no words, no logos, no watermarks, no graphics, no UI elements' to the prompt. Max 40 words. Return ONLY the prompt." },
             { role: "user", content: `Image for banner about: ${topic}` },
           ]);
           try {
