@@ -1,12 +1,14 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import {
     Users, Building2, FolderKanban, LayoutTemplate, Sparkles,
-    Search, Shield, ShieldCheck, ChevronDown, MoreHorizontal,
+    Search, Shield, ShieldCheck, ChevronDown, MoreHorizontal, ShieldX,
 } from "lucide-react";
 import { AppShell } from "@/components/layout/AppShell";
 import { TopBar } from "@/components/layout/TopBar";
+import { Button } from "@/components/ui/Button";
 import { trpc } from "@/lib/trpc";
 
 /* ─── KPI Card ──────────────────────────────────────── */
@@ -52,7 +54,41 @@ function RoleBadge({ role }: { role: string }) {
 /* ─── Main Page ──────────────────────────────────────── */
 
 export default function AdminDashboardPage() {
+    const router = useRouter();
     const [userSearch, setUserSearch] = useState("");
+
+    // Access guard
+    const { data: me, isLoading: meLoading } = trpc.auth.me.useQuery(undefined, { refetchOnWindowFocus: false });
+    const isSuperAdmin = me?.role === "SUPER_ADMIN";
+
+    if (meLoading) {
+        return (
+            <AppShell>
+                <TopBar breadcrumbs={[{ label: "Админ-панель" }]} showBackToProjects={false} showHistoryNavigation={true} />
+                <div className="flex-1 flex items-center justify-center">
+                    <p className="text-sm text-text-tertiary">Загрузка...</p>
+                </div>
+            </AppShell>
+        );
+    }
+
+    if (!isSuperAdmin) {
+        return (
+            <AppShell>
+                <TopBar breadcrumbs={[{ label: "Админ-панель" }]} showBackToProjects={false} showHistoryNavigation={true} />
+                <div className="flex-1 flex flex-col items-center justify-center gap-4">
+                    <div className="w-16 h-16 rounded-2xl bg-red-500/10 flex items-center justify-center">
+                        <ShieldX size={32} className="text-red-400" />
+                    </div>
+                    <h2 className="text-lg font-semibold text-text-primary">Нет доступа</h2>
+                    <p className="text-sm text-text-tertiary max-w-[300px] text-center">
+                        Эта страница доступна только супер-администраторам платформы.
+                    </p>
+                    <Button onClick={() => router.push("/")}>На главную</Button>
+                </div>
+            </AppShell>
+        );
+    }
 
     const { data: stats, isLoading: statsLoading } = trpc.admin.stats.useQuery();
     const { data: usersData, isLoading: usersLoading } = trpc.admin.users.useQuery({

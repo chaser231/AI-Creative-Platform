@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import {
     Search, Star, MoreHorizontal, Copy, Trash2, Pencil, ExternalLink,
-    LayoutTemplate, X, Check, StarOff,
+    LayoutTemplate, X, Check, StarOff, ShieldX,
 } from "lucide-react";
 import { AppShell } from "@/components/layout/AppShell";
 import { TopBar } from "@/components/layout/TopBar";
@@ -18,17 +18,21 @@ export default function AdminTemplatesPage() {
     const router = useRouter();
     const utils = trpc.useUtils();
 
+    // Access guard
+    const { data: me, isLoading: meLoading } = trpc.auth.me.useQuery(undefined, { refetchOnWindowFocus: false });
+    const isSuperAdmin = me?.role === "SUPER_ADMIN";
+
     const [search, setSearch] = useState("");
     const [wsFilter, setWsFilter] = useState<string | null>(null);
     const [officialFilter, setOfficialFilter] = useState<boolean | undefined>(undefined);
 
-    // Data
+    // Data — only query if admin
     const { data, isLoading } = trpc.adminTemplate.list.useQuery({
         search: search || undefined,
         workspaceId: wsFilter || undefined,
         isOfficial: officialFilter,
-    });
-    const { data: workspaces } = trpc.admin.workspaces.useQuery();
+    }, { enabled: isSuperAdmin });
+    const { data: workspaces } = trpc.admin.workspaces.useQuery(undefined, { enabled: isSuperAdmin });
 
     // Mutations
     const updateMutation = trpc.adminTemplate.update.useMutation({
@@ -91,6 +95,35 @@ export default function AdminTemplatesPage() {
         router.push(`/editor/template-${templateId}?mode=template-edit`);
         setContextMenu(null);
     };
+
+    if (meLoading) {
+        return (
+            <AppShell>
+                <TopBar breadcrumbs={[{ label: "Админ-панель", href: "/admin" }, { label: "Шаблоны" }]} showBackToProjects={false} showHistoryNavigation={true} />
+                <div className="flex-1 flex items-center justify-center">
+                    <p className="text-sm text-text-tertiary">Загрузка...</p>
+                </div>
+            </AppShell>
+        );
+    }
+
+    if (!isSuperAdmin) {
+        return (
+            <AppShell>
+                <TopBar breadcrumbs={[{ label: "Админ-панель", href: "/admin" }, { label: "Шаблоны" }]} showBackToProjects={false} showHistoryNavigation={true} />
+                <div className="flex-1 flex flex-col items-center justify-center gap-4">
+                    <div className="w-16 h-16 rounded-2xl bg-red-500/10 flex items-center justify-center">
+                        <ShieldX size={32} className="text-red-400" />
+                    </div>
+                    <h2 className="text-lg font-semibold text-text-primary">Нет доступа</h2>
+                    <p className="text-sm text-text-tertiary max-w-[300px] text-center">
+                        Эта страница доступна только супер-администраторам платформы.
+                    </p>
+                    <Button onClick={() => router.push("/")}>На главную</Button>
+                </div>
+            </AppShell>
+        );
+    }
 
     return (
         <AppShell>
