@@ -13,6 +13,8 @@ import { templateRouter } from "./template";
 import { assetRouter } from "./asset";
 import { aiRouter } from "./ai";
 import { workflowRouter } from "./workflow";
+import { adminRouter } from "./admin";
+import { adminTemplateRouter } from "./adminTemplate";
 
 export const appRouter = createTRPCRouter({
   auth: authRouter,
@@ -22,6 +24,8 @@ export const appRouter = createTRPCRouter({
   asset: assetRouter,
   ai: aiRouter,
   workflow: workflowRouter,
+  admin: adminRouter,
+  adminTemplate: adminTemplateRouter,
 });
 
 export type AppRouter = typeof appRouter;

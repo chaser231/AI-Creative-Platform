@@ -12,6 +12,7 @@ import {
     Star,
     LayoutTemplate,
     Check,
+    ShieldCheck,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { UserMenu } from "@/components/auth/UserMenu";
@@ -36,6 +37,10 @@ export function Sidebar() {
     const { workspaces, currentWorkspace, setWorkspaceId } = useWorkspace();
     const [wsDropdownOpen, setWsDropdownOpen] = useState(false);
     const dropdownRef = useRef<HTMLDivElement>(null);
+
+    // Check if user is super admin
+    const meQuery = trpc.auth.me.useQuery(undefined, { refetchOnWindowFocus: false });
+    const isSuperAdmin = meQuery.data?.role === "SUPER_ADMIN";
 
     // Fetch favorite projects from DB
     const favoritesQuery = trpc.project.listFavorites.useQuery(
@@ -160,6 +165,38 @@ export function Sidebar() {
                                 <span className="truncate">{project.name}</span>
                             </Link>
                         ))}
+                    </div>
+                )}
+
+                {/* Admin section — SUPER_ADMIN only */}
+                {isSuperAdmin && (
+                    <div className="pt-4">
+                        <p className="px-3 text-[10px] font-medium text-text-tertiary uppercase tracking-widest mb-2">
+                            Администрирование
+                        </p>
+                        {[
+                            { label: "Админ-панель", href: "/admin", icon: <ShieldCheck size={18} /> },
+                            { label: "Шаблоны (админ)", href: "/admin/templates", icon: <LayoutTemplate size={18} /> },
+                        ].map((item) => {
+                            const isActive = pathname === item.href || pathname.startsWith(item.href + "/");
+                            return (
+                                <Link
+                                    key={item.href}
+                                    href={item.href}
+                                    className={cn(
+                                        "flex items-center gap-2.5 px-3 py-2 rounded-[var(--radius-xl)] text-[13px] transition-all duration-[var(--transition-fast)]",
+                                        isActive
+                                            ? "bg-bg-surface text-text-primary shadow-[var(--shadow-sm)]"
+                                            : "text-text-secondary hover:text-text-primary hover:bg-bg-surface/60"
+                                    )}
+                                >
+                                    <span className={cn(isActive ? "text-amber-500" : "text-text-tertiary")}>
+                                        {item.icon}
+                                    </span>
+                                    {item.label}
+                                </Link>
+                            );
+                        })}
                     </div>
                 )}
             </nav>

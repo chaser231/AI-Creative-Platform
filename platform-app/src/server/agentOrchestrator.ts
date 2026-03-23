@@ -144,6 +144,7 @@ RULES:
 - For illustration: "modern digital illustration, flat design"
 - For 3d: "3D render, isometric, soft shadows"
 - For gradient: "abstract gradient background, vibrant colors"
+- ALWAYS include: "no text, no letters, no words, no logos, no watermarks, no graphics, no UI elements"
 - Keep it under 50 words
 - Return ONLY the prompt text`,
         },
@@ -323,6 +324,7 @@ RULES:
     case "apply_and_fill_template": {
       const templateId = params.templateId as string;
       const topic = params.topic as string;
+      const imageModel = (params.imageModel as string) || "flux-schnell";
 
       // Fetch the full template
       const template = await context.prisma.template.findUnique({
@@ -370,7 +372,137 @@ RULES:
         params: { templateData: template.data },
       });
 
-      // Generate content for each slot
+      // ─── Detect if this is a Market BU template ───────
+      const templateCategories = (template.categories as string[]) || [];
+      const templateTags = (template.tags as any) || [];
+      const allTags = [...templateCategories, ...(Array.isArray(templateTags) ? templateTags : [])].map(t => String(t).toLowerCase());
+      const isMarketTemplate = allTags.some(t =>
+        ["yandex-market", "маркет", "market"].includes(t)
+      );
+
+      // Check if template has both headline AND subhead slots
+      const hasHeadline = slots.some(s => s.slotId === "headline" && s.type === "text");
+      const hasSubhead = slots.some(s => s.slotId === "subhead" && s.type === "text");
+      const hasPairedTextSlots = hasHeadline && hasSubhead;
+
+      // ─── Market paired title+subtitle generation ───────
+      if (isMarketTemplate && hasPairedTextSlots) {
+        // Use specialized Market copywriting prompt (versioned in prompts/market-title-subtitle-v1.md)
+        const MARKET_SYSTEM_PROMPT = `Ты — бренд-копирайтер Яндекс Маркета. Пиши разговорно, коротко и честно.
+
+ЗАДАЧА
+Из одной входной «идеи» сгенерировать РОВНО 3 разные пары «title + subtitle».
+
+ЖЁСТКИЕ ОГРАНИЧЕНИЯ (следи неукоснительно)
+• TITLE: 8–30 символов, максимум 2 строки, без точки в конце, без кавычек, без «!». Допускается длинное тире «—».
+• SUBTITLE: 18–60 символов, максимум 2 строки; без эмодзи; спокойная пунктуация.
+• Считать ВСЕ видимые символы (включая пробелы). Если выходит за лимиты — переформулируй до соответствия.
+• Числа — арабские; скидки только в форматах «до N%» или «−N%».
+• Бренды пиши корректно (род/число не придумывай).
+• Title всегда пиши с CAPS-LOCK, без эмодзи, без многоточий.
+• Subtitle без CAPS-LOCK, без эмодзи, без многоточий злоупотребления.
+
+ЕДИНЫЙ TOV (как мы звучим)
+• Пиши короче, яснее, ближе к речи.
+• Спокойный, утилитарный тон. Опирайся на факты.
+• Пиши без двусмысленности и манипуляций (никакого FOMO/«успей, иначе…»).
+• НИКАКОГО драматизма, лозунгов и давления на «боли» (не пиши «надоело?», «пора менять», «больше никакой...»).
+
+ЧТО ДЕЛАТЬ В КАЖДОЙ ПАРЕ
+• TITLE — суть оффера и рациональная выгода (прямое указание на скидки, низкие цены, большой выбор). Утвердительно и просто.
+• SUBTITLE — добавляет конкретику (контекст/условие/бренды). КОРОЧЕ и ПРОЩЕ, чем title. Фокус на выгоде.
+
+ФОРМАТ ОТВЕТА — строго JSON-массив, ничего кроме него:
+[
+  {"title": "...", "subtitle": "..."},
+  {"title": "...", "subtitle": "..."},
+  {"title": "...", "subtitle": "..."}
+]`;
+
+        const pairsResponse = await callLLM([
+          { role: "system", content: MARKET_SYSTEM_PROMPT },
+          { role: "user", content: topic },
+        ]);
+
+        // Parse JSON pairs from the response
+        let pairs: Array<{ title: string; subtitle: string }> = [];
+        try {
+          const jsonMatch = pairsResponse.match(/\[[\s\S]*\]/);
+          if (jsonMatch) {
+            pairs = JSON.parse(jsonMatch[0]);
+          }
+        } catch {
+          // Fallback: use the raw response as single pair
+        }
+
+        if (pairs.length > 0) {
+          // Use the FIRST pair for immediate application
+          const chosenPair = pairs[0];
+          canvasActions.push({
+            action: "update_layer",
+            params: { slotId: "headline", updates: { text: chosenPair.title } },
+          });
+          canvasActions.push({
+            action: "update_layer",
+            params: { slotId: "subhead", updates: { text: chosenPair.subtitle } },
+          });
+        }
+
+        // Still generate other slots (CTA, images) generically
+        for (const slot of slots) {
+          if (slot.slotId === "headline" || slot.slotId === "subhead") continue; // already handled
+
+          if (slot.slotId === "cta" && slot.type === "text") {
+            const cta = await callLLM([
+              { role: "system", content: "Ты — копирайтер. Напиши текст для кнопки призыва к действию (CTA). 1-3 слова. Без кавычек. Только текст." },
+              { role: "user", content: `CTA для: ${topic}` },
+            ]);
+            canvasActions.push({
+              action: "update_layer",
+              params: { slotId: "cta", updates: { text: cta.trim().replace(/^["«]|["»]$/g, "").replace(/\.$/, "") } },
+            });
+          } else if ((slot.slotId === "background" || slot.slotId === "image-primary") && slot.type === "image") {
+            const imagePrompt = await callLLM([
+              { role: "system", content: "You are an expert prompt engineer. Convert the request into a detailed English prompt for AI image generation. Include: high quality, commercial, professional. CRITICAL: always add 'no text, no letters, no words, no logos, no watermarks, no graphics, no UI elements' to the prompt. Max 40 words. Return ONLY the prompt." },
+              { role: "user", content: `Image for banner about: ${topic}` },
+            ]);
+            try {
+              const { getProvider: getAIProvider } = await import("@/lib/ai-providers");
+              const imgProvider = getAIProvider(imageModel);
+              const imgResult = await imgProvider.generate({
+                prompt: imagePrompt.trim(),
+                type: "image",
+                model: imageModel,
+              });
+              canvasActions.push({
+                action: "update_layer",
+                params: { slotId: slot.slotId, updates: { src: imgResult.content } },
+              });
+            } catch {
+              // skip failed image
+            }
+          }
+        }
+
+        const filledSlots = canvasActions.length - 1;
+        return {
+          success: true,
+          type: "canvas_action",
+          content: pairs.length > 0
+            ? `Шаблон «${template.name}» применён (Маркет). Сгенерировано ${pairs.length} вариантов текста, применён первый. Заполнено ${filledSlots} элементов.`
+            : `Шаблон «${template.name}» применён. Заполнено ${filledSlots} элементов.`,
+          canvasActions,
+          metadata: {
+            templateId,
+            templateName: template.name,
+            slotsFound: slots.length,
+            isMarket: true,
+            textVariants: pairs,
+          },
+        };
+      }
+
+      // ─── Generic slot filling (non-Market templates) ───────
       for (const slot of slots) {
         if (slot.slotId === "headline" && slot.type === "text") {
           const headline = await callLLM([
@@ -400,19 +532,17 @@ RULES:
             params: { slotId: "cta", updates: { text: cta.trim().replace(/^["«]|["»]$/g, "") } },
           });
         } else if ((slot.slotId === "background" || slot.slotId === "image-primary") && (slot.type === "image")) {
-          // Generate image for image slots
           const imagePrompt = await callLLM([
-            { role: "system", content: "You are an expert prompt engineer. Convert the request into a detailed English prompt for AI image generation. Include: high quality, commercial, professional. Max 40 words. Return ONLY the prompt." },
+            { role: "system", content: "You are an expert prompt engineer. Convert the request into a detailed English prompt for AI image generation. Include: high quality, commercial, professional. CRITICAL: always add 'no text, no letters, no words, no logos, no watermarks, no graphics, no UI elements' to the prompt. Max 40 words. Return ONLY the prompt." },
             { role: "user", content: `Image for banner about: ${topic}` },
           ]);
-
           try {
             const { getProvider: getAIProvider } = await import("@/lib/ai-providers");
-            const imgProvider = getAIProvider("flux-schnell");
+            const imgProvider = getAIProvider(imageModel);
             const imgResult = await imgProvider.generate({
               prompt: imagePrompt.trim(),
               type: "image",
-              model: "flux-schnell",
+              model: imageModel,
             });
             canvasActions.push({
               action: "update_layer",
@@ -591,13 +721,19 @@ async function callReplicateWithTools(messages: ChatMessage[]): Promise<{
     return `  - ${a.id}: ${a.description}\n    Параметры: {\n${params}\n    }\n    Обязательные: [${a.required.join(", ")}]`;
   }).join("\n");
 
-  const jsonPrompt = `\n\nОТВЕЧАЙ СТРОГО в формате JSON:
+  const jsonPrompt = `\n\nОТВЕЧАЙ СТРОГО в формате JSON — ОДИН объект, без комментариев до или после:
 {
   "response": "Текстовый ответ пользователю",
   "actions": [
     {"action_id": "id_действия", "parameters": {"param": "value"}}
   ]
 }
+
+КРИТИЧНО:
+- Верни РОВНО ОДИН JSON-объект. НЕ пиши несколько JSON-блоков.
+- НЕ планируй многошаговые сценарии. Выполни только ТЕКУЩИЙ шаг.
+- Если нужно сначала search_templates — верни ТОЛЬКО search_templates.
+- НЕ пиши текст вне JSON (никаких "(ожидание...)", пояснений и т.д.)
 
 Доступные действия:
 ${actionsList}
@@ -616,11 +752,25 @@ ${actionsList}
 
   try {
     let jsonStr = rawResponse.trim();
+
+    // Strip markdown code fences
     const jsonMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
     if (jsonMatch) jsonStr = jsonMatch[1].trim();
-    const braceStart = jsonStr.indexOf("{");
-    const braceEnd = jsonStr.lastIndexOf("}");
-    if (braceStart !== -1 && braceEnd !== -1) jsonStr = jsonStr.slice(braceStart, braceEnd + 1);
+
+    // Extract the FIRST balanced JSON object (handles multi-block responses)
+    const firstBrace = jsonStr.indexOf("{");
+    if (firstBrace !== -1) {
+      let depth = 0;
+      let end = -1;
+      for (let i = firstBrace; i < jsonStr.length; i++) {
+        if (jsonStr[i] === "{") depth++;
+        else if (jsonStr[i] === "}") {
+          depth--;
+          if (depth === 0) { end = i; break; }
+        }
+      }
+      if (end !== -1) jsonStr = jsonStr.slice(firstBrace, end + 1);
+    }
 
     const parsed = JSON.parse(jsonStr);
     const actions = Array.isArray(parsed.actions) ? parsed.actions : [];
@@ -635,7 +785,8 @@ ${actionsList}
           arguments: JSON.stringify(a.parameters || {}),
         })),
     };
-  } catch {
+  } catch (e) {
+    console.error("[Agent] JSON parse failed:", e, "Raw:", rawResponse.slice(0, 200));
     return { content: rawResponse, toolCalls: [] };
   }
 }
