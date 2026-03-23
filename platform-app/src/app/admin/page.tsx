@@ -57,10 +57,28 @@ export default function AdminDashboardPage() {
     const router = useRouter();
     const [userSearch, setUserSearch] = useState("");
 
-    // Access guard
+    // Access guard — must be before any early return
     const { data: me, isLoading: meLoading } = trpc.auth.me.useQuery(undefined, { refetchOnWindowFocus: false });
     const isSuperAdmin = me?.role === "SUPER_ADMIN";
 
+    // ALL hooks must be called unconditionally (React Rules of Hooks)
+    const { data: stats, isLoading: statsLoading } = trpc.admin.stats.useQuery(undefined, { enabled: isSuperAdmin });
+    const { data: usersData, isLoading: usersLoading } = trpc.admin.users.useQuery({
+        search: userSearch || undefined,
+        limit: 50,
+        offset: 0,
+    }, { enabled: isSuperAdmin });
+    const { data: workspaces, isLoading: wsLoading } = trpc.admin.workspaces.useQuery(undefined, { enabled: isSuperAdmin });
+
+    const updateRoleMutation = trpc.admin.updateUserRole.useMutation();
+
+    const handleToggleRole = async (userId: string, currentRole: string) => {
+        const newRole = currentRole === "SUPER_ADMIN" ? "USER" as const : "SUPER_ADMIN" as const;
+        await updateRoleMutation.mutateAsync({ userId, role: newRole });
+        window.location.reload();
+    };
+
+    // Early returns AFTER all hooks
     if (meLoading) {
         return (
             <AppShell>
@@ -89,23 +107,6 @@ export default function AdminDashboardPage() {
             </AppShell>
         );
     }
-
-    const { data: stats, isLoading: statsLoading } = trpc.admin.stats.useQuery();
-    const { data: usersData, isLoading: usersLoading } = trpc.admin.users.useQuery({
-        search: userSearch || undefined,
-        limit: 50,
-        offset: 0,
-    });
-    const { data: workspaces, isLoading: wsLoading } = trpc.admin.workspaces.useQuery();
-
-    const updateRoleMutation = trpc.admin.updateUserRole.useMutation();
-
-    const handleToggleRole = async (userId: string, currentRole: string) => {
-        const newRole = currentRole === "SUPER_ADMIN" ? "USER" as const : "SUPER_ADMIN" as const;
-        await updateRoleMutation.mutateAsync({ userId, role: newRole });
-        // Refetch
-        window.location.reload();
-    };
 
     return (
         <AppShell>
