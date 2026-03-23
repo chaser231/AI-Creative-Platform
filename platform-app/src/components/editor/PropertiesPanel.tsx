@@ -78,11 +78,11 @@ export function PropertiesPanel() {
                 <span className="text-[10px] text-text-tertiary font-light shrink-0">Фон</span>
                 <ColorInput value={artboardProps.fill} onChange={(v) => updateArtboardProps({ fill: v })} />
                 <div className="w-px h-5 bg-border-primary shrink-0" />
-                <CompactInput label="R" value={artboardProps.cornerRadius} onChange={(v) => updateArtboardProps({ cornerRadius: Number(v) })} />
+                <CompactInput label="R" value={artboardProps.cornerRadius} min={0} onChange={(v) => updateArtboardProps({ cornerRadius: Math.max(0, Number(v)) })} />
                 <div className="w-px h-5 bg-border-primary shrink-0" />
                 <span className="text-[10px] text-text-tertiary font-light shrink-0">Обводка</span>
                 <ColorInput value={artboardProps.stroke || "#000000"} onChange={(v) => updateArtboardProps({ stroke: v })} />
-                <CompactInput label="W" value={artboardProps.strokeWidth} onChange={(v) => updateArtboardProps({ strokeWidth: Number(v) })} />
+                <CompactInput label="W" value={artboardProps.strokeWidth} min={0} onChange={(v) => updateArtboardProps({ strokeWidth: Math.max(0, Number(v)) })} />
                 <div className="w-px h-5 bg-border-primary shrink-0" />
                 <button
                     onClick={() => updateArtboardProps({ clipContent: !artboardProps.clipContent })}
@@ -388,11 +388,13 @@ function CompactInput({
     value,
     onChange,
     width = "w-14",
+    min,
 }: {
     label: string;
     value: number | string;
     onChange: (value: string) => void;
     width?: string;
+    min?: number;
 }) {
     return (
         <div className="flex items-center gap-1">
@@ -400,6 +402,7 @@ function CompactInput({
             <input
                 type="number"
                 value={value}
+                min={min}
                 onChange={(e) => onChange(e.target.value)}
                 className={`${width} h-7 px-1.5 rounded-[var(--radius-sm)] border border-border-primary bg-bg-secondary text-[11px] text-text-primary text-center focus:outline-none focus:ring-1 focus:ring-border-focus`}
             />
@@ -759,7 +762,7 @@ function RectPropsGrouped({
                         </div>
                         <div>
                             <label className="text-[9px] text-text-tertiary uppercase tracking-wider font-medium mb-1.5 block">Радиус</label>
-                            <input type="number" value={layer.cornerRadius} onChange={(e) => onChange({ cornerRadius: Number(e.target.value) })}
+                            <input type="number" min={0} value={layer.cornerRadius} onChange={(e) => onChange({ cornerRadius: Math.max(0, Number(e.target.value)) })}
                                 className="w-full h-8 px-2 rounded-[var(--radius-md)] border border-border-primary bg-bg-secondary text-[11px] text-text-primary text-center focus:outline-none focus:ring-1 focus:ring-border-focus" />
                         </div>
                     </div>
@@ -959,7 +962,7 @@ function FramePropsGrouped({
                         </div>
                         <div>
                             <label className="text-[9px] text-text-tertiary uppercase tracking-wider font-medium mb-1.5 block">Радиус</label>
-                            <input type="number" value={layer.cornerRadius} onChange={(e) => onChange({ cornerRadius: Number(e.target.value) })}
+                            <input type="number" min={0} value={layer.cornerRadius} onChange={(e) => onChange({ cornerRadius: Math.max(0, Number(e.target.value)) })}
                                 className="w-full h-8 px-2 rounded-[var(--radius-md)] border border-border-primary bg-bg-secondary text-[11px] text-text-primary text-center focus:outline-none focus:ring-1 focus:ring-border-focus" />
                         </div>
                     </div>
