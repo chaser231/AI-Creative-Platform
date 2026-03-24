@@ -518,6 +518,56 @@ export function applyAllAutoLayouts(layers: Layer[]): Layer[] {
         }
     }
 
+    // ── Cascade position deltas ──────────────────────────────
+    // When auto-layout moves a frame, its children (both managed and unmanaged)
+    // need their absolute coords updated. Auto-layout managed children were already
+    // positioned by commitUpdates (frame.x + localOffset). But for ALL frames
+    // (including non-auto-layout ones) that were repositioned, cascade dx/dy
+    // to their non-managed children (invisible, absolute-positioned, or children
+    // of non-auto-layout frames).
+    const cascadeFrameDeltas = (originalLayers: Layer[]) => {
+        const allFrames = updatedLayers.filter((l): l is FrameLayer => l.type === "frame");
+        const cascaded = new Set<string>();
+
+        const cascade = (frameId: string) => {
+            if (cascaded.has(frameId)) return;
+            cascaded.add(frameId);
+
+            const original = originalLayers.find(l => l.id === frameId);
+            const updated = updatedLayers.find(l => l.id === frameId) as FrameLayer | undefined;
+            if (!original || !updated) return;
+
+            const dx = updated.x - original.x;
+            const dy = updated.y - original.y;
+            if (Math.abs(dx) < 0.01 && Math.abs(dy) < 0.01) return;
+
+            const isAutoLayout = updated.layoutMode && updated.layoutMode !== "none";
+
+            updated.childIds.forEach(cid => {
+                const child = updatedLayers.find(l => l.id === cid);
+                if (!child) return;
+
+                // Skip children already positioned by auto-layout
+                const isManagedByAutoLayout = isAutoLayout && !child.isAbsolutePositioned && child.visible;
+                if (isManagedByAutoLayout) return;
+
+                // Cascade delta to unmanaged child
+                updatedLayers = updatedLayers.map(l =>
+                    l.id === cid ? { ...l, x: l.x + dx, y: l.y + dy } as Layer : l
+                );
+
+                // Recursively cascade for child frames
+                if (child.type === "frame") {
+                    cascade(cid);
+                }
+            });
+        };
+
+        allFrames.forEach(f => cascade(f.id));
+    };
+
+    cascadeFrameDeltas(layers);
+
     return updatedLayers;
 }
 
