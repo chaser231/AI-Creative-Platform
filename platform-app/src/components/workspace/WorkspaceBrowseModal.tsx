@@ -20,6 +20,20 @@ interface Props {
     onClose: () => void;
 }
 
+interface BrowseWorkspace {
+    id: string;
+    name: string;
+    slug: string;
+    businessUnit: string;
+    visibility: string;
+    joinPolicy: string;
+    logoUrl: string | null;
+    memberCount: number;
+    projectCount: number;
+    isJoined: boolean;
+    hasPendingRequest: boolean;
+}
+
 export function WorkspaceBrowseModal({ isOpen, onClose }: Props) {
     const [search, setSearch] = useState("");
     const { setWorkspaceId, refetch } = useWorkspace();
@@ -29,14 +43,14 @@ export function WorkspaceBrowseModal({ isOpen, onClose }: Props) {
     });
 
     const joinMutation = trpc.workspace.join.useMutation({
-        onSuccess: (result) => {
+        onSuccess: (result: { status: string }) => {
             if (result.status === "joined") {
                 refetch();
             }
         },
     });
 
-    const filtered = (workspaces ?? []).filter((ws: any) =>
+    const filtered = (workspaces ?? []).filter((ws: BrowseWorkspace) =>
         ws.name.toLowerCase().includes(search.toLowerCase()) ||
         ws.businessUnit.toLowerCase().includes(search.toLowerCase())
     );
@@ -104,7 +118,7 @@ export function WorkspaceBrowseModal({ isOpen, onClose }: Props) {
                         </div>
                     ) : (
                         <div className="space-y-1.5">
-                            {filtered.map((ws: any) => (
+                            {filtered.map((ws: BrowseWorkspace) => (
                                 <div
                                     key={ws.id}
                                     className="flex items-center justify-between p-3 rounded-[var(--radius-xl)] hover:bg-bg-secondary/60 transition-colors group"

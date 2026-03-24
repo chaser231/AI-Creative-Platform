@@ -7,11 +7,12 @@
 import { z } from "zod";
 import { createTRPCRouter, protectedProcedure } from "../trpc";
 import { TRPCError } from "@trpc/server";
+import type { PrismaClient } from "@prisma/client";
 
 /** Role hierarchy for comparisons */
 const ROLE_RANK: Record<string, number> = { VIEWER: 0, USER: 1, CREATOR: 2, ADMIN: 3 };
 
-async function checkRole(prisma: any, userId: string, workspaceId: string, minRole: string) {
+async function checkRole(prisma: PrismaClient, userId: string, workspaceId: string, minRole: string) {
   const membership = await prisma.workspaceMember.findUnique({
     where: { userId_workspaceId: { userId, workspaceId } },
   });
@@ -329,6 +330,6 @@ export const projectRouter = createTRPCRouter({
         },
         orderBy: { createdAt: "desc" },
       });
-      return favorites.map((f) => f.project);
+      return favorites.map((f: { project: { id: string; name: string; status: string; updatedAt: Date } }) => f.project);
     }),
 });

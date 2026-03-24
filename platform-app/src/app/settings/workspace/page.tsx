@@ -22,6 +22,21 @@ import {
     Trash2, ShieldAlert, ArrowRight, Clock,
 } from "lucide-react";
 
+interface ExtendedWorkspace {
+    id: string;
+    name: string;
+    slug: string;
+    businessUnit: string;
+    visibility: "VISIBLE" | "HIDDEN";
+    joinPolicy: "OPEN" | "REQUEST" | "INVITE_ONLY";
+}
+
+interface JoinRequest {
+    id: string;
+    message: string | null;
+    user: { name: string; email: string };
+}
+
 const BU_OPTIONS = [
     { value: "yandex-market", label: "Яндекс Маркет" },
     { value: "yandex-go", label: "Яндекс Go" },
@@ -50,10 +65,11 @@ export default function WorkspaceSettingsPage() {
     useEffect(() => {
         if (currentWorkspace) {
             setName(currentWorkspace.name);
-            setSlug((currentWorkspace as any).slug || "");
-            setBusinessUnit((currentWorkspace as any).businessUnit || "other");
-            setVisibility((currentWorkspace as any).visibility || "VISIBLE");
-            setJoinPolicy((currentWorkspace as any).joinPolicy || "OPEN");
+            const ws = currentWorkspace as unknown as ExtendedWorkspace;
+            setSlug(ws.slug || "");
+            setBusinessUnit(ws.businessUnit || "other");
+            setVisibility(ws.visibility || "VISIBLE");
+            setJoinPolicy(ws.joinPolicy || "OPEN");
         }
     }, [currentWorkspace]);
 
@@ -218,7 +234,7 @@ export default function WorkspaceSettingsPage() {
                                 <label className="text-[11px] text-text-tertiary uppercase tracking-wider font-medium mb-1.5 block">Политика вступления</label>
                                 <select
                                     value={joinPolicy}
-                                    onChange={(e) => setJoinPolicy(e.target.value as any)}
+                                    onChange={(e) => setJoinPolicy(e.target.value as "OPEN" | "REQUEST" | "INVITE_ONLY")}
                                     className="w-full h-10 px-3 rounded-[var(--radius-lg)] border border-border-primary bg-bg-secondary text-sm text-text-primary cursor-pointer focus:outline-none focus:ring-1 focus:ring-border-focus"
                                 >
                                     <option value="OPEN">Свободное — все могут вступить</option>
@@ -255,7 +271,7 @@ export default function WorkspaceSettingsPage() {
                                 </span>
                             </h2>
                             <div className="bg-bg-surface border border-border-primary rounded-[var(--radius-xl)] overflow-hidden divide-y divide-border-primary">
-                                {joinRequests.map((req: any) => (
+                                {joinRequests.map((req: JoinRequest) => (
                                     <div key={req.id} className="flex items-center justify-between px-5 py-3">
                                         <div className="flex items-center gap-3 min-w-0">
                                             <div className="w-8 h-8 rounded-full bg-bg-tertiary flex items-center justify-center shrink-0">

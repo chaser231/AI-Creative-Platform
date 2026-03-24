@@ -8,6 +8,7 @@
 import { z } from "zod";
 import { createTRPCRouter, protectedProcedure, publicProcedure } from "../trpc";
 import { TRPCError } from "@trpc/server";
+import type { PrismaClient } from "@prisma/client";
 
 // ─── RBAC HELPERS ────────────────────────────────────────
 
@@ -25,7 +26,7 @@ function roleIndex(role: string): number {
  * Throws FORBIDDEN if insufficient role or NOT a member.
  */
 async function requireRole(
-  prisma: any,
+  prisma: PrismaClient,
   userId: string,
   workspaceId: string,
   minRole: Role
@@ -66,7 +67,7 @@ export const workspaceRouter = createTRPCRouter({
       orderBy: { workspace: { name: "asc" } },
     });
 
-    return memberships.map((m: { workspace: any; role: string }) => ({
+    return memberships.map((m) => ({
       ...m.workspace,
       role: m.role,
     }));
@@ -110,7 +111,7 @@ export const workspaceRouter = createTRPCRouter({
     const joinedIds = new Set(memberships.map((m: { workspaceId: string }) => m.workspaceId));
     const pendingIds = new Set(pendingRequests.map((r: { workspaceId: string }) => r.workspaceId));
 
-    return workspaces.map((ws: any) => ({
+    return workspaces.map((ws: { id: string; name: string; slug: string; businessUnit: string; visibility: string; joinPolicy: string; logoUrl: string | null; _count: { members: number; projects: number } }) => ({
       ...ws,
       memberCount: ws._count.members,
       projectCount: ws._count.projects,
