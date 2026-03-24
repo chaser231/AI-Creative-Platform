@@ -16,8 +16,7 @@ import type {
     LayerConstraints,
 } from "@/types";
 import { CONTENT_SOURCE_KEYS, DEFAULT_CONSTRAINTS } from "@/types";
-import { applyLayout } from "@/services/layoutEngine";
-import { applyAllAutoLayouts } from "@/utils/layoutEngine";
+import { applyLayout, applyAllAutoLayouts } from "@/utils/layoutEngine";
 import type { SlotMapping } from "@/services/slotMappingService";
 import type { TemplatePack } from "@/services/templateService";
 import { DEFAULT_SNAP_CONFIG } from "@/services/snapService";
@@ -1519,12 +1518,6 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
                     slotId: m.slotId
                 } as Layer;
 
-                import("@/services/layoutEngine").then(({ applyLayout }) => {
-                    // This is synchronous in current code but we are inside map which expects sync
-                    // Since applyLayout is already imported at top of canvasStore.ts, we can just use it
-                });
-
-                const { applyLayout } = require("@/services/layoutEngine");
                 const [layouted] = applyLayout([mockLayer], format);
                 if (layouted) {
                     finalProps = {

@@ -56,7 +56,7 @@ export default function TeamPage() {
             membersQuery.refetch();
             setRoleDropdownId(null);
         },
-        onError: (err) => {
+        onError: (err: { message: string }) => {
             setToast(err.message);
             setTimeout(() => setToast(null), 3000);
         },
@@ -66,7 +66,7 @@ export default function TeamPage() {
         onSuccess: () => {
             membersQuery.refetch();
         },
-        onError: (err) => {
+        onError: (err: { message: string }) => {
             setToast(err.message);
             setTimeout(() => setToast(null), 3000);
         },

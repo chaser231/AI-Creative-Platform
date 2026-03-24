@@ -7,15 +7,41 @@ const eslintConfig = defineConfig([
   ...nextTs,
   {
     rules: {
+      // Type safety
       "@typescript-eslint/no-explicit-any": "warn",
-      "react/no-unescaped-entities": "warn",
+      "@typescript-eslint/no-unused-vars": [
+        "warn",
+        {
+          argsIgnorePattern: "^_",
+          varsIgnorePattern: "^_",
+          caughtErrorsIgnorePattern: "^_",
+        },
+      ],
       "@typescript-eslint/no-require-imports": "warn",
+
+      // Console discipline
+      "no-console": ["warn", { allow: ["error"] }],
+
+      // React
+      "react/no-unescaped-entities": "warn",
+
+      // Quality
       "prefer-const": "warn",
+      "no-var": "error",
+      eqeqeq: ["warn", "always", { null: "ignore" }],
     },
   },
+
+  // Server files: console.error is fine for logging
+  {
+    files: ["src/server/**/*.ts", "src/app/api/**/*.ts"],
+    rules: {
+      "no-console": "off",
+    },
+  },
+
   // Override default ignores of eslint-config-next.
   globalIgnores([
-    // Default ignores of eslint-config-next:
     ".next/**",
     "out/**",
     "build/**",
