@@ -149,7 +149,7 @@ function CanvasLayer({
         width: layer.width,
         height: layer.height,
         rotation: layer.rotation,
-        draggable: !layer.locked && !isEditing,
+        draggable: !layer.locked && !isEditing && !isAutoLayoutChild,
         onClick: onSelect,
         onTap: onSelect,
         onDragStart,
@@ -353,8 +353,8 @@ function FrameLayerRenderer({
     const selectedChildIds = layer.childIds.filter((id) => selectedLayerIds.includes(id));
 
     // Handle transform end for children inside this frame.
-    // Node x/y are in frame-local coords; we must convert to absolute scene coords.
-    // For auto-layout children: restrict resize on the managed axis (Figma behavior).
+    // For auto-layout children: only pass size changes, let auto-layout engine compute position.
+    // For non-auto-layout children: convert frame-local coords to absolute scene coords.
     const handleChildTransformEnd = useCallback((e: Konva.KonvaEventObject<Event>) => {
         const node = e.target;
         const id = node.id();
@@ -367,33 +367,23 @@ function FrameLayerRenderer({
         node.scaleX(1);
         node.scaleY(1);
 
-        let width = node.width() * scaleX;
-        let height = node.height() * scaleY;
+        const width = node.width() * scaleX;
+        const height = node.height() * scaleY;
 
-        // Auto-layout constraint: restrict resize on managed axis
         const childLayer = layers.find(l => l.id === id);
         const isAutoLayout = layer.layoutMode && layer.layoutMode !== "none" && childLayer && !childLayer.isAbsolutePositioned;
-        if (isAutoLayout && childLayer) {
-            if (layer.layoutMode === "horizontal") {
-                // In horizontal layout, width is managed by auto-layout
-                // unless the child has layoutSizingWidth: "fixed"
-                if (childLayer.layoutSizingWidth !== "fixed") {
-                    width = childLayer.width; // keep original
-                }
-            } else if (layer.layoutMode === "vertical") {
-                // In vertical layout, height is managed
-                if (childLayer.layoutSizingHeight !== "fixed") {
-                    height = childLayer.height; // keep original
-                }
-            }
+
+        if (isAutoLayout) {
+            // Auto-layout children: only update size and rotation.
+            // Position (x, y) is computed by the auto-layout engine.
+            // After updateLayer, applyAllAutoLayouts will reposition this child.
+            updateLayer(id, { width, height, rotation });
+        } else {
+            // Non-auto-layout: convert frame-local coords to absolute scene coords.
+            const newX = node.x() + layer.x;
+            const newY = node.y() + layer.y;
+            updateLayer(id, { x: newX, y: newY, width, height, rotation });
         }
-
-        // node.x()/y() are relative to the frame Group.
-        // Convert to absolute scene coords by adding the frame's position.
-        const newX = node.x() + layer.x;
-        const newY = node.y() + layer.y;
-
-        updateLayer(id, { x: newX, y: newY, width, height, rotation });
     }, [updateLayer, layer.x, layer.y, layer.layoutMode, layers]);
 
     // Force the bounding box of the frame to its own dimensions
