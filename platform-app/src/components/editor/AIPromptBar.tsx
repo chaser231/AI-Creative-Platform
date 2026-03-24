@@ -145,14 +145,15 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult 
                 prompt: prompt
             });
             setPrompt(""); // Clear prompt after success
-        } catch (err: any) {
-            console.warn("AI Generation Error:", err.message);
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : "Unknown error";
+            console.error("AI Generation Error:", message);
             
-            let message = err.message;
+            let displayMsg = message;
             if (message.includes("fetch failed") || message.includes("E003")) {
-                message = "Сервер перегружен или недоступен (слишком много запросов). Попробуйте еще раз через 10 секунд.";
+                displayMsg = "Сервер перегружен или недоступен (слишком много запросов). Попробуйте еще раз через 10 секунд.";
             }
-            alert("Ошибка генерации: " + message);
+            alert("Ошибка генерации: " + displayMsg);
         } finally {
             setIsGenerating(false);
         }

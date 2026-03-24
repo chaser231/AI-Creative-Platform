@@ -36,12 +36,13 @@ export function TextContentBlock({ id, name, props, value, onChange, businessUni
             setVariants(results);
             setActiveVariantIdx(0);
             if (results.length > 0) onChange(results[0]);
-        } catch (e: any) {
+        } catch (e: unknown) {
+            const message = e instanceof Error ? e.message : "Unknown error";
             console.error("Failed to generate text variants:", e);
-            if (e?.message?.includes("fetch failed") || e?.message?.includes("E003")) {
+            if (message.includes("fetch failed") || message.includes("E003")) {
                 setGenError("Слишком много запросов к модели текста или сервер перегружен. Попробуйте еще раз через несколько секунд.");
             } else {
-                setGenError(e?.message || "Не удалось сгенерировать текст. Попробуйте позже.");
+                setGenError(message || "Не удалось сгенерировать текст. Попробуйте позже.");
             }
         } finally {
             setIsGenerating(false);

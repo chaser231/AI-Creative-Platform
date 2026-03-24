@@ -30,8 +30,9 @@ model User {
   projects    Project[]   @relation("ProjectCreator")
   aiSessions  AISession[]
   uploads     Asset[]     @relation("AssetUploader")
-  favorites   FavoriteProject[]
-  aiWorkflows AIWorkflow[] @relation("WorkflowCreator")
+  favorites    FavoriteProject[]
+  aiWorkflows  AIWorkflow[] @relation("WorkflowCreator")
+  joinRequests JoinRequest[]
 }
 
 model Account {
@@ -83,6 +84,10 @@ model Workspace {
   slug         String @unique
   businessUnit String // "yandex-market", "yandex-go", "yandex-food", "other"
 
+  // Access control
+  visibility WorkspaceVisibility @default(VISIBLE)
+  joinPolicy WorkspaceJoinPolicy @default(OPEN)
+
   // Brand Identity (embedded, no separate BrandKit entity)
   colors      Json   @default("[]")
   fonts       Json   @default("[]")
@@ -99,6 +104,18 @@ model Workspace {
   systemPrompts SystemPrompt[]
   aiPresets     AIPreset[]
   aiWorkflows   AIWorkflow[]
+  joinRequests  JoinRequest[]
+}
+
+enum WorkspaceVisibility {
+  VISIBLE   // Shows up in browse/discover
+  HIDDEN    // Only accessible by invite link
+}
+
+enum WorkspaceJoinPolicy {
+  OPEN         // Anyone can join instantly
+  REQUEST      // Must send a request, admin approves
+  INVITE_ONLY  // Can only join via /invite/[slug]
 }
 
 model WorkspaceMember {
@@ -119,6 +136,22 @@ enum WorkspaceRole {
   CREATOR
   USER
   VIEWER
+}
+
+model JoinRequest {
+  id          String   @id @default(cuid())
+  status      String   @default("PENDING") // PENDING | APPROVED | REJECTED
+  message     String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user        User      @relation(fields: [userId], references: [id])
+  userId      String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  workspaceId String
+
+  @@unique([userId, workspaceId])
+  @@index([workspaceId, status])
 }
 
 // ─── PROJECTS ────────────────────────────────────────────

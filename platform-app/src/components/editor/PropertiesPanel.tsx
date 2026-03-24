@@ -454,8 +454,8 @@ function TextPropsGrouped({
                 const userFonts = await getUserFonts();
                 const fontNames = [
                     ...SYSTEM_FONTS,
-                    ...PREINSTALLED_FONTS.map((f: any) => f.name),
-                    ...userFonts.map((f: any) => f.name)
+                    ...PREINSTALLED_FONTS.map((f: { name: string }) => f.name),
+                    ...userFonts.map((f: { name: string }) => f.name)
                 ];
                 setAvailableFonts(Array.from(new Set(fontNames)));
             } catch (err) {

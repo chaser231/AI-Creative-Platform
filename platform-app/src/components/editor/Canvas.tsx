@@ -149,7 +149,7 @@ function CanvasLayer({
         width: layer.width,
         height: layer.height,
         rotation: layer.rotation,
-        draggable: !layer.locked && !isEditing,
+        draggable: !layer.locked && !isEditing && !isAutoLayoutChild,
         onClick: onSelect,
         onTap: onSelect,
         onDragStart,
@@ -353,7 +353,8 @@ function FrameLayerRenderer({
     const selectedChildIds = layer.childIds.filter((id) => selectedLayerIds.includes(id));
 
     // Handle transform end for children inside this frame.
-    // Node x/y are in frame-local coords; we must convert to absolute scene coords.
+    // For auto-layout children: only pass size changes, let auto-layout engine compute position.
+    // For non-auto-layout children: convert frame-local coords to absolute scene coords.
     const handleChildTransformEnd = useCallback((e: Konva.KonvaEventObject<Event>) => {
         const node = e.target;
         const id = node.id();
@@ -369,13 +370,28 @@ function FrameLayerRenderer({
         const width = node.width() * scaleX;
         const height = node.height() * scaleY;
 
-        // node.x()/y() are relative to the frame Group.
-        // Convert to absolute scene coords by adding the frame's position.
-        const newX = node.x() + layer.x;
-        const newY = node.y() + layer.y;
+        const childLayer = layers.find(l => l.id === id);
+        const isAutoLayout = layer.layoutMode && layer.layoutMode !== "none" && childLayer && !childLayer.isAbsolutePositioned;
 
-        updateLayer(id, { x: newX, y: newY, width, height, rotation });
-    }, [updateLayer, layer.x, layer.y]);
+        // Get absolute frame position from store (layer.x prop may be relative for nested frames)
+        const storeFrame = layers.find(l => l.id === layer.id);
+        const frameAbsX = storeFrame?.x ?? layer.x;
+        const frameAbsY = storeFrame?.y ?? layer.y;
+
+        if (isAutoLayout && childLayer) {
+            // Auto-layout children: update size, then reset node position
+            // to the store's local coords so React can reconcile properly.
+            updateLayer(id, { width, height, rotation });
+            // Force node back to store position (frame-local coords)
+            node.x(childLayer.x - frameAbsX);
+            node.y(childLayer.y - frameAbsY);
+        } else {
+            // Non-auto-layout: convert frame-local coords to absolute scene coords.
+            const newX = node.x() + frameAbsX;
+            const newY = node.y() + frameAbsY;
+            updateLayer(id, { x: newX, y: newY, width, height, rotation });
+        }
+    }, [updateLayer, layer.x, layer.y, layer.layoutMode, layer.id, layers]);
 
     // Force the bounding box of the frame to its own dimensions
     // ignoring any overflowing children.
@@ -467,10 +483,16 @@ function FrameLayerRenderer({
                     strokeWidth={isHighlighted ? FRAME_HIGHLIGHT_WIDTH : layer.strokeWidth}
                     cornerRadius={layer.cornerRadius}
                 />
-                {childLayers.map((child) => (
+                {childLayers.map((child) => {
+                    // Use STORE's absolute position for the frame, not the prop
+                    // (prop may be relative for nested frames).
+                    const storeFrame = layers.find(l => l.id === layer.id);
+                    const frameAbsX = storeFrame?.x ?? layer.x;
+                    const frameAbsY = storeFrame?.y ?? layer.y;
+                    return (
                     <CanvasLayer
                         key={child.id}
-                        layer={{ ...child, x: child.x - layer.x, y: child.y - layer.y }}
+                        layer={{ ...child, x: child.x - frameAbsX, y: child.y - frameAbsY }}
                         isSelected={selectedLayerIds.includes(child.id)}
                         onSelect={onSelect}
                         onDragStart={onDragStart}
@@ -481,7 +503,8 @@ function FrameLayerRenderer({
                         isEditing={false}
                         isAutoLayoutChild={layer.layoutMode !== undefined && layer.layoutMode !== "none" && !child.isAbsolutePositioned}
                     />
-                ))}
+                    );
+                })}
             </Group>
             {/* Inner Transformer for selected children — operates in frame-local coords */}
             {selectedChildIds.length > 0 && (
@@ -1006,23 +1029,26 @@ export function Canvas({ stageRef }: CanvasProps) {
 
         updateLayer(id, { x: newX, y: newY, width, height, rotation, ...extraProps });
 
-        // Handle constrained position for children if it's a frame
-        // (Similar to previous implementation)
+        // Handle constrained position for children if it's a non-auto-layout frame.
+        // Auto-layout frames have their children positioned by applyAllAutoLayouts.
         const layer = layers.find(l => l.id === id);
         if (layer?.type === "frame") {
             const frame = layer as FrameLayer;
-            const delta = {
-                oldX: layer.x, oldY: layer.y,
-                oldWidth: layer.width, oldHeight: layer.height,
-                newX, newY, newWidth: width, newHeight: height
-            };
-            frame.childIds.forEach(cid => {
-                const child = layers.find(l => l.id === cid);
-                if (child) {
-                    const res = computeConstrainedPosition(child, delta);
-                    updateLayer(cid, res);
-                }
-            });
+            const isAutoLayout = frame.layoutMode && frame.layoutMode !== "none";
+            if (!isAutoLayout) {
+                const delta = {
+                    oldX: layer.x, oldY: layer.y,
+                    oldWidth: layer.width, oldHeight: layer.height,
+                    newX, newY, newWidth: width, newHeight: height
+                };
+                frame.childIds.forEach(cid => {
+                    const child = layers.find(l => l.id === cid);
+                    if (child) {
+                        const res = computeConstrainedPosition(child, delta);
+                        updateLayer(cid, res);
+                    }
+                });
+            }
         }
 
     }, [updateLayer, layers]);

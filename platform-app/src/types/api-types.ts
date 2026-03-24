@@ -24,11 +24,8 @@ export interface CanvasState {
   canvasHeight: number;
 }
 
-export interface ArtboardProps {
-  fill: string;
-  cornerRadius: number;
-  clipContent: boolean;
-}
+import type { ArtboardProps } from "@/store/canvas/types";
+export type { ArtboardProps };
 
 // ─── Project DTOs ────────────────────────────────────────
 

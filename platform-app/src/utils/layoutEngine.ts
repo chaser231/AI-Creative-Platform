@@ -1,4 +1,4 @@
-import { Layer, FrameLayer, TextLayer } from "@/types";
+import { Layer, FrameLayer, TextLayer, TemplateSlotRole, ResizeFormat } from "@/types";
 
 // ─── Text Size Estimation ──────────────────────────────────────
 // Uses an OffscreenCanvas (or in-memory canvas) to measure text
@@ -455,41 +455,191 @@ function commitUpdates(
 }
 
 /**
- * Applies computeAutoLayout to all frames in the document, bottom-up.
- * Returns a new array of layers with applied coordinates/sizes.
+ * Applies computeAutoLayout to all frames in the document.
+ * Runs bottom-up twice:
+ *  - 1st pass: resolve sizes (inner frames first so parents can measure them)
+ *  - 2nd pass: fix child positions after parents reposition child frames
  */
 export function applyAllAutoLayouts(layers: Layer[]): Layer[] {
     let updatedLayers = [...layers];
 
-    // Find all frames
-    const frames = updatedLayers.filter((l): l is FrameLayer => l.type === "frame");
+    // Find all auto-layout frames
+    const frames = updatedLayers.filter(
+        (l): l is FrameLayer => l.type === "frame" && !!l.layoutMode && l.layoutMode !== "none"
+    );
     if (frames.length === 0) return updatedLayers;
 
-    // Process bottom-up: deepest nested frames first so their sizes
-    // are resolved before parent frames measure them.
-    const getDepth = (id: string, currentDepth = 0): number => {
-        const parent = frames.find(f => f.childIds.includes(id));
-        return parent ? getDepth(parent.id, currentDepth + 1) : currentDepth;
-    };
-
-    const sortedFrames = frames.sort((a, b) => getDepth(b.id) - getDepth(a.id));
-
-    sortedFrames.forEach(frame => {
-        // Need to find the latest version of this frame in updatedLayers
-        const currentFrame = updatedLayers.find(l => l.id === frame.id) as FrameLayer;
-        if (!currentFrame || !currentFrame.layoutMode || currentFrame.layoutMode === "none") return;
-
-        const updates = computeAutoLayout(currentFrame, updatedLayers);
-
-        if (Object.keys(updates).length > 0) {
-            updatedLayers = updatedLayers.map(l => {
-                if (updates[l.id]) {
-                    return { ...l, ...updates[l.id] } as Layer;
-                }
-                return l;
-            });
+    // Guard: remove self-references from childIds
+    frames.forEach(f => {
+        if (f.childIds.includes(f.id)) {
+            updatedLayers = updatedLayers.map(l =>
+                l.id === f.id
+                    ? { ...l, childIds: (l as FrameLayer).childIds.filter(c => c !== f.id) } as Layer
+                    : l
+            );
         }
     });
 
+    // Compute nesting depth with circular-reference protection
+    const depthCache = new Map<string, number>();
+    const getDepth = (id: string, visited: Set<string>): number => {
+        if (depthCache.has(id)) return depthCache.get(id)!;
+        if (visited.has(id)) return 0;
+        visited.add(id);
+        const allFrames = updatedLayers.filter((l): l is FrameLayer => l.type === "frame");
+        const parent = allFrames.find(f => f.childIds.includes(id));
+        const depth = parent ? 1 + getDepth(parent.id, visited) : 0;
+        depthCache.set(id, depth);
+        return depth;
+    };
+
+    // Sort deepest first (bottom-up)
+    const frameIds = frames.map(f => f.id);
+    const sortedIds = [...frameIds].sort((a, b) => {
+        return getDepth(b, new Set<string>()) - getDepth(a, new Set<string>());
+    });
+
+    // Run bottom-up pass twice to handle nested repositioning
+    for (let pass = 0; pass < 2; pass++) {
+        for (const fid of sortedIds) {
+            const currentFrame = updatedLayers.find(l => l.id === fid) as FrameLayer | undefined;
+            if (!currentFrame || !currentFrame.layoutMode || currentFrame.layoutMode === "none") continue;
+
+            const updates = computeAutoLayout(currentFrame, updatedLayers);
+
+            if (Object.keys(updates).length > 0) {
+                updatedLayers = updatedLayers.map(l => {
+                    if (updates[l.id]) {
+                        return { ...l, ...updates[l.id] } as Layer;
+                    }
+                    return l;
+                });
+            }
+        }
+    }
+
+    // ── Cascade position deltas ──────────────────────────────
+    // When auto-layout moves a frame, its children (both managed and unmanaged)
+    // need their absolute coords updated. Auto-layout managed children were already
+    // positioned by commitUpdates (frame.x + localOffset). But for ALL frames
+    // (including non-auto-layout ones) that were repositioned, cascade dx/dy
+    // to their non-managed children (invisible, absolute-positioned, or children
+    // of non-auto-layout frames).
+    const cascadeFrameDeltas = (originalLayers: Layer[]) => {
+        const allFrames = updatedLayers.filter((l): l is FrameLayer => l.type === "frame");
+        const cascaded = new Set<string>();
+
+        const cascade = (frameId: string) => {
+            if (cascaded.has(frameId)) return;
+            cascaded.add(frameId);
+
+            const original = originalLayers.find(l => l.id === frameId);
+            const updated = updatedLayers.find(l => l.id === frameId) as FrameLayer | undefined;
+            if (!original || !updated) return;
+
+            const dx = updated.x - original.x;
+            const dy = updated.y - original.y;
+            if (Math.abs(dx) < 0.01 && Math.abs(dy) < 0.01) return;
+
+            const isAutoLayout = updated.layoutMode && updated.layoutMode !== "none";
+
+            updated.childIds.forEach(cid => {
+                const child = updatedLayers.find(l => l.id === cid);
+                if (!child) return;
+
+                // Skip children already positioned by auto-layout
+                const isManagedByAutoLayout = isAutoLayout && !child.isAbsolutePositioned && child.visible;
+                if (isManagedByAutoLayout) return;
+
+                // Cascade delta to unmanaged child
+                updatedLayers = updatedLayers.map(l =>
+                    l.id === cid ? { ...l, x: l.x + dx, y: l.y + dy } as Layer : l
+                );
+
+                // Recursively cascade for child frames
+                if (child.type === "frame") {
+                    cascade(cid);
+                }
+            });
+        };
+
+        allFrames.forEach(f => cascade(f.id));
+    };
+
+    cascadeFrameDeltas(layers);
+
     return updatedLayers;
+}
+
+// ─── Template Slot Layout Rules ────────────────────────────────
+// Defines positional rules for template slots (headline, subhead, etc.)
+// per format. Migrated from services/layoutEngine.ts.
+
+export interface LayoutRule {
+    slotId: TemplateSlotRole;
+    formatId: string; // e.g. "instagram-story" or "*"
+    constraints: {
+        top?: string; // e.g. "20%" or "100px"
+        bottom?: string;
+        left?: string;
+        right?: string;
+        centerX?: boolean;
+        centerY?: boolean;
+        width?: string;
+        height?: string;
+        scale?: number;
+    };
+}
+
+const SLOT_LAYOUT_RULES: LayoutRule[] = [
+    // Instagram Story Rules
+    { slotId: "headline", formatId: "instagram-story", constraints: { top: "15%", centerX: true, width: "80%" } },
+    { slotId: "subhead", formatId: "instagram-story", constraints: { top: "25%", centerX: true, width: "70%" } },
+    { slotId: "cta", formatId: "instagram-story", constraints: { bottom: "10%", centerX: true } },
+    { slotId: "background", formatId: "*", constraints: { top: "0", left: "0", width: "100%", height: "100%" } },
+    // Instagram Post Rules
+    { slotId: "headline", formatId: "instagram-post", constraints: { top: "10%", left: "10%", width: "80%" } },
+    { slotId: "cta", formatId: "instagram-post", constraints: { bottom: "10%", right: "10%" } },
+];
+
+export function applyLayout(layers: Layer[], format: ResizeFormat): Layer[] {
+    return layers.map(layer => {
+        if (!layer.slotId || layer.slotId === "none") return layer;
+
+        const rule = SLOT_LAYOUT_RULES.find(r =>
+            r.slotId === layer.slotId &&
+            (r.formatId === format.id || r.formatId === "*")
+        );
+
+        if (!rule) return layer;
+
+        const newLayer = { ...layer };
+        const c = rule.constraints;
+        const fw = format.width;
+        const fh = format.height;
+
+        const parse = (val: string, dim: number) => {
+            if (val.endsWith("%")) return (parseFloat(val) / 100) * dim;
+            return parseFloat(val);
+        };
+
+        if (c.width) newLayer.width = parse(c.width, fw);
+        if (c.height) newLayer.height = parse(c.height, fh);
+
+        let x = newLayer.x;
+        let y = newLayer.y;
+
+        if (c.left) x = parse(c.left, fw);
+        if (c.right) x = fw - parse(c.right, fw) - newLayer.width;
+        if (c.centerX) x = (fw - newLayer.width) / 2;
+
+        if (c.top) y = parse(c.top, fh);
+        if (c.bottom) y = fh - parse(c.bottom, fh) - newLayer.height;
+        if (c.centerY) y = (fh - newLayer.height) / 2;
+
+        newLayer.x = x;
+        newLayer.y = y;
+
+        return newLayer;
+    });
 }
