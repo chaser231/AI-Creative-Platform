@@ -373,11 +373,14 @@ function FrameLayerRenderer({
         const childLayer = layers.find(l => l.id === id);
         const isAutoLayout = layer.layoutMode && layer.layoutMode !== "none" && childLayer && !childLayer.isAbsolutePositioned;
 
-        if (isAutoLayout) {
-            // Auto-layout children: only update size and rotation.
-            // Position (x, y) is computed by the auto-layout engine.
-            // After updateLayer, applyAllAutoLayouts will reposition this child.
+        if (isAutoLayout && childLayer) {
+            // Auto-layout children: update size, then reset node position
+            // to the store's local coords so React can reconcile properly.
             updateLayer(id, { width, height, rotation });
+            // Force node back to store position (frame-local coords)
+            // so that React re-render picks up auto-layout computed position
+            node.x(childLayer.x - layer.x);
+            node.y(childLayer.y - layer.y);
         } else {
             // Non-auto-layout: convert frame-local coords to absolute scene coords.
             const newX = node.x() + layer.x;

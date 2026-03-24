@@ -281,6 +281,7 @@ export const createLayerSlice: StateCreator<CanvasStore, [], [], LayerSlice> = (
                         const f = currentLayers.find(l => l.id === fid) as FrameLayer;
                         if (f && f.childIds) {
                             f.childIds.forEach(cid => {
+                                if (childrenIdsToMove.has(cid)) return; // circular ref guard
                                 childrenIdsToMove.add(cid);
                                 const child = currentLayers.find(l => l.id === cid);
                                 if (child?.type === "frame") collect(cid);
