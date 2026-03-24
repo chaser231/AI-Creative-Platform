@@ -457,6 +457,10 @@ function commitUpdates(
 /**
  * Applies computeAutoLayout to all frames in the document, bottom-up.
  * Returns a new array of layers with applied coordinates/sizes.
+ *
+ * Two-pass approach:
+ * 1. Bottom-up: resolve sizes (inner frames first so parents can measure them)
+ * 2. Top-down: re-commit child positions after parent frames reposition child frames
  */
 export function applyAllAutoLayouts(layers: Layer[]): Layer[] {
     let updatedLayers = [...layers];
@@ -465,17 +469,19 @@ export function applyAllAutoLayouts(layers: Layer[]): Layer[] {
     const frames = updatedLayers.filter((l): l is FrameLayer => l.type === "frame");
     if (frames.length === 0) return updatedLayers;
 
-    // Process bottom-up: deepest nested frames first so their sizes
-    // are resolved before parent frames measure them.
-    const getDepth = (id: string, currentDepth = 0): number => {
+    // Compute nesting depth with circular-reference protection
+    const getDepth = (id: string, visited = new Set<string>()): number => {
+        if (visited.has(id)) return 0; // break circular refs
+        visited.add(id);
         const parent = frames.find(f => f.childIds.includes(id));
-        return parent ? getDepth(parent.id, currentDepth + 1) : currentDepth;
+        return parent ? 1 + getDepth(parent.id, visited) : 0;
     };
 
-    const sortedFrames = frames.sort((a, b) => getDepth(b.id) - getDepth(a.id));
+    // Sort deepest first (bottom-up)
+    const sortedFrames = [...frames].sort((a, b) => getDepth(b.id) - getDepth(a.id));
 
+    // ── Pass 1: bottom-up — resolve sizes + initial positions ──
     sortedFrames.forEach(frame => {
-        // Need to find the latest version of this frame in updatedLayers
         const currentFrame = updatedLayers.find(l => l.id === frame.id) as FrameLayer;
         if (!currentFrame || !currentFrame.layoutMode || currentFrame.layoutMode === "none") return;
 
@@ -487,6 +493,40 @@ export function applyAllAutoLayouts(layers: Layer[]): Layer[] {
                     return { ...l, ...updates[l.id] } as Layer;
                 }
                 return l;
+            });
+        }
+    });
+
+    // ── Pass 2: top-down — re-commit positions for nested frames ──
+    // After pass 1, parent frames may have repositioned child frames.
+    // Child frame children need their absolute positions recalculated.
+    const topDownFrames = [...frames].sort((a, b) => getDepth(a.id) - getDepth(b.id));
+
+    topDownFrames.forEach(frame => {
+        const currentFrame = updatedLayers.find(l => l.id === frame.id) as FrameLayer;
+        if (!currentFrame || !currentFrame.layoutMode || currentFrame.layoutMode === "none") return;
+
+        // Check if any children are frames that need their children re-committed
+        const hasNestedFrames = currentFrame.childIds.some(cid => {
+            const child = updatedLayers.find(l => l.id === cid);
+            return child?.type === "frame" && (child as FrameLayer).layoutMode && (child as FrameLayer).layoutMode !== "none";
+        });
+
+        if (hasNestedFrames) {
+            // Re-run auto-layout for each nested frame child with its updated position
+            currentFrame.childIds.forEach(cid => {
+                const childFrame = updatedLayers.find(l => l.id === cid) as FrameLayer | undefined;
+                if (!childFrame || childFrame.type !== "frame" || !childFrame.layoutMode || childFrame.layoutMode === "none") return;
+
+                const childUpdates = computeAutoLayout(childFrame, updatedLayers);
+                if (Object.keys(childUpdates).length > 0) {
+                    updatedLayers = updatedLayers.map(l => {
+                        if (childUpdates[l.id]) {
+                            return { ...l, ...childUpdates[l.id] } as Layer;
+                        }
+                        return l;
+                    });
+                }
             });
         }
     });

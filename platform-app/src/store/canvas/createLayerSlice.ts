@@ -269,7 +269,14 @@ export const createLayerSlice: StateCreator<CanvasStore, [], [], LayerSlice> = (
 
                 let dx = 0;
                 let dy = 0;
-                if (targetLayer.type === "frame" && (layerUpdates.x !== undefined || layerUpdates.y !== undefined)) {
+                // Only cascade dx/dy for non-auto-layout frames.
+                // Auto-layout frames have their children positioned by applyAllAutoLayouts,
+                // which uses frame.x + localOffset — so moving the frame propagates automatically.
+                const isAutoLayoutFrame = targetLayer.type === "frame" &&
+                    (targetLayer as FrameLayer).layoutMode &&
+                    (targetLayer as FrameLayer).layoutMode !== "none";
+
+                if (targetLayer.type === "frame" && !isAutoLayoutFrame && (layerUpdates.x !== undefined || layerUpdates.y !== undefined)) {
                     if (layerUpdates.x !== undefined) dx = (layerUpdates.x as number) - targetLayer.x;
                     if (layerUpdates.y !== undefined) dy = (layerUpdates.y as number) - targetLayer.y;
                 }
