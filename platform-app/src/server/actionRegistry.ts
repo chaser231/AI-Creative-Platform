@@ -9,6 +9,8 @@
  * Agent returns canvas instructions that the client executes.
  */
 
+import type { PrismaClient } from "@prisma/client";
+
 // ─── Types ───────────────────────────────────────────────
 
 export interface ActionParameter {
@@ -30,7 +32,7 @@ export interface ActionContext {
   userId: string;
   workspaceId: string;
   projectId?: string;
-  prisma: any;
+  prisma: PrismaClient;
 }
 
 export interface FallbackAction {

@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/Button";
 import { DEFAULT_PACKS, type TemplatePackMeta } from "@/constants/defaultPacks";
 import { getRecommendedPacks, searchPacks } from "@/services/templateCatalogService";
 import type { TemplatePackV2 } from "@/services/templateService";
-import type { BusinessUnit, FrameLayer } from "@/types";
+import type { BusinessUnit, FrameLayer, TemplateTag } from "@/types";
 import { TextContentBlock } from "@/components/wizard/blocks/TextContentBlock";
 import { ImageContentBlock } from "@/components/wizard/blocks/ImageContentBlock";
 import { BadgeContentBlock } from "@/components/wizard/blocks/BadgeContentBlock";
@@ -225,7 +225,7 @@ export function WizardFlow({ projectId, onSwitchToStudio }: WizardFlowProps) {
                 </div>
                 {(v2.tags || []).length > 0 && (
                     <div className="flex gap-1 mt-1.5 flex-wrap">
-                        {(v2.tags || []).slice(0, 2).map((tag: any) => (
+                        {(v2.tags || []).slice(0, 2).map((tag: TemplateTag) => (
                             <span
                                 key={tag.id}
                                 className="text-[8px] px-1 py-0.5 rounded-full border border-border-primary text-text-tertiary"

@@ -12,7 +12,7 @@ import { DEFAULT_PACKS, type TemplatePackMeta } from "@/constants/defaultPacks";
 import { serializeTemplate } from "@/services/templateService";
 import { searchPacks } from "@/services/templateCatalogService";
 import type { TemplatePackV2, TemplatePack } from "@/services/templateService";
-import type { BusinessUnit, TemplateCategory, ContentType } from "@/types";
+import type { BusinessUnit, TemplateCategory, ContentType, TemplateTag } from "@/types";
 import { SlotMappingModal } from "@/components/editor/SlotMappingModal";
 
 interface TemplatePanelProps {
@@ -196,7 +196,7 @@ export function TemplatePanel({ open, onClose }: TemplatePanelProps) {
         URL.revokeObjectURL(url);
     };
 
-    const handleLoadPack = (pack: any) => {
+    const handleLoadPack = (pack: TemplatePackV2) => {
         setPackToApply(pack);
     };
 
@@ -229,8 +229,7 @@ export function TemplatePanel({ open, onClose }: TemplatePanelProps) {
 
     /* ─── V2 Pack Card ──────────────────────────────────── */
     const PackCard = ({ pack, color, onDelete }: {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        pack: any;
+        pack: TemplatePackV2 | TemplatePackMeta;
         color?: string;
         onDelete?: () => void;
     }) => {
@@ -271,7 +270,7 @@ export function TemplatePanel({ open, onClose }: TemplatePanelProps) {
                     </div>
                     {(v2.tags || []).length > 0 && (
                         <div className="flex gap-0.5 mt-1 flex-wrap">
-                            {(v2.tags || []).slice(0, 2).map((tag: any) => (
+                            {(v2.tags || []).slice(0, 2).map((tag: TemplateTag) => (
                                 <span
                                     key={tag.id}
                                     className="text-[7px] px-1 py-0.5 rounded-full border border-border-primary text-text-tertiary"

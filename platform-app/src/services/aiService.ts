@@ -42,7 +42,7 @@ export interface AIPipeline {
 
 // ─── Remote Provider ─────────────────────────────────────
 
-async function callAIApi(prompt: string, type: string, model: string, params: any = {}): Promise<AIResult> {
+async function callAIApi(prompt: string, type: string, model: string, params: Record<string, unknown> = {}): Promise<AIResult> {
     const response = await fetch("/api/ai/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },

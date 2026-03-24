@@ -16,6 +16,8 @@ import { getModelsForCaps } from "@/lib/ai-models";
 import { Button } from "@/components/ui/Button";
 import { trpc } from "@/lib/trpc";
 import { useWorkspace } from "@/providers/WorkspaceProvider";
+import type { Layer, MasterComponent } from "@/types";
+import type { TemplatePackV2 } from "@/services/templateService";
 import {
     Copy, Plus, X, Send, Loader2, Bot, User, Sparkles,
     CheckCircle, AlertCircle, ChevronRight, Zap, LayoutTemplate, Search,
@@ -165,21 +167,21 @@ export function AIChatPanel({ open, onClose, messages, onAddMessages, projectId 
                     } else if (ca.action === "load_template") {
                         // Load template onto canvas
                         const { applyTemplatePack } = await import("@/services/templateService");
-                        await applyTemplatePack(ca.params.templateData);
+                        await applyTemplatePack((ca.params as { templateData: TemplatePackV2 }).templateData);
                     } else if (ca.action === "update_layer") {
                         // Find layer by slotId and update
                         const { slotId, updates } = ca.params as { slotId: string; updates: Record<string, unknown> };
                         const currentLayers = useCanvasStore.getState().layers;
-                        const targetLayer = currentLayers.find((l: any) => l.slotId === slotId);
+                        const targetLayer = currentLayers.find((l: Layer) => l.slotId === slotId);
                         if (targetLayer) {
                             updateLayer(targetLayer.id, updates as any);
                         }
                         // Also check masterComponents
                         const masters = useCanvasStore.getState().masterComponents;
-                        const targetMaster = masters?.find((mc: any) => mc.slotId === slotId);
+                        const targetMaster = masters?.find((mc: MasterComponent) => mc.slotId === slotId);
                         if (targetMaster && !targetLayer) {
                             // Update via master if no direct layer found
-                            const masterLayer = currentLayers.find((l: any) => l.masterId === targetMaster.id);
+                            const masterLayer = currentLayers.find((l: Layer) => l.masterId === targetMaster.id);
                             if (masterLayer) {
                                 updateLayer(masterLayer.id, updates as any);
                             }
@@ -319,25 +321,25 @@ export function AIChatPanel({ open, onClose, messages, onAddMessages, projectId 
         const masters = useCanvasStore.getState().masterComponents;
 
         // Find and update headline
-        const headlineLayer = currentLayers.find((l: any) => l.slotId === "headline");
+        const headlineLayer = currentLayers.find((l: Layer) => l.slotId === "headline");
         if (headlineLayer) {
             updateLayer(headlineLayer.id, { text: variant.title } as any);
         } else {
-            const headlineMaster = masters?.find((mc: any) => mc.slotId === "headline");
+            const headlineMaster = masters?.find((mc: MasterComponent) => mc.slotId === "headline");
             if (headlineMaster) {
-                const ml = currentLayers.find((l: any) => l.masterId === headlineMaster.id);
+                const ml = currentLayers.find((l: Layer) => l.masterId === headlineMaster.id);
                 if (ml) updateLayer(ml.id, { text: variant.title } as any);
             }
         }
 
         // Find and update subhead
-        const subheadLayer = currentLayers.find((l: any) => l.slotId === "subhead");
+        const subheadLayer = currentLayers.find((l: Layer) => l.slotId === "subhead");
         if (subheadLayer) {
             updateLayer(subheadLayer.id, { text: variant.subtitle } as any);
         } else {
-            const subheadMaster = masters?.find((mc: any) => mc.slotId === "subhead");
+            const subheadMaster = masters?.find((mc: MasterComponent) => mc.slotId === "subhead");
             if (subheadMaster) {
-                const ml = currentLayers.find((l: any) => l.masterId === subheadMaster.id);
+                const ml = currentLayers.find((l: Layer) => l.masterId === subheadMaster.id);
                 if (ml) updateLayer(ml.id, { text: variant.subtitle } as any);
             }
         }
@@ -382,21 +384,21 @@ export function AIChatPanel({ open, onClose, messages, onAddMessages, projectId 
                 for (const ca of result.canvasActions) {
                     if (ca.action === "load_template") {
                         const { applyTemplatePack } = await import("@/services/templateService");
-                        await applyTemplatePack(ca.params.templateData);
+                        await applyTemplatePack((ca.params as { templateData: TemplatePackV2 }).templateData);
                     } else if (ca.action === "update_layer") {
                         const { slotId, updates } = ca.params as { slotId: string; updates: Record<string, unknown> };
                         // Wait for template to finish loading
                         await new Promise(r => setTimeout(r, 200));
                         const currentLayers = useCanvasStore.getState().layers;
-                        const targetLayer = currentLayers.find((l: any) => l.slotId === slotId);
+                        const targetLayer = currentLayers.find((l: Layer) => l.slotId === slotId);
                         if (targetLayer) {
                             updateLayer(targetLayer.id, updates as any);
                         }
                         // Check masterComponents
                         const masters = useCanvasStore.getState().masterComponents;
-                        const targetMaster = masters?.find((mc: any) => mc.slotId === slotId);
+                        const targetMaster = masters?.find((mc: MasterComponent) => mc.slotId === slotId);
                         if (targetMaster && !targetLayer) {
-                            const masterLayer = currentLayers.find((l: any) => l.masterId === targetMaster.id);
+                            const masterLayer = currentLayers.find((l: Layer) => l.masterId === targetMaster.id);
                             if (masterLayer) {
                                 updateLayer(masterLayer.id, updates as any);
                             }

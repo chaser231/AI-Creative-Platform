@@ -27,7 +27,7 @@ import { useCreateProjectSync } from "@/hooks/useProjectSync";
 import { useProjectStore } from "@/store/projectStore";
 import { searchPacks, getAllTags, type CatalogSearchParams } from "@/services/templateCatalogService";
 import type { TemplatePackV2 } from "@/services/templateService";
-import type { BusinessUnit, TemplateCategory, ContentType } from "@/types";
+import type { BusinessUnit, TemplateCategory, ContentType, TemplateTag } from "@/types";
 
 /* ─── Constants ──────────────────────────────────────── */
 
@@ -113,7 +113,7 @@ function PackCard({ pack, onLoad }: { pack: TemplatePackV2; onLoad: (pack: Templ
                             {label}
                         </span>
                     ))}
-                    {(pack.tags || []).slice(0, 1).map((tag: any) => (
+                    {(pack.tags || []).slice(0, 1).map((tag: TemplateTag) => (
                         <span
                             key={tag.id}
                             className="text-[9px] px-1.5 py-0.5 rounded-md border border-border-primary text-text-tertiary whitespace-nowrap"

@@ -250,11 +250,11 @@ function hydrateLayerTree(
  * Safely extracts data (if wrapped in Meta), hydrates, and loads into CanvasStore.
  */
 export async function applyTemplatePack(
-    pack: any,
-    options?: { onSuccess?: () => void; onError?: (err: any) => void }
+    pack: TemplatePackV2 | { data: TemplatePackV2 },
+    options?: { onSuccess?: () => void; onError?: (err: unknown) => void }
 ) {
     try {
-        const data = pack.data || pack; // Handle TemplatePackMeta wrapper if present
+        const data = ('data' in pack) ? pack.data : pack; // Handle TemplatePackMeta wrapper if present
         const hydrated = hydrateTemplate(data);
         const { useCanvasStore } = await import("@/store/canvasStore");
         useCanvasStore.getState().loadTemplatePack(hydrated);
