@@ -69,9 +69,25 @@ export const createViewportSlice: StateCreator<CanvasStore, [], [], ViewportSlic
 
     getFrameAtPoint: (x, y, excludeId) => {
         const { layers } = get();
+
+        // Collect excludeId + all its descendants to prevent circular nesting
+        const excludeIds = new Set<string>();
+        if (excludeId) {
+            const collectDescendants = (id: string) => {
+                excludeIds.add(id);
+                const frame = layers.find(l => l.id === id && l.type === "frame") as FrameLayer | undefined;
+                if (frame?.childIds) {
+                    frame.childIds.forEach(cid => {
+                        if (!excludeIds.has(cid)) collectDescendants(cid);
+                    });
+                }
+            };
+            collectDescendants(excludeId);
+        }
+
         for (let i = layers.length - 1; i >= 0; i--) {
             const l = layers[i];
-            if (l.type !== "frame" || l.id === excludeId) continue;
+            if (l.type !== "frame" || excludeIds.has(l.id)) continue;
             const frame = l as FrameLayer;
             if (
                 x >= frame.x &&
