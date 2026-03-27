@@ -8,7 +8,7 @@ import { TopBar } from "@/components/layout/TopBar";
 import { Button } from "@/components/ui/Button";
 import { Dialog } from "@/components/ui/Dialog";
 import { LayersPanel } from "@/components/editor/LayersPanel";
-import { PropertiesPanel } from "@/components/editor/PropertiesPanel";
+import { PropertiesPanel } from "@/components/editor/properties";
 import { Toolbar } from "@/components/editor/Toolbar";
 import { ExportModal } from "@/components/editor/ExportModal";
 import { ResizePanel } from "@/components/editor/ResizePanel";
