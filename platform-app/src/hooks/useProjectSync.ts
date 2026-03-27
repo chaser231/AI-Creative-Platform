@@ -100,7 +100,7 @@ export function useCanvasAutoSave(projectId: string, enabled: boolean = true) {
       { id: projectId, canvasState },
       {
       onError: (err: { message: string }) => {
-          console.warn("Auto-save failed:", err.message);
+          console.error("Auto-save failed:", err.message);
         },
       }
     );
@@ -245,7 +245,7 @@ export function useCreateProjectSync() {
     async (data: { name: string; goal: string; workspaceId?: string }) => {
       const wsId = data.workspaceId ?? cachedWorkspaceId;
       if (!wsId) {
-        console.warn("No workspace ID available for project creation");
+        console.error("No workspace ID available for project creation");
         return null;
       }
 

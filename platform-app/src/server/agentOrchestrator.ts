@@ -312,11 +312,11 @@ RULES:
         success: true,
         type: "template_choices",
         content: `Найдено ${templates.length} шаблонов. Выберите один:`,
-        templateChoices: templates.map((t: any) => ({
+        templateChoices: templates.map((t: { id: string; name: string; description: string | null; thumbnailUrl: string | null }) => ({
           id: t.id,
           name: t.name,
           description: t.description || "",
-          thumbnailUrl: t.thumbnailUrl,
+          thumbnailUrl: t.thumbnailUrl ?? undefined,
         })),
       };
     }
@@ -335,18 +335,26 @@ RULES:
         return { success: false, type: "error", content: "Шаблон не найден" };
       }
 
-      const templateData = (template.data as any)?.data || template.data;
+      const templateData = (template.data as Record<string, unknown>)?.data || template.data;
 
       // Scan template layers to find slots
       const slots: Array<{ id: string; type: string; slotId: string }> = [];
 
-      function scanLayers(layers: any[]) {
+      interface TemplateNode {
+        layer?: { id?: string; type?: string; slotId?: string };
+        id?: string;
+        type?: string;
+        slotId?: string;
+        children?: TemplateNode[];
+      }
+
+      function scanLayers(layers: TemplateNode[]) {
         for (const node of layers) {
           const layer = node.layer || node;
           if (layer.slotId && layer.slotId !== "none") {
             slots.push({
-              id: layer.id,
-              type: layer.type,
+              id: layer.id || "",
+              type: layer.type || "",
               slotId: layer.slotId,
             });
           }
@@ -355,11 +363,12 @@ RULES:
       }
 
       // Scan both layerTree and masterComponents
-      if (templateData.layerTree) scanLayers(templateData.layerTree);
-      if (templateData.masterComponents) {
-        for (const mc of templateData.masterComponents) {
+      const td = templateData as Record<string, unknown>;
+      if (td.layerTree) scanLayers(td.layerTree as TemplateNode[]);
+      if (td.masterComponents) {
+        for (const mc of td.masterComponents as TemplateNode[]) {
           if (mc.slotId && mc.slotId !== "none") {
-            slots.push({ id: mc.id, type: mc.type, slotId: mc.slotId });
+            slots.push({ id: mc.id || "", type: mc.type || "", slotId: mc.slotId });
           }
         }
       }
@@ -645,7 +654,7 @@ async function callOpenAIWithTools(messages: ChatMessage[]): Promise<{
 
   return {
     content: message?.content || null,
-    toolCalls: (message?.tool_calls || []).map((tc: any) => ({
+    toolCalls: (message?.tool_calls || []).map((tc: { id: string; function: { name: string; arguments: string } }) => ({
       id: tc.id,
       name: tc.function.name,
       arguments: tc.function.arguments,
@@ -778,8 +787,8 @@ ${actionsList}
     return {
       content: parsed.response || null,
       toolCalls: actions
-        .filter((a: any) => a.action_id && ACTIONS.some((def) => def.id === a.action_id))
-        .map((a: any, i: number) => ({
+        .filter((a: { action_id?: string; parameters?: Record<string, unknown> }) => a.action_id && ACTIONS.some((def) => def.id === a.action_id))
+        .map((a: { action_id: string; parameters?: Record<string, unknown> }, i: number) => ({
           id: `replicate-${i}`,
           name: a.action_id,
           arguments: JSON.stringify(a.parameters || {}),

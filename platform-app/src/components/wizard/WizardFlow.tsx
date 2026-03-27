@@ -103,7 +103,7 @@ export function WizardFlow({ projectId, onSwitchToStudio }: WizardFlowProps) {
         const reader = new FileReader();
         reader.onload = (ev) => {
             if (ev.target?.result && typeof ev.target.result === "string") {
-                setImageValues(prev => ({ ...prev, [id]: ev.target!.result as string }));
+                setImageValues(prev => ({ ...prev, [id]: ev.target?.result as string }));
             }
         };
         reader.readAsDataURL(file);
@@ -490,7 +490,8 @@ export function WizardFlow({ projectId, onSwitchToStudio }: WizardFlowProps) {
                                         let childMasterIds = new Set<string>();
                                         
                                         if (selectedTemplate.layerTree && selectedTemplate.layerTree.length > 0) {
-                                            const findNode = (nodes: any[], mId: string): any => {
+                                            interface TreeNode { masterId?: string; layer?: { masterId?: string }; children?: TreeNode[] }
+                                            const findNode = (nodes: TreeNode[], mId: string): TreeNode | null => {
                                                 for (const n of nodes) {
                                                     if (n.masterId === mId || n.layer?.masterId === mId) return n;
                                                     if (n.children) {
@@ -502,7 +503,7 @@ export function WizardFlow({ projectId, onSwitchToStudio }: WizardFlowProps) {
                                             };
                                             const frameNode = findNode(selectedTemplate.layerTree, frame.id);
                                             if (frameNode && frameNode.children) {
-                                                frameNode.children.forEach((c: any) => {
+                                                frameNode.children.forEach((c: TreeNode) => {
                                                     if (c.masterId) childMasterIds.add(c.masterId);
                                                     if (c.layer?.masterId) childMasterIds.add(c.layer.masterId);
                                                 });

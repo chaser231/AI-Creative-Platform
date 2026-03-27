@@ -1082,7 +1082,7 @@ export function Canvas({ stageRef }: CanvasProps) {
         const width = node.width() * scaleX;
         const height = node.height() * scaleY;
 
-        let extraProps: any = {};
+        let extraProps: { textAdjust?: string } = {};
         if (node.getClassName() === "Text") {
             const layer = layers.find(l => l.id === id);
             if (layer && layer.type === "text") {
