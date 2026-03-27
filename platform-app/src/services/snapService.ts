@@ -599,3 +599,259 @@ function getCrossAxisCenter(nodes: NodeBounds[], axis: 'horizontal' | 'vertical'
         return (minX + maxX) / 2;
     }
 }
+
+// ─── Alt-Hover Distance Measurement ─────────────────────────
+
+/**
+ * Compute distances from a selected (stationary) node to a specific target node.
+ * Used for Alt-hover measurement without dragging.
+ * Returns all applicable directional distances (left, right, top, bottom).
+ */
+export function computeHoverDistances(
+    selectedNode: NodeBounds,
+    targetNode: NodeBounds,
+): DistanceMeasurement[] {
+    const measurements: DistanceMeasurement[] = [];
+
+    const aLeft = selectedNode.x;
+    const aRight = selectedNode.x + selectedNode.width;
+    const aTop = selectedNode.y;
+    const aBottom = selectedNode.y + selectedNode.height;
+
+    const bLeft = targetNode.x;
+    const bRight = targetNode.x + targetNode.width;
+    const bTop = targetNode.y;
+    const bBottom = targetNode.y + targetNode.height;
+
+    // Vertical overlap for horizontal distances
+    const vertOverlap = aTop < bBottom && aBottom > bTop;
+    // Horizontal overlap for vertical distances
+    const horizOverlap = aLeft < bRight && aRight > bLeft;
+
+    if (vertOverlap) {
+        const crossPos = Math.max(aTop, bTop) + (Math.min(aBottom, bBottom) - Math.max(aTop, bTop)) / 2;
+
+        if (bRight <= aLeft) {
+            measurements.push({
+                axis: 'horizontal', from: bRight, to: aLeft,
+                position: crossPos, distance: Math.round(aLeft - bRight),
+            });
+        }
+        if (bLeft >= aRight) {
+            measurements.push({
+                axis: 'horizontal', from: aRight, to: bLeft,
+                position: crossPos, distance: Math.round(bLeft - aRight),
+            });
+        }
+    }
+
+    if (horizOverlap) {
+        const crossPos = Math.max(aLeft, bLeft) + (Math.min(aRight, bRight) - Math.max(aLeft, bLeft)) / 2;
+
+        if (bBottom <= aTop) {
+            measurements.push({
+                axis: 'vertical', from: bBottom, to: aTop,
+                position: crossPos, distance: Math.round(aTop - bBottom),
+            });
+        }
+        if (bTop >= aBottom) {
+            measurements.push({
+                axis: 'vertical', from: aBottom, to: bTop,
+                position: crossPos, distance: Math.round(bTop - aBottom),
+            });
+        }
+    }
+
+    // If no overlap on either axis (diagonal), show both horizontal and vertical
+    if (!vertOverlap && !horizOverlap) {
+        // Horizontal gap
+        const hFrom = aRight < bLeft ? aRight : bRight;
+        const hTo = aRight < bLeft ? bLeft : aLeft;
+        const hDist = Math.abs(hTo - hFrom);
+        if (hDist > 0) {
+            const crossPos = (Math.max(aTop, bTop) + Math.min(aBottom, bBottom)) / 2 ||
+                             (aTop + aBottom) / 2;
+            measurements.push({
+                axis: 'horizontal', from: Math.min(hFrom, hTo), to: Math.max(hFrom, hTo),
+                position: (aTop + aBottom + bTop + bBottom) / 4,
+                distance: Math.round(hDist),
+            });
+        }
+        // Vertical gap
+        const vFrom = aBottom < bTop ? aBottom : bBottom;
+        const vTo = aBottom < bTop ? bTop : aTop;
+        const vDist = Math.abs(vTo - vFrom);
+        if (vDist > 0) {
+            measurements.push({
+                axis: 'vertical', from: Math.min(vFrom, vTo), to: Math.max(vFrom, vTo),
+                position: (aLeft + aRight + bLeft + bRight) / 4,
+                distance: Math.round(vDist),
+            });
+        }
+    }
+
+    return measurements;
+}
+
+// ─── Resize Snap ────────────────────────────────────────────
+
+export type ActiveEdge = 'top' | 'bottom' | 'left' | 'right';
+
+export interface ResizeSnapResult {
+    /** Snapped x position (may change for left-edge resize) */
+    x: number;
+    /** Snapped y position (may change for top-edge resize) */
+    y: number;
+    /** Snapped width */
+    width: number;
+    /** Snapped height */
+    height: number;
+    /** Snap guides to display */
+    guides: SnapGuide[];
+}
+
+/**
+ * Compute snap for a node being resized.
+ * Only snaps the edges that are actively being dragged (determined by anchor name).
+ */
+export function computeResizeSnap(
+    resizingNode: NodeBounds & { width: number; height: number },
+    otherNodes: NodeBounds[],
+    activeEdges: ActiveEdge[],
+    artboardBounds?: { width: number; height: number },
+    threshold: number = SNAP_THRESHOLD,
+): ResizeSnapResult {
+    const guides: SnapGuide[] = [];
+    let { x, y, width, height } = resizingNode;
+
+    const artboardNode: NodeBounds | null = artboardBounds
+        ? { id: '__artboard__', x: 0, y: 0, width: artboardBounds.width, height: artboardBounds.height, rotation: 0 }
+        : null;
+    const allTargets = [...otherNodes, ...(artboardNode ? [artboardNode] : [])];
+
+    // Snap RIGHT edge
+    if (activeEdges.includes('right')) {
+        const activeEdgePos = x + width;
+        let bestDiff = threshold + 1;
+        let bestTarget = 0;
+        let bestInfo: { start: number; end: number; type: SnapGuide['type'] } | null = null;
+
+        for (const node of allTargets) {
+            const isArtboard = node.id === '__artboard__';
+            const targets = [node.x, node.x + node.width / 2, node.x + node.width];
+            for (const te of targets) {
+                const diff = Math.abs(activeEdgePos - te);
+                if (diff < bestDiff) {
+                    bestDiff = diff;
+                    bestTarget = te;
+                    bestInfo = {
+                        start: Math.min(y, node.y),
+                        end: Math.max(y + height, node.y + node.height),
+                        type: isArtboard ? 'artboard' : 'edge',
+                    };
+                }
+            }
+        }
+        if (bestInfo && bestDiff <= threshold) {
+            width = bestTarget - x;
+            guides.push({ orientation: 'vertical', position: bestTarget, start: bestInfo.start, end: bestInfo.end, type: bestInfo.type });
+        }
+    }
+
+    // Snap LEFT edge
+    if (activeEdges.includes('left')) {
+        const activeEdgePos = x;
+        let bestDiff = threshold + 1;
+        let bestTarget = 0;
+        let bestInfo: { start: number; end: number; type: SnapGuide['type'] } | null = null;
+
+        for (const node of allTargets) {
+            const isArtboard = node.id === '__artboard__';
+            const targets = [node.x, node.x + node.width / 2, node.x + node.width];
+            for (const te of targets) {
+                const diff = Math.abs(activeEdgePos - te);
+                if (diff < bestDiff) {
+                    bestDiff = diff;
+                    bestTarget = te;
+                    bestInfo = {
+                        start: Math.min(y, node.y),
+                        end: Math.max(y + height, node.y + node.height),
+                        type: isArtboard ? 'artboard' : 'edge',
+                    };
+                }
+            }
+        }
+        if (bestInfo && bestDiff <= threshold) {
+            const oldRight = x + width;
+            x = bestTarget;
+            width = oldRight - x;
+            guides.push({ orientation: 'vertical', position: bestTarget, start: bestInfo.start, end: bestInfo.end, type: bestInfo.type });
+        }
+    }
+
+    // Snap BOTTOM edge
+    if (activeEdges.includes('bottom')) {
+        const activeEdgePos = y + height;
+        let bestDiff = threshold + 1;
+        let bestTarget = 0;
+        let bestInfo: { start: number; end: number; type: SnapGuide['type'] } | null = null;
+
+        for (const node of allTargets) {
+            const isArtboard = node.id === '__artboard__';
+            const targets = [node.y, node.y + node.height / 2, node.y + node.height];
+            for (const te of targets) {
+                const diff = Math.abs(activeEdgePos - te);
+                if (diff < bestDiff) {
+                    bestDiff = diff;
+                    bestTarget = te;
+                    bestInfo = {
+                        start: Math.min(x, node.x),
+                        end: Math.max(x + width, node.x + node.width),
+                        type: isArtboard ? 'artboard' : 'edge',
+                    };
+                }
+            }
+        }
+        if (bestInfo && bestDiff <= threshold) {
+            height = bestTarget - y;
+            guides.push({ orientation: 'horizontal', position: bestTarget, start: bestInfo.start, end: bestInfo.end, type: bestInfo.type });
+        }
+    }
+
+    // Snap TOP edge
+    if (activeEdges.includes('top')) {
+        const activeEdgePos = y;
+        let bestDiff = threshold + 1;
+        let bestTarget = 0;
+        let bestInfo: { start: number; end: number; type: SnapGuide['type'] } | null = null;
+
+        for (const node of allTargets) {
+            const isArtboard = node.id === '__artboard__';
+            const targets = [node.y, node.y + node.height / 2, node.y + node.height];
+            for (const te of targets) {
+                const diff = Math.abs(activeEdgePos - te);
+                if (diff < bestDiff) {
+                    bestDiff = diff;
+                    bestTarget = te;
+                    bestInfo = {
+                        start: Math.min(x, node.x),
+                        end: Math.max(x + width, node.x + node.width),
+                        type: isArtboard ? 'artboard' : 'edge',
+                    };
+                }
+            }
+        }
+        if (bestInfo && bestDiff <= threshold) {
+            const oldBottom = y + height;
+            y = bestTarget;
+            height = oldBottom - y;
+            guides.push({ orientation: 'horizontal', position: bestTarget, start: bestInfo.start, end: bestInfo.end, type: bestInfo.type });
+        }
+    }
+
+    // Ensure minimum dimensions
+    if (width < 5) width = 5;
+    if (height < 5) height = 5;
+
+    return { x, y, width, height, guides };
+}
