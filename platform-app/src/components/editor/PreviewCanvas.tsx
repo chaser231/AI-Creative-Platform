@@ -3,6 +3,7 @@
 import { useEffect, useState, useRef } from "react";
 import { Stage, Layer, Rect, Text, Image as KonvaImage, Group } from "react-konva";
 import type { Layer as LayerType, TextLayer, BadgeLayer, FrameLayer, ImageLayer } from "@/types";
+import { computeImageFitProps } from "@/utils/imageFitUtils";
 import Konva from "konva";
 
 function useImage(src: string): HTMLImageElement | undefined {
@@ -65,11 +66,37 @@ function PreviewLayer({ layer }: PreviewLayerProps) {
         case "image":
             // eslint-disable-next-line react-hooks/rules-of-hooks
             const img = useImage(layer.src);
+            if (!img) return null;
+            const fitMode = layer.objectFit || "cover";
+            const nw = img.naturalWidth || img.width;
+            const nh = img.naturalHeight || img.height;
+            const fit = computeImageFitProps(fitMode, nw, nh, layer.width, layer.height);
+
+            if (fitMode === "contain" || fitMode === "crop") {
+                return (
+                    <Group
+                        {...commonProps}
+                        clipFunc={(ctx) => {
+                            ctx.rect(0, 0, layer.width, layer.height);
+                        }}
+                    >
+                        <KonvaImage
+                            image={img}
+                            x={fit.drawX}
+                            y={fit.drawY}
+                            width={fit.drawWidth}
+                            height={fit.drawHeight}
+                            crop={{ x: fit.cropX, y: fit.cropY, width: fit.cropWidth, height: fit.cropHeight }}
+                        />
+                    </Group>
+                );
+            }
+
             return (
                 <KonvaImage
                     {...commonProps}
                     image={img}
-                    // For a true object-fit cover we'd need a clip rect, but Konva image respects width/height.
+                    crop={{ x: fit.cropX, y: fit.cropY, width: fit.cropWidth, height: fit.cropHeight }}
                 />
             );
         case "badge":

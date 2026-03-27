@@ -162,6 +162,7 @@ export const createLayerSlice: StateCreator<CanvasStore, [], [], LayerSlice> = (
             x: 100, y: 100, width, height,
             rotation: 0, visible: true, locked: false,
             src,
+            objectFit: "cover",
         };
         const state = get();
         const { layer: finalLayer, master, instances } = createLayerWithMasterAndInstances(
@@ -402,7 +403,7 @@ export const createLayerSlice: StateCreator<CanvasStore, [], [], LayerSlice> = (
                 state.layers.filter((l) => idsToRemove.has(l.id) && l.masterId).map((l) => l.masterId!)
             );
             return {
-                layers: newLayers,
+                layers: applyAllAutoLayouts(newLayers),
                 selectedLayerIds: state.selectedLayerIds.filter((sid) => !idsToRemove.has(sid)),
                 masterComponents: state.masterComponents.filter((m) => !masterIdsToRemove.has(m.id)),
                 componentInstances: state.componentInstances.filter((i) => !masterIdsToRemove.has(i.masterId)),
@@ -451,7 +452,7 @@ export const createLayerSlice: StateCreator<CanvasStore, [], [], LayerSlice> = (
             );
 
             return {
-                layers: newLayers,
+                layers: applyAllAutoLayouts(newLayers),
                 selectedLayerIds: [],
                 masterComponents: state.masterComponents.filter((m) => !masterIdsToRemove.has(m.id)),
                 componentInstances: state.componentInstances.filter((i) => !masterIdsToRemove.has(i.masterId)),

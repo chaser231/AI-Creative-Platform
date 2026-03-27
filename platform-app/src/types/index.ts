@@ -117,10 +117,19 @@ export interface RectangleComponentProps extends BaseComponentProps {
     cornerRadius: number;
 }
 
+export type ImageFitMode = "cover" | "contain" | "fill" | "crop";
+
+export const IMAGE_FIT_MODE_LABELS: Record<ImageFitMode, string> = {
+    cover: "Cover",
+    contain: "Contain",
+    fill: "Fill",
+    crop: "Crop",
+};
+
 export interface ImageComponentProps extends BaseComponentProps {
     type: "image";
     src: string;
-    objectFit: "cover" | "contain" | "fill";
+    objectFit: ImageFitMode;
 }
 
 export interface BadgeComponentProps extends BaseComponentProps {
@@ -170,7 +179,7 @@ export type ComponentProps = TextComponentProps | RectangleComponentProps | Imag
 /** Which properties cascade from master to instances as "content source" */
 export const CONTENT_SOURCE_KEYS: Record<ComponentType, string[]> = {
     text: ["text"],
-    image: ["src", "width", "height"],
+    image: ["src", "width", "height", "objectFit"],
     badge: ["label"],
     rectangle: [],
     frame: [],
@@ -292,6 +301,7 @@ export interface RectangleLayer extends BaseLayer {
 export interface ImageLayer extends BaseLayer {
     type: "image";
     src: string;
+    objectFit?: ImageFitMode;
 }
 
 export interface BadgeLayer extends BaseLayer {

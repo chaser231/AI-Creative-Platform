@@ -4,9 +4,11 @@ import { useRef, useCallback, useEffect, useState, useMemo, Fragment } from "rea
 import { ImageIcon } from "lucide-react";
 import { Stage, Layer, Rect, Text, Image as KonvaImage, Transformer, Group, Line } from "react-konva";
 import { useCanvasStore, computeConstrainedPosition } from "@/store/canvasStore";
-import type { Layer as LayerType, TextLayer, BadgeLayer, FrameLayer } from "@/types";
+import type { Layer as LayerType, TextLayer, BadgeLayer, FrameLayer, ImageLayer } from "@/types";
+import { computeImageFitProps } from "@/utils/imageFitUtils";
 import { ContextMenu, buildLayerContextMenuItems } from "./ContextMenu";
-import { computeSnap, SnapResult, DistanceMeasurement, SpacingGuide } from "@/services/snapService";
+import { computeSnap, computeHoverDistances, computeResizeSnap, SnapResult, DistanceMeasurement, SpacingGuide } from "@/services/snapService";
+import type { ActiveEdge, NodeBounds } from "@/services/snapService";
 import { isFocusedOnInput } from "@/utils/keyboard";
 import Konva from "konva";
 
@@ -120,6 +122,8 @@ interface CanvasLayerProps {
     onDragEnd: (e: Konva.KonvaEventObject<any>) => void;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     onTransformEnd: (e: Konva.KonvaEventObject<any>) => void;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    onTransform?: (e: Konva.KonvaEventObject<any>) => void;
     onDblClickText: (layer: LayerType & { type: "text" }, node: Konva.Text) => void;
     isEditing: boolean;
     isAutoLayoutChild?: boolean;
@@ -133,6 +137,7 @@ function CanvasLayer({
     onDragMove,
     onDragEnd,
     onTransformEnd,
+    onTransform,
     onDblClickText,
     isEditing,
     isAutoLayoutChild,
@@ -156,6 +161,7 @@ function CanvasLayer({
         onDragMove,
         onDragEnd,
         onTransformEnd,
+        onTransform,
         onDblClick: (e: Konva.KonvaEventObject<MouseEvent>) => {
             // For text, we already handle dblClick in the <Text> node itself to trigger editing.
             // But for other shapes inside frames, a double click should deep-select them natively.
@@ -258,11 +264,41 @@ function ImageLayerRenderer({
 }) {
     const image = useImage(layer.src);
     if (!image) return null;
+
+    const fitMode = (layer as ImageLayer).objectFit || "cover";
+    const naturalW = image.naturalWidth || image.width;
+    const naturalH = image.naturalHeight || image.height;
+    const fit = computeImageFitProps(fitMode, naturalW, naturalH, layer.width, layer.height);
+
+    // For contain/crop the image may be smaller than container, so we draw within a clipped Group
+    if (fitMode === "contain" || fitMode === "crop") {
+        return (
+            <Group
+                ref={shapeRef as React.RefObject<Konva.Group | null>}
+                {...commonProps}
+                clipFunc={(ctx) => {
+                    ctx.rect(0, 0, layer.width, layer.height);
+                }}
+            >
+                <KonvaImage
+                    image={image}
+                    x={fit.drawX}
+                    y={fit.drawY}
+                    width={fit.drawWidth}
+                    height={fit.drawHeight}
+                    crop={{ x: fit.cropX, y: fit.cropY, width: fit.cropWidth, height: fit.cropHeight }}
+                />
+            </Group>
+        );
+    }
+
+    // For cover and fill — image fills the entire container
     return (
         <KonvaImage
             ref={shapeRef as React.RefObject<Konva.Image | null>}
             {...commonProps}
             image={image}
+            crop={{ x: fit.cropX, y: fit.cropY, width: fit.cropWidth, height: fit.cropHeight }}
         />
     );
 }
@@ -641,6 +677,9 @@ export function Canvas({ stageRef }: CanvasProps) {
     const [distanceMeasurements, setDistanceMeasurements] = useState<DistanceMeasurement[]>([]);
     const [spacingGuides, setSpacingGuides] = useState<SpacingGuide[]>([]);
     const isAltPressed = useRef(false);
+    const [isAltHovering, setIsAltHovering] = useState(false);
+    const isDragging = useRef(false);
+    const isTransforming = useRef(false);
 
     // Track start positions for multi-drag
     const dragStartLocs = useRef<Record<string, { x: number; y: number }>>({});
@@ -749,6 +788,7 @@ export function Canvas({ stageRef }: CanvasProps) {
 
     const handleLayerDragStart = useCallback((e: Konva.KonvaEventObject<DragEvent>) => {
         setStageDraggable(false);
+        isDragging.current = true;
         let id = e.target.id();
 
         const isDeepSelect = e.evt?.metaKey || e.evt?.ctrlKey;
@@ -793,17 +833,51 @@ export function Canvas({ stageRef }: CanvasProps) {
 
     }, [layers, selectedLayerIds, selectLayer]);
 
-    // Alt key tracking for distance measurement
+    // Alt key tracking for distance measurement (both drag and hover)
     useEffect(() => {
-        const handleKeyDown = (e: KeyboardEvent) => { if (e.key === 'Alt') isAltPressed.current = true; };
-        const handleKeyUp = (e: KeyboardEvent) => { if (e.key === 'Alt') isAltPressed.current = false; };
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if (e.key === 'Alt') {
+                e.preventDefault();
+                isAltPressed.current = true;
+                setIsAltHovering(true);
+
+                // If a layer is selected and we're not dragging/transforming,
+                // show distances from selected layer to all nearby objects + artboard
+                if (!isDragging.current && !isTransforming.current && selectedLayerIds.length > 0) {
+                    const selectedLayer = layers.find(l => l.id === selectedLayerIds[0]);
+                    if (selectedLayer) {
+                        const selectedBounds: NodeBounds = {
+                            id: selectedLayer.id, x: selectedLayer.x, y: selectedLayer.y,
+                            width: selectedLayer.width, height: selectedLayer.height, rotation: selectedLayer.rotation,
+                        };
+                        // Measure to artboard edges by default on Alt press
+                        const artboardBounds: NodeBounds = {
+                            id: '__artboard__', x: 0, y: 0,
+                            width: canvasWidth, height: canvasHeight, rotation: 0,
+                        };
+                        const dists = computeHoverDistances(selectedBounds, artboardBounds);
+                        setDistanceMeasurements(dists);
+                    }
+                }
+            }
+        };
+        const handleKeyUp = (e: KeyboardEvent) => {
+            if (e.key === 'Alt') {
+                isAltPressed.current = false;
+                setIsAltHovering(false);
+                // Clear hover measurements (but not if dragging — drag handler manages its own)
+                if (!isDragging.current && !isTransforming.current) {
+                    setDistanceMeasurements([]);
+                }
+            }
+        };
         window.addEventListener('keydown', handleKeyDown);
         window.addEventListener('keyup', handleKeyUp);
         return () => {
             window.removeEventListener('keydown', handleKeyDown);
             window.removeEventListener('keyup', handleKeyUp);
         };
-    }, []);
+    }, [selectedLayerIds, layers, canvasWidth, canvasHeight]);
 
     const handleLayerDragMove = useCallback((e: Konva.KonvaEventObject<DragEvent>) => {
         const id = e.target.id();
@@ -907,6 +981,7 @@ export function Canvas({ stageRef }: CanvasProps) {
         setDistanceMeasurements([]);
         setSpacingGuides([]);
         setStageDraggable(true);
+        isDragging.current = false;
         const id = e.target.id();
         const startLoc = dragStartLocs.current[id];
         const stage = e.target.getStage();
@@ -976,6 +1051,10 @@ export function Canvas({ stageRef }: CanvasProps) {
     }, [updateLayer, getFrameAtPoint, moveLayerToFrame, removeLayerFromFrame, setHighlightedFrameId, layers]);
 
     const handleTransformEnd = useCallback((e: Konva.KonvaEventObject<Event>) => {
+        isTransforming.current = false;
+        setSnapLines([]);
+        setDistanceMeasurements([]);
+        setSpacingGuides([]);
         // Start handling multi-transform logic? 
         // Konva Transformer updates the nodes directly.
         // We just need to read their new props and update store.
@@ -1052,6 +1131,78 @@ export function Canvas({ stageRef }: CanvasProps) {
         }
 
     }, [updateLayer, layers]);
+
+    // ─── Live Resize Snapping ────────────────────────────
+    const handleTransform = useCallback((e: Konva.KonvaEventObject<Event>) => {
+        isTransforming.current = true;
+        const node = e.target;
+        const id = node.id();
+        const stage = node.getStage();
+        if (!stage) return;
+
+        const { snapConfig } = useCanvasStore.getState();
+        if (!snapConfig.objectSnap && !snapConfig.artboardSnap) return;
+
+        // Read current transform state
+        const scaleX = node.scaleX();
+        const scaleY = node.scaleY();
+        const currentWidth = node.width() * scaleX;
+        const currentHeight = node.height() * scaleY;
+
+        // Get scene position
+        const absPos = node.getAbsolutePosition();
+        const currentX = (absPos.x - stage.x()) / stage.scaleX();
+        const currentY = (absPos.y - stage.y()) / stage.scaleY();
+
+        // Determine which edges are active based on the transformer's active anchor
+        // We need to get the transformer reference
+        const transformer = stage.findOne('Transformer') as Konva.Transformer | null;
+        const anchorName = transformer?.getActiveAnchor?.() || '';
+
+        const activeEdges: ActiveEdge[] = [];
+        if (anchorName.includes('top')) activeEdges.push('top');
+        if (anchorName.includes('bottom')) activeEdges.push('bottom');
+        if (anchorName.includes('left')) activeEdges.push('left');
+        if (anchorName.includes('right')) activeEdges.push('right');
+        // Middle handles
+        if (anchorName === 'middle-left') { activeEdges.length = 0; activeEdges.push('left'); }
+        if (anchorName === 'middle-right') { activeEdges.length = 0; activeEdges.push('right'); }
+        if (anchorName === 'top-center') { activeEdges.length = 0; activeEdges.push('top'); }
+        if (anchorName === 'bottom-center') { activeEdges.length = 0; activeEdges.push('bottom'); }
+
+        if (activeEdges.length === 0) return;
+
+        const otherNodes = layers
+            .filter(l => l.id !== id && l.visible && !l.locked)
+            .map(l => ({
+                id: l.id, x: l.x, y: l.y,
+                width: l.width, height: l.height, rotation: l.rotation,
+            }));
+
+        const snapResult = computeResizeSnap(
+            { id, x: currentX, y: currentY, width: currentWidth, height: currentHeight, rotation: node.rotation() },
+            otherNodes,
+            activeEdges,
+            { width: canvasWidth, height: canvasHeight },
+        );
+
+        setSnapLines(snapResult.guides);
+
+        // Apply snapped dimensions back to the Konva node
+        if (snapResult.guides.length > 0) {
+            const newScaleX = snapResult.width / node.width();
+            const newScaleY = snapResult.height / node.height();
+            node.scaleX(newScaleX);
+            node.scaleY(newScaleY);
+
+            // Update position if left or top edges were snapped
+            if (activeEdges.includes('left') || activeEdges.includes('top')) {
+                const newAbsX = snapResult.x * stage.scaleX() + stage.x();
+                const newAbsY = snapResult.y * stage.scaleY() + stage.y();
+                node.setAbsolutePosition({ x: newAbsX, y: newAbsY });
+            }
+        }
+    }, [layers, canvasWidth, canvasHeight]);
 
     const [isPanning, setIsPanning] = useState(false);
 
@@ -1178,8 +1329,6 @@ export function Canvas({ stageRef }: CanvasProps) {
     }, [selectLayer, isEditingText, stopTextEditing, isPanning]);
 
     const handleStageMouseMove = useCallback((e: Konva.KonvaEventObject<MouseEvent>) => {
-        if (!selectionBox) return;
-
         const stage = e.target.getStage();
         if (!stage) return;
         const pointer = stage.getPointerPosition();
@@ -1187,6 +1336,61 @@ export function Canvas({ stageRef }: CanvasProps) {
 
         const currentSceneX = (pointer.x - stage.x()) / stage.scaleX();
         const currentSceneY = (pointer.y - stage.y()) / stage.scaleY();
+
+        // Alt-hover distance measurement
+        if (isAltPressed.current && !isDragging.current && !isTransforming.current && selectedLayerIds.length > 0) {
+            const selectedLayer = layers.find(l => l.id === selectedLayerIds[0]);
+            if (selectedLayer) {
+                const selectedBounds: NodeBounds = {
+                    id: selectedLayer.id, x: selectedLayer.x, y: selectedLayer.y,
+                    width: selectedLayer.width, height: selectedLayer.height, rotation: selectedLayer.rotation,
+                };
+
+                // Find what the cursor is hovering over
+                const hoveredNode = stage.getIntersection(pointer);
+                let hoveredLayerId: string | null = null;
+
+                if (hoveredNode) {
+                    // Walk up the parent chain to find a layer node
+                    let current: Konva.Node | null = hoveredNode;
+                    while (current && current !== stage) {
+                        const nodeId = current.id();
+                        if (nodeId) {
+                            const found = layers.find(l => l.id === nodeId);
+                            if (found && found.id !== selectedLayer.id) {
+                                hoveredLayerId = found.id;
+                                break;
+                            }
+                        }
+                        current = current.parent;
+                    }
+                }
+
+                if (hoveredLayerId) {
+                    // Measure to hovered object
+                    const hoveredLayer = layers.find(l => l.id === hoveredLayerId);
+                    if (hoveredLayer) {
+                        const targetBounds: NodeBounds = {
+                            id: hoveredLayer.id, x: hoveredLayer.x, y: hoveredLayer.y,
+                            width: hoveredLayer.width, height: hoveredLayer.height, rotation: hoveredLayer.rotation,
+                        };
+                        setDistanceMeasurements(computeHoverDistances(selectedBounds, targetBounds));
+                    }
+                } else {
+                    // Measure to artboard edges
+                    const artboardBounds: NodeBounds = {
+                        id: '__artboard__', x: 0, y: 0,
+                        width: canvasWidth, height: canvasHeight, rotation: 0,
+                    };
+                    setDistanceMeasurements(computeHoverDistances(selectedBounds, artboardBounds));
+                }
+            }
+            // Don't process selection box while Alt-hovering
+            return;
+        }
+
+        // Selection box rubber-banding
+        if (!selectionBox) return;
 
         setSelectionBox(prev => {
             if (!prev) return null;
@@ -1198,7 +1402,7 @@ export function Canvas({ stageRef }: CanvasProps) {
                 height: Math.abs(currentSceneY - prev.startY),
             };
         });
-    }, [selectionBox]);
+    }, [selectionBox, selectedLayerIds, layers, canvasWidth, canvasHeight]);
 
     const handleStageMouseUp = useCallback((e: Konva.KonvaEventObject<MouseEvent>) => {
         if (isPanning) {
@@ -1420,6 +1624,7 @@ export function Canvas({ stageRef }: CanvasProps) {
                                     onDragMove={handleLayerDragMove}
                                     onDragEnd={handleLayerDragEnd}
                                     onTransformEnd={handleTransformEnd}
+                                    onTransform={handleTransform}
                                     onDblClickText={handleDblClickText}
                                     isEditing={isEditingText && editingLayerId === layer.id}
                                 />
@@ -1447,6 +1652,7 @@ export function Canvas({ stageRef }: CanvasProps) {
                                     onDragMove={handleLayerDragMove}
                                     onDragEnd={handleLayerDragEnd}
                                     onTransformEnd={handleTransformEnd}
+                                    onTransform={handleTransform}
                                     onDblClickText={handleDblClickText}
                                     isEditing={isEditingText && editingLayerId === layer.id}
                                 />
