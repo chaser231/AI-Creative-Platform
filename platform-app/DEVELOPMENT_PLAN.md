@@ -78,26 +78,30 @@ export default [
 
 ---
 
-## Immediate Cleanup Tasks (from Audit)
+## Immediate Cleanup Tasks (from Audit) — ✅ COMPLETE
 
-| # | Task | Priority | Effort |
-|---|------|----------|--------|
-| 1 | Set up ESLint + `npm run lint` script | P0 | 15 min |
-| 2 | Delete duplicate `src/services/layoutEngine.ts` (keep `utils/`) | P0 | 10 min |
-| 3 | Fix `catch (e: any)` → `unknown` in 2 files | P0 | 5 min |
-| 4 | Replace 5 `any` types in server routers with proper Prisma types | P1 | 20 min |
-| 5 | Remove stale `console.log/warn` from components | P1 | 15 min |
-| 6 | Delete dead components: `Tooltip.tsx`, `PreviewCanvas.tsx` (if confirmed unused) | P2 | 5 min |
-| 7 | Replace 36 remaining `any` types in components/services | P2 | 30 min |
-| 8 | Split `canvasStore.ts` (2035 lines) into domain slices | P3 | 2h |
+| # | Task | Status |
+|---|------|--------|
+| 1 | Set up ESLint + `npm run lint` script | ✅ Done |
+| 2 | Delete duplicate `src/services/layoutEngine.ts` | ✅ Done |
+| 3 | Fix `catch (e: any)` → `unknown` | ✅ Done |
+| 4 | Replace `any` types in server routers | ✅ Done |
+| 5 | Remove stale `console.log/warn` | ✅ Done (0 in components) |
+| 6 | Delete dead components | ✅ Done (`Tooltip` removed, `PreviewCanvas` confirmed used) |
+| 7 | Replace remaining `any` types | ✅ Done (41 → 0 explicit) |
+| 8 | Split `canvasStore.ts` into domain slices | ✅ Done (2035 → 40 lines, 9 slices) |
 
 ---
 
 ## Feature Roadmap
 
-### In Progress
+### Done
 - [x] Workspace management (browse, create, settings, join requests)
-- [ ] Codebase cleanup (from audit)
+- [x] Codebase cleanup (audit: ESLint, any types, console.warn, dead code, canvasStore split)
+- [x] Auto-layout engine bugfixes (infinite recursion, nested frame coordinates, resize stability)
+- [x] Image fit modes (cover, contain, fill, crop) + PropertiesPanel controls
+- [x] Snap-при-ресайзе (live resize snapping to objects and artboard)
+- [x] Alt-hover distance measurement (hover + selected → distances to objects/artboard)
 
 ### Short-term
 - [ ] Activity Feed on admin dashboard
@@ -105,7 +109,11 @@ export default [
 - [ ] Edit-in-Canvas flow for templates
 - [ ] Analytics backend using `PlatformEvent` model
 
-### Medium-term
+### Medium-term — Refactoring
+- [ ] **Split large monolith files** — `Canvas.tsx` (1865 lines), `PropertiesPanel.tsx` (1049 lines), `agentOrchestrator.ts` (960 lines), `AIChatPanel.tsx` (924 lines)
+- [ ] **Figma-like auto-layout engine** — migrate from absolute to local (parent-relative) coordinates. Eliminates coordinate drift bugs, simplifies nested frame logic, aligns with Figma/CSS flexbox model. (~16 files, 3-5h)
+
+### Medium-term — Features
 - [ ] Real-time collaboration (WebSocket cursor sharing)
 - [ ] Comment threads on project elements
 - [ ] Template versioning with diff view
