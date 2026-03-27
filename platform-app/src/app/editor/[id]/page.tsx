@@ -8,17 +8,18 @@ import { TopBar } from "@/components/layout/TopBar";
 import { Button } from "@/components/ui/Button";
 import { Dialog } from "@/components/ui/Dialog";
 import { LayersPanel } from "@/components/editor/LayersPanel";
-import { PropertiesPanel } from "@/components/editor/PropertiesPanel";
+import { PropertiesPanel } from "@/components/editor/properties";
 import { Toolbar } from "@/components/editor/Toolbar";
 import { ExportModal } from "@/components/editor/ExportModal";
 import { ResizePanel } from "@/components/editor/ResizePanel";
 import { TemplatePanel } from "@/components/editor/TemplatePanel";
 import { AIPromptBar } from "@/components/editor/AIPromptBar";
-import { AIChatPanel } from "@/components/editor/AIChatPanel";
+import { AIChatPanel } from "@/components/editor/ai-chat";
 import { VersionHistoryPanel } from "@/components/editor/VersionHistoryPanel";
 import { WizardFlow } from "@/components/wizard/WizardFlow";
 import { useProjectStore } from "@/store/projectStore";
 import { useCanvasStore } from "@/store/canvasStore";
+import { useShallow } from "zustand/react/shallow";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { useCanvasAutoSave, useLoadCanvasState } from "@/hooks/useProjectSync";
 import { useAISessionSync } from "@/hooks/useAISessionSync";
@@ -28,7 +29,7 @@ import Konva from "konva";
 
 // Dynamic import for Canvas (Konva needs client-only, no SSR)
 const Canvas = dynamic(
-    () => import("@/components/editor/Canvas").then((mod) => mod.Canvas),
+    () => import("@/components/editor/canvas").then((mod) => mod.Canvas),
     { ssr: false }
 );
 
@@ -51,7 +52,11 @@ export default function EditorPage({ params }: EditorPageProps) {
     const [versionPanelOpen, setVersionPanelOpen] = useState(false);
     const projects = useProjectStore((s) => s.projects);
     const updateProject = useProjectStore((s) => s.updateProject);
-    const { editorMode, setEditorMode, undo, redo, history, future, artboardProps, updateArtboardProps } = useCanvasStore();
+    const { editorMode, setEditorMode, undo, redo, history, future, artboardProps, updateArtboardProps } = useCanvasStore(useShallow((s) => ({
+        editorMode: s.editorMode, setEditorMode: s.setEditorMode,
+        undo: s.undo, redo: s.redo, history: s.history, future: s.future,
+        artboardProps: s.artboardProps, updateArtboardProps: s.updateArtboardProps,
+    })));
     useKeyboardShortcuts();
     // IMPORTANT: Load canvas state FIRST, then enable auto-save AFTER load completes.
     // This prevents the canvas-clear-on-mount from triggering an empty save.

@@ -6,7 +6,7 @@ import { Layer, FrameLayer, TextLayer, TemplateSlotRole, ResizeFormat } from "@/
 
 let _measureCanvas: OffscreenCanvas | HTMLCanvasElement | null = null;
 
-function getMeasureCanvas(): OffscreenCanvas | HTMLCanvasElement {
+function getMeasureCanvas(): OffscreenCanvas | HTMLCanvasElement | null {
     if (!_measureCanvas) {
         if (typeof OffscreenCanvas !== "undefined") {
             _measureCanvas = new OffscreenCanvas(1, 1);
@@ -14,7 +14,7 @@ function getMeasureCanvas(): OffscreenCanvas | HTMLCanvasElement {
             _measureCanvas = document.createElement("canvas");
         } else {
             // SSR fallback — will use rough estimates
-            return null as any;
+            return null;
         }
     }
     return _measureCanvas;

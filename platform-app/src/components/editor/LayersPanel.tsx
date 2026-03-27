@@ -14,6 +14,7 @@ import {
     GripVertical,
 } from "lucide-react";
 import { useCanvasStore } from "@/store/canvasStore";
+import { useShallow } from "zustand/react/shallow";
 import type { FrameLayer } from "@/types";
 import { cn } from "@/lib/cn";
 import { useState, useRef } from "react";
@@ -53,7 +54,16 @@ function LayerRow({
         updateLayer,
         moveLayerToFrame,
         removeLayerFromFrame
-    } = useCanvasStore();
+    } = useCanvasStore(useShallow((s) => ({
+        layers: s.layers, selectedLayerIds: s.selectedLayerIds,
+        selectLayer: s.selectLayer, toggleSelection: s.toggleSelection,
+        toggleLayerVisibility: s.toggleLayerVisibility, toggleLayerLock: s.toggleLayerLock,
+        removeLayer: s.removeLayer, duplicateLayer: s.duplicateLayer,
+        duplicateSelectedLayers: s.duplicateSelectedLayers, deleteSelectedLayers: s.deleteSelectedLayers,
+        bringToFront: s.bringToFront, sendToBack: s.sendToBack,
+        updateLayer: s.updateLayer, moveLayerToFrame: s.moveLayerToFrame,
+        removeLayerFromFrame: s.removeLayerFromFrame,
+    })));
 
     const [expanded, setExpanded] = useState(true);
     const [isDragOver, setIsDragOver] = useState(false);
@@ -327,7 +337,9 @@ function LayerRow({
 }
 
 export function LayersPanel() {
-    const { layers, selectedLayerIds, removeLayerFromFrame } = useCanvasStore();
+    const { layers, selectedLayerIds, removeLayerFromFrame } = useCanvasStore(useShallow((s) => ({
+        layers: s.layers, selectedLayerIds: s.selectedLayerIds, removeLayerFromFrame: s.removeLayerFromFrame,
+    })));
     const [isDragOverRoot, setIsDragOverRoot] = useState(false);
 
     // Build set of all child IDs to exclude from top-level

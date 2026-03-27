@@ -4,109 +4,24 @@ import { useRef, useCallback, useEffect, useState, useMemo, Fragment } from "rea
 import { ImageIcon } from "lucide-react";
 import { Stage, Layer, Rect, Text, Image as KonvaImage, Transformer, Group, Line } from "react-konva";
 import { useCanvasStore, computeConstrainedPosition } from "@/store/canvasStore";
+import { useShallow } from "zustand/react/shallow";
 import type { Layer as LayerType, TextLayer, BadgeLayer, FrameLayer, ImageLayer } from "@/types";
 import { computeImageFitProps } from "@/utils/imageFitUtils";
-import { ContextMenu, buildLayerContextMenuItems } from "./ContextMenu";
+import { ContextMenu, buildLayerContextMenuItems } from "../ContextMenu";
 import { computeSnap, computeHoverDistances, computeResizeSnap, SnapResult, DistanceMeasurement, SpacingGuide } from "@/services/snapService";
 import type { ActiveEdge, NodeBounds } from "@/services/snapService";
 import { isFocusedOnInput } from "@/utils/keyboard";
 import Konva from "konva";
-
+import { useImage } from "./useImage";
+import { SelectionTransformer, FrameChildTransformer } from "./transformers";
+import { InlineTextEditor } from "./InlineTextEditor";
+import { SnapGuides } from "./SnapGuides";
+import { usePanZoom } from "./usePanZoom";
 /* ─── Constants ───────────────────────────────────── */
 const FRAME_HIGHLIGHT_STROKE = "#6366F1";
 const FRAME_HIGHLIGHT_WIDTH = 2;
 
-function useImage(src: string): HTMLImageElement | undefined {
-    const [loadedImg, setLoadedImg] = useState<HTMLImageElement | undefined>(undefined);
-    useEffect(() => {
-        if (!src) return;
-        const img = new window.Image();
-        img.crossOrigin = "anonymous";
-        img.src = src;
-        img.onload = () => {
-            setLoadedImg(img);
-        };
-    }, [src]);
-    return loadedImg;
-}
 
-/* ─── Selection Transformer ───────────────────────── */
-interface SelectionTransformerProps {
-    selectedLayerIds: string[];
-    stageRef: React.RefObject<Konva.Stage | null>;
-    /** IDs to exclude (e.g. children nested inside frames) */
-    excludeIds?: Set<string>;
-}
-
-function SelectionTransformer({ selectedLayerIds, stageRef, excludeIds }: SelectionTransformerProps) {
-    const trRef = useRef<Konva.Transformer>(null);
-
-    useEffect(() => {
-        if (!trRef.current || !stageRef.current) return;
-
-        // Find all selected nodes, excluding frame children
-        const filteredIds = excludeIds
-            ? selectedLayerIds.filter((id) => !excludeIds.has(id))
-            : selectedLayerIds;
-        const nodes = filteredIds
-            .map((id) => stageRef.current?.findOne("#" + id))
-            .filter((node): node is Konva.Node => !!node);
-
-        trRef.current.nodes(nodes);
-        trRef.current.getLayer()?.batchDraw();
-    }, [selectedLayerIds, stageRef, excludeIds]);
-
-    return (
-        <Transformer
-            ref={trRef}
-            boundBoxFunc={(oldBox, newBox) => {
-                if (newBox.width < 5 || newBox.height < 5) return oldBox;
-                return newBox;
-            }}
-            borderStroke="#6366F1"
-            anchorStroke="#6366F1"
-            anchorFill="#FFFFFF"
-            anchorSize={8}
-            anchorCornerRadius={2}
-        />
-    );
-}
-
-/* ─── Inner Transformer for Frame Children ────────── */
-interface FrameChildTransformerProps {
-    selectedChildIds: string[];
-    containerRef: React.RefObject<Konva.Group | null>;
-}
-
-function FrameChildTransformer({ selectedChildIds, containerRef }: FrameChildTransformerProps) {
-    const trRef = useRef<Konva.Transformer>(null);
-
-    useEffect(() => {
-        if (!trRef.current || !containerRef.current) return;
-
-        const nodes = selectedChildIds
-            .map((id) => containerRef.current?.findOne("#" + id))
-            .filter((node): node is Konva.Node => !!node);
-
-        trRef.current.nodes(nodes);
-        trRef.current.getLayer()?.batchDraw();
-    }, [selectedChildIds, containerRef]);
-
-    return (
-        <Transformer
-            ref={trRef}
-            boundBoxFunc={(oldBox, newBox) => {
-                if (newBox.width < 5 || newBox.height < 5) return oldBox;
-                return newBox;
-            }}
-            borderStroke="#6366F1"
-            anchorStroke="#6366F1"
-            anchorFill="#FFFFFF"
-            anchorSize={8}
-            anchorCornerRadius={2}
-        />
-    );
-}
 
 /* ─── Canvas Layer ────────────────────────────────── */
 interface CanvasLayerProps {
@@ -552,94 +467,7 @@ function FrameLayerRenderer({
         </Group>
     );
 }
-// Skip InlineTextEditor...
 
-/* ─── Inline text editing overlay ──────────────────── */
-function InlineTextEditor({
-    layer,
-    stageRef,
-    zoom,
-    stageX,
-    stageY,
-    onCommit,
-}: {
-    layer: TextLayer;
-    stageRef: React.RefObject<Konva.Stage | null>;
-    zoom: number;
-    stageX: number;
-    stageY: number;
-    onCommit: (text: string) => void;
-}) {
-    const textareaRef = useRef<HTMLTextAreaElement>(null);
-    const [value, setValue] = useState(layer.text);
-
-    // Calculate the screen position of the text layer
-    const screenX = layer.x * zoom + stageX;
-    const screenY = layer.y * zoom + stageY;
-    const screenW = layer.width * zoom;
-    const screenH = Math.max(layer.height * zoom, 40);
-
-    useEffect(() => {
-        const ta = textareaRef.current;
-        if (ta) {
-            ta.focus();
-            ta.select();
-        }
-    }, []);
-
-    const handleCommit = () => {
-        onCommit(value);
-    };
-
-    const handleKeyDown = (e: React.KeyboardEvent) => {
-        if (e.key === "Escape") {
-            onCommit(layer.text);
-        }
-        if (e.key === "Enter" && !e.shiftKey) {
-            e.preventDefault();
-            handleCommit();
-        }
-    };
-
-    const fontSizeScaled = layer.fontSize * zoom;
-
-    return (
-        <textarea
-            ref={textareaRef}
-            value={value}
-            onChange={(e) => setValue(e.target.value)}
-            onBlur={handleCommit}
-            onKeyDown={handleKeyDown}
-            style={{
-                position: "absolute",
-                left: screenX,
-                top: screenY,
-                width: screenW,
-                minHeight: screenH,
-                fontSize: fontSizeScaled,
-                fontFamily: layer.fontFamily,
-                fontWeight: layer.fontWeight,
-                color: layer.fill,
-                textAlign: layer.align,
-                textTransform: layer.textTransform === "uppercase" ? "uppercase" : layer.textTransform === "lowercase" ? "lowercase" : "none",
-                letterSpacing: layer.letterSpacing * zoom,
-                lineHeight: layer.lineHeight,
-                border: "2px solid var(--accent-primary)",
-                borderRadius: "var(--radius-sm)",
-                background: "rgba(255,255,255,0.95)",
-                padding: "2px 4px",
-                margin: 0,
-                outline: "none",
-                resize: "none",
-                overflow: "hidden",
-                zIndex: 50,
-                transformOrigin: "top left",
-                transform: layer.rotation ? `rotate(${layer.rotation}deg)` : undefined,
-                boxShadow: "0 0 0 3px rgba(99, 102, 241, 0.2)",
-            }}
-        />
-    );
-}
 /* ─── Main Canvas component ───────────────────────── */
 
 interface CanvasProps {
@@ -715,7 +543,38 @@ export function Canvas({ stageRef }: CanvasProps) {
         getFrameAtPoint,
         moveLayerToFrame,
         removeLayerFromFrame,
-    } = useCanvasStore();
+    } = useCanvasStore(useShallow((s) => ({
+        layers: s.layers,
+        selectedLayerIds: s.selectedLayerIds,
+        selectLayer: s.selectLayer,
+        toggleSelection: s.toggleSelection,
+        addToSelection: s.addToSelection,
+        updateLayer: s.updateLayer,
+        addImageLayer: s.addImageLayer,
+        removeLayer: s.removeLayer,
+        duplicateLayer: s.duplicateLayer,
+        bringToFront: s.bringToFront,
+        sendToBack: s.sendToBack,
+        toggleLayerVisibility: s.toggleLayerVisibility,
+        toggleLayerLock: s.toggleLayerLock,
+        zoom: s.zoom,
+        setZoom: s.setZoom,
+        stageX: s.stageX,
+        stageY: s.stageY,
+        setStagePosition: s.setStagePosition,
+        canvasWidth: s.canvasWidth,
+        canvasHeight: s.canvasHeight,
+        activeResizeId: s.activeResizeId,
+        isEditingText: s.isEditingText,
+        editingLayerId: s.editingLayerId,
+        startTextEditing: s.startTextEditing,
+        stopTextEditing: s.stopTextEditing,
+        artboardProps: s.artboardProps,
+        setHighlightedFrameId: s.setHighlightedFrameId,
+        getFrameAtPoint: s.getFrameAtPoint,
+        moveLayerToFrame: s.moveLayerToFrame,
+        removeLayerFromFrame: s.removeLayerFromFrame,
+    })));
 
     // Collect all IDs that are children of any frame (to exclude from top-level SelectionTransformer)
     const frameChildIds = useMemo(() => {
@@ -1082,7 +941,7 @@ export function Canvas({ stageRef }: CanvasProps) {
         const width = node.width() * scaleX;
         const height = node.height() * scaleY;
 
-        let extraProps: any = {};
+        let extraProps: { textAdjust?: string } = {};
         if (node.getClassName() === "Text") {
             const layer = layers.find(l => l.id === id);
             if (layer && layer.type === "text") {
@@ -1204,87 +1063,19 @@ export function Canvas({ stageRef }: CanvasProps) {
         }
     }, [layers, canvasWidth, canvasHeight]);
 
-    const [isPanning, setIsPanning] = useState(false);
-
-    // Spacebar Panning Logic
-    useEffect(() => {
-        const handleKeyDown = (e: KeyboardEvent) => {
-            if (isFocusedOnInput(e)) return;
-
-            // Space to pan
-            if (e.code === "Space" && !isEditingText && !isPanning) {
-                e.preventDefault(); // Prevent scrolling
-                setIsPanning(true);
-                // Ensure stage is draggable
-                setStageDraggable(true);
-                if (containerRef.current) {
-                    containerRef.current.style.cursor = "grab";
-                }
-            }
-        };
-
-        const handleKeyUp = (e: KeyboardEvent) => {
-            if (isFocusedOnInput(e)) return;
-
-            if (e.code === "Space" && isPanning) {
-                setIsPanning(false);
-                // We might want to keep it draggable or not, but usually we revert to selection mode
-                // which handles draggable locally. But let's reset cursor.
-                if (containerRef.current) {
-                    containerRef.current.style.cursor = "default";
-                }
-            }
-        };
-
-        window.addEventListener("keydown", handleKeyDown);
-        window.addEventListener("keyup", handleKeyUp);
-
-        return () => {
-            window.removeEventListener("keydown", handleKeyDown);
-            window.removeEventListener("keyup", handleKeyUp);
-        };
-    }, [isEditingText, isPanning]);
+    const { isPanning, setIsPanning, handleWheel } = usePanZoom({
+        stageRef,
+        containerRef,
+        zoom,
+        stageX,
+        stageY,
+        setZoom,
+        setStagePosition,
+        isEditingText,
+        setStageDraggable,
+    });
 
     /* ─── Stage Interaction ───────────────────────────── */
-
-    const handleWheel = useCallback(
-        (e: Konva.KonvaEventObject<WheelEvent>) => {
-            e.evt.preventDefault();
-            const stage = stageRef.current;
-            if (!stage) return;
-
-            // Check for Pinch (CtrlKey on standard trackpads) for Zoom
-            if (e.evt.ctrlKey) {
-                const oldScale = zoom;
-                const pointer = stage.getPointerPosition();
-                if (!pointer) return;
-
-                const scaleBy = 1.05;
-                // e.evt.deltaY is negative for pinch-in (zoom out) usually? 
-                // Actually deltaY < 0 is scrolling up (zoom in)
-                const newScale = e.evt.deltaY < 0 ? oldScale * scaleBy : oldScale / scaleBy;
-                const clampedScale = Math.min(Math.max(newScale, 0.1), 3);
-
-                const mousePointTo = {
-                    x: (pointer.x - stageX) / oldScale,
-                    y: (pointer.y - stageY) / oldScale,
-                };
-
-                setZoom(clampedScale);
-                setStagePosition(
-                    pointer.x - mousePointTo.x * clampedScale,
-                    pointer.y - mousePointTo.y * clampedScale
-                );
-            } else {
-                // Pan
-                setStagePosition(
-                    stageX - e.evt.deltaX,
-                    stageY - e.evt.deltaY
-                );
-            }
-        },
-        [zoom, stageX, stageY, setZoom, setStagePosition, stageRef]
-    );
 
     const handleStageMouseDown = useCallback((e: Konva.KonvaEventObject<MouseEvent>) => {
         // If panning, let Konva handle drag (stage is draggable)
@@ -1541,9 +1332,15 @@ export function Canvas({ stageRef }: CanvasProps) {
         [addImageLayer]
     );
 
-    const editingLayer = isEditingText && editingLayerId
-        ? (layers.find((l) => l.id === editingLayerId) as TextLayer | undefined)
-        : undefined;
+    const editingLayer = useMemo(() => {
+        if (!isEditingText || !editingLayerId) return undefined;
+        return layers.find((l) => l.id === editingLayerId) as TextLayer | undefined;
+    }, [isEditingText, editingLayerId, layers]);
+
+    // Pre-compute top-level layers (those not inside any frame) — avoids O(n²) in render
+    const topLevelLayers = useMemo(() => {
+        return layers.filter((l) => !frameChildIds.has(l.id));
+    }, [layers, frameChildIds]);
 
     return (
         <div
@@ -1614,7 +1411,7 @@ export function Canvas({ stageRef }: CanvasProps) {
                                 shadowBlur={20}
                                 listening={false}
                             />
-                            {layers.filter(l => !layers.some(p => p.type === 'frame' && (p as FrameLayer).childIds.includes(l.id))).map(layer => (
+                            {topLevelLayers.map(layer => (
                                 <CanvasLayer
                                     key={layer.id}
                                     layer={layer}
@@ -1642,7 +1439,7 @@ export function Canvas({ stageRef }: CanvasProps) {
                                 shadowBlur={20}
                                 listening={false}
                             />
-                            {layers.filter(l => !layers.some(p => p.type === 'frame' && (p as FrameLayer).childIds.includes(l.id))).map(layer => (
+                            {topLevelLayers.map(layer => (
                                 <CanvasLayer
                                     key={layer.id}
                                     layer={layer}
@@ -1660,137 +1457,13 @@ export function Canvas({ stageRef }: CanvasProps) {
                         </>
                     )}
 
-                    {/* Snap Guides */}
-                    {snapLines.map((guide, i) => (
-                        <Line
-                            key={`snap-${i}`}
-                            points={
-                                guide.orientation === 'vertical'
-                                    ? [guide.position, guide.start, guide.position, guide.end]
-                                    : [guide.start, guide.position, guide.end, guide.position]
-                            }
-                            stroke={guide.type === 'artboard' ? '#6366F1' : '#ff0000'}
-                            strokeWidth={1}
-                            dash={[4, 4]}
-                            listening={false}
-                        />
-                    ))}
-
-                    {/* Distance Measurements (Alt+drag) */}
-                    {distanceMeasurements.map((dm, i) => {
-                        const isHz = dm.axis === 'horizontal';
-                        const points = isHz
-                            ? [dm.from, dm.position, dm.to, dm.position]
-                            : [dm.position, dm.from, dm.position, dm.to];
-                        const labelX = isHz ? (dm.from + dm.to) / 2 : dm.position + 4;
-                        const labelY = isHz ? dm.position - 14 : (dm.from + dm.to) / 2 - 6;
-                        return (
-                            <Fragment key={`dist-group-${i}`}>
-                                <Line
-                                    key={`dist-line-${i}`}
-                                    points={points}
-                                    stroke="#F97316"
-                                    strokeWidth={1}
-                                    listening={false}
-                                />
-                                {/* End caps */}
-                                {isHz ? (
-                                    <Fragment key={`dist-caps-hz-${i}`}>
-                                        <Line key={`dist-cap-a-${i}`} points={[dm.from, dm.position - 4, dm.from, dm.position + 4]} stroke="#F97316" strokeWidth={1} listening={false} />
-                                        <Line key={`dist-cap-b-${i}`} points={[dm.to, dm.position - 4, dm.to, dm.position + 4]} stroke="#F97316" strokeWidth={1} listening={false} />
-                                    </Fragment>
-                                ) : (
-                                    <>
-                                        <Line key={`dist-cap-a-${i}`} points={[dm.position - 4, dm.from, dm.position + 4, dm.from]} stroke="#F97316" strokeWidth={1} listening={false} />
-                                        <Line key={`dist-cap-b-${i}`} points={[dm.position - 4, dm.to, dm.position + 4, dm.to]} stroke="#F97316" strokeWidth={1} listening={false} />
-                                    </>
-                                )}
-                                {/* Distance label */}
-                                <Rect
-                                    key={`dist-bg-${i}`}
-                                    x={labelX - 22}
-                                    y={labelY - 4}
-                                    width={44}
-                                    height={20}
-                                    fill="#F97316"
-                                    cornerRadius={4}
-                                    listening={false}
-                                />
-                                <Text
-                                    key={`dist-label-${i}`}
-                                    x={labelX - 22}
-                                    y={labelY + 1}
-                                    width={44}
-                                    text={`${Number(dm.distance.toFixed(1))}`}
-                                    fontSize={11}
-                                    fontFamily="Inter, sans-serif"
-                                    fill="#fff"
-                                    align="center"
-                                    listening={false}
-                                />
-                            </Fragment>
-                        );
-                    })}
-
-                    {/* Smart Spacing Guides */}
-                    {spacingGuides.map((sg, i) =>
-                        sg.segments.map((seg, j) => {
-                            const isHz = sg.axis === 'horizontal';
-                            const points = isHz
-                                ? [seg.from, seg.crossPos, seg.to, seg.crossPos]
-                                : [seg.crossPos, seg.from, seg.crossPos, seg.to];
-                            const labelX = isHz ? (seg.from + seg.to) / 2 : seg.crossPos + 4;
-                            const labelY = isHz ? seg.crossPos - 14 : (seg.from + seg.to) / 2 - 6;
-                            return (
-                                <Fragment key={`spc-group-${i}-${j}`}>
-                                    <Line
-                                        key={`spc-line-${i}-${j}`}
-                                        points={points}
-                                        stroke="#EC4899"
-                                        strokeWidth={1}
-                                        dash={[2, 2]}
-                                        listening={false}
-                                    />
-                                    <Rect
-                                        key={`spc-bg-${i}-${j}`}
-                                        x={labelX - 22}
-                                        y={labelY - 4}
-                                        width={44}
-                                        height={20}
-                                        fill="#EC4899"
-                                        cornerRadius={4}
-                                        listening={false}
-                                    />
-                                    <Text
-                                        key={`spc-label-${i}-${j}`}
-                                        x={labelX - 22}
-                                        y={labelY + 1}
-                                        width={44}
-                                        text={`${Number(sg.gap.toFixed(1))}`}
-                                        fontSize={11}
-                                        fontFamily="Inter, sans-serif"
-                                        fill="#fff"
-                                        align="center"
-                                        listening={false}
-                                    />
-                                </Fragment>
-                            );
-                        })
-                    )}
-
-                    {/* Selection Box */}
-                    {selectionBox && (
-                        <Rect
-                            x={selectionBox.x}
-                            y={selectionBox.y}
-                            width={selectionBox.width}
-                            height={selectionBox.height}
-                            fill="rgba(99, 102, 241, 0.2)"
-                            stroke="#6366F1"
-                            strokeWidth={1}
-                            listening={false}
-                        />
-                    )}
+                    {/* Snap Guides, Distance Measurements, Spacing Guides, Selection Box */}
+                    <SnapGuides
+                        snapLines={snapLines}
+                        distanceMeasurements={distanceMeasurements}
+                        spacingGuides={spacingGuides}
+                        selectionBox={selectionBox}
+                    />
 
                     {/* Selection Transformer */}
                     <SelectionTransformer selectedLayerIds={selectedLayerIds} stageRef={stageRef} excludeIds={frameChildIds} />

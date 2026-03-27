@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/Button";
 import { Download, Layers, Package } from "lucide-react";
 import Konva from "konva";
 import { useCanvasStore } from "@/store/canvasStore";
+import { useShallow } from "zustand/react/shallow";
 import type { FrameLayer } from "@/types";
 import { cn } from "@/lib/cn";
 import JSZip from "jszip";
@@ -27,7 +28,11 @@ export function ExportModal({ open, onClose, stageRef }: ExportModalProps) {
     const [selectedResizes, setSelectedResizes] = useState<Set<string>>(new Set());
     const [isExporting, setIsExporting] = useState(false);
 
-    const { canvasWidth, canvasHeight, layers, resizes, setActiveResize, activeResizeId, artboardProps } = useCanvasStore();
+    const { canvasWidth, canvasHeight, layers, resizes, setActiveResize, activeResizeId, artboardProps } = useCanvasStore(useShallow((s) => ({
+        canvasWidth: s.canvasWidth, canvasHeight: s.canvasHeight, layers: s.layers,
+        resizes: s.resizes, setActiveResize: s.setActiveResize,
+        activeResizeId: s.activeResizeId, artboardProps: s.artboardProps,
+    })));
 
     // Get all frames for export target selector
     const frames = layers.filter((l) => l.type === "frame") as FrameLayer[];

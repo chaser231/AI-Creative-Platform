@@ -7,7 +7,7 @@
 import { z } from "zod";
 import { createTRPCRouter, protectedProcedure } from "../trpc";
 import { TRPCError } from "@trpc/server";
-import { interpretAndExecute, executeAction } from "../agentOrchestrator";
+import { interpretAndExecute, executeAction } from "../agent";
 
 export const workflowRouter = createTRPCRouter({
   /** List workflows for a workspace (user's + templates) */

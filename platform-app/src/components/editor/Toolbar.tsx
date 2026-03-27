@@ -12,6 +12,7 @@ import {
     Magnet,
 } from "lucide-react";
 import { useCanvasStore } from "@/store/canvasStore";
+import { useShallow } from "zustand/react/shallow";
 import type { ToolType } from "@/types";
 import { useRef, useState } from "react";
 import { Popover } from "@/components/ui/Popover";
@@ -42,7 +43,13 @@ export function Toolbar({ onOpenTemplates, onToggleAI, aiActive }: ToolbarProps)
         addFrameLayer,
         snapConfig,
         updateSnapConfig,
-    } = useCanvasStore();
+    } = useCanvasStore(useShallow((s) => ({
+        activeTool: s.activeTool, setActiveTool: s.setActiveTool,
+        addTextLayer: s.addTextLayer, addRectangleLayer: s.addRectangleLayer,
+        addImageLayer: s.addImageLayer, addBadgeLayer: s.addBadgeLayer,
+        addFrameLayer: s.addFrameLayer, snapConfig: s.snapConfig,
+        updateSnapConfig: s.updateSnapConfig,
+    })));
     const fileRef = useRef<HTMLInputElement>(null);
     const [showSnapConfig, setShowSnapConfig] = useState(false);
 

@@ -57,7 +57,7 @@ export default function AdminTemplatesPage() {
     // Delete confirm
     const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
 
-    const openEditModal = (template: any) => {
+    const openEditModal = (template: { id: string; name: string; description: string | null; isOfficial: boolean }) => {
         setEditingTemplate(template);
         setEditName(template.name);
         setEditDesc(template.description || "");

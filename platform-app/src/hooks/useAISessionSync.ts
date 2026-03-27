@@ -12,7 +12,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { trpc } from "@/lib/trpc";
-import type { AIChatMessage } from "@/components/editor/AIChatPanel";
+import type { AIChatMessage } from "@/components/editor/ai-chat";
 
 /**
  * Hook to sync AI chat messages with the backend.

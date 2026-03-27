@@ -2,6 +2,7 @@
 
 import { Monitor, Plus, Trash2, Check, Link, Unlink } from "lucide-react";
 import { useCanvasStore } from "@/store/canvasStore";
+import { useShallow } from "zustand/react/shallow";
 import { PRESET_FORMATS, FORMAT_PACKS } from "@/types";
 import type { ResizeFormat } from "@/types";
 import { useState, useRef } from "react";
@@ -15,7 +16,12 @@ export function ResizePanel() {
         removeResize,
         toggleInstanceMode,
         renameResize,
-    } = useCanvasStore();
+    } = useCanvasStore(useShallow((s) => ({
+        resizes: s.resizes, activeResizeId: s.activeResizeId,
+        setActiveResize: s.setActiveResize, addResize: s.addResize,
+        removeResize: s.removeResize, toggleInstanceMode: s.toggleInstanceMode,
+        renameResize: s.renameResize,
+    })));
     const [showPresets, setShowPresets] = useState(false);
     const [showCustom, setShowCustom] = useState(false);
     const [customName, setCustomName] = useState("");

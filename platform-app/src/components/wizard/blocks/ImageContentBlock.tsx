@@ -128,7 +128,7 @@ export function ImageContentBlock({ id, name, props, value, onChange, businessUn
         Array.from(e.target.files || []).forEach(file => {
             const reader = new FileReader();
             reader.onload = (ev) => {
-                if (ev.target?.result) setAdditionalPhotos(prev => [...prev, ev.target!.result as string]);
+                if (ev.target?.result) setAdditionalPhotos(prev => [...prev, ev.target?.result as string]);
             };
             reader.readAsDataURL(file);
         });

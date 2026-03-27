@@ -103,7 +103,7 @@ export function useSaveTemplateSync() {
     async (pack: TemplatePackV2, workspaceId?: string) => {
       const wsId = workspaceId ?? cachedWorkspaceId;
       if (!wsId) {
-        console.warn("No workspace ID available for template save");
+        console.error("No workspace ID available for template save");
         return null;
       }
 

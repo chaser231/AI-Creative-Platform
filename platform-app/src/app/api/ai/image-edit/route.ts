@@ -1,8 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getProvider, getModelById } from "@/lib/ai-providers";
+import { auth } from "@/server/auth";
 
 export async function POST(req: NextRequest) {
     try {
+        const session = await auth();
+        if (!session?.user) {
+            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+        }
+
         const body = await req.json();
         const { action, prompt, imageBase64, maskBase64, model, aspectRatio, canvasSize, originalSize, originalLocation } = body;
 
