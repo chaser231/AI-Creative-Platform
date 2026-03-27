@@ -1332,9 +1332,15 @@ export function Canvas({ stageRef }: CanvasProps) {
         [addImageLayer]
     );
 
-    const editingLayer = isEditingText && editingLayerId
-        ? (layers.find((l) => l.id === editingLayerId) as TextLayer | undefined)
-        : undefined;
+    const editingLayer = useMemo(() => {
+        if (!isEditingText || !editingLayerId) return undefined;
+        return layers.find((l) => l.id === editingLayerId) as TextLayer | undefined;
+    }, [isEditingText, editingLayerId, layers]);
+
+    // Pre-compute top-level layers (those not inside any frame) — avoids O(n²) in render
+    const topLevelLayers = useMemo(() => {
+        return layers.filter((l) => !frameChildIds.has(l.id));
+    }, [layers, frameChildIds]);
 
     return (
         <div
@@ -1405,7 +1411,7 @@ export function Canvas({ stageRef }: CanvasProps) {
                                 shadowBlur={20}
                                 listening={false}
                             />
-                            {layers.filter(l => !layers.some(p => p.type === 'frame' && (p as FrameLayer).childIds.includes(l.id))).map(layer => (
+                            {topLevelLayers.map(layer => (
                                 <CanvasLayer
                                     key={layer.id}
                                     layer={layer}
@@ -1433,7 +1439,7 @@ export function Canvas({ stageRef }: CanvasProps) {
                                 shadowBlur={20}
                                 listening={false}
                             />
-                            {layers.filter(l => !layers.some(p => p.type === 'frame' && (p as FrameLayer).childIds.includes(l.id))).map(layer => (
+                            {topLevelLayers.map(layer => (
                                 <CanvasLayer
                                     key={layer.id}
                                     layer={layer}
