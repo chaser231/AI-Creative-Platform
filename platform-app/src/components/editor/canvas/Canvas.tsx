@@ -14,6 +14,8 @@ import Konva from "konva";
 import { useImage } from "./useImage";
 import { SelectionTransformer, FrameChildTransformer } from "./transformers";
 import { InlineTextEditor } from "./InlineTextEditor";
+import { SnapGuides } from "./SnapGuides";
+import { usePanZoom } from "./usePanZoom";
 /* ─── Constants ───────────────────────────────────── */
 const FRAME_HIGHLIGHT_STROKE = "#6366F1";
 const FRAME_HIGHLIGHT_WIDTH = 2;
@@ -1029,87 +1031,19 @@ export function Canvas({ stageRef }: CanvasProps) {
         }
     }, [layers, canvasWidth, canvasHeight]);
 
-    const [isPanning, setIsPanning] = useState(false);
-
-    // Spacebar Panning Logic
-    useEffect(() => {
-        const handleKeyDown = (e: KeyboardEvent) => {
-            if (isFocusedOnInput(e)) return;
-
-            // Space to pan
-            if (e.code === "Space" && !isEditingText && !isPanning) {
-                e.preventDefault(); // Prevent scrolling
-                setIsPanning(true);
-                // Ensure stage is draggable
-                setStageDraggable(true);
-                if (containerRef.current) {
-                    containerRef.current.style.cursor = "grab";
-                }
-            }
-        };
-
-        const handleKeyUp = (e: KeyboardEvent) => {
-            if (isFocusedOnInput(e)) return;
-
-            if (e.code === "Space" && isPanning) {
-                setIsPanning(false);
-                // We might want to keep it draggable or not, but usually we revert to selection mode
-                // which handles draggable locally. But let's reset cursor.
-                if (containerRef.current) {
-                    containerRef.current.style.cursor = "default";
-                }
-            }
-        };
-
-        window.addEventListener("keydown", handleKeyDown);
-        window.addEventListener("keyup", handleKeyUp);
-
-        return () => {
-            window.removeEventListener("keydown", handleKeyDown);
-            window.removeEventListener("keyup", handleKeyUp);
-        };
-    }, [isEditingText, isPanning]);
+    const { isPanning, setIsPanning, handleWheel } = usePanZoom({
+        stageRef,
+        containerRef,
+        zoom,
+        stageX,
+        stageY,
+        setZoom,
+        setStagePosition,
+        isEditingText,
+        setStageDraggable,
+    });
 
     /* ─── Stage Interaction ───────────────────────────── */
-
-    const handleWheel = useCallback(
-        (e: Konva.KonvaEventObject<WheelEvent>) => {
-            e.evt.preventDefault();
-            const stage = stageRef.current;
-            if (!stage) return;
-
-            // Check for Pinch (CtrlKey on standard trackpads) for Zoom
-            if (e.evt.ctrlKey) {
-                const oldScale = zoom;
-                const pointer = stage.getPointerPosition();
-                if (!pointer) return;
-
-                const scaleBy = 1.05;
-                // e.evt.deltaY is negative for pinch-in (zoom out) usually? 
-                // Actually deltaY < 0 is scrolling up (zoom in)
-                const newScale = e.evt.deltaY < 0 ? oldScale * scaleBy : oldScale / scaleBy;
-                const clampedScale = Math.min(Math.max(newScale, 0.1), 3);
-
-                const mousePointTo = {
-                    x: (pointer.x - stageX) / oldScale,
-                    y: (pointer.y - stageY) / oldScale,
-                };
-
-                setZoom(clampedScale);
-                setStagePosition(
-                    pointer.x - mousePointTo.x * clampedScale,
-                    pointer.y - mousePointTo.y * clampedScale
-                );
-            } else {
-                // Pan
-                setStagePosition(
-                    stageX - e.evt.deltaX,
-                    stageY - e.evt.deltaY
-                );
-            }
-        },
-        [zoom, stageX, stageY, setZoom, setStagePosition, stageRef]
-    );
 
     const handleStageMouseDown = useCallback((e: Konva.KonvaEventObject<MouseEvent>) => {
         // If panning, let Konva handle drag (stage is draggable)
@@ -1485,137 +1419,13 @@ export function Canvas({ stageRef }: CanvasProps) {
                         </>
                     )}
 
-                    {/* Snap Guides */}
-                    {snapLines.map((guide, i) => (
-                        <Line
-                            key={`snap-${i}`}
-                            points={
-                                guide.orientation === 'vertical'
-                                    ? [guide.position, guide.start, guide.position, guide.end]
-                                    : [guide.start, guide.position, guide.end, guide.position]
-                            }
-                            stroke={guide.type === 'artboard' ? '#6366F1' : '#ff0000'}
-                            strokeWidth={1}
-                            dash={[4, 4]}
-                            listening={false}
-                        />
-                    ))}
-
-                    {/* Distance Measurements (Alt+drag) */}
-                    {distanceMeasurements.map((dm, i) => {
-                        const isHz = dm.axis === 'horizontal';
-                        const points = isHz
-                            ? [dm.from, dm.position, dm.to, dm.position]
-                            : [dm.position, dm.from, dm.position, dm.to];
-                        const labelX = isHz ? (dm.from + dm.to) / 2 : dm.position + 4;
-                        const labelY = isHz ? dm.position - 14 : (dm.from + dm.to) / 2 - 6;
-                        return (
-                            <Fragment key={`dist-group-${i}`}>
-                                <Line
-                                    key={`dist-line-${i}`}
-                                    points={points}
-                                    stroke="#F97316"
-                                    strokeWidth={1}
-                                    listening={false}
-                                />
-                                {/* End caps */}
-                                {isHz ? (
-                                    <Fragment key={`dist-caps-hz-${i}`}>
-                                        <Line key={`dist-cap-a-${i}`} points={[dm.from, dm.position - 4, dm.from, dm.position + 4]} stroke="#F97316" strokeWidth={1} listening={false} />
-                                        <Line key={`dist-cap-b-${i}`} points={[dm.to, dm.position - 4, dm.to, dm.position + 4]} stroke="#F97316" strokeWidth={1} listening={false} />
-                                    </Fragment>
-                                ) : (
-                                    <>
-                                        <Line key={`dist-cap-a-${i}`} points={[dm.position - 4, dm.from, dm.position + 4, dm.from]} stroke="#F97316" strokeWidth={1} listening={false} />
-                                        <Line key={`dist-cap-b-${i}`} points={[dm.position - 4, dm.to, dm.position + 4, dm.to]} stroke="#F97316" strokeWidth={1} listening={false} />
-                                    </>
-                                )}
-                                {/* Distance label */}
-                                <Rect
-                                    key={`dist-bg-${i}`}
-                                    x={labelX - 22}
-                                    y={labelY - 4}
-                                    width={44}
-                                    height={20}
-                                    fill="#F97316"
-                                    cornerRadius={4}
-                                    listening={false}
-                                />
-                                <Text
-                                    key={`dist-label-${i}`}
-                                    x={labelX - 22}
-                                    y={labelY + 1}
-                                    width={44}
-                                    text={`${Number(dm.distance.toFixed(1))}`}
-                                    fontSize={11}
-                                    fontFamily="Inter, sans-serif"
-                                    fill="#fff"
-                                    align="center"
-                                    listening={false}
-                                />
-                            </Fragment>
-                        );
-                    })}
-
-                    {/* Smart Spacing Guides */}
-                    {spacingGuides.map((sg, i) =>
-                        sg.segments.map((seg, j) => {
-                            const isHz = sg.axis === 'horizontal';
-                            const points = isHz
-                                ? [seg.from, seg.crossPos, seg.to, seg.crossPos]
-                                : [seg.crossPos, seg.from, seg.crossPos, seg.to];
-                            const labelX = isHz ? (seg.from + seg.to) / 2 : seg.crossPos + 4;
-                            const labelY = isHz ? seg.crossPos - 14 : (seg.from + seg.to) / 2 - 6;
-                            return (
-                                <Fragment key={`spc-group-${i}-${j}`}>
-                                    <Line
-                                        key={`spc-line-${i}-${j}`}
-                                        points={points}
-                                        stroke="#EC4899"
-                                        strokeWidth={1}
-                                        dash={[2, 2]}
-                                        listening={false}
-                                    />
-                                    <Rect
-                                        key={`spc-bg-${i}-${j}`}
-                                        x={labelX - 22}
-                                        y={labelY - 4}
-                                        width={44}
-                                        height={20}
-                                        fill="#EC4899"
-                                        cornerRadius={4}
-                                        listening={false}
-                                    />
-                                    <Text
-                                        key={`spc-label-${i}-${j}`}
-                                        x={labelX - 22}
-                                        y={labelY + 1}
-                                        width={44}
-                                        text={`${Number(sg.gap.toFixed(1))}`}
-                                        fontSize={11}
-                                        fontFamily="Inter, sans-serif"
-                                        fill="#fff"
-                                        align="center"
-                                        listening={false}
-                                    />
-                                </Fragment>
-                            );
-                        })
-                    )}
-
-                    {/* Selection Box */}
-                    {selectionBox && (
-                        <Rect
-                            x={selectionBox.x}
-                            y={selectionBox.y}
-                            width={selectionBox.width}
-                            height={selectionBox.height}
-                            fill="rgba(99, 102, 241, 0.2)"
-                            stroke="#6366F1"
-                            strokeWidth={1}
-                            listening={false}
-                        />
-                    )}
+                    {/* Snap Guides, Distance Measurements, Spacing Guides, Selection Box */}
+                    <SnapGuides
+                        snapLines={snapLines}
+                        distanceMeasurements={distanceMeasurements}
+                        spacingGuides={spacingGuides}
+                        selectionBox={selectionBox}
+                    />
 
                     {/* Selection Transformer */}
                     <SelectionTransformer selectedLayerIds={selectedLayerIds} stageRef={stageRef} excludeIds={frameChildIds} />
