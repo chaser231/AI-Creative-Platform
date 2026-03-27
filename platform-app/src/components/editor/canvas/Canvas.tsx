@@ -6,107 +6,19 @@ import { Stage, Layer, Rect, Text, Image as KonvaImage, Transformer, Group, Line
 import { useCanvasStore, computeConstrainedPosition } from "@/store/canvasStore";
 import type { Layer as LayerType, TextLayer, BadgeLayer, FrameLayer, ImageLayer } from "@/types";
 import { computeImageFitProps } from "@/utils/imageFitUtils";
-import { ContextMenu, buildLayerContextMenuItems } from "./ContextMenu";
+import { ContextMenu, buildLayerContextMenuItems } from "../ContextMenu";
 import { computeSnap, computeHoverDistances, computeResizeSnap, SnapResult, DistanceMeasurement, SpacingGuide } from "@/services/snapService";
 import type { ActiveEdge, NodeBounds } from "@/services/snapService";
 import { isFocusedOnInput } from "@/utils/keyboard";
 import Konva from "konva";
-
+import { useImage } from "./useImage";
+import { SelectionTransformer, FrameChildTransformer } from "./transformers";
+import { InlineTextEditor } from "./InlineTextEditor";
 /* ─── Constants ───────────────────────────────────── */
 const FRAME_HIGHLIGHT_STROKE = "#6366F1";
 const FRAME_HIGHLIGHT_WIDTH = 2;
 
-function useImage(src: string): HTMLImageElement | undefined {
-    const [loadedImg, setLoadedImg] = useState<HTMLImageElement | undefined>(undefined);
-    useEffect(() => {
-        if (!src) return;
-        const img = new window.Image();
-        img.crossOrigin = "anonymous";
-        img.src = src;
-        img.onload = () => {
-            setLoadedImg(img);
-        };
-    }, [src]);
-    return loadedImg;
-}
 
-/* ─── Selection Transformer ───────────────────────── */
-interface SelectionTransformerProps {
-    selectedLayerIds: string[];
-    stageRef: React.RefObject<Konva.Stage | null>;
-    /** IDs to exclude (e.g. children nested inside frames) */
-    excludeIds?: Set<string>;
-}
-
-function SelectionTransformer({ selectedLayerIds, stageRef, excludeIds }: SelectionTransformerProps) {
-    const trRef = useRef<Konva.Transformer>(null);
-
-    useEffect(() => {
-        if (!trRef.current || !stageRef.current) return;
-
-        // Find all selected nodes, excluding frame children
-        const filteredIds = excludeIds
-            ? selectedLayerIds.filter((id) => !excludeIds.has(id))
-            : selectedLayerIds;
-        const nodes = filteredIds
-            .map((id) => stageRef.current?.findOne("#" + id))
-            .filter((node): node is Konva.Node => !!node);
-
-        trRef.current.nodes(nodes);
-        trRef.current.getLayer()?.batchDraw();
-    }, [selectedLayerIds, stageRef, excludeIds]);
-
-    return (
-        <Transformer
-            ref={trRef}
-            boundBoxFunc={(oldBox, newBox) => {
-                if (newBox.width < 5 || newBox.height < 5) return oldBox;
-                return newBox;
-            }}
-            borderStroke="#6366F1"
-            anchorStroke="#6366F1"
-            anchorFill="#FFFFFF"
-            anchorSize={8}
-            anchorCornerRadius={2}
-        />
-    );
-}
-
-/* ─── Inner Transformer for Frame Children ────────── */
-interface FrameChildTransformerProps {
-    selectedChildIds: string[];
-    containerRef: React.RefObject<Konva.Group | null>;
-}
-
-function FrameChildTransformer({ selectedChildIds, containerRef }: FrameChildTransformerProps) {
-    const trRef = useRef<Konva.Transformer>(null);
-
-    useEffect(() => {
-        if (!trRef.current || !containerRef.current) return;
-
-        const nodes = selectedChildIds
-            .map((id) => containerRef.current?.findOne("#" + id))
-            .filter((node): node is Konva.Node => !!node);
-
-        trRef.current.nodes(nodes);
-        trRef.current.getLayer()?.batchDraw();
-    }, [selectedChildIds, containerRef]);
-
-    return (
-        <Transformer
-            ref={trRef}
-            boundBoxFunc={(oldBox, newBox) => {
-                if (newBox.width < 5 || newBox.height < 5) return oldBox;
-                return newBox;
-            }}
-            borderStroke="#6366F1"
-            anchorStroke="#6366F1"
-            anchorFill="#FFFFFF"
-            anchorSize={8}
-            anchorCornerRadius={2}
-        />
-    );
-}
 
 /* ─── Canvas Layer ────────────────────────────────── */
 interface CanvasLayerProps {
@@ -552,94 +464,7 @@ function FrameLayerRenderer({
         </Group>
     );
 }
-// Skip InlineTextEditor...
 
-/* ─── Inline text editing overlay ──────────────────── */
-function InlineTextEditor({
-    layer,
-    stageRef,
-    zoom,
-    stageX,
-    stageY,
-    onCommit,
-}: {
-    layer: TextLayer;
-    stageRef: React.RefObject<Konva.Stage | null>;
-    zoom: number;
-    stageX: number;
-    stageY: number;
-    onCommit: (text: string) => void;
-}) {
-    const textareaRef = useRef<HTMLTextAreaElement>(null);
-    const [value, setValue] = useState(layer.text);
-
-    // Calculate the screen position of the text layer
-    const screenX = layer.x * zoom + stageX;
-    const screenY = layer.y * zoom + stageY;
-    const screenW = layer.width * zoom;
-    const screenH = Math.max(layer.height * zoom, 40);
-
-    useEffect(() => {
-        const ta = textareaRef.current;
-        if (ta) {
-            ta.focus();
-            ta.select();
-        }
-    }, []);
-
-    const handleCommit = () => {
-        onCommit(value);
-    };
-
-    const handleKeyDown = (e: React.KeyboardEvent) => {
-        if (e.key === "Escape") {
-            onCommit(layer.text);
-        }
-        if (e.key === "Enter" && !e.shiftKey) {
-            e.preventDefault();
-            handleCommit();
-        }
-    };
-
-    const fontSizeScaled = layer.fontSize * zoom;
-
-    return (
-        <textarea
-            ref={textareaRef}
-            value={value}
-            onChange={(e) => setValue(e.target.value)}
-            onBlur={handleCommit}
-            onKeyDown={handleKeyDown}
-            style={{
-                position: "absolute",
-                left: screenX,
-                top: screenY,
-                width: screenW,
-                minHeight: screenH,
-                fontSize: fontSizeScaled,
-                fontFamily: layer.fontFamily,
-                fontWeight: layer.fontWeight,
-                color: layer.fill,
-                textAlign: layer.align,
-                textTransform: layer.textTransform === "uppercase" ? "uppercase" : layer.textTransform === "lowercase" ? "lowercase" : "none",
-                letterSpacing: layer.letterSpacing * zoom,
-                lineHeight: layer.lineHeight,
-                border: "2px solid var(--accent-primary)",
-                borderRadius: "var(--radius-sm)",
-                background: "rgba(255,255,255,0.95)",
-                padding: "2px 4px",
-                margin: 0,
-                outline: "none",
-                resize: "none",
-                overflow: "hidden",
-                zIndex: 50,
-                transformOrigin: "top left",
-                transform: layer.rotation ? `rotate(${layer.rotation}deg)` : undefined,
-                boxShadow: "0 0 0 3px rgba(99, 102, 241, 0.2)",
-            }}
-        />
-    );
-}
 /* ─── Main Canvas component ───────────────────────── */
 
 interface CanvasProps {

@@ -28,7 +28,7 @@ import Konva from "konva";
 
 // Dynamic import for Canvas (Konva needs client-only, no SSR)
 const Canvas = dynamic(
-    () => import("@/components/editor/Canvas").then((mod) => mod.Canvas),
+    () => import("@/components/editor/canvas").then((mod) => mod.Canvas),
     { ssr: false }
 );
 
