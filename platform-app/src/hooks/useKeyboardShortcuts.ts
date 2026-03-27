@@ -2,6 +2,7 @@
 
 import { useEffect, useCallback } from "react";
 import { useCanvasStore } from "@/store/canvasStore";
+import { useShallow } from "zustand/react/shallow";
 import { isFocusedOnInput } from "@/utils/keyboard";
 import type { FrameLayer } from "@/types";
 
@@ -21,7 +22,12 @@ export function useKeyboardShortcuts() {
         redo,
         selectLayer,
         reorderLayer,
-    } = useCanvasStore();
+    } = useCanvasStore(useShallow((s) => ({
+        selectedLayerIds: s.selectedLayerIds, layers: s.layers,
+        isEditingText: s.isEditingText, deleteSelectedLayers: s.deleteSelectedLayers,
+        duplicateSelectedLayers: s.duplicateSelectedLayers, updateLayer: s.updateLayer,
+        undo: s.undo, redo: s.redo, selectLayer: s.selectLayer, reorderLayer: s.reorderLayer,
+    })));
 
     // clipboard state lives in a ref so it persists across renders
     // but doesn't trigger re-renders

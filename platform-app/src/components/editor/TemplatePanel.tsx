@@ -5,6 +5,7 @@ import { v4 as uuid } from "uuid";
 import { LayoutTemplate, Plus, ArrowRight, Check, Search, X, Star, Download, Upload, Shuffle } from "lucide-react";
 import { useTemplateStore } from "@/store/templateStore";
 import { useCanvasStore } from "@/store/canvasStore";
+import { useShallow } from "zustand/react/shallow";
 import { useProjectStore } from "@/store/projectStore";
 import { Modal } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
@@ -66,7 +67,10 @@ function Chip({
 
 export function TemplatePanel({ open, onClose }: TemplatePanelProps) {
     const { savedPacks, addPack, deletePack } = useTemplateStore();
-    const { masterComponents, componentInstances, resizes, layers, resetCanvas, setCanvasSize } = useCanvasStore();
+    const { masterComponents, componentInstances, resizes, layers, resetCanvas, setCanvasSize } = useCanvasStore(useShallow((s) => ({
+        masterComponents: s.masterComponents, componentInstances: s.componentInstances,
+        resizes: s.resizes, layers: s.layers, resetCanvas: s.resetCanvas, setCanvasSize: s.setCanvasSize,
+    })));
     const { projects, activeProjectId } = useProjectStore();
     const [activeTab, setActiveTab] = useState<"single" | "pack">("single");
     const [packToApply, setPackToApply] = useState<TemplatePackV2 | null>(null);

@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { Sparkles, Wand2, Image as ImageIcon, Send, MessageCircle, Settings2, Ratio, Type, Grip, CheckCircle2, Circle, X } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { useCanvasStore } from "@/store/canvasStore";
+import { useShallow } from "zustand/react/shallow";
 import { RemoteTextProvider, RemoteImageProvider } from "@/services/aiService";
 import { ImageEditorModal } from "@/components/wizard/blocks/ImageEditorModal";
 import type { ImageLayer } from "@/types";
@@ -50,7 +51,10 @@ interface AIPromptBarProps {
 }
 
 export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult }: AIPromptBarProps) {
-    const { addTextLayer, addImageLayer, selectedLayerIds, updateLayer, layers } = useCanvasStore();
+    const { addTextLayer, addImageLayer, selectedLayerIds, updateLayer, layers } = useCanvasStore(useShallow((s) => ({
+        addTextLayer: s.addTextLayer, addImageLayer: s.addImageLayer,
+        selectedLayerIds: s.selectedLayerIds, updateLayer: s.updateLayer, layers: s.layers,
+    })));
     const [activeTab, setActiveTab] = useState<"text" | "image" | "outpaint">("text");
     const [prompt, setPrompt] = useState("");
     const [selectedModel, setSelectedModel] = useState(TEXT_MODELS[0].id);

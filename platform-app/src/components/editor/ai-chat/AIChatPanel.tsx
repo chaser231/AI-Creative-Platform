@@ -12,6 +12,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { useCanvasStore } from "@/store/canvasStore";
+import { useShallow } from "zustand/react/shallow";
 import { getModelsForCaps } from "@/lib/ai-models";
 import { Button } from "@/components/ui/Button";
 import { trpc } from "@/lib/trpc";
@@ -39,7 +40,10 @@ interface AIChatPanelProps {
 }
 
 export function AIChatPanel({ open, onClose, messages, onAddMessages, projectId }: AIChatPanelProps) {
-    const { addTextLayer, addImageLayer, layers, updateLayer } = useCanvasStore();
+    const { addTextLayer, addImageLayer, layers, updateLayer } = useCanvasStore(useShallow((s) => ({
+        addTextLayer: s.addTextLayer, addImageLayer: s.addImageLayer,
+        layers: s.layers, updateLayer: s.updateLayer,
+    })));
     const { currentWorkspace } = useWorkspace();
     const [input, setInput] = useState("");
     const [isThinking, setIsThinking] = useState(false);

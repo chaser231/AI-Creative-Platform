@@ -4,6 +4,7 @@ import { useRef, useCallback, useEffect, useState, useMemo, Fragment } from "rea
 import { ImageIcon } from "lucide-react";
 import { Stage, Layer, Rect, Text, Image as KonvaImage, Transformer, Group, Line } from "react-konva";
 import { useCanvasStore, computeConstrainedPosition } from "@/store/canvasStore";
+import { useShallow } from "zustand/react/shallow";
 import type { Layer as LayerType, TextLayer, BadgeLayer, FrameLayer, ImageLayer } from "@/types";
 import { computeImageFitProps } from "@/utils/imageFitUtils";
 import { ContextMenu, buildLayerContextMenuItems } from "../ContextMenu";
@@ -542,7 +543,38 @@ export function Canvas({ stageRef }: CanvasProps) {
         getFrameAtPoint,
         moveLayerToFrame,
         removeLayerFromFrame,
-    } = useCanvasStore();
+    } = useCanvasStore(useShallow((s) => ({
+        layers: s.layers,
+        selectedLayerIds: s.selectedLayerIds,
+        selectLayer: s.selectLayer,
+        toggleSelection: s.toggleSelection,
+        addToSelection: s.addToSelection,
+        updateLayer: s.updateLayer,
+        addImageLayer: s.addImageLayer,
+        removeLayer: s.removeLayer,
+        duplicateLayer: s.duplicateLayer,
+        bringToFront: s.bringToFront,
+        sendToBack: s.sendToBack,
+        toggleLayerVisibility: s.toggleLayerVisibility,
+        toggleLayerLock: s.toggleLayerLock,
+        zoom: s.zoom,
+        setZoom: s.setZoom,
+        stageX: s.stageX,
+        stageY: s.stageY,
+        setStagePosition: s.setStagePosition,
+        canvasWidth: s.canvasWidth,
+        canvasHeight: s.canvasHeight,
+        activeResizeId: s.activeResizeId,
+        isEditingText: s.isEditingText,
+        editingLayerId: s.editingLayerId,
+        startTextEditing: s.startTextEditing,
+        stopTextEditing: s.stopTextEditing,
+        artboardProps: s.artboardProps,
+        setHighlightedFrameId: s.setHighlightedFrameId,
+        getFrameAtPoint: s.getFrameAtPoint,
+        moveLayerToFrame: s.moveLayerToFrame,
+        removeLayerFromFrame: s.removeLayerFromFrame,
+    })));
 
     // Collect all IDs that are children of any frame (to exclude from top-level SelectionTransformer)
     const frameChildIds = useMemo(() => {

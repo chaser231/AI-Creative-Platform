@@ -5,6 +5,7 @@ import { ArrowRight, Check, AlertTriangle, Shuffle, X, Type, Image, Square, Tag,
 import { Modal } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
 import { useCanvasStore } from "@/store/canvasStore";
+import { useShallow } from "zustand/react/shallow";
 import { autoMap, updateMapping, removeMapping } from "@/services/slotMappingService";
 import type { MappingResult, SlotMapping } from "@/services/slotMappingService";
 import type { TemplatePack } from "@/services/templateService";
@@ -36,7 +37,9 @@ function confidenceBadge(confidence: number) {
 }
 
 export function SlotMappingModal({ open, onClose, templatePack, templateName }: SlotMappingModalProps) {
-    const { masterComponents, applySmartResize } = useCanvasStore();
+    const { masterComponents, applySmartResize } = useCanvasStore(useShallow((s) => ({
+        masterComponents: s.masterComponents, applySmartResize: s.applySmartResize,
+    })));
 
     const [mappingResult, setMappingResult] = useState<MappingResult>(() =>
         autoMap(masterComponents, templatePack)

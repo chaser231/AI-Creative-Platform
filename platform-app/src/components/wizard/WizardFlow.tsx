@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { ChevronRight, LayoutTemplate, FileText, ImagePlus, Sparkles, Search, Star, X } from "lucide-react";
 import { useTemplateStore } from "@/store/templateStore";
 import { useCanvasStore } from "@/store/canvasStore";
+import { useShallow } from "zustand/react/shallow";
 import { useProjectStore } from "@/store/projectStore";
 import { Button } from "@/components/ui/Button";
 import { DEFAULT_PACKS, type TemplatePackMeta } from "@/constants/defaultPacks";
@@ -27,7 +28,7 @@ type WizardStep = "template" | "content" | "review";
 
 export function WizardFlow({ projectId, onSwitchToStudio }: WizardFlowProps) {
     const { savedPacks } = useTemplateStore();
-    const { resetCanvas } = useCanvasStore();
+    const { resetCanvas } = useCanvasStore(useShallow((s) => ({ resetCanvas: s.resetCanvas })));
     const { projects } = useProjectStore();
     const [step, setStep] = useState<WizardStep>("template");
     const [templateMode, setTemplateMode] = useState<"single" | "pack" | "manual">("single");

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCanvasStore } from "@/store/canvasStore";
+import { useShallow } from "zustand/react/shallow";
 import type { ArtboardProps } from "@/store/canvasStore";
 import type { Layer, TextLayer, RectangleLayer, BadgeLayer, FrameLayer, ImageLayer, ConstraintH, ConstraintV, TemplateSlotRole } from "@/types";
 import { DEFAULT_CONSTRAINTS } from "@/types";
@@ -27,7 +28,11 @@ import { FramePropsGrouped } from "./FramePropsGrouped";
 import { ImagePropsInline } from "./ImagePropsInline";
 
 export function PropertiesPanel() {
-    const { layers, selectedLayerIds, updateLayer, activeResizeId, artboardProps, updateArtboardProps, alignSelectedLayers } = useCanvasStore();
+    const { layers, selectedLayerIds, updateLayer, activeResizeId, artboardProps, updateArtboardProps, alignSelectedLayers } = useCanvasStore(useShallow((s) => ({
+        layers: s.layers, selectedLayerIds: s.selectedLayerIds, updateLayer: s.updateLayer,
+        activeResizeId: s.activeResizeId, artboardProps: s.artboardProps,
+        updateArtboardProps: s.updateArtboardProps, alignSelectedLayers: s.alignSelectedLayers,
+    })));
 
     const isMultiSelection = selectedLayerIds.length > 1;
     const selectedLayer = selectedLayerIds.length === 1
