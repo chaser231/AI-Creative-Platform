@@ -140,7 +140,7 @@ function PackCard({ pack, onLoad }: { pack: TemplatePackV2; onLoad: (pack: Templ
 
 export default function TemplateCatalogPage() {
     const router = useRouter();
-    const { backendTemplates, isLoading: isLoadingBackend } = useTemplateListSync();
+    const { backendTemplates, isLoading: isLoadingBackend, workspaceId } = useTemplateListSync();
     const { createProject: createOnBackend } = useCreateProjectSync();
     const addProject = useProjectStore((s) => s.addProject);
     const [search, setSearch] = useState("");
@@ -198,33 +198,30 @@ export default function TemplateCatalogPage() {
     const handleLoadPack = async (pack: TemplatePackV2, selectedMode: "wizard" | "studio") => {
         const { applyTemplatePack } = await import("@/services/templateService");
 
-        // The listing-level pack has empty masterComponents/resizes.
-        // Load the full template data from backend if available.
+        // Load full template data from backend REST endpoint
         let fullPack = pack;
         try {
-            // Use tRPC httpBatchLink format to fetch full template data
-            const input = encodeURIComponent(JSON.stringify({ "0": { json: { id: pack.id } } }));
-            const res = await fetch(`/api/trpc/template.getById?batch=1&input=${input}`);
+            const res = await fetch(`/api/template/${pack.id}`);
             if (res.ok) {
-                const json = await res.json();
-                // Batch response format: [{ result: { data: { json: ... } } }]
-                const templateData = json?.[0]?.result?.data?.json;
-                if (templateData?.data) {
-                    // templateData.data is the full TemplatePack JSON stored in DB
-                    fullPack = templateData.data as TemplatePackV2;
+                const template = await res.json();
+                if (template?.data) {
+                    // template.data is the full TemplatePack JSON stored in DB
+                    fullPack = template.data as TemplatePackV2;
                 }
             }
         } catch {
-            // Fallback to the listing-level pack (local templates)
+            // Fallback to the listing-level pack
+            console.warn("Failed to load full template, using listing data");
         }
 
         applyTemplatePack(fullPack, {
             onSuccess: async () => {
-                // Backend-first project creation
+                // Backend-first project creation (pass workspaceId explicitly)
                 try {
                     const backendProject = await createOnBackend({
                         name: pack.name,
                         goal: "banner",
+                        workspaceId: workspaceId || undefined,
                     });
 
                     if (backendProject) {
