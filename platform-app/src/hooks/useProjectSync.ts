@@ -153,6 +153,43 @@ export function useCanvasAutoSave(projectId: string, enabled: boolean = true) {
     );
   }, [projectId, saveStateMutation]);
 
+  // Synchronous save for unmount — no S3 migration, uses sendBeacon as fallback
+  const saveNowSync = useCallback(() => {
+    if (!enabledRef.current) return;
+    if (!hasEverLoadedRef.current) return;
+
+    const store = useCanvasStore.getState();
+    if (store.layers.length === 0 && lastSavedRef.current !== "") return;
+
+    const canvasState = {
+      layers: store.layers,
+      masterComponents: store.masterComponents,
+      componentInstances: store.componentInstances,
+      resizes: store.resizes,
+      artboardProps: store.artboardProps,
+      canvasWidth: store.canvasWidth,
+      canvasHeight: store.canvasHeight,
+    };
+
+    const serialized = JSON.stringify(canvasState);
+    if (serialized === lastSavedRef.current) return;
+    lastSavedRef.current = serialized;
+
+    // Use sendBeacon for reliable delivery during navigation/unload
+    const payload = JSON.stringify({ projectId, canvasState });
+    const blob = new Blob([payload], { type: "application/json" });
+    const sent = navigator.sendBeacon("/api/canvas/save", blob);
+    if (!sent) {
+      // Fallback for large payloads
+      fetch("/api/canvas/save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: payload,
+        keepalive: true,
+      }).catch(() => { /* best-effort */ });
+    }
+  }, [projectId]);
+
   // Subscribe to canvas store changes and debounce saves
   useEffect(() => {
     // Don't subscribe until enabled
@@ -169,14 +206,17 @@ export function useCanvasAutoSave(projectId: string, enabled: boolean = true) {
       unsubscribe();
       if (timeoutRef.current) {
         clearTimeout(timeoutRef.current);
+        timeoutRef.current = null;
       }
+      // Flush pending save synchronously on cleanup
+      saveNowSync();
     };
-  }, [saveNow, enabled]);
+  }, [saveNow, saveNowSync, enabled]);
 
   // Save on unmount (leaving editor via React navigation)
   useEffect(() => {
     return () => {
-      saveNow();
+      saveNowSync();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

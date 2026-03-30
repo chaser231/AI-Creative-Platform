@@ -209,12 +209,13 @@ export default function TemplateCatalogPage() {
         // Load the full template data from backend if available.
         let fullPack = pack;
         try {
-            // Fetch full template data from backend (listing only has metadata)
-            // Use vanilla fetch to get full template by ID
-            const res = await fetch(`/api/trpc/template.getById?input=${encodeURIComponent(JSON.stringify({ id: pack.id }))}`);
+            // Use tRPC httpBatchLink format to fetch full template data
+            const input = encodeURIComponent(JSON.stringify({ "0": { json: { id: pack.id } } }));
+            const res = await fetch(`/api/trpc/template.getById?batch=1&input=${input}`);
             if (res.ok) {
                 const json = await res.json();
-                const templateData = json?.result?.data;
+                // Batch response format: [{ result: { data: { json: ... } } }]
+                const templateData = json?.[0]?.result?.data?.json;
                 if (templateData?.data) {
                     // templateData.data is the full TemplatePack JSON stored in DB
                     fullPack = templateData.data as TemplatePackV2;
