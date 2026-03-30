@@ -21,8 +21,7 @@ import { TopBar } from "@/components/layout/TopBar";
 import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
 import { cn } from "@/lib/cn";
-import { useTemplateStore } from "@/store/templateStore";
-import { useTemplateListSync, useTemplatePushSync } from "@/hooks/useTemplateSync";
+import { useTemplateListSync } from "@/hooks/useTemplateSync";
 import { useCreateProjectSync } from "@/hooks/useProjectSync";
 import { useProjectStore } from "@/store/projectStore";
 import { searchPacks, getAllTags, type CatalogSearchParams } from "@/services/templateCatalogService";
@@ -141,11 +140,9 @@ function PackCard({ pack, onLoad }: { pack: TemplatePackV2; onLoad: (pack: Templ
 
 export default function TemplateCatalogPage() {
     const router = useRouter();
-    const { savedPacks } = useTemplateStore();
     const { backendTemplates, isLoading: isLoadingBackend } = useTemplateListSync();
     const { createProject: createOnBackend } = useCreateProjectSync();
     const addProject = useProjectStore((s) => s.addProject);
-    useTemplatePushSync(); // Auto-push local templates to backend
     const [search, setSearch] = useState("");
     const [selectedBUs, setSelectedBUs] = useState<BusinessUnit[]>([]);
     const [selectedCategories, setSelectedCategories] = useState<TemplateCategory[]>([]);
@@ -180,12 +177,8 @@ export default function TemplateCatalogPage() {
 
     const hasFilters = selectedBUs.length > 0 || selectedCategories.length > 0 || selectedContentType !== null || search !== "";
 
-    // Merge local + backend templates, deduplicate by ID
-    const allPacks = useMemo(() => {
-        const localIds = new Set(savedPacks.map(p => p.id));
-        const uniqueBackend = backendTemplates.filter(bt => !localIds.has(bt.id));
-        return [...savedPacks, ...uniqueBackend];
-    }, [savedPacks, backendTemplates]);
+    // Use backend templates only — filtered by current workspace on the server
+    const allPacks = backendTemplates;
 
     // Search results
     const results = useMemo(() => {
