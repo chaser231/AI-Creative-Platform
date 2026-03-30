@@ -34,7 +34,7 @@ export function useProjectListSync(onlyMine?: boolean) {
   const workspaceId = currentWorkspace?.id ?? null;
 
   const projectsQuery = trpc.project.list.useQuery(
-    { workspaceId: workspaceId! },
+    { workspaceId: workspaceId!, onlyMine },
     {
       enabled: !!workspaceId,
       retry: 1,
@@ -71,13 +71,31 @@ export function useCanvasAutoSave(projectId: string, enabled: boolean = true) {
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
   const lastSavedRef = useRef<string>("");
   const enabledRef = useRef(enabled);
+  const hasEverLoadedRef = useRef(false);
   enabledRef.current = enabled;
+
+  // Track when the first successful load happens
+  useEffect(() => {
+    if (enabled) {
+      // Small delay to ensure load has actually populated the store
+      const t = setTimeout(() => { hasEverLoadedRef.current = true; }, 500);
+      return () => clearTimeout(t);
+    }
+  }, [enabled]);
 
   const saveNow = useCallback(() => {
     // Guard: don't save until initial load is complete
     if (!enabledRef.current) return;
+    // Guard: don't save if we haven't loaded at least once
+    if (!hasEverLoadedRef.current) return;
 
     const store = useCanvasStore.getState();
+
+    // Guard: never overwrite a project with empty layers
+    // (protects against clear-on-mount race condition)
+    if (store.layers.length === 0 && lastSavedRef.current !== "") {
+      return;
+    }
 
     // Serialize current canvas state
     const canvasState = {
@@ -137,11 +155,17 @@ export function useCanvasAutoSave(projectId: string, enabled: boolean = true) {
   // Save on page unload (refresh, close tab).
   // tRPC mutations get aborted during page unload, so we use
   // navigator.sendBeacon which guarantees delivery.
+  // Fallback: if sendBeacon fails (payload too large), try fetch with keepalive.
   useEffect(() => {
     const handleBeforeUnload = () => {
       if (!enabledRef.current) return;
+      if (!hasEverLoadedRef.current) return;
 
       const store = useCanvasStore.getState();
+
+      // Don't save empty state on unload
+      if (store.layers.length === 0 && lastSavedRef.current !== "") return;
+
       const canvasState = {
         layers: store.layers,
         masterComponents: store.masterComponents,
@@ -155,12 +179,20 @@ export function useCanvasAutoSave(projectId: string, enabled: boolean = true) {
       const serialized = JSON.stringify(canvasState);
       if (serialized === lastSavedRef.current) return;
 
-      // sendBeacon survives page unload unlike fetch/tRPC
-      const blob = new Blob(
-        [JSON.stringify({ projectId, canvasState })],
-        { type: "application/json" }
-      );
-      navigator.sendBeacon("/api/canvas/save", blob);
+      const payload = JSON.stringify({ projectId, canvasState });
+      const blob = new Blob([payload], { type: "application/json" });
+
+      // sendBeacon has a ~64KB limit; fallback to fetch+keepalive for larger payloads
+      const sent = navigator.sendBeacon("/api/canvas/save", blob);
+      if (!sent) {
+        // Fallback: fetch with keepalive survives unload for up to ~4MB
+        fetch("/api/canvas/save", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: payload,
+          keepalive: true,
+        }).catch(() => { /* best-effort */ });
+      }
     };
 
     window.addEventListener("beforeunload", handleBeforeUnload);

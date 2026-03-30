@@ -31,6 +31,7 @@ export const projectRouter = createTRPCRouter({
     .input(
       z.object({
         workspaceId: z.string(),
+        onlyMine: z.boolean().optional(),
         status: z
           .enum(["DRAFT", "IN_PROGRESS", "REVIEW", "PUBLISHED", "ARCHIVED"])
           .optional(),
@@ -43,6 +44,7 @@ export const projectRouter = createTRPCRouter({
       const projects = await ctx.prisma.project.findMany({
         where: {
           workspaceId: input.workspaceId,
+          ...(input.onlyMine && { createdById: ctx.user.id }),
           ...(input.status && { status: input.status }),
         },
         select: {
@@ -162,7 +164,15 @@ export const projectRouter = createTRPCRouter({
     .input(
       z.object({
         id: z.string(),
-        canvasState: z.any(), // Full CanvasState JSON blob
+        canvasState: z.object({
+          layers: z.array(z.any()),
+          masterComponents: z.array(z.any()).optional(),
+          componentInstances: z.array(z.any()).optional(),
+          resizes: z.any().optional(),
+          artboardProps: z.any().optional(),
+          canvasWidth: z.number().optional(),
+          canvasHeight: z.number().optional(),
+        }),
       })
     )
     .mutation(async ({ ctx, input }) => {
