@@ -24,24 +24,33 @@ export const templateRouter = createTRPCRouter({
     .query(async ({ ctx, input }) => {
       const { workspaceId, search, ...filters } = input;
 
+      // Build AND conditions to safely combine multiple OR filters
+      const andConditions: Record<string, unknown>[] = [];
+
+      // Visibility: workspace-specific + official templates (cross-workspace)
+      if (filters.isOfficial !== undefined) {
+        andConditions.push({ workspaceId, isOfficial: filters.isOfficial });
+      } else {
+        andConditions.push({ OR: [{ workspaceId }, { isOfficial: true }] });
+      }
+
+      // Category/content/occasion filters
+      if (filters.category) andConditions.push({ categories: { has: filters.category } });
+      if (filters.contentType) andConditions.push({ contentType: filters.contentType });
+      if (filters.occasion) andConditions.push({ occasion: filters.occasion });
+
+      // Search filter
+      if (search) {
+        andConditions.push({
+          OR: [
+            { name: { contains: search, mode: "insensitive" } },
+            { description: { contains: search, mode: "insensitive" } },
+          ],
+        });
+      }
+
       const templates = await ctx.prisma.template.findMany({
-        where: {
-          workspaceId,
-          ...(filters.category && {
-            categories: { has: filters.category },
-          }),
-          ...(filters.contentType && { contentType: filters.contentType }),
-          ...(filters.occasion && { occasion: filters.occasion }),
-          ...(filters.isOfficial !== undefined && {
-            isOfficial: filters.isOfficial,
-          }),
-          ...(search && {
-            OR: [
-              { name: { contains: search, mode: "insensitive" } },
-              { description: { contains: search, mode: "insensitive" } },
-            ],
-          }),
-        },
+        where: { AND: andConditions },
         select: {
           id: true,
           name: true,
@@ -57,6 +66,7 @@ export const templateRouter = createTRPCRouter({
           createdAt: true,
           updatedAt: true,
           author: true,
+          workspaceId: true,
         },
         orderBy: [{ isOfficial: "desc" }, { popularity: "desc" }],
       });

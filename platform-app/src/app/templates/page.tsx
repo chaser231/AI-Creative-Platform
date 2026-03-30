@@ -205,7 +205,26 @@ export default function TemplateCatalogPage() {
     const handleLoadPack = async (pack: TemplatePackV2, selectedMode: "wizard" | "studio") => {
         const { applyTemplatePack } = await import("@/services/templateService");
 
-        applyTemplatePack(pack, {
+        // The listing-level pack has empty masterComponents/resizes.
+        // Load the full template data from backend if available.
+        let fullPack = pack;
+        try {
+            // Fetch full template data from backend (listing only has metadata)
+            // Use vanilla fetch to get full template by ID
+            const res = await fetch(`/api/trpc/template.getById?input=${encodeURIComponent(JSON.stringify({ id: pack.id }))}`);
+            if (res.ok) {
+                const json = await res.json();
+                const templateData = json?.result?.data;
+                if (templateData?.data) {
+                    // templateData.data is the full TemplatePack JSON stored in DB
+                    fullPack = templateData.data as TemplatePackV2;
+                }
+            }
+        } catch {
+            // Fallback to the listing-level pack (local templates)
+        }
+
+        applyTemplatePack(fullPack, {
             onSuccess: async () => {
                 // Backend-first project creation
                 try {
