@@ -72,6 +72,7 @@ export function useCanvasAutoSave(projectId: string, enabled: boolean = true) {
   const lastSavedRef = useRef<string>("");
   const enabledRef = useRef(enabled);
   const hasEverLoadedRef = useRef(false);
+  const isMigratingRef = useRef(false);
   enabledRef.current = enabled;
 
   // Track when the first successful load happens
@@ -83,11 +84,13 @@ export function useCanvasAutoSave(projectId: string, enabled: boolean = true) {
     }
   }, [enabled]);
 
-  const saveNow = useCallback(() => {
+  const saveNow = useCallback(async () => {
     // Guard: don't save until initial load is complete
     if (!enabledRef.current) return;
     // Guard: don't save if we haven't loaded at least once
     if (!hasEverLoadedRef.current) return;
+    // Guard: don't run concurrent migrations
+    if (isMigratingRef.current) return;
 
     const store = useCanvasStore.getState();
 
@@ -97,9 +100,35 @@ export function useCanvasAutoSave(projectId: string, enabled: boolean = true) {
       return;
     }
 
+    // Migrate base64 images to S3 URLs before saving
+    let layers = store.layers;
+    const hasBase64 = layers.some(
+      (l: { type: string; src?: string }) =>
+        l.type === "image" && l.src && (l.src.startsWith("data:") || l.src.length > 500)
+    );
+
+    if (hasBase64) {
+      try {
+        isMigratingRef.current = true;
+        const { migrateBase64ToS3 } = await import("@/utils/imageUpload");
+        const migrated = await migrateBase64ToS3(
+          layers as unknown as Array<{ type: string; src?: string; [key: string]: unknown }>,
+          projectId
+        );
+        layers = migrated as unknown as typeof layers;
+        // Update local store with S3 URLs so future saves skip migration
+        useCanvasStore.setState({ layers });
+      } catch (err) {
+        console.warn("S3 migration skipped:", err);
+        // Continue with base64 — better to save large than not save at all
+      } finally {
+        isMigratingRef.current = false;
+      }
+    }
+
     // Serialize current canvas state
     const canvasState = {
-      layers: store.layers,
+      layers,
       masterComponents: store.masterComponents,
       componentInstances: store.componentInstances,
       resizes: store.resizes,

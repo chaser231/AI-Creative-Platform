@@ -1,0 +1,85 @@
+/**
+ * Image S3 Upload Utility
+ *
+ * Provides functions to:
+ * 1. Upload a single base64 image to S3 and get a public URL
+ * 2. Process all image layers in a canvas state, replacing base64 with S3 URLs
+ *
+ * This is used by the auto-save flow to keep canvasState JSON compact.
+ */
+
+// Cache to avoid re-uploading the same image multiple times
+const uploadCache = new Map<string, string>();
+
+/**
+ * Upload a base64 image to S3 via /api/upload.
+ * Returns the public URL, or null on failure.
+ */
+export async function uploadImageToS3(
+  base64: string,
+  projectId: string,
+  mimeType: string = "image/png"
+): Promise<string | null> {
+  // Check cache first (use first 64 chars as key to avoid huge map keys)
+  const cacheKey = base64.slice(0, 64) + base64.length;
+  const cached = uploadCache.get(cacheKey);
+  if (cached) return cached;
+
+  try {
+    const res = await fetch("/api/upload", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ base64, mimeType, projectId }),
+    });
+
+    if (!res.ok) return null;
+
+    const { url } = await res.json();
+    if (url) {
+      uploadCache.set(cacheKey, url);
+    }
+    return url || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Check if a string is a base64 data URI or raw base64 image.
+ */
+function isBase64Image(src: string): boolean {
+  if (!src) return false;
+  if (src.startsWith("data:image/")) return true;
+  // Also match raw base64 that's > 200 chars (URLs are typically shorter)
+  if (src.length > 200 && /^[A-Za-z0-9+/=]+$/.test(src.slice(0, 100))) return true;
+  return false;
+}
+
+/**
+ * Process canvas state layers: upload any base64 image sources to S3,
+ * replacing them with public URLs. Returns the modified layers array.
+ *
+ * This runs concurrently for all image layers to minimize latency.
+ * Non-image layers are passed through unchanged.
+ */
+export async function migrateBase64ToS3(
+  layers: Array<{ type: string; src?: string; [key: string]: unknown }>,
+  projectId: string
+): Promise<Array<{ type: string; src?: string; [key: string]: unknown }>> {
+  // Find layers that need migration
+  const migrationTasks = layers.map(async (layer) => {
+    if (layer.type === "image" && layer.src && isBase64Image(layer.src)) {
+      const mimeType = layer.src.startsWith("data:")
+        ? layer.src.match(/^data:([^;]+)/)?.[1] || "image/png"
+        : "image/png";
+
+      const url = await uploadImageToS3(layer.src, projectId, mimeType);
+      if (url) {
+        return { ...layer, src: url };
+      }
+    }
+    return layer;
+  });
+
+  return Promise.all(migrationTasks);
+}
