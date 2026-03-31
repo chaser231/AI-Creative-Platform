@@ -408,6 +408,9 @@ function FrameLayerRenderer({
         >
             <Group
                 ref={clipGroupRef}
+                name={layer.clipContent ? "clip-group" : undefined}
+                _clipWidth={layer.width}
+                _clipHeight={layer.height}
                 clipFunc={layer.clipContent ? (ctx) => {
                     if (layer.cornerRadius > 0) {
                         const r = layer.cornerRadius;
@@ -611,12 +614,47 @@ export function Canvas({ stageRef }: CanvasProps) {
 
     /* ─── Layer Interactions ──────────────────────────── */
 
+    const isPointClipped = useCallback((node: Konva.Node | null, ptr: {x: number; y: number} | null) => {
+        if (!node || !ptr) return false;
+        let current: Konva.Node | null = node.parent;
+        while (current) {
+            if (current.name() === 'clip-group') {
+                const transform = current.getAbsoluteTransform().copy();
+                transform.invert();
+                const localPos = transform.point(ptr);
+                
+                const w = current.getAttr('_clipWidth') as number;
+                const h = current.getAttr('_clipHeight') as number;
+                
+                if (w !== undefined && h !== undefined) {
+                    if (localPos.x < 0 || localPos.x > w || localPos.y < 0 || localPos.y > h) {
+                        return true;
+                    }
+                }
+            }
+            current = current.parent;
+        }
+        return false;
+    }, []);
+
     const handleLayerSelect = useCallback((e: Konva.KonvaEventObject<MouseEvent>) => {
         // Stop propagation so stage click doesn't deselect
         e.cancelBubble = true;
 
         let id = e.target.id();
         if (!id) return;
+
+        // If the pointer is outside any ancestor clip-group, ignore this layer entirely
+        const ptr = e.target.getStage()?.getPointerPosition() || null;
+        if (isPointClipped(e.target, ptr)) {
+            // Treat as if we clicked the empty stage
+            selectLayer(null);
+            e.cancelBubble = false; // let it bubble or we just handled it (it won't select the frame either)
+            return;
+        }
+
+        // Stop propagation so stage click doesn't deselect
+        e.cancelBubble = true;
 
         const isMulti = e.evt?.shiftKey;
         const isDeepSelect = e.evt?.metaKey || e.evt?.ctrlKey || (e.evt as any)?._isDeepSelect;
@@ -649,6 +687,14 @@ export function Canvas({ stageRef }: CanvasProps) {
         setStageDraggable(false);
         isDragging.current = true;
         let id = e.target.id();
+
+        const ptr = e.target.getStage()?.getPointerPosition() || null;
+        if (isPointClipped(e.target, ptr)) {
+            // Cancel drag if grabbed on visually clipped overflow
+            e.target.stopDrag();
+            selectLayer(null);
+            return;
+        }
 
         const isDeepSelect = e.evt?.metaKey || e.evt?.ctrlKey;
 
@@ -1395,8 +1441,12 @@ export function Canvas({ stageRef }: CanvasProps) {
                 <Layer>
                     {/* Artboard background */}
                     {artboardProps.clipContent ? (
-                        <Group clipFunc={(ctx) => {
-                            if (artboardProps.cornerRadius > 0) {
+                        <Group
+                            name="clip-group"
+                            _clipWidth={canvasWidth}
+                            _clipHeight={canvasHeight}
+                            clipFunc={(ctx) => {
+                                if (artboardProps.cornerRadius > 0) {
                                 const r = artboardProps.cornerRadius;
                                 const w = canvasWidth;
                                 const h = canvasHeight;
