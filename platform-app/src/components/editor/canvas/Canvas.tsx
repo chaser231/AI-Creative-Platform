@@ -409,8 +409,8 @@ function FrameLayerRenderer({
             <Group
                 ref={clipGroupRef}
                 name={layer.clipContent ? "clip-group" : undefined}
-                _clipWidth={layer.width}
-                _clipHeight={layer.height}
+                width={layer.width}
+                height={layer.height}
                 clipFunc={layer.clipContent ? (ctx) => {
                     if (layer.cornerRadius > 0) {
                         const r = layer.cornerRadius;
@@ -623,8 +623,8 @@ export function Canvas({ stageRef }: CanvasProps) {
                 transform.invert();
                 const localPos = transform.point(ptr);
                 
-                const w = current.getAttr('_clipWidth') as number;
-                const h = current.getAttr('_clipHeight') as number;
+                const w = current.width();
+                const h = current.height();
                 
                 if (w !== undefined && h !== undefined) {
                     if (localPos.x < 0 || localPos.x > w || localPos.y < 0 || localPos.y > h) {
@@ -1443,8 +1443,8 @@ export function Canvas({ stageRef }: CanvasProps) {
                     {artboardProps.clipContent ? (
                         <Group
                             name="clip-group"
-                            _clipWidth={canvasWidth}
-                            _clipHeight={canvasHeight}
+                            width={canvasWidth}
+                            height={canvasHeight}
                             clipFunc={(ctx) => {
                                 if (artboardProps.cornerRadius > 0) {
                                 const r = artboardProps.cornerRadius;
