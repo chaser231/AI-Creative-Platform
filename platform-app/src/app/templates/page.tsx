@@ -151,6 +151,7 @@ export default function TemplateCatalogPage() {
     const [activePopover, setActivePopover] = useState<string | null>(null);
     const [selectedPackForMode, setSelectedPackForMode] = useState<TemplatePackV2 | null>(null);
     const [mode, setMode] = useState<"wizard" | "studio">("wizard");
+    const [selectedResizeId, setSelectedResizeId] = useState<string | null>(null);
 
     const togglePopover = (name: string) => {
         setActivePopover((prev) => (prev === name ? null : name));
@@ -177,8 +178,8 @@ export default function TemplateCatalogPage() {
 
     const hasFilters = selectedBUs.length > 0 || selectedCategories.length > 0 || selectedContentType !== null || search !== "";
 
-    // Use backend templates only — filtered by current workspace on the server
-    const allPacks = backendTemplates;
+    // Use backend templates only — strictly filtering for packs 
+    const allPacks = backendTemplates.filter(p => p.resizes && p.resizes.length > 0);
 
     // Search results
     const results = useMemo(() => {
@@ -212,6 +213,12 @@ export default function TemplateCatalogPage() {
         } catch {
             // Fallback to the listing-level pack
             console.warn("Failed to load full template, using listing data");
+        }
+
+        const { extractSingleFormatFromPack } = await import("@/services/templateService");
+        
+        if (selectedResizeId && selectedResizeId !== "all") {
+             fullPack = extractSingleFormatFromPack(fullPack, selectedResizeId);
         }
 
         applyTemplatePack(fullPack, {
@@ -485,7 +492,10 @@ export default function TemplateCatalogPage() {
             {/* Mode Selection Modal */}
             <Modal
                 open={!!selectedPackForMode}
-                onClose={() => setSelectedPackForMode(null)}
+                onClose={() => {
+                    setSelectedPackForMode(null);
+                    setSelectedResizeId(null);
+                }}
                 title="Режим работы"
                 maxWidth="max-w-md"
                 footer={
@@ -509,6 +519,25 @@ export default function TemplateCatalogPage() {
                     <p className="text-sm text-text-secondary">
                         Выберите, как вы хотите продолжить работу с шаблоном <strong>{selectedPackForMode?.name}</strong>.
                     </p>
+                    
+                    {/* Format selector */}
+                    {selectedPackForMode?.resizes && selectedPackForMode.resizes.length > 0 && (
+                        <div className="bg-bg-secondary p-3 rounded-lg border border-border-primary">
+                            <label className="block text-xs font-semibold text-text-primary mb-2">
+                                <span className="text-accent-primary mr-1">❖</span> Выберите формат для работы:
+                            </label>
+                            <select 
+                                className="w-full h-9 px-3 rounded-md bg-bg-surface border border-border-primary text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-accent-primary/20 cursor-pointer"
+                                value={selectedResizeId || "all"}
+                                onChange={(e) => setSelectedResizeId(e.target.value)}
+                            >
+                                <option value="all">Весь пакет ({selectedPackForMode.resizes.length} макетов)</option>
+                                {selectedPackForMode.resizes.map(r => (
+                                    <option key={r.id} value={r.id}>{r.name} ({r.width}×{r.height})</option>
+                                ))}
+                            </select>
+                        </div>
+                    )}
                     <div className="grid grid-cols-2 gap-3">
                         <button
                             onClick={() => setMode("wizard")}

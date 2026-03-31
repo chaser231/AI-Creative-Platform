@@ -16,6 +16,7 @@ import { searchPacks } from "@/services/templateCatalogService";
 import type { TemplatePackV2, TemplatePack } from "@/services/templateService";
 import type { BusinessUnit, TemplateCategory, ContentType, TemplateTag } from "@/types";
 import { SlotMappingModal } from "@/components/editor/SlotMappingModal";
+import { extractSingleFormatFromPack } from "@/services/templateService";
 
 interface TemplatePanelProps {
     open: boolean;
@@ -131,22 +132,7 @@ export function TemplatePanel({ open, onClose }: TemplatePanelProps) {
 
     const extractSingleFormatIfRequested = (fullPack: TemplatePackV2): TemplatePackV2 => {
         if (activeTab === "single" && selectedResizeId && fullPack.resizes && fullPack.resizes.length > 0) {
-            const chosenResize = fullPack.resizes.find(r => r.id === selectedResizeId);
-            if (chosenResize) {
-                const chosenInstances = fullPack.componentInstances?.filter(ci => ci.resizeId === selectedResizeId) || [];
-                const newMasterComponents = fullPack.masterComponents.map(mc => {
-                    const instance = chosenInstances.find(ci => ci.masterId === mc.id);
-                    return instance ? { ...mc, props: instance.localProps as any } : mc;
-                });
-                return {
-                    ...fullPack,
-                    baseWidth: chosenResize.width,
-                    baseHeight: chosenResize.height,
-                    resizes: [], // Make it a strictly single format
-                    componentInstances: [],
-                    masterComponents: newMasterComponents
-                };
-            }
+            return extractSingleFormatFromPack(fullPack, selectedResizeId);
         }
         return fullPack;
     };

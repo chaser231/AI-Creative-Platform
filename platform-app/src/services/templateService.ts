@@ -265,3 +265,26 @@ export async function applyTemplatePack(
         options?.onError?.(err);
     }
 }
+
+/**
+ * Extracts a single format instance from a full template pack, turning it into a standalone master structure.
+ */
+export function extractSingleFormatFromPack(fullPack: TemplatePackV2, targetResizeId: string): TemplatePackV2 {
+    const chosenResize = fullPack.resizes?.find((r: any) => r.id === targetResizeId);
+    if (!chosenResize) return fullPack;
+
+    const chosenInstances = fullPack.componentInstances?.filter((ci: any) => ci.resizeId === targetResizeId) || [];
+    const newMasterComponents = fullPack.masterComponents.map((mc: any) => {
+        const instance = chosenInstances.find((ci: any) => ci.masterId === mc.id);
+        return instance ? { ...mc, props: instance.localProps as any } : mc;
+    });
+
+    return {
+        ...fullPack,
+        baseWidth: chosenResize.width,
+        baseHeight: chosenResize.height,
+        resizes: [], // Make it a strictly single format
+        componentInstances: [],
+        masterComponents: newMasterComponents
+    };
+}
