@@ -85,6 +85,27 @@ export function TemplatePanel({ open, onClose }: TemplatePanelProps) {
     const [packToApply, setPackToApply] = useState<TemplatePackV2 | null>(null);
     const [selectedResizeId, setSelectedResizeId] = useState<string | null>(null);
 
+    // Extract individual formats from packs for the single tab
+    const singlePacks = useMemo(() => {
+        const list: (TemplatePackV2 & { _originalId?: string; _sourceResizeId?: string })[] = [];
+        allPacks.forEach(pack => {
+            if (!pack.resizes || pack.resizes.length === 0) {
+                list.push(pack);
+            } else {
+                pack.resizes.forEach(resize => {
+                    list.push({
+                        ...pack,
+                        id: `${pack.id}_${resize.id}`,
+                        name: `${pack.name} (${resize.name})`,
+                        _originalId: pack.id,
+                        _sourceResizeId: resize.id,
+                    });
+                });
+            }
+        });
+        return list;
+    }, [allPacks]);
+
     // Pack tab state
     const [packSearch, setPackSearch] = useState("");
 
@@ -267,11 +288,12 @@ export function TemplatePanel({ open, onClose }: TemplatePanelProps) {
         URL.revokeObjectURL(url);
     };
 
-    const handleLoadPack = (pack: TemplatePackV2) => {
-        setPackToApply(pack);
-        if (pack.resizes && pack.resizes.length > 0) {
-            setSelectedResizeId(pack.resizes[0].id);
+    const handleLoadPack = (pack: TemplatePackV2 & { _originalId?: string; _sourceResizeId?: string }) => {
+        if (pack._originalId && pack._sourceResizeId) {
+            setPackToApply({ ...pack, id: pack._originalId });
+            setSelectedResizeId(pack._sourceResizeId);
         } else {
+            setPackToApply(pack);
             setSelectedResizeId(null);
         }
     };
@@ -447,15 +469,15 @@ export function TemplatePanel({ open, onClose }: TemplatePanelProps) {
                                     Сохраненные одиночные шаблоны
                                 </h4>
                                 <div className="grid grid-cols-2 gap-3">
-                                    {allPacks.map((pack) => (
+                                    {singlePacks.map((pack) => (
                                         <PackCard
                                             key={pack.id}
                                             pack={pack}
-                                            onDelete={() => deletePack(pack.id)}
+                                            onDelete={!pack._originalId ? () => deletePack(pack.id) : undefined}
                                         />
                                     ))}
                                 </div>
-                                {allPacks.length === 0 && (
+                                {singlePacks.length === 0 && (
                                     <div className="col-span-2 text-center py-6 text-xs text-text-tertiary">
                                         Нет сохраненных шаблонов.<br />Сохраните текущий холст для быстрого старта!
                                     </div>
@@ -720,24 +742,6 @@ export function TemplatePanel({ open, onClose }: TemplatePanelProps) {
                         <p className="text-[13px] text-text-secondary">
                             Как вы хотите применить шаблон <strong className="text-text-primary">{packToApply?.name}</strong>?
                         </p>
-
-                        {/* Extract single format from pack if in single tab */}
-                        {activeTab === "single" && packToApply?.resizes && packToApply.resizes.length > 0 && (
-                            <div className="bg-bg-secondary p-3 rounded-lg border border-border-primary mt-2">
-                                <label className="block text-xs font-semibold text-text-primary mb-2">
-                                    <span className="text-accent-primary mr-1">❖</span> Выберите конкретный формат (шаблон является пакетом):
-                                </label>
-                                <select 
-                                    className="w-full h-9 px-3 rounded-md bg-bg-surface border border-border-primary text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-accent-primary/20"
-                                    value={selectedResizeId || ""}
-                                    onChange={(e) => setSelectedResizeId(e.target.value)}
-                                >
-                                    {packToApply.resizes.map(r => (
-                                        <option key={r.id} value={r.id}>{r.name} ({r.width}×{r.height})</option>
-                                    ))}
-                                </select>
-                            </div>
-                        )}
 
                         <div className="grid grid-cols-1 gap-3 mt-4">
                             <button

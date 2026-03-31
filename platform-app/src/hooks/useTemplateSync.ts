@@ -52,6 +52,7 @@ export function useTemplateListSync() {
     createdAt: Date;
     updatedAt: Date;
     author: string;
+    resizes: any[]; // Include resizes mapped from template.list
   };
 
   const backendTemplates: TemplatePackV2[] = (
@@ -66,7 +67,8 @@ export function useTemplateListSync() {
     baseHeight: 0,
     masterComponents: [],
     componentInstances: [],
-    resizes: [],
+    resizes: t.resizes || [],
+
     // V2 metadata
     businessUnits: ["other" as const],
     categories: (t.categories || []) as TemplatePackV2["categories"],
