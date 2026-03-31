@@ -83,6 +83,7 @@ export function TemplatePanel({ open, onClose }: TemplatePanelProps) {
     const { projects, activeProjectId } = useProjectStore();
     const [activeTab, setActiveTab] = useState<"single" | "pack">("single");
     const [packToApply, setPackToApply] = useState<TemplatePackV2 | null>(null);
+    const [selectedResizeId, setSelectedResizeId] = useState<string | null>(null);
 
     // Pack tab state
     const [packSearch, setPackSearch] = useState("");
@@ -107,6 +108,28 @@ export function TemplatePanel({ open, onClose }: TemplatePanelProps) {
         return searchPacks({ query: packSearch, sortBy: "popularity", sortOrder: "desc" }, allPacks);
     }, [packSearch, allPacks]);
 
+    const extractSingleFormatIfRequested = (fullPack: TemplatePackV2): TemplatePackV2 => {
+        if (activeTab === "single" && selectedResizeId && fullPack.resizes && fullPack.resizes.length > 0) {
+            const chosenResize = fullPack.resizes.find(r => r.id === selectedResizeId);
+            if (chosenResize) {
+                const chosenInstances = fullPack.componentInstances?.filter(ci => ci.resizeId === selectedResizeId) || [];
+                const newMasterComponents = fullPack.masterComponents.map(mc => {
+                    const instance = chosenInstances.find(ci => ci.masterId === mc.id);
+                    return instance ? { ...mc, props: instance.localProps as any } : mc;
+                });
+                return {
+                    ...fullPack,
+                    baseWidth: chosenResize.width,
+                    baseHeight: chosenResize.height,
+                    resizes: [], // Make it a strictly single format
+                    componentInstances: [],
+                    masterComponents: newMasterComponents
+                };
+            }
+        }
+        return fullPack;
+    };
+
     const handleApplyPackDestructive = async () => {
         if (!packToApply) return;
         const { applyTemplatePack } = await import("@/services/templateService");
@@ -125,19 +148,39 @@ export function TemplatePanel({ open, onClose }: TemplatePanelProps) {
             console.warn("Failed to fetch full template, using listing data");
         }
 
-        applyTemplatePack(fullPack, {
+        const finalPack = extractSingleFormatIfRequested(fullPack);
+
+        applyTemplatePack(finalPack, {
             onSuccess: () => {
                 setPackToApply(null);
+                setSelectedResizeId(null);
                 onClose();
             }
         });
     };
 
-    const handleApplyPackSmart = () => {
+    const handleApplyPackSmart = async () => {
         if (!packToApply) return;
-        setSmartResizePack(packToApply);
-        setSmartResizePackName(packToApply.name);
+
+        let fullPack = packToApply;
+        try {
+            const res = await fetch(`/api/template/${packToApply.id}`);
+            if (res.ok) {
+                const template = await res.json();
+                if (template?.data) {
+                    fullPack = template.data as TemplatePackV2;
+                }
+            }
+        } catch {
+            console.warn("Failed to fetch full template, using listing data");
+        }
+
+        const finalPack = extractSingleFormatIfRequested(fullPack);
+
+        setSmartResizePack(finalPack as TemplatePack);
+        setSmartResizePackName(finalPack.name);
         setPackToApply(null);
+        setSelectedResizeId(null);
     };
 
     const handleSaveAsTemplate = () => {
@@ -226,6 +269,11 @@ export function TemplatePanel({ open, onClose }: TemplatePanelProps) {
 
     const handleLoadPack = (pack: TemplatePackV2) => {
         setPackToApply(pack);
+        if (pack.resizes && pack.resizes.length > 0) {
+            setSelectedResizeId(pack.resizes[0].id);
+        } else {
+            setSelectedResizeId(null);
+        }
     };
 
     const handleImportPack = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -399,7 +447,7 @@ export function TemplatePanel({ open, onClose }: TemplatePanelProps) {
                                     Сохраненные одиночные шаблоны
                                 </h4>
                                 <div className="grid grid-cols-2 gap-3">
-                                    {allPacks.filter(p => !p.resizes || p.resizes.length === 0).map((pack) => (
+                                    {allPacks.map((pack) => (
                                         <PackCard
                                             key={pack.id}
                                             pack={pack}
@@ -407,9 +455,9 @@ export function TemplatePanel({ open, onClose }: TemplatePanelProps) {
                                         />
                                     ))}
                                 </div>
-                                {allPacks.filter(p => !p.resizes || p.resizes.length === 0).length === 0 && (
+                                {allPacks.length === 0 && (
                                     <div className="col-span-2 text-center py-6 text-xs text-text-tertiary">
-                                        Нет сохраненных одиночных шаблонов.<br />Сохраните текущий холст для быстрого старта!
+                                        Нет сохраненных шаблонов.<br />Сохраните текущий холст для быстрого старта!
                                     </div>
                                 )}
                             </div>
@@ -672,6 +720,25 @@ export function TemplatePanel({ open, onClose }: TemplatePanelProps) {
                         <p className="text-[13px] text-text-secondary">
                             Как вы хотите применить шаблон <strong className="text-text-primary">{packToApply?.name}</strong>?
                         </p>
+
+                        {/* Extract single format from pack if in single tab */}
+                        {activeTab === "single" && packToApply?.resizes && packToApply.resizes.length > 0 && (
+                            <div className="bg-bg-secondary p-3 rounded-lg border border-border-primary mt-2">
+                                <label className="block text-xs font-semibold text-text-primary mb-2">
+                                    <span className="text-accent-primary mr-1">❖</span> Выберите конкретный формат (шаблон является пакетом):
+                                </label>
+                                <select 
+                                    className="w-full h-9 px-3 rounded-md bg-bg-surface border border-border-primary text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-accent-primary/20"
+                                    value={selectedResizeId || ""}
+                                    onChange={(e) => setSelectedResizeId(e.target.value)}
+                                >
+                                    {packToApply.resizes.map(r => (
+                                        <option key={r.id} value={r.id}>{r.name} ({r.width}×{r.height})</option>
+                                    ))}
+                                </select>
+                            </div>
+                        )}
+
                         <div className="grid grid-cols-1 gap-3 mt-4">
                             <button
                                 onClick={handleApplyPackDestructive}

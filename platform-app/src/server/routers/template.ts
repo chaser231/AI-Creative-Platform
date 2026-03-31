@@ -67,11 +67,20 @@ export const templateRouter = createTRPCRouter({
           updatedAt: true,
           author: true,
           workspaceId: true,
+          data: true, // Fetch data to extract resizes
         },
         orderBy: [{ isOfficial: "desc" }, { popularity: "desc" }],
       });
 
-      return templates;
+      // Extract resizes from data JSON, then remove heavy masterComponents
+      return templates.map((t: any) => {
+        const { data, ...rest } = t;
+        const dataObj = data as any;
+        return {
+          ...rest,
+          resizes: dataObj?.resizes || [],
+        };
+      });
     }),
 
   /** Get full template with data */
