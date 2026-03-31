@@ -1372,17 +1372,17 @@ export function Canvas({ stageRef }: CanvasProps) {
                 f.type.startsWith("image/")
             );
             for (const file of files) {
-                const reader = new FileReader();
-                reader.onload = () => {
-                    const img = new window.Image();
-                    img.onload = () => {
-                        const maxSize = 500;
-                        const scale = Math.min(maxSize / img.width, maxSize / img.height, 1);
-                        addImageLayer(reader.result as string, img.width * scale, img.height * scale);
-                    };
-                    img.src = reader.result as string;
-                };
-                reader.readAsDataURL(file);
+                import("@/utils/imageUpload").then(({ compressImageFile }) => {
+                    compressImageFile(file).then((compressedBase64) => {
+                        const img = new window.Image();
+                        img.onload = () => {
+                            const maxSize = 500;
+                            const scale = Math.min(maxSize / img.width, maxSize / img.height, 1);
+                            addImageLayer(compressedBase64, img.width * scale, img.height * scale);
+                        };
+                        img.src = compressedBase64;
+                    });
+                });
             }
         },
         [addImageLayer]

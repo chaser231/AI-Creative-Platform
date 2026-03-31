@@ -188,13 +188,11 @@ export function WizardFlow({ projectId, onSwitchToStudio, initialTemplateId }: W
     const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>, id: string) => {
         const file = e.target.files?.[0];
         if (!file) return;
-        const reader = new FileReader();
-        reader.onload = (ev) => {
-            if (ev.target?.result && typeof ev.target.result === "string") {
-                setImageValues(prev => ({ ...prev, [id]: ev.target?.result as string }));
-            }
-        };
-        reader.readAsDataURL(file);
+        import("@/utils/imageUpload").then(({ compressImageFile }) => {
+            compressImageFile(file).then((compressedBase64) => {
+                setImageValues(prev => ({ ...prev, [id]: compressedBase64 }));
+            });
+        });
     };
 
     const handleApplyAndContinue = async () => {

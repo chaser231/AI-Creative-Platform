@@ -118,19 +118,22 @@ export function ImageContentBlock({ id, name, props, value, onChange, businessUn
     const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
         if (file) {
-            const reader = new FileReader();
-            reader.onload = (ev) => { if (ev.target?.result) onChange(ev.target.result as string); };
-            reader.readAsDataURL(file);
+            import("@/utils/imageUpload").then(({ compressImageFile }) => {
+                compressImageFile(file).then((compressedBase64) => {
+                    onChange(compressedBase64);
+                });
+            });
         }
     };
 
     const handleMultiFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-        Array.from(e.target.files || []).forEach(file => {
-            const reader = new FileReader();
-            reader.onload = (ev) => {
-                if (ev.target?.result) setAdditionalPhotos(prev => [...prev, ev.target?.result as string]);
-            };
-            reader.readAsDataURL(file);
+        const files = Array.from(e.target.files || []);
+        import("@/utils/imageUpload").then(({ compressImageFile }) => {
+            files.forEach(file => {
+                compressImageFile(file).then((compressedBase64) => {
+                    setAdditionalPhotos(prev => [...prev, compressedBase64]);
+                });
+            });
         });
     };
 
