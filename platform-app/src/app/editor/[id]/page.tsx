@@ -309,6 +309,7 @@ export default function EditorPage({ params }: EditorPageProps) {
                 <WizardFlow
                     projectId={id}
                     onSwitchToStudio={() => setEditorMode("studio")}
+                    initialTemplateId={searchParams.get("templateId") || null}
                 />
             ) : (
                 <div className="relative flex-1 min-h-0">

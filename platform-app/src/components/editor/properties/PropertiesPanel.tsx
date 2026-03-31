@@ -202,7 +202,17 @@ export function PropertiesPanel() {
                                                     <span className="text-[10px] text-text-tertiary font-light mb-1 block">По горизонтали</span>
                                                     <select
                                                         value={selectedLayer.layoutSizingWidth || "fixed"}
-                                                        onChange={(e) => updateLayer(selectedLayer.id, { layoutSizingWidth: e.target.value as Layer["layoutSizingWidth"] })}
+                                                        onChange={(e) => {
+                                                            const val = e.target.value as Layer["layoutSizingWidth"];
+                                                            const updates: any = { layoutSizingWidth: val };
+                                                            if (selectedLayer.type === "text" && val === "fill") {
+                                                                const txt = selectedLayer as TextLayer;
+                                                                if (txt.textAdjust === "auto_width") {
+                                                                    updates.textAdjust = "auto_height";
+                                                                }
+                                                            }
+                                                            updateLayer(selectedLayer.id, updates);
+                                                        }}
                                                         className="w-full h-8 px-2 text-[11px] bg-bg-secondary border border-border-primary rounded-[var(--radius-md)] text-text-primary cursor-pointer focus:outline-none focus:ring-1 focus:ring-border-focus"
                                                     >
                                                         <option value="fixed">Fixed</option>

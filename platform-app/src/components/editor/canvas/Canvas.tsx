@@ -941,12 +941,23 @@ export function Canvas({ stageRef }: CanvasProps) {
         const width = node.width() * scaleX;
         const height = node.height() * scaleY;
 
-        let extraProps: { textAdjust?: string } = {};
-        if (node.getClassName() === "Text") {
-            const layer = layers.find(l => l.id === id);
-            if (layer && layer.type === "text") {
-                if (Math.abs(scaleX - 1) > 0.01 || Math.abs(scaleY - 1) > 0.01) {
-                    extraProps.textAdjust = "fixed";
+        let extraProps: any = {};
+        const layer = layers.find(l => l.id === id);
+        if (layer) {
+            const hasScaledX = Math.abs(scaleX - 1) > 0.01;
+            const hasScaledY = Math.abs(scaleY - 1) > 0.01;
+
+            if (hasScaledX || hasScaledY) {
+                if (layer.layoutSizingWidth === "fill" || layer.layoutSizingWidth === "hug") extraProps.layoutSizingWidth = "fixed";
+                if (layer.layoutSizingHeight === "fill" || layer.layoutSizingHeight === "hug") extraProps.layoutSizingHeight = "fixed";
+                
+                if (layer.type === "text") {
+                    const txt = layer as TextLayer;
+                    if (txt.textAdjust === "auto_width") {
+                         extraProps.textAdjust = "fixed";
+                    } else if (txt.textAdjust === "auto_height") {
+                         if (hasScaledY) extraProps.textAdjust = "fixed";
+                    }
                 }
             }
         }
@@ -969,7 +980,6 @@ export function Canvas({ stageRef }: CanvasProps) {
 
         // Handle constrained position for children if it's a non-auto-layout frame.
         // Auto-layout frames have their children positioned by applyAllAutoLayouts.
-        const layer = layers.find(l => l.id === id);
         if (layer?.type === "frame") {
             const frame = layer as FrameLayer;
             const isAutoLayout = frame.layoutMode && frame.layoutMode !== "none";

@@ -122,12 +122,15 @@ export function TextPropsGrouped({
                                 onChange={(e) => onChange({ fontWeight: e.target.value })}
                                 className="w-full h-8 px-2 rounded-[var(--radius-md)] border border-border-primary bg-bg-secondary text-[11px] text-text-primary cursor-pointer focus:outline-none focus:ring-1 focus:ring-border-focus"
                             >
+                                <option value="100">Thin</option>
+                                <option value="200">ExtraLight</option>
                                 <option value="300">Light</option>
                                 <option value="400">Regular</option>
                                 <option value="500">Medium</option>
                                 <option value="600">SemiBold</option>
                                 <option value="700">Bold</option>
-                                <option value="800">ExtraBold</option>
+                                <option value="800">ExtraBold / Heavy</option>
+                                <option value="900">Black</option>
                             </select>
                         </div>
                     </div>
@@ -191,7 +194,14 @@ export function TextPropsGrouped({
                             <label className="text-[9px] text-text-tertiary uppercase tracking-wider font-medium mb-1.5 block">Размер Контейнера</label>
                             <select
                                 value={layer.textAdjust || "auto_width"}
-                                onChange={(e) => onChange({ textAdjust: e.target.value as TextLayer["textAdjust"] })}
+                                onChange={(e) => {
+                                    const val = e.target.value as TextLayer["textAdjust"];
+                                    const updates: any = { textAdjust: val };
+                                    if (val === "auto_width" && layer.layoutSizingWidth === "fill") {
+                                        updates.layoutSizingWidth = "fixed";
+                                    }
+                                    onChange(updates);
+                                }}
                                 className="w-full h-8 px-2 rounded-[var(--radius-md)] border border-border-primary bg-bg-secondary text-[11px] text-text-primary cursor-pointer focus:outline-none focus:ring-1 focus:ring-border-focus"
                             >
                                 <option value="auto_width">Auto Width</option>

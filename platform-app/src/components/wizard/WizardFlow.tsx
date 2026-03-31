@@ -23,11 +23,12 @@ import type { FrameComponentProps } from "@/types";
 interface WizardFlowProps {
     projectId: string;
     onSwitchToStudio: () => void;
+    initialTemplateId?: string | null;
 }
 
 type WizardStep = "template" | "content" | "review";
 
-export function WizardFlow({ projectId, onSwitchToStudio }: WizardFlowProps) {
+export function WizardFlow({ projectId, onSwitchToStudio, initialTemplateId }: WizardFlowProps) {
     const { savedPacks } = useTemplateStore();
     const { backendTemplates } = useTemplateListSync();
 
@@ -39,9 +40,9 @@ export function WizardFlow({ projectId, onSwitchToStudio }: WizardFlowProps) {
     }, [backendTemplates, savedPacks]);
     const { resetCanvas } = useCanvasStore(useShallow((s) => ({ resetCanvas: s.resetCanvas })));
     const { projects } = useProjectStore();
-    const [step, setStep] = useState<WizardStep>("template");
+    const [step, setStep] = useState<WizardStep>(initialTemplateId ? "content" : "template");
     const [templateMode, setTemplateMode] = useState<"single" | "pack" | "manual">("single");
-    const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
+    const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(initialTemplateId || null);
     const [fullSelectedTemplate, setFullSelectedTemplate] = useState<TemplatePackV2 | null>(null);
     const [manualSizes, setManualSizes] = useState<{width: number; height: number; id: string}[]>([]);
     const [manualW, setManualW] = useState("1080");
@@ -98,7 +99,6 @@ export function WizardFlow({ projectId, onSwitchToStudio }: WizardFlowProps) {
     const singlePacksRef = { current: singlePacks };
 
     // Fetch full template data when user selects a template
-    // (Backend listing excludes masterComponents/layerTree for performance)
     useEffect(() => {
         if (!selectedTemplateId) { setFullSelectedTemplate(null); return; }
 
@@ -106,6 +106,9 @@ export function WizardFlow({ projectId, onSwitchToStudio }: WizardFlowProps) {
         const vPack = singlePacksRef.current.find(p => p.id === selectedTemplateId);
         if (vPack && vPack._originalId) {
             fetchId = vPack._originalId;
+        } else if (selectedTemplateId && !vPack) {
+            // Check if it's already a regular pack ID not mapped to single
+            fetchId = selectedTemplateId;
         }
 
         const applyExtract = (pack: any) => {
