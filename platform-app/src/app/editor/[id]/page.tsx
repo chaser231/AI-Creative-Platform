@@ -7,6 +7,7 @@ import { Download, Share2, Wand2, PenTool, Copy, Check, HelpCircle, Settings, Hi
 import { TopBar } from "@/components/layout/TopBar";
 import { Button } from "@/components/ui/Button";
 import { Dialog } from "@/components/ui/Dialog";
+import { Modal } from "@/components/ui/Modal";
 import { LayersPanel } from "@/components/editor/LayersPanel";
 import { PropertiesPanel } from "@/components/editor/properties";
 import { Toolbar } from "@/components/editor/Toolbar";
@@ -61,8 +62,24 @@ export default function EditorPage({ params }: EditorPageProps) {
     // IMPORTANT: Load canvas state FIRST, then enable auto-save AFTER load completes.
     // This prevents the canvas-clear-on-mount from triggering an empty save.
     const { isLoaded: canvasLoaded } = useLoadCanvasState(id);
-    const { isSaving } = useCanvasAutoSave(id, canvasLoaded);
+    const { isSaving, getUnsavedState, saveNowSync } = useCanvasAutoSave(id, canvasLoaded);
     const searchParams = useSearchParams();
+    const router = useRouter();
+
+    const [showExitWarning, setShowExitWarning] = useState(false);
+
+    const handleBackRequest = useCallback(() => {
+        if (getUnsavedState && getUnsavedState()) {
+            setShowExitWarning(true);
+        } else {
+            router.push("/");
+        }
+    }, [getUnsavedState, router]);
+
+    const handleForceExit = useCallback(() => {
+        if (saveNowSync) saveNowSync();
+        router.push("/");
+    }, [saveNowSync, router]);
 
     // Set editor mode from URL query parameters
     useEffect(() => {
@@ -91,7 +108,6 @@ export default function EditorPage({ params }: EditorPageProps) {
     const [isRenaming, setIsRenaming] = useState(false);
     const [editName, setEditName] = useState(projectName);
     const nameInputRef = useRef<HTMLInputElement>(null);
-    const router = useRouter();
 
     // Status dropdown
     const [statusDropdownOpen, setStatusDropdownOpen] = useState(false);
@@ -151,6 +167,7 @@ export default function EditorPage({ params }: EditorPageProps) {
                     breadcrumbs={[
                         { label: "" }, // We'll use custom left content instead
                     ]}
+                    onBackRequest={handleBackRequest}
                     customLeftContent={
                         <div className="flex items-center gap-2">
                             {/* Editable project name */}
@@ -555,6 +572,36 @@ export default function EditorPage({ params }: EditorPageProps) {
                     </div>
                 </div>
             )}
+            
+            {/* Unsaved Changes Warning Modal */}
+            <Modal
+                open={showExitWarning}
+                onClose={() => setShowExitWarning(false)}
+                title="Несохраненные изменения"
+                maxWidth="max-w-sm"
+            >
+                <div className="flex flex-col gap-4 pt-2">
+                    <div className="flex items-start gap-3 text-amber-500 bg-amber-500/10 p-3 rounded-lg border border-amber-500/20">
+                        <AlertTriangle size={20} className="shrink-0 mt-0.5" />
+                        <p className="text-sm">
+                            Ваши последние изменения сейчас сохраняются или загружаются файлы. 
+                            Если вы выйдете сейчас, некоторые данные могут быть потеряны.
+                        </p>
+                    </div>
+                    <div className="flex justify-end gap-2 mt-2">
+                        <Button variant="ghost" onClick={() => setShowExitWarning(false)}>
+                            Остаться
+                        </Button>
+                        <Button 
+                            variant="primary" 
+                            className="bg-red-500 hover:bg-red-600 text-white border-none"
+                            onClick={handleForceExit}
+                        >
+                            Всё равно выйти
+                        </Button>
+                    </div>
+                </div>
+            </Modal>
         </div>
     );
 }
