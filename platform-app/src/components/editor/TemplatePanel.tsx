@@ -4,6 +4,7 @@ import { useState, useMemo } from "react";
 import { v4 as uuid } from "uuid";
 import { LayoutTemplate, Plus, ArrowRight, Check, Search, X, Star, Download, Upload, Shuffle } from "lucide-react";
 import { useTemplateStore } from "@/store/templateStore";
+import { useTemplateListSync } from "@/hooks/useTemplateSync";
 import { useCanvasStore } from "@/store/canvasStore";
 import { useShallow } from "zustand/react/shallow";
 import { useProjectStore } from "@/store/projectStore";
@@ -67,6 +68,14 @@ function Chip({
 
 export function TemplatePanel({ open, onClose }: TemplatePanelProps) {
     const { savedPacks, addPack, deletePack } = useTemplateStore();
+    const { backendTemplates } = useTemplateListSync();
+
+    // Merge backend + local templates, backend takes priority
+    const allPacks = useMemo(() => {
+        const backendIds = new Set(backendTemplates.map(t => t.id));
+        const uniqueLocal = savedPacks.filter(p => !backendIds.has(p.id));
+        return [...backendTemplates, ...uniqueLocal];
+    }, [backendTemplates, savedPacks]);
     const { masterComponents, componentInstances, resizes, layers, resetCanvas, setCanvasSize } = useCanvasStore(useShallow((s) => ({
         masterComponents: s.masterComponents, componentInstances: s.componentInstances,
         resizes: s.resizes, layers: s.layers, resetCanvas: s.resetCanvas, setCanvasSize: s.setCanvasSize,
@@ -95,13 +104,28 @@ export function TemplatePanel({ open, onClose }: TemplatePanelProps) {
     // Search results
     const searchResults = useMemo(() => {
         if (!packSearch) return null;
-        return searchPacks({ query: packSearch, sortBy: "popularity", sortOrder: "desc" }, savedPacks);
-    }, [packSearch, savedPacks]);
+        return searchPacks({ query: packSearch, sortBy: "popularity", sortOrder: "desc" }, allPacks);
+    }, [packSearch, allPacks]);
 
     const handleApplyPackDestructive = async () => {
         if (!packToApply) return;
         const { applyTemplatePack } = await import("@/services/templateService");
-        applyTemplatePack(packToApply, {
+
+        // Fetch full template data from REST endpoint (listing excludes masterComponents/layerTree)
+        let fullPack = packToApply;
+        try {
+            const res = await fetch(`/api/template/${packToApply.id}`);
+            if (res.ok) {
+                const template = await res.json();
+                if (template?.data) {
+                    fullPack = template.data as TemplatePackV2;
+                }
+            }
+        } catch {
+            console.warn("Failed to fetch full template, using listing data");
+        }
+
+        applyTemplatePack(fullPack, {
             onSuccess: () => {
                 setPackToApply(null);
                 onClose();
@@ -375,7 +399,7 @@ export function TemplatePanel({ open, onClose }: TemplatePanelProps) {
                                     Сохраненные одиночные шаблоны
                                 </h4>
                                 <div className="grid grid-cols-2 gap-3">
-                                    {savedPacks.filter(p => !p.resizes || p.resizes.length === 0).map((pack) => (
+                                    {allPacks.filter(p => !p.resizes || p.resizes.length === 0).map((pack) => (
                                         <PackCard
                                             key={pack.id}
                                             pack={pack}
@@ -383,7 +407,7 @@ export function TemplatePanel({ open, onClose }: TemplatePanelProps) {
                                         />
                                     ))}
                                 </div>
-                                {savedPacks.filter(p => !p.resizes || p.resizes.length === 0).length === 0 && (
+                                {allPacks.filter(p => !p.resizes || p.resizes.length === 0).length === 0 && (
                                     <div className="col-span-2 text-center py-6 text-xs text-text-tertiary">
                                         Нет сохраненных одиночных шаблонов.<br />Сохраните текущий холст для быстрого старта!
                                     </div>
@@ -583,13 +607,13 @@ export function TemplatePanel({ open, onClose }: TemplatePanelProps) {
                             ) : (
                                 <>
                                     {/* Saved Packs */}
-                                    {savedPacks.length > 0 && (
+                                    {allPacks.length > 0 && (
                                         <div>
                                             <h4 className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wider mb-2">
                                                 Мои пакеты
                                             </h4>
                                             <div className="grid grid-cols-2 gap-3">
-                                                {savedPacks.filter(p => p.resizes && p.resizes.length > 0).map((pack) => (
+                                                {allPacks.filter(p => p.resizes && p.resizes.length > 0).map((pack) => (
                                                     <PackCard
                                                         key={pack.id}
                                                         pack={pack}

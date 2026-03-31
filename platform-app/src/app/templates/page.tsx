@@ -236,6 +236,31 @@ export default function TemplateCatalogPage() {
                             resizes: [{ id: "master", name: "Master", width: 1080, height: 1080, label: "1080 × 1080", instancesEnabled: false }],
                             activeResizeId: "master",
                         });
+
+                        // Save canvas state to DB BEFORE navigating to editor.
+                        // Without this, the editor's useLoadCanvasState clears the
+                        // store and then loads null from DB (project was just created).
+                        try {
+                            const { useCanvasStore } = await import("@/store/canvasStore");
+                            const store = useCanvasStore.getState();
+                            const canvasState = {
+                                layers: store.layers,
+                                masterComponents: store.masterComponents,
+                                componentInstances: store.componentInstances,
+                                resizes: store.resizes,
+                                artboardProps: store.artboardProps,
+                                canvasWidth: store.canvasWidth,
+                                canvasHeight: store.canvasHeight,
+                            };
+                            await fetch("/api/canvas/save", {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({ projectId: backendProject.id, canvasState }),
+                            });
+                        } catch {
+                            console.warn("Failed to pre-save canvas state for template");
+                        }
+
                         router.push(`/editor/${backendProject.id}?mode=${selectedMode}`);
                         return;
                     }
