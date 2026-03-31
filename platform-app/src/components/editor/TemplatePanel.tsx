@@ -4,6 +4,7 @@ import { useState, useMemo } from "react";
 import { v4 as uuid } from "uuid";
 import { LayoutTemplate, Plus, ArrowRight, Check, Search, X, Star, Download, Upload, Shuffle } from "lucide-react";
 import { useTemplateStore } from "@/store/templateStore";
+import { useTemplateListSync } from "@/hooks/useTemplateSync";
 import { useCanvasStore } from "@/store/canvasStore";
 import { useShallow } from "zustand/react/shallow";
 import { useProjectStore } from "@/store/projectStore";
@@ -15,6 +16,7 @@ import { searchPacks } from "@/services/templateCatalogService";
 import type { TemplatePackV2, TemplatePack } from "@/services/templateService";
 import type { BusinessUnit, TemplateCategory, ContentType, TemplateTag } from "@/types";
 import { SlotMappingModal } from "@/components/editor/SlotMappingModal";
+import { extractSingleFormatFromPack } from "@/services/templateService";
 
 interface TemplatePanelProps {
     open: boolean;
@@ -67,6 +69,14 @@ function Chip({
 
 export function TemplatePanel({ open, onClose }: TemplatePanelProps) {
     const { savedPacks, addPack, deletePack } = useTemplateStore();
+    const { backendTemplates } = useTemplateListSync();
+
+    // Merge backend + local templates, backend takes priority
+    const allPacks = useMemo(() => {
+        const backendIds = new Set(backendTemplates.map(t => t.id));
+        const uniqueLocal = savedPacks.filter(p => !backendIds.has(p.id));
+        return [...backendTemplates, ...uniqueLocal];
+    }, [backendTemplates, savedPacks]);
     const { masterComponents, componentInstances, resizes, layers, resetCanvas, setCanvasSize } = useCanvasStore(useShallow((s) => ({
         masterComponents: s.masterComponents, componentInstances: s.componentInstances,
         resizes: s.resizes, layers: s.layers, resetCanvas: s.resetCanvas, setCanvasSize: s.setCanvasSize,
@@ -74,6 +84,28 @@ export function TemplatePanel({ open, onClose }: TemplatePanelProps) {
     const { projects, activeProjectId } = useProjectStore();
     const [activeTab, setActiveTab] = useState<"single" | "pack">("single");
     const [packToApply, setPackToApply] = useState<TemplatePackV2 | null>(null);
+    const [selectedResizeId, setSelectedResizeId] = useState<string | null>(null);
+
+    // Extract individual formats from packs for the single tab
+    const singlePacks = useMemo(() => {
+        const list: (TemplatePackV2 & { _originalId?: string; _sourceResizeId?: string })[] = [];
+        allPacks.forEach(pack => {
+            if (!pack.resizes || pack.resizes.length === 0) {
+                list.push(pack);
+            } else {
+                pack.resizes.forEach(resize => {
+                    list.push({
+                        ...pack,
+                        id: `${pack.id}_${resize.id}`,
+                        name: `${pack.name} (${resize.name})`,
+                        _originalId: pack.id,
+                        _sourceResizeId: resize.id,
+                    });
+                });
+            }
+        });
+        return list;
+    }, [allPacks]);
 
     // Pack tab state
     const [packSearch, setPackSearch] = useState("");
@@ -95,25 +127,67 @@ export function TemplatePanel({ open, onClose }: TemplatePanelProps) {
     // Search results
     const searchResults = useMemo(() => {
         if (!packSearch) return null;
-        return searchPacks({ query: packSearch, sortBy: "popularity", sortOrder: "desc" }, savedPacks);
-    }, [packSearch, savedPacks]);
+        return searchPacks({ query: packSearch, sortBy: "popularity", sortOrder: "desc" }, allPacks);
+    }, [packSearch, allPacks]);
+
+    const extractSingleFormatIfRequested = (fullPack: TemplatePackV2): TemplatePackV2 => {
+        if (activeTab === "single" && selectedResizeId && fullPack.resizes && fullPack.resizes.length > 0) {
+            return extractSingleFormatFromPack(fullPack, selectedResizeId);
+        }
+        return fullPack;
+    };
 
     const handleApplyPackDestructive = async () => {
         if (!packToApply) return;
         const { applyTemplatePack } = await import("@/services/templateService");
-        applyTemplatePack(packToApply, {
+
+        // Fetch full template data from REST endpoint (listing excludes masterComponents/layerTree)
+        let fullPack = packToApply;
+        try {
+            const res = await fetch(`/api/template/${packToApply.id}`);
+            if (res.ok) {
+                const template = await res.json();
+                if (template?.data) {
+                    fullPack = template.data as TemplatePackV2;
+                }
+            }
+        } catch {
+            console.warn("Failed to fetch full template, using listing data");
+        }
+
+        const finalPack = extractSingleFormatIfRequested(fullPack);
+
+        applyTemplatePack(finalPack, {
             onSuccess: () => {
                 setPackToApply(null);
+                setSelectedResizeId(null);
                 onClose();
             }
         });
     };
 
-    const handleApplyPackSmart = () => {
+    const handleApplyPackSmart = async () => {
         if (!packToApply) return;
-        setSmartResizePack(packToApply);
-        setSmartResizePackName(packToApply.name);
+
+        let fullPack = packToApply;
+        try {
+            const res = await fetch(`/api/template/${packToApply.id}`);
+            if (res.ok) {
+                const template = await res.json();
+                if (template?.data) {
+                    fullPack = template.data as TemplatePackV2;
+                }
+            }
+        } catch {
+            console.warn("Failed to fetch full template, using listing data");
+        }
+
+        const finalPack = extractSingleFormatIfRequested(fullPack);
+
+        setSmartResizePack(finalPack as TemplatePack);
+        setSmartResizePackName(finalPack.name);
         setPackToApply(null);
+        setSelectedResizeId(null);
     };
 
     const handleSaveAsTemplate = () => {
@@ -200,8 +274,14 @@ export function TemplatePanel({ open, onClose }: TemplatePanelProps) {
         URL.revokeObjectURL(url);
     };
 
-    const handleLoadPack = (pack: TemplatePackV2) => {
-        setPackToApply(pack);
+    const handleLoadPack = (pack: TemplatePackV2 & { _originalId?: string; _sourceResizeId?: string }) => {
+        if (pack._originalId && pack._sourceResizeId) {
+            setPackToApply({ ...pack, id: pack._originalId });
+            setSelectedResizeId(pack._sourceResizeId);
+        } else {
+            setPackToApply(pack);
+            setSelectedResizeId(null);
+        }
     };
 
     const handleImportPack = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -375,17 +455,17 @@ export function TemplatePanel({ open, onClose }: TemplatePanelProps) {
                                     Сохраненные одиночные шаблоны
                                 </h4>
                                 <div className="grid grid-cols-2 gap-3">
-                                    {savedPacks.filter(p => !p.resizes || p.resizes.length === 0).map((pack) => (
+                                    {singlePacks.map((pack) => (
                                         <PackCard
                                             key={pack.id}
                                             pack={pack}
-                                            onDelete={() => deletePack(pack.id)}
+                                            onDelete={!pack._originalId ? () => deletePack(pack.id) : undefined}
                                         />
                                     ))}
                                 </div>
-                                {savedPacks.filter(p => !p.resizes || p.resizes.length === 0).length === 0 && (
+                                {singlePacks.length === 0 && (
                                     <div className="col-span-2 text-center py-6 text-xs text-text-tertiary">
-                                        Нет сохраненных одиночных шаблонов.<br />Сохраните текущий холст для быстрого старта!
+                                        Нет сохраненных шаблонов.<br />Сохраните текущий холст для быстрого старта!
                                     </div>
                                 )}
                             </div>
@@ -583,13 +663,13 @@ export function TemplatePanel({ open, onClose }: TemplatePanelProps) {
                             ) : (
                                 <>
                                     {/* Saved Packs */}
-                                    {savedPacks.length > 0 && (
+                                    {allPacks.length > 0 && (
                                         <div>
                                             <h4 className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wider mb-2">
                                                 Мои пакеты
                                             </h4>
                                             <div className="grid grid-cols-2 gap-3">
-                                                {savedPacks.filter(p => p.resizes && p.resizes.length > 0).map((pack) => (
+                                                {allPacks.filter(p => p.resizes && p.resizes.length > 0).map((pack) => (
                                                     <PackCard
                                                         key={pack.id}
                                                         pack={pack}
@@ -648,6 +728,7 @@ export function TemplatePanel({ open, onClose }: TemplatePanelProps) {
                         <p className="text-[13px] text-text-secondary">
                             Как вы хотите применить шаблон <strong className="text-text-primary">{packToApply?.name}</strong>?
                         </p>
+
                         <div className="grid grid-cols-1 gap-3 mt-4">
                             <button
                                 onClick={handleApplyPackDestructive}

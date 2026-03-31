@@ -13,6 +13,7 @@
 import { useEffect, useCallback } from "react";
 import { trpc } from "@/lib/trpc";
 import { useTemplateStore } from "@/store/templateStore";
+import { useWorkspace } from "@/providers/WorkspaceProvider";
 import type { TemplatePackV2 } from "@/services/templateService";
 
 // Cache workspace ID from project sync
@@ -23,12 +24,8 @@ import { cachedWorkspaceId } from "@/hooks/useProjectSync";
  * Use on the templates listing page.
  */
 export function useTemplateListSync() {
-  const workspaceQuery = trpc.workspace.list.useQuery(undefined, {
-    retry: 1,
-    refetchOnWindowFocus: false,
-  });
-
-  const workspaceId = workspaceQuery.data?.[0]?.id ?? cachedWorkspaceId ?? null;
+  const { currentWorkspace } = useWorkspace();
+  const workspaceId = currentWorkspace?.id ?? cachedWorkspaceId ?? null;
 
   const templatesQuery = trpc.template.list.useQuery(
     { workspaceId: workspaceId! },
@@ -55,6 +52,7 @@ export function useTemplateListSync() {
     createdAt: Date;
     updatedAt: Date;
     author: string;
+    resizes: any[]; // Include resizes mapped from template.list
   };
 
   const backendTemplates: TemplatePackV2[] = (
@@ -69,7 +67,8 @@ export function useTemplateListSync() {
     baseHeight: 0,
     masterComponents: [],
     componentInstances: [],
-    resizes: [],
+    resizes: t.resizes || [],
+
     // V2 metadata
     businessUnits: ["other" as const],
     categories: (t.categories || []) as TemplatePackV2["categories"],
@@ -87,8 +86,8 @@ export function useTemplateListSync() {
   return {
     workspaceId,
     backendTemplates,
-    isLoading: workspaceQuery.isLoading || templatesQuery.isLoading,
-    isError: workspaceQuery.isError || templatesQuery.isError,
+    isLoading: !workspaceId || templatesQuery.isLoading,
+    isError: templatesQuery.isError,
     refetch: templatesQuery.refetch,
   };
 }

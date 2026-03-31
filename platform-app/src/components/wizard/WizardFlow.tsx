@@ -1,16 +1,17 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { ChevronRight, LayoutTemplate, FileText, ImagePlus, Sparkles, Search, Star, X } from "lucide-react";
 import { useTemplateStore } from "@/store/templateStore";
+import { useTemplateListSync } from "@/hooks/useTemplateSync";
 import { useCanvasStore } from "@/store/canvasStore";
 import { useShallow } from "zustand/react/shallow";
 import { useProjectStore } from "@/store/projectStore";
 import { Button } from "@/components/ui/Button";
 import { DEFAULT_PACKS, type TemplatePackMeta } from "@/constants/defaultPacks";
 import { getRecommendedPacks, searchPacks } from "@/services/templateCatalogService";
-import type { TemplatePackV2 } from "@/services/templateService";
+import { type TemplatePackV2, extractSingleFormatFromPack } from "@/services/templateService";
 import type { BusinessUnit, FrameLayer, TemplateTag } from "@/types";
 import { TextContentBlock } from "@/components/wizard/blocks/TextContentBlock";
 import { ImageContentBlock } from "@/components/wizard/blocks/ImageContentBlock";
@@ -28,11 +29,20 @@ type WizardStep = "template" | "content" | "review";
 
 export function WizardFlow({ projectId, onSwitchToStudio }: WizardFlowProps) {
     const { savedPacks } = useTemplateStore();
+    const { backendTemplates } = useTemplateListSync();
+
+    // Merge backend + local templates, backend takes priority
+    const allPacks = useMemo(() => {
+        const backendIds = new Set(backendTemplates.map(t => t.id));
+        const uniqueLocal = savedPacks.filter(p => !backendIds.has(p.id));
+        return [...backendTemplates, ...uniqueLocal];
+    }, [backendTemplates, savedPacks]);
     const { resetCanvas } = useCanvasStore(useShallow((s) => ({ resetCanvas: s.resetCanvas })));
     const { projects } = useProjectStore();
     const [step, setStep] = useState<WizardStep>("template");
     const [templateMode, setTemplateMode] = useState<"single" | "pack" | "manual">("single");
     const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
+    const [fullSelectedTemplate, setFullSelectedTemplate] = useState<TemplatePackV2 | null>(null);
     const [manualSizes, setManualSizes] = useState<{width: number; height: number; id: string}[]>([]);
     const [manualW, setManualW] = useState("1080");
     const [manualH, setManualH] = useState("1080");
@@ -48,8 +58,8 @@ export function WizardFlow({ projectId, onSwitchToStudio }: WizardFlowProps) {
 
     // Recommended packs for this project's BU
     const recommended = useMemo(
-        () => getRecommendedPacks(projectBU, savedPacks, 4),
-        [projectBU, savedPacks]
+        () => getRecommendedPacks(projectBU, allPacks, 4),
+        [projectBU, allPacks]
     );
 
     // Search results (all packs filtered by search query)
@@ -59,10 +69,84 @@ export function WizardFlow({ projectId, onSwitchToStudio }: WizardFlowProps) {
             query: packSearch,
             sortBy: "popularity",
             sortOrder: "desc",
-        }, savedPacks);
-    }, [packSearch, savedPacks]);
+        }, allPacks);
+    }, [packSearch, allPacks]);
 
-    const selectedTemplate = savedPacks.find(p => p.id === selectedTemplateId) || DEFAULT_PACKS.find(p => p.id === selectedTemplateId || p.data.id === selectedTemplateId)?.data;
+    // Search results (all packs filtered by search query)
+    const singlePacks = useMemo(() => {
+        const list: (TemplatePackV2 & { _originalId?: string; _sourceResizeId?: string })[] = [];
+        allPacks.forEach(pack => {
+            if (!pack.resizes || pack.resizes.length === 0) {
+                list.push(pack);
+            } else {
+                pack.resizes.forEach(resize => {
+                    list.push({
+                        ...pack,
+                        id: `${pack.id}_${resize.id}`,
+                        name: resize.name || `${resize.width}×${resize.height}`,
+                        description: pack.name,
+                        _originalId: pack.id,
+                        _sourceResizeId: resize.id,
+                    });
+                });
+            }
+        });
+        return list;
+    }, [allPacks]);
+
+    const allPacksRef = { current: allPacks };
+    const singlePacksRef = { current: singlePacks };
+
+    // Fetch full template data when user selects a template
+    // (Backend listing excludes masterComponents/layerTree for performance)
+    useEffect(() => {
+        if (!selectedTemplateId) { setFullSelectedTemplate(null); return; }
+
+        let fetchId = selectedTemplateId;
+        const vPack = singlePacksRef.current.find(p => p.id === selectedTemplateId);
+        if (vPack && vPack._originalId) {
+            fetchId = vPack._originalId;
+        }
+
+        const applyExtract = (pack: any) => {
+            if (vPack && vPack._sourceResizeId) {
+                return extractSingleFormatFromPack(pack as TemplatePackV2, vPack._sourceResizeId);
+            }
+            return pack;
+        };
+
+        // Check if it's a DEFAULT_PACK (already has full data)
+        const defaultPack = DEFAULT_PACKS.find(p => p.id === fetchId || p.data.id === fetchId);
+        if (defaultPack) { setFullSelectedTemplate(applyExtract(defaultPack.data)); return; }
+
+        // Check if it's a local pack (has masterComponents)
+        const localPack = savedPacks.find(p => p.id === fetchId);
+        if (localPack && localPack.masterComponents?.length > 0) { setFullSelectedTemplate(applyExtract(localPack)); return; }
+
+        // Fetch full data from backend REST endpoint
+        let cancelled = false;
+        (async () => {
+            try {
+                const res = await fetch(`/api/template/${fetchId}`);
+                if (res.ok && !cancelled) {
+                    const template = await res.json();
+                    if (template?.data) {
+                        setFullSelectedTemplate(applyExtract(template.data as TemplatePackV2));
+                        return;
+                    }
+                }
+            } catch {
+                // Fallback: use listing data (no masterComponents)
+                if (!cancelled) {
+                    const listingPack = allPacksRef.current.find(p => p.id === fetchId);
+                    if (listingPack) setFullSelectedTemplate(applyExtract(listingPack));
+                }
+            }
+        })();
+        return () => { cancelled = true; };
+    }, [selectedTemplateId, savedPacks]);
+
+    const selectedTemplate = fullSelectedTemplate;
 
     const handleGenerateContent = async () => {
         if (!productDescription || !selectedTemplate) return;
@@ -138,16 +222,10 @@ export function WizardFlow({ projectId, onSwitchToStudio }: WizardFlowProps) {
                 }))
             } as unknown as TemplatePackV2;
         } else {
-            let selectedPack = savedPacks.find(p => p.id === selectedTemplateId);
-            if (!selectedPack) {
-                const meta = DEFAULT_PACKS.find(p => p.id === selectedTemplateId || p.data.id === selectedTemplateId);
-                if (meta) selectedPack = meta.data;
-            }
-
-            if (!selectedPack) return;
-            
-            // Deep clone to avoid mutating store state
-            packToApply = JSON.parse(JSON.stringify(selectedPack));
+            // We already fetched and extracted the correct format in the eager fetch useEffect!
+            // So we can just use `fullSelectedTemplate` as the pack to apply!
+            if (!fullSelectedTemplate) return;
+            packToApply = JSON.parse(JSON.stringify(fullSelectedTemplate));
         }
 
         const { applyTemplatePack } = await import("@/services/templateService");
@@ -312,11 +390,11 @@ export function WizardFlow({ projectId, onSwitchToStudio }: WizardFlowProps) {
                             {templateMode === "single" ? (
                                 <>
                                     <div className="grid grid-cols-2 gap-4">
-                                        {savedPacks.filter(p => !p.resizes || p.resizes.length === 0).map((pack) => (
+                                        {singlePacks.map((pack) => (
                                             <PackCard key={pack.id} pack={pack} />
                                         ))}
                                     </div>
-                                    {savedPacks.filter(p => !p.resizes || p.resizes.length === 0).length === 0 && (
+                                    {singlePacks.length === 0 && (
                                         <div className="text-center py-6 text-xs text-text-tertiary">
                                             Нет одиночных шаблонов.<br />Используйте вкладку "Пакеты" или редактор для их создания.
                                         </div>
@@ -388,13 +466,13 @@ export function WizardFlow({ projectId, onSwitchToStudio }: WizardFlowProps) {
                                             )}
 
                                             {/* Saved Packs */}
-                                            {savedPacks.length > 0 && (
+                                            {allPacks.length > 0 && (
                                                 <div>
                                                     <h3 className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wider mb-2">
                                                         Мои пакеты
                                                     </h3>
                                                     <div className="grid grid-cols-2 gap-3">
-                                                        {savedPacks.map((pack) => (
+                                                        {allPacks.map((pack) => (
                                                             <PackCard key={pack.id} pack={pack} />
                                                         ))}
                                                     </div>

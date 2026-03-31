@@ -105,7 +105,7 @@ export default function DashboardPage() {
   const [modalOpen, setModalOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const localProjects = useProjectStore((s) => s.projects);
-  const { projects: backendProjects, isLoading, workspaceId, refetch } = useProjectListSync();
+  const { projects: backendProjects, isLoading, workspaceId, refetch } = useProjectListSync(true);
   const { currentWorkspace, needsOnboarding } = useWorkspace();
 
   // tRPC mutations for project management

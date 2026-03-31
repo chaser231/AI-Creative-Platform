@@ -21,6 +21,11 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Missing data" }, { status: 400 });
     }
 
+    // Validate canvasState structure — reject empty/invalid saves
+    if (!canvasState.layers || !Array.isArray(canvasState.layers)) {
+      return NextResponse.json({ error: "Invalid canvas state: missing layers" }, { status: 400 });
+    }
+
     await prisma.project.update({
       where: { id: projectId },
       data: {

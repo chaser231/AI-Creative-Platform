@@ -34,7 +34,7 @@ export function useProjectListSync(onlyMine?: boolean) {
   const workspaceId = currentWorkspace?.id ?? null;
 
   const projectsQuery = trpc.project.list.useQuery(
-    { workspaceId: workspaceId! },
+    { workspaceId: workspaceId!, onlyMine },
     {
       enabled: !!workspaceId,
       retry: 1,
@@ -71,17 +71,64 @@ export function useCanvasAutoSave(projectId: string, enabled: boolean = true) {
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
   const lastSavedRef = useRef<string>("");
   const enabledRef = useRef(enabled);
+  const hasEverLoadedRef = useRef(false);
+  const isMigratingRef = useRef(false);
   enabledRef.current = enabled;
 
-  const saveNow = useCallback(() => {
+  // Track when the first successful load happens
+  useEffect(() => {
+    if (enabled) {
+      // Small delay to ensure load has actually populated the store
+      const t = setTimeout(() => { hasEverLoadedRef.current = true; }, 500);
+      return () => clearTimeout(t);
+    }
+  }, [enabled]);
+
+  const saveNow = useCallback(async () => {
     // Guard: don't save until initial load is complete
     if (!enabledRef.current) return;
+    // Guard: don't save if we haven't loaded at least once
+    if (!hasEverLoadedRef.current) return;
+    // Guard: don't run concurrent migrations
+    if (isMigratingRef.current) return;
 
     const store = useCanvasStore.getState();
 
+    // Guard: never overwrite a project with empty layers
+    // (protects against clear-on-mount race condition)
+    if (store.layers.length === 0 && lastSavedRef.current !== "") {
+      return;
+    }
+
+    // Migrate base64 images to S3 URLs before saving
+    let layers = store.layers;
+    const hasBase64 = layers.some(
+      (l: { type: string; src?: string }) =>
+        l.type === "image" && l.src && (l.src.startsWith("data:") || l.src.length > 500)
+    );
+
+    if (hasBase64) {
+      try {
+        isMigratingRef.current = true;
+        const { migrateBase64ToS3 } = await import("@/utils/imageUpload");
+        const migrated = await migrateBase64ToS3(
+          layers as unknown as Array<{ type: string; src?: string; [key: string]: unknown }>,
+          projectId
+        );
+        layers = migrated as unknown as typeof layers;
+        // Update local store with S3 URLs so future saves skip migration
+        useCanvasStore.setState({ layers });
+      } catch (err) {
+        console.warn("S3 migration skipped:", err);
+        // Continue with base64 — better to save large than not save at all
+      } finally {
+        isMigratingRef.current = false;
+      }
+    }
+
     // Serialize current canvas state
     const canvasState = {
-      layers: store.layers,
+      layers,
       masterComponents: store.masterComponents,
       componentInstances: store.componentInstances,
       resizes: store.resizes,
@@ -106,6 +153,43 @@ export function useCanvasAutoSave(projectId: string, enabled: boolean = true) {
     );
   }, [projectId, saveStateMutation]);
 
+  // Synchronous save for unmount — no S3 migration, uses sendBeacon as fallback
+  const saveNowSync = useCallback(() => {
+    if (!enabledRef.current) return;
+    if (!hasEverLoadedRef.current) return;
+
+    const store = useCanvasStore.getState();
+    if (store.layers.length === 0 && lastSavedRef.current !== "") return;
+
+    const canvasState = {
+      layers: store.layers,
+      masterComponents: store.masterComponents,
+      componentInstances: store.componentInstances,
+      resizes: store.resizes,
+      artboardProps: store.artboardProps,
+      canvasWidth: store.canvasWidth,
+      canvasHeight: store.canvasHeight,
+    };
+
+    const serialized = JSON.stringify(canvasState);
+    if (serialized === lastSavedRef.current) return;
+    lastSavedRef.current = serialized;
+
+    // Use sendBeacon for reliable delivery during navigation/unload
+    const payload = JSON.stringify({ projectId, canvasState });
+    const blob = new Blob([payload], { type: "application/json" });
+    const sent = navigator.sendBeacon("/api/canvas/save", blob);
+    if (!sent) {
+      // Fallback for large payloads
+      fetch("/api/canvas/save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: payload,
+        keepalive: true,
+      }).catch(() => { /* best-effort */ });
+    }
+  }, [projectId]);
+
   // Subscribe to canvas store changes and debounce saves
   useEffect(() => {
     // Don't subscribe until enabled
@@ -122,14 +206,17 @@ export function useCanvasAutoSave(projectId: string, enabled: boolean = true) {
       unsubscribe();
       if (timeoutRef.current) {
         clearTimeout(timeoutRef.current);
+        timeoutRef.current = null;
       }
+      // Flush pending save synchronously on cleanup
+      saveNowSync();
     };
-  }, [saveNow, enabled]);
+  }, [saveNow, saveNowSync, enabled]);
 
   // Save on unmount (leaving editor via React navigation)
   useEffect(() => {
     return () => {
-      saveNow();
+      saveNowSync();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -137,11 +224,17 @@ export function useCanvasAutoSave(projectId: string, enabled: boolean = true) {
   // Save on page unload (refresh, close tab).
   // tRPC mutations get aborted during page unload, so we use
   // navigator.sendBeacon which guarantees delivery.
+  // Fallback: if sendBeacon fails (payload too large), try fetch with keepalive.
   useEffect(() => {
     const handleBeforeUnload = () => {
       if (!enabledRef.current) return;
+      if (!hasEverLoadedRef.current) return;
 
       const store = useCanvasStore.getState();
+
+      // Don't save empty state on unload
+      if (store.layers.length === 0 && lastSavedRef.current !== "") return;
+
       const canvasState = {
         layers: store.layers,
         masterComponents: store.masterComponents,
@@ -155,12 +248,20 @@ export function useCanvasAutoSave(projectId: string, enabled: boolean = true) {
       const serialized = JSON.stringify(canvasState);
       if (serialized === lastSavedRef.current) return;
 
-      // sendBeacon survives page unload unlike fetch/tRPC
-      const blob = new Blob(
-        [JSON.stringify({ projectId, canvasState })],
-        { type: "application/json" }
-      );
-      navigator.sendBeacon("/api/canvas/save", blob);
+      const payload = JSON.stringify({ projectId, canvasState });
+      const blob = new Blob([payload], { type: "application/json" });
+
+      // sendBeacon has a ~64KB limit; fallback to fetch+keepalive for larger payloads
+      const sent = navigator.sendBeacon("/api/canvas/save", blob);
+      if (!sent) {
+        // Fallback: fetch with keepalive survives unload for up to ~4MB
+        fetch("/api/canvas/save", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: payload,
+          keepalive: true,
+        }).catch(() => { /* best-effort */ });
+      }
     };
 
     window.addEventListener("beforeunload", handleBeforeUnload);

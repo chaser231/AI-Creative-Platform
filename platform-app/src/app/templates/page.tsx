@@ -21,8 +21,7 @@ import { TopBar } from "@/components/layout/TopBar";
 import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
 import { cn } from "@/lib/cn";
-import { useTemplateStore } from "@/store/templateStore";
-import { useTemplateListSync, useTemplatePushSync } from "@/hooks/useTemplateSync";
+import { useTemplateListSync } from "@/hooks/useTemplateSync";
 import { useCreateProjectSync } from "@/hooks/useProjectSync";
 import { useProjectStore } from "@/store/projectStore";
 import { searchPacks, getAllTags, type CatalogSearchParams } from "@/services/templateCatalogService";
@@ -141,11 +140,9 @@ function PackCard({ pack, onLoad }: { pack: TemplatePackV2; onLoad: (pack: Templ
 
 export default function TemplateCatalogPage() {
     const router = useRouter();
-    const { savedPacks } = useTemplateStore();
-    const { backendTemplates, isLoading: isLoadingBackend } = useTemplateListSync();
+    const { backendTemplates, isLoading: isLoadingBackend, workspaceId } = useTemplateListSync();
     const { createProject: createOnBackend } = useCreateProjectSync();
     const addProject = useProjectStore((s) => s.addProject);
-    useTemplatePushSync(); // Auto-push local templates to backend
     const [search, setSearch] = useState("");
     const [selectedBUs, setSelectedBUs] = useState<BusinessUnit[]>([]);
     const [selectedCategories, setSelectedCategories] = useState<TemplateCategory[]>([]);
@@ -154,6 +151,7 @@ export default function TemplateCatalogPage() {
     const [activePopover, setActivePopover] = useState<string | null>(null);
     const [selectedPackForMode, setSelectedPackForMode] = useState<TemplatePackV2 | null>(null);
     const [mode, setMode] = useState<"wizard" | "studio">("wizard");
+    const [selectedResizeId, setSelectedResizeId] = useState<string | null>(null);
 
     const togglePopover = (name: string) => {
         setActivePopover((prev) => (prev === name ? null : name));
@@ -180,12 +178,8 @@ export default function TemplateCatalogPage() {
 
     const hasFilters = selectedBUs.length > 0 || selectedCategories.length > 0 || selectedContentType !== null || search !== "";
 
-    // Merge local + backend templates, deduplicate by ID
-    const allPacks = useMemo(() => {
-        const localIds = new Set(savedPacks.map(p => p.id));
-        const uniqueBackend = backendTemplates.filter(bt => !localIds.has(bt.id));
-        return [...savedPacks, ...uniqueBackend];
-    }, [savedPacks, backendTemplates]);
+    // Use backend templates only — strictly filtering for packs 
+    const allPacks = backendTemplates.filter(p => p.resizes && p.resizes.length > 0);
 
     // Search results
     const results = useMemo(() => {
@@ -205,13 +199,36 @@ export default function TemplateCatalogPage() {
     const handleLoadPack = async (pack: TemplatePackV2, selectedMode: "wizard" | "studio") => {
         const { applyTemplatePack } = await import("@/services/templateService");
 
-        applyTemplatePack(pack, {
+        // Load full template data from backend REST endpoint
+        let fullPack = pack;
+        try {
+            const res = await fetch(`/api/template/${pack.id}`);
+            if (res.ok) {
+                const template = await res.json();
+                if (template?.data) {
+                    // template.data is the full TemplatePack JSON stored in DB
+                    fullPack = template.data as TemplatePackV2;
+                }
+            }
+        } catch {
+            // Fallback to the listing-level pack
+            console.warn("Failed to load full template, using listing data");
+        }
+
+        const { extractSingleFormatFromPack } = await import("@/services/templateService");
+        
+        if (selectedResizeId && selectedResizeId !== "all") {
+             fullPack = extractSingleFormatFromPack(fullPack, selectedResizeId);
+        }
+
+        applyTemplatePack(fullPack, {
             onSuccess: async () => {
-                // Backend-first project creation
+                // Backend-first project creation (pass workspaceId explicitly)
                 try {
                     const backendProject = await createOnBackend({
                         name: pack.name,
                         goal: "banner",
+                        workspaceId: workspaceId || undefined,
                     });
 
                     if (backendProject) {
@@ -226,6 +243,31 @@ export default function TemplateCatalogPage() {
                             resizes: [{ id: "master", name: "Master", width: 1080, height: 1080, label: "1080 × 1080", instancesEnabled: false }],
                             activeResizeId: "master",
                         });
+
+                        // Save canvas state to DB BEFORE navigating to editor.
+                        // Without this, the editor's useLoadCanvasState clears the
+                        // store and then loads null from DB (project was just created).
+                        try {
+                            const { useCanvasStore } = await import("@/store/canvasStore");
+                            const store = useCanvasStore.getState();
+                            const canvasState = {
+                                layers: store.layers,
+                                masterComponents: store.masterComponents,
+                                componentInstances: store.componentInstances,
+                                resizes: store.resizes,
+                                artboardProps: store.artboardProps,
+                                canvasWidth: store.canvasWidth,
+                                canvasHeight: store.canvasHeight,
+                            };
+                            await fetch("/api/canvas/save", {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({ projectId: backendProject.id, canvasState }),
+                            });
+                        } catch {
+                            console.warn("Failed to pre-save canvas state for template");
+                        }
+
                         router.push(`/editor/${backendProject.id}?mode=${selectedMode}`);
                         return;
                     }
@@ -450,7 +492,10 @@ export default function TemplateCatalogPage() {
             {/* Mode Selection Modal */}
             <Modal
                 open={!!selectedPackForMode}
-                onClose={() => setSelectedPackForMode(null)}
+                onClose={() => {
+                    setSelectedPackForMode(null);
+                    setSelectedResizeId(null);
+                }}
                 title="Режим работы"
                 maxWidth="max-w-md"
                 footer={
@@ -474,6 +519,25 @@ export default function TemplateCatalogPage() {
                     <p className="text-sm text-text-secondary">
                         Выберите, как вы хотите продолжить работу с шаблоном <strong>{selectedPackForMode?.name}</strong>.
                     </p>
+                    
+                    {/* Format selector */}
+                    {selectedPackForMode?.resizes && selectedPackForMode.resizes.length > 0 && (
+                        <div className="bg-bg-secondary p-3 rounded-lg border border-border-primary">
+                            <label className="block text-xs font-semibold text-text-primary mb-2">
+                                <span className="text-accent-primary mr-1">❖</span> Выберите формат для работы:
+                            </label>
+                            <select 
+                                className="w-full h-9 px-3 rounded-md bg-bg-surface border border-border-primary text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-accent-primary/20 cursor-pointer"
+                                value={selectedResizeId || "all"}
+                                onChange={(e) => setSelectedResizeId(e.target.value)}
+                            >
+                                <option value="all">Весь пакет ({selectedPackForMode.resizes.length} макетов)</option>
+                                {selectedPackForMode.resizes.map(r => (
+                                    <option key={r.id} value={r.id}>{r.name} ({r.width}×{r.height})</option>
+                                ))}
+                            </select>
+                        </div>
+                    )}
                     <div className="grid grid-cols-2 gap-3">
                         <button
                             onClick={() => setMode("wizard")}
