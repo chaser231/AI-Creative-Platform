@@ -110,14 +110,22 @@ export function useCanvasAutoSave(projectId: string, enabled: boolean = true) {
     if (hasBase64) {
       try {
         isMigratingRef.current = true;
-        const { migrateBase64ToS3 } = await import("@/utils/imageUpload");
-        const migrated = await migrateBase64ToS3(
-          layers as unknown as Array<{ type: string; src?: string; [key: string]: unknown }>,
+        const { migrateBase64ToS3Map } = await import("@/utils/imageUpload");
+        const migratedUrls = await migrateBase64ToS3Map(
+          layers as unknown as Array<{ id: string; type: string; src?: string; [key: string]: unknown }>,
           projectId
         );
-        layers = migrated as unknown as typeof layers;
-        // Update local store with S3 URLs so future saves skip migration
-        useCanvasStore.setState({ layers });
+        
+        // Update local store with S3 URLs for ONLY the migrated layers
+        if (Object.keys(migratedUrls).length > 0) {
+          useCanvasStore.setState((state) => {
+            const newLayers = state.layers.map((l: any) =>
+              migratedUrls[l.id] ? { ...l, src: migratedUrls[l.id] } : l
+            );
+            layers = newLayers as typeof layers; // use latest for this save
+            return { layers: newLayers };
+          });
+        }
       } catch (err) {
         console.warn("S3 migration skipped:", err);
         // Continue with base64 — better to save large than not save at all
@@ -153,6 +161,10 @@ export function useCanvasAutoSave(projectId: string, enabled: boolean = true) {
     );
   }, [projectId, saveStateMutation]);
 
+  const getUnsavedState = useCallback(() => {
+    return !!timeoutRef.current || isMigratingRef.current || saveStateMutation.isPending;
+  }, [saveStateMutation.isPending]);
+
   // Synchronous save for unmount — no S3 migration, uses sendBeacon as fallback
   const saveNowSync = useCallback(() => {
     if (!enabledRef.current) return;
@@ -178,14 +190,20 @@ export function useCanvasAutoSave(projectId: string, enabled: boolean = true) {
     // Use sendBeacon for reliable delivery during navigation/unload
     const payload = JSON.stringify({ projectId, canvasState });
     const blob = new Blob([payload], { type: "application/json" });
-    const sent = navigator.sendBeacon("/api/canvas/save", blob);
+    
+    let sent = false;
+    try {
+        sent = navigator.sendBeacon("/api/canvas/save", blob);
+    } catch {}
+    
     if (!sent) {
-      // Fallback for large payloads
+      // Fallback for large payloads (e.g. over 64KB limit).
+      // Since client-side routing unmounts this component without destroying the page context,
+      // a standard fetch request will perfectly succeed in the background.
       fetch("/api/canvas/save", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: payload,
-        keepalive: true,
       }).catch(() => { /* best-effort */ });
     }
   }, [projectId]);
@@ -226,7 +244,16 @@ export function useCanvasAutoSave(projectId: string, enabled: boolean = true) {
   // navigator.sendBeacon which guarantees delivery.
   // Fallback: if sendBeacon fails (payload too large), try fetch with keepalive.
   useEffect(() => {
-    const handleBeforeUnload = () => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      // 1. Warn user if there are pending scheduled saves or active migrations
+      const hasUnsaved = !!timeoutRef.current || isMigratingRef.current;
+      if (hasUnsaved) {
+        e.preventDefault();
+        e.returnValue = "Сохранение изменений... Вы уверены, что хотите выйти?";
+        // Note: we don't return here, we still attempt best-effort save below Just In Case they force close!
+      }
+
+      // 2. Perform best-effort save on unload
       if (!enabledRef.current) return;
       if (!hasEverLoadedRef.current) return;
 
@@ -269,8 +296,10 @@ export function useCanvasAutoSave(projectId: string, enabled: boolean = true) {
   }, [projectId]);
 
   return {
-    isSaving: saveStateMutation.isPending,
+    isSaving: saveStateMutation.isPending || isMigratingRef.current,
     lastError: saveStateMutation.error,
+    getUnsavedState,
+    saveNowSync,
   };
 }
 

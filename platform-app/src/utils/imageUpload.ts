@@ -57,16 +57,17 @@ function isBase64Image(src: string): boolean {
 
 /**
  * Process canvas state layers: upload any base64 image sources to S3,
- * replacing them with public URLs. Returns the modified layers array.
+ * replacing them with public URLs. Returns a map of layer ID to new S3 URL.
  *
  * This runs concurrently for all image layers to minimize latency.
- * Non-image layers are passed through unchanged.
+ * Non-image layers are ignored.
  */
-export async function migrateBase64ToS3(
-  layers: Array<{ type: string; src?: string; [key: string]: unknown }>,
+export async function migrateBase64ToS3Map(
+  layers: Array<{ id: string; type: string; src?: string; [key: string]: unknown }>,
   projectId: string
-): Promise<Array<{ type: string; src?: string; [key: string]: unknown }>> {
-  // Find layers that need migration
+): Promise<Record<string, string>> {
+  const urlMap: Record<string, string> = {};
+
   const migrationTasks = layers.map(async (layer) => {
     if (layer.type === "image" && layer.src && isBase64Image(layer.src)) {
       const mimeType = layer.src.startsWith("data:")
@@ -75,11 +76,11 @@ export async function migrateBase64ToS3(
 
       const url = await uploadImageToS3(layer.src, projectId, mimeType);
       if (url) {
-        return { ...layer, src: url };
+        urlMap[layer.id] = url;
       }
     }
-    return layer;
   });
 
-  return Promise.all(migrationTasks);
+  await Promise.all(migrationTasks);
+  return urlMap;
 }

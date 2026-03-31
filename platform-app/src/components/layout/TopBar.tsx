@@ -22,6 +22,7 @@ interface TopBarProps {
     customLeftContent?: React.ReactNode;
     showBackToProjects?: boolean;
     showHistoryNavigation?: boolean;
+    onBackRequest?: () => void;
 }
 
 export function TopBar({
@@ -36,6 +37,7 @@ export function TopBar({
     customLeftContent,
     showBackToProjects = true,
     showHistoryNavigation = false,
+    onBackRequest,
 }: TopBarProps) {
     const router = useRouter();
 
@@ -49,7 +51,15 @@ export function TopBar({
             {/* Left: back + breadcrumbs */}
             <div className="flex items-center gap-3 min-w-0 flex-1">
                 {/* Navigation: either "Back to Projects" or History Arrows */}
-                {showBackToProjects && (
+                {showBackToProjects && onBackRequest ? (
+                    <button
+                        onClick={onBackRequest}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-[var(--radius-full)] text-xs font-medium text-text-secondary hover:text-text-primary hover:bg-bg-tertiary transition-colors shrink-0 cursor-pointer border-none bg-transparent"
+                    >
+                        <ArrowLeft size={14} />
+                        К проектам
+                    </button>
+                ) : showBackToProjects ? (
                     <Link
                         href="/"
                         className="flex items-center gap-1.5 px-3 py-1.5 rounded-[var(--radius-full)] text-xs font-medium text-text-secondary hover:text-text-primary hover:bg-bg-tertiary transition-colors shrink-0"
@@ -57,7 +67,7 @@ export function TopBar({
                         <ArrowLeft size={14} />
                         К проектам
                     </Link>
-                )}
+                ) : null}
 
                 {showHistoryNavigation && (
                     <div className="flex items-center gap-1 mr-2">
