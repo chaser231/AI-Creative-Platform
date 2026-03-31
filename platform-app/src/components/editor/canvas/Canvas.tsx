@@ -408,11 +408,13 @@ function FrameLayerRenderer({
         >
             <Group
                 ref={clipGroupRef}
-                name={layer.clipContent ? "clip-group" : undefined}
-                width={layer.width}
-                height={layer.height}
-                clipFunc={layer.clipContent ? (ctx) => {
-                    if (layer.cornerRadius > 0) {
+                clipX={layer.clipContent ? 0 : undefined}
+                clipY={layer.clipContent ? 0 : undefined}
+                clipWidth={layer.clipContent ? layer.width : undefined}
+                clipHeight={layer.clipContent ? layer.height : undefined}
+            >
+               <Group
+                   clipFunc={(layer.clipContent && layer.cornerRadius > 0) ? (ctx) => {
                         const r = layer.cornerRadius;
                         const w = layer.width;
                         const h = layer.height;
@@ -423,11 +425,8 @@ function FrameLayerRenderer({
                         ctx.arcTo(0, h, 0, 0, r);
                         ctx.arcTo(0, 0, w, 0, r);
                         ctx.closePath();
-                    } else {
-                        ctx.rect(0, 0, layer.width, layer.height);
-                    }
-                } : undefined}
-            >
+                    } : undefined}
+               >
                 <Rect
                     id={layer.id}
                     width={layer.width}
@@ -459,6 +458,7 @@ function FrameLayerRenderer({
                     />
                     );
                 })}
+               </Group>
             </Group>
             {/* Inner Transformer for selected children — operates in frame-local coords */}
             {selectedChildIds.length > 0 && (
@@ -614,47 +614,12 @@ export function Canvas({ stageRef }: CanvasProps) {
 
     /* ─── Layer Interactions ──────────────────────────── */
 
-    const isPointClipped = useCallback((node: Konva.Node | null, ptr: {x: number; y: number} | null) => {
-        if (!node || !ptr) return false;
-        let current: Konva.Node | null = node.parent;
-        while (current) {
-            if (current.name() === 'clip-group') {
-                const transform = current.getAbsoluteTransform().copy();
-                transform.invert();
-                const localPos = transform.point(ptr);
-                
-                const w = current.width();
-                const h = current.height();
-                
-                if (w !== undefined && h !== undefined) {
-                    if (localPos.x < 0 || localPos.x > w || localPos.y < 0 || localPos.y > h) {
-                        return true;
-                    }
-                }
-            }
-            current = current.parent;
-        }
-        return false;
-    }, []);
-
     const handleLayerSelect = useCallback((e: Konva.KonvaEventObject<MouseEvent>) => {
         // Stop propagation so stage click doesn't deselect
         e.cancelBubble = true;
 
         let id = e.target.id();
         if (!id) return;
-
-        // If the pointer is outside any ancestor clip-group, ignore this layer entirely
-        const ptr = e.target.getStage()?.getPointerPosition() || null;
-        if (isPointClipped(e.target, ptr)) {
-            // Treat as if we clicked the empty stage
-            selectLayer(null);
-            e.cancelBubble = false; // let it bubble or we just handled it (it won't select the frame either)
-            return;
-        }
-
-        // Stop propagation so stage click doesn't deselect
-        e.cancelBubble = true;
 
         const isMulti = e.evt?.shiftKey;
         const isDeepSelect = e.evt?.metaKey || e.evt?.ctrlKey || (e.evt as any)?._isDeepSelect;
@@ -687,14 +652,6 @@ export function Canvas({ stageRef }: CanvasProps) {
         setStageDraggable(false);
         isDragging.current = true;
         let id = e.target.id();
-
-        const ptr = e.target.getStage()?.getPointerPosition() || null;
-        if (isPointClipped(e.target, ptr)) {
-            // Cancel drag if grabbed on visually clipped overflow
-            e.target.stopDrag();
-            selectLayer(null);
-            return;
-        }
 
         const isDeepSelect = e.evt?.metaKey || e.evt?.ctrlKey;
 
@@ -1442,11 +1399,10 @@ export function Canvas({ stageRef }: CanvasProps) {
                     {/* Artboard background */}
                     {artboardProps.clipContent ? (
                         <Group
-                            name="clip-group"
-                            width={canvasWidth}
-                            height={canvasHeight}
-                            clipFunc={(ctx) => {
-                                if (artboardProps.cornerRadius > 0) {
+                            clipX={0} clipY={0} clipWidth={canvasWidth} clipHeight={canvasHeight}
+                        >
+                            <Group
+                                clipFunc={artboardProps.cornerRadius > 0 ? (ctx) => {
                                 const r = artboardProps.cornerRadius;
                                 const w = canvasWidth;
                                 const h = canvasHeight;
@@ -1457,10 +1413,8 @@ export function Canvas({ stageRef }: CanvasProps) {
                                 ctx.arcTo(0, h, 0, 0, r);
                                 ctx.arcTo(0, 0, w, 0, r);
                                 ctx.closePath();
-                            } else {
-                                ctx.rect(0, 0, canvasWidth, canvasHeight);
-                            }
-                        }}>
+                            } : undefined}
+                            >
                             <Rect
                                 x={0} y={0} width={canvasWidth} height={canvasHeight}
                                 fill={artboardProps.fill}
@@ -1486,6 +1440,7 @@ export function Canvas({ stageRef }: CanvasProps) {
                                     isEditing={isEditingText && editingLayerId === layer.id}
                                 />
                             ))}
+                            </Group>
                         </Group>
                     ) : (
                         <>
