@@ -4,6 +4,7 @@ import type { AgentStep, AgentResponse, ChatMessage, ModelPreferences } from "./
 import { getActiveProvider, callLLM, callOpenAIWithTools, callReplicateWithTools } from "./llmProviders";
 import { SYSTEM_PROMPT } from "./systemPrompt";
 import { executeAction } from "./executeAction";
+import { analyzeReferenceImages } from "./visionAnalyzer";
 
 // ─── Main Orchestrator ───────────────────────────────────
 
@@ -19,8 +20,26 @@ export async function interpretAndExecute(
     ? `\n\nВоркспейс: «${workspaceName}»`
     : "";
 
+  // ── VLM Vision Pre-step ──────────────────────────────────────────
+  // If the user uploaded reference images, call a VLM first to produce
+  // textual descriptions. These are injected into the system context so
+  // the text-only planning LLM can reason about the visual content.
+  let visionContextStr = "";
+  if (modelPreferences?.referenceImages && modelPreferences.referenceImages.length > 0) {
+    const visionResult = await analyzeReferenceImages(
+      modelPreferences.referenceImages,
+      userMessage
+    );
+    if (visionResult.imageCount > 0) {
+      visionContextStr = `\n\n⚠️ ВИЗУАЛЬНЫЙ КОНТЕКСТ (загруженные референсы):
+${visionResult.combinedSummary}
+
+Инструкция: Используй эти описания при составлении промптов для генерации изображений. Описывай объекты конкретно.`;
+    }
+  }
+
   const messages: ChatMessage[] = [
-    { role: "system", content: SYSTEM_PROMPT + contextInfo },
+    { role: "system", content: SYSTEM_PROMPT + contextInfo + visionContextStr },
     ...(conversationHistory || []),
     { role: "user", content: userMessage },
   ];
