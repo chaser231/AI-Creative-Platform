@@ -93,12 +93,43 @@ export function useCanvasAutoSave(
     }
   }, [enabled]);
 
-  /** Capture a small JPEG thumbnail from the Konva stage */
+  /** Capture a high-res JPEG thumbnail of just the artboard from the Konva stage */
   const captureThumbnail = useCallback((): string | null => {
     try {
       const stage = stageRef?.current;
       if (!stage) return null;
-      return stage.toDataURL({ pixelRatio: 0.15, mimeType: "image/jpeg", quality: 0.6 });
+
+      const store = useCanvasStore.getState();
+      const w = store.canvasWidth;
+      const h = store.canvasHeight;
+
+      // Un-zoom and un-pan stage temporarily
+      const oldScaleX = stage.scaleX();
+      const oldScaleY = stage.scaleY();
+      const oldX = stage.x();
+      const oldY = stage.y();
+
+      stage.scale({ x: 1, y: 1 });
+      stage.position({ x: 0, y: 0 });
+      stage.draw(); // Synchronous draw to apply transform safely
+
+      // Capture exact artboard coordinates at higher resolution
+      const dataUrl = stage.toDataURL({
+        x: 0,
+        y: 0,
+        width: w,
+        height: h,
+        pixelRatio: 0.5, // Higher quality preview
+        mimeType: "image/jpeg",
+        quality: 0.8
+      });
+
+      // Restore zoom/pan immediately
+      stage.scale({ x: oldScaleX, y: oldScaleY });
+      stage.position({ x: oldX, y: oldY });
+      stage.draw();
+
+      return dataUrl;
     } catch {
       return null;
     }
