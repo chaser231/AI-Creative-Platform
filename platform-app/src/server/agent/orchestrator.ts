@@ -4,6 +4,7 @@ import type { AgentStep, AgentResponse, ChatMessage, ModelPreferences } from "./
 import { getActiveProvider, callLLM, callOpenAIWithTools, callReplicateWithTools } from "./llmProviders";
 import { SYSTEM_PROMPT } from "./systemPrompt";
 import { executeAction } from "./executeAction";
+import { analyzeReferenceImages } from "./visionAnalyzer";
 
 // ─── Main Orchestrator ───────────────────────────────────
 
@@ -19,8 +20,28 @@ export async function interpretAndExecute(
     ? `\n\nВоркспейс: «${workspaceName}»`
     : "";
 
+  // ── VLM Vision Pre-step ──────────────────────────────────────────
+  // If the user uploaded reference images, call a VLM first to produce
+  // textual descriptions. These are injected into the system context so
+  // the text-only planning LLM can reason about the visual content.
+  let visionContextStr = "";
+  if (modelPreferences?.referenceImages && modelPreferences.referenceImages.length > 0) {
+    console.log(`[Pipeline ▶2 VLM] Calling analyzeReferenceImages for ${modelPreferences.referenceImages.length} image(s)...`);
+    const visionResult = await analyzeReferenceImages(
+      modelPreferences.referenceImages,
+      userMessage
+    );
+    if (visionResult.imageCount > 0) {
+      visionContextStr = `\n\n⚠️ ВИЗУАЛЬНЫЙ КОНТЕКСТ (загруженные референсы):\n${visionResult.combinedSummary}\n\nИнструкция: Используй эти описания при составлении промптов для генерации изображений. Описывай объекты конкретно.`;
+      console.log(`[Pipeline ▶2 VLM] Vision analysis DONE. Summary (first 200 chars): ${visionResult.combinedSummary.slice(0, 200)}`);
+    }
+  }
+
+  const systemContent = SYSTEM_PROMPT + contextInfo + visionContextStr;
+  console.log(`[Pipeline ▶3 LLM] System context length: ${systemContent.length} chars, has vision context: ${visionContextStr.length > 0}`);
+
   const messages: ChatMessage[] = [
-    { role: "system", content: SYSTEM_PROMPT + contextInfo },
+    { role: "system", content: systemContent },
     ...(conversationHistory || []),
     { role: "user", content: userMessage },
   ];
@@ -74,8 +95,14 @@ export async function interpretAndExecute(
       }
 
       // Inject user's model preferences
-      if (step.actionId === "generate_image" && modelPreferences?.imageModel) {
-        step.parameters.model = modelPreferences.imageModel;
+      if (step.actionId === "generate_image") {
+        if (modelPreferences?.imageModel) {
+          step.parameters.model = modelPreferences.imageModel;
+        }
+        if (modelPreferences?.referenceImages && modelPreferences.referenceImages.length > 0) {
+          step.parameters.referenceImages = modelPreferences.referenceImages;
+          console.log(`[Pipeline ▶4 Orchestrator] Injecting ${modelPreferences.referenceImages.length} referenceImages into generate_image step`);
+        }
       }
 
       step.result = await executeAction(step.actionId, step.parameters, context);

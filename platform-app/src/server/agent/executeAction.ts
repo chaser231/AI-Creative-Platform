@@ -106,21 +106,25 @@ RULES:
 
       // Call AI provider (use specified model or default to flux-schnell)
       const selectedModel = (params.model as string) || "flux-schnell";
+      const referenceImages = (params.referenceImages as string[] | undefined);
       const { getProvider: getAIProvider } = await import("@/lib/ai-providers");
       const imageProvider = getAIProvider(selectedModel);
+
+      console.log(`[Pipeline ▶5 executeAction] generate_image — model: ${selectedModel}, prompt: "${imagePrompt.trim().slice(0, 80)}...", referenceImages: ${referenceImages ? referenceImages.length : 0}`);
 
       try {
         const aiResult = await imageProvider.generate({
           prompt: imagePrompt.trim(),
           type: "image",
           model: selectedModel,
+          referenceImages: referenceImages && referenceImages.length > 0 ? referenceImages : undefined,
         });
 
         return {
           success: true,
           type: "image",
           content: aiResult.content,
-          metadata: { model: "flux-schnell", style, prompt: imagePrompt.trim() },
+          metadata: { model: selectedModel, style, prompt: imagePrompt.trim() },
         };
       } catch (e) {
         return {

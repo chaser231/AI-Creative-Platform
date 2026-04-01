@@ -10,7 +10,7 @@ export async function POST(req: NextRequest) {
         }
 
         const body = await req.json();
-        const { action, prompt, imageBase64, maskBase64, model, aspectRatio, canvasSize, originalSize, originalLocation } = body;
+        const { action, prompt, imageBase64, maskBase64, model, aspectRatio, canvasSize, originalSize, originalLocation, referenceImages } = body;
 
         if (!action) {
             return NextResponse.json(
@@ -63,6 +63,7 @@ export async function POST(req: NextRequest) {
                         model: editModel,
                         imageBase64,
                         aspectRatio,
+                        referenceImages: referenceImages && referenceImages.length > 0 ? referenceImages : undefined,
                     });
                 } else {
                     // Fallback: text-to-image with prompt (no editing, just regenerate)
@@ -71,6 +72,7 @@ export async function POST(req: NextRequest) {
                         prompt: prompt || "Generate an image",
                         type: "image",
                         model: editModel,
+                        referenceImages: referenceImages && referenceImages.length > 0 ? referenceImages : undefined,
                     });
                 }
                 break;

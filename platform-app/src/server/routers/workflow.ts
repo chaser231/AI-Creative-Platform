@@ -136,9 +136,18 @@ export const workflowRouter = createTRPCRouter({
           .optional(),
         selectedTextModel: z.string().optional(),
         selectedImageModel: z.string().optional(),
+        /** Reference images to pass to image generation (base64) */
+        referenceImages: z.array(z.string()).optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
+      // ▶ STAGE 1: tRPC entry point
+      if (input.referenceImages && input.referenceImages.length > 0) {
+        console.log(`[Pipeline ▶1 tRPC] referenceImages: ${input.referenceImages.length} image(s), first ~60 chars: ${input.referenceImages[0].slice(0, 60)}...`);
+      } else {
+        console.log(`[Pipeline ▶1 tRPC] No referenceImages attached`);
+      }
+
       // Get workspace name for context
       const workspace = await ctx.prisma.workspace.findUnique({
         where: { id: input.workspaceId },
@@ -158,6 +167,7 @@ export const workflowRouter = createTRPCRouter({
         {
           textModel: input.selectedTextModel,
           imageModel: input.selectedImageModel,
+          referenceImages: input.referenceImages,
         }
       );
 
