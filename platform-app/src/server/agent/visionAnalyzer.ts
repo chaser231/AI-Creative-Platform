@@ -33,9 +33,9 @@ export async function analyzeReferenceImages(
     if (process.env.OPENAI_API_KEY) {
       return await analyzeWithGPT4oVision(images, userIntent);
     }
-    // Fallback: Llama 3.2 90B Vision via Replicate (proven image support)
+    // Fallback: Gemini 2.5 Flash via Replicate (uses `images` array param)
     if (process.env.REPLICATE_API_TOKEN) {
-      return await analyzeWithLlamaVision(images, userIntent);
+      return await analyzeWithGeminiFlash(images, userIntent);
     }
     throw new Error("No VLM API key available (OPENAI_API_KEY or REPLICATE_API_TOKEN required)");
   } catch (e) {
@@ -117,84 +117,84 @@ async function analyzeWithGPT4oVision(
   return parseVisionResponse(raw, images.length, userIntent);
 }
 
-// ─── Llama 3.2 90B Vision via Replicate ──────────────────
+// ─── Gemini 2.5 Flash via Replicate ──────────────────────
 
-async function analyzeWithLlamaVision(
+async function analyzeWithGeminiFlash(
   images: string[],
   userIntent: string
 ): Promise<VisionAnalysisResult> {
   const token = process.env.REPLICATE_API_TOKEN!;
-  const imageDescriptions: string[] = [];
 
-  for (let i = 0; i < images.length; i++) {
-    const imgUrl = images[i].startsWith("data:") ? images[i] : `data:image/jpeg;base64,${images[i]}`;
+  // Prepare image data URLs
+  const imageUrls = images.map((img) =>
+    img.startsWith("data:") ? img : `data:image/jpeg;base64,${img}`
+  );
 
-    console.log(`[VisionAnalyzer] Sending image ${i + 1}/${images.length} to Llama 3.2 Vision (${imgUrl.slice(0, 30)}...)`);
+  console.log(`[VisionAnalyzer] Sending ${imageUrls.length} image(s) to Gemini 2.5 Flash...`);
 
-    const createRes = await fetch(
-      "https://api.replicate.com/v1/models/meta/meta-llama-3.2-90b-vision-instruct/predictions",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-          Prefer: "wait",
-        },
-        body: JSON.stringify({
-          input: {
-            prompt: `You are a product identification expert. Look at this image carefully.
+  const createRes = await fetch(
+    "https://api.replicate.com/v1/models/google/gemini-2.5-flash/predictions",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+        Prefer: "wait",
+      },
+      body: JSON.stringify({
+        input: {
+          prompt: `You are a product identification expert. The user uploaded ${images.length} reference images.
 
-Describe the EXACT product/object shown:
-1. What is the specific product? (e.g. sneakers, kettle, speaker, phone)
+For EACH image, describe the EXACT product/object:
+1. Product type (e.g. sneakers, electric kettle, Bluetooth speaker)
 2. Brand name if visible
-3. Color, material, shape
+3. Color, material, shape, key details
 4. Photography style and background
 
 User's intent: "${userIntent}"
 
-Respond in Russian, one concise paragraph. Be PRECISE about the product type.`,
-            image: imgUrl,
-            max_tokens: 300,
-            temperature: 0.1,
-          },
-        }),
-      }
-    );
+Respond STRICTLY in JSON format:
+{
+  "descriptions": [
+    "Description of image 1 in Russian...",
+    "Description of image 2 in Russian..."
+  ],
+  "summary": "Brief combined summary in Russian of all objects and how they should be used together."
+}
 
-    if (!createRes.ok) {
-      const errText = await createRes.text();
-      console.error(`[VisionAnalyzer] Llama Vision error for image ${i + 1}: ${createRes.status} — ${errText.slice(0, 200)}`);
-      imageDescriptions.push(`Изображение ${i + 1} (описание недоступно)`);
-      continue;
+Be PRECISE about product types. Do NOT guess or invent products that are not shown.`,
+          images: imageUrls,
+          max_output_tokens: 1024,
+          temperature: 0.1,
+        },
+      }),
     }
+  );
 
-    let result = await createRes.json();
-    while (result.status !== "succeeded" && result.status !== "failed") {
-      await new Promise((r) => setTimeout(r, 1000));
-      const poll = await fetch(`https://api.replicate.com/v1/predictions/${result.id}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      result = await poll.json();
-    }
-
-    if (result.status === "failed") {
-      console.error(`[VisionAnalyzer] Image ${i + 1} failed:`, result.error);
-      imageDescriptions.push(`Изображение ${i + 1} (описание недоступно)`);
-    } else {
-      const output = Array.isArray(result.output) ? result.output.join("") : String(result.output || "");
-      console.log(`[VisionAnalyzer] Image ${i + 1} description: "${output.trim().slice(0, 120)}"`);
-      imageDescriptions.push(output.trim());
-    }
+  if (!createRes.ok) {
+    const errText = await createRes.text();
+    console.error(`[VisionAnalyzer] Gemini Flash error: ${createRes.status} — ${errText.slice(0, 300)}`);
+    throw new Error(`Gemini Flash Replicate error: ${createRes.status}`);
   }
 
-  const combinedSummary = buildCombinedSummary(imageDescriptions, userIntent);
-  console.log(`[VisionAnalyzer] Llama Vision analysis complete. Summary (first 200 chars): "${combinedSummary.slice(0, 200)}"`);
+  let result = await createRes.json();
+  while (result.status !== "succeeded" && result.status !== "failed") {
+    await new Promise((r) => setTimeout(r, 1000));
+    const poll = await fetch(`https://api.replicate.com/v1/predictions/${result.id}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    result = await poll.json();
+  }
 
-  return {
-    descriptions: imageDescriptions,
-    combinedSummary,
-    imageCount: images.length,
-  };
+  if (result.status === "failed") {
+    console.error(`[VisionAnalyzer] Gemini Flash failed:`, result.error);
+    throw new Error(`Gemini Flash prediction failed: ${result.error || "unknown"}`);
+  }
+
+  const raw = Array.isArray(result.output) ? result.output.join("") : String(result.output || "");
+  console.log(`[VisionAnalyzer] Gemini Flash raw response (first 300 chars): "${raw.slice(0, 300)}"`);
+
+  return parseVisionResponse(raw, images.length, userIntent);
 }
 
 // ─── Helpers ─────────────────────────────────────────────
