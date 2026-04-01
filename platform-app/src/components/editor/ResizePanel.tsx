@@ -70,53 +70,57 @@ export function ResizePanel() {
 
             {showPresets && (
                 <div className="p-2 border-b border-border-primary bg-bg-secondary">
-                    <p className="text-[10px] text-text-tertiary mb-2 px-2 font-light">Добавить пресет:</p>
-                    {availablePresets.map((preset) => (
-                        <button
-                            key={preset.id}
-                            onClick={() => {
-                                addResize(preset);
-                                setShowPresets(false);
-                            }}
-                            className="w-full flex items-center gap-2 px-2 py-1.5 rounded-[var(--radius-md)] hover:bg-bg-primary transition-colors cursor-pointer text-left"
-                        >
-                            <Monitor size={11} className="text-text-tertiary shrink-0" />
-                            <span className="text-[11px] text-text-primary">{preset.name}</span>
-                            <span className="text-[10px] text-text-tertiary ml-auto font-light">{preset.label}</span>
-                        </button>
-                    ))}
+                    {!showCustom && (
+                        <>
+                            <p className="text-[10px] text-text-tertiary mb-2 px-2 font-light">Добавить пресет:</p>
+                            {availablePresets.map((preset) => (
+                                <button
+                                    key={preset.id}
+                                    onClick={() => {
+                                        addResize(preset);
+                                        setShowPresets(false);
+                                    }}
+                                    className="w-full flex items-center gap-2 px-2 py-1.5 rounded-[var(--radius-md)] hover:bg-bg-primary transition-colors cursor-pointer text-left"
+                                >
+                                    <Monitor size={11} className="text-text-tertiary shrink-0" />
+                                    <span className="text-[11px] text-text-primary">{preset.name}</span>
+                                    <span className="text-[10px] text-text-tertiary ml-auto font-light">{preset.label}</span>
+                                </button>
+                            ))}
 
-                    {/* Format packs */}
-                    <div className="mt-2 pt-2 border-t border-border-primary">
-                        <p className="text-[10px] text-text-tertiary mb-1.5 px-2 font-light">Паки форматов:</p>
-                        <div className="flex flex-wrap gap-1 px-1">
-                            {FORMAT_PACKS.map((pack) => {
-                                const packFormats = PRESET_FORMATS.filter((p) => pack.formatIds.includes(p.id));
-                                const alreadyAdded = packFormats.every((pf) => resizes.some((r) => r.id === pf.id));
-                                return (
-                                    <button
-                                        key={pack.id}
-                                        disabled={alreadyAdded}
-                                        onClick={() => {
-                                            packFormats
-                                                .filter((pf) => !resizes.some((r) => r.id === pf.id))
-                                                .forEach((pf) => addResize(pf));
-                                        }}
-                                        className={`px-2.5 py-1 rounded-[var(--radius-full)] text-[10px] font-medium border transition-colors cursor-pointer ${alreadyAdded
-                                            ? "border-border-primary text-text-tertiary opacity-50 cursor-not-allowed"
-                                            : "border-accent-primary/30 text-accent-primary hover:bg-accent-primary/5"
-                                            }`}
-                                        title={pack.description}
-                                    >
-                                        {pack.name}
-                                    </button>
-                                );
-                            })}
-                        </div>
-                    </div>
+                            {/* Format packs */}
+                            <div className="mt-2 pt-2 border-t border-border-primary">
+                                <p className="text-[10px] text-text-tertiary mb-1.5 px-2 font-light">Паки форматов:</p>
+                                <div className="flex flex-wrap gap-1 px-1">
+                                    {FORMAT_PACKS.map((pack) => {
+                                        const packFormats = PRESET_FORMATS.filter((p) => pack.formatIds.includes(p.id));
+                                        const alreadyAdded = packFormats.every((pf) => resizes.some((r) => r.id === pf.id));
+                                        return (
+                                            <button
+                                                key={pack.id}
+                                                disabled={alreadyAdded}
+                                                onClick={() => {
+                                                    packFormats
+                                                        .filter((pf) => !resizes.some((r) => r.id === pf.id))
+                                                        .forEach((pf) => addResize(pf));
+                                                }}
+                                                className={`px-2.5 py-1 rounded-[var(--radius-full)] text-[10px] font-medium border transition-colors cursor-pointer ${alreadyAdded
+                                                    ? "border-border-primary text-text-tertiary opacity-50 cursor-not-allowed"
+                                                    : "border-accent-primary/30 text-accent-primary hover:bg-accent-primary/5"
+                                                    }`}
+                                                title={pack.description}
+                                            >
+                                                {pack.name}
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        </>
+                    )}
 
                     {/* New custom format */}
-                    <div className="mt-2 pt-2 border-t border-border-primary">
+                    <div className={showCustom ? "" : "mt-2 pt-2 border-t border-border-primary"}>
                         {!showCustom ? (
                             <button
                                 onClick={() => setShowCustom(true)}
@@ -133,22 +137,23 @@ export function ResizePanel() {
                                     value={customName}
                                     onChange={(e) => setCustomName(e.target.value)}
                                     className="w-full h-7 px-2 rounded-[var(--radius-sm)] border border-border-primary bg-bg-primary text-[11px] text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-1 focus:ring-border-focus"
+                                    autoFocus
                                 />
-                                <div className="flex items-center gap-2">
+                                <div className="flex items-center gap-1.5">
                                     <input
                                         type="number"
                                         placeholder="W"
                                         value={customWidth}
                                         onChange={(e) => setCustomWidth(e.target.value)}
-                                        className="flex-1 h-7 px-2 rounded-[var(--radius-sm)] border border-border-primary bg-bg-primary text-[11px] text-text-primary text-center focus:outline-none"
+                                        className="min-w-0 flex-1 h-7 px-2 rounded-[var(--radius-sm)] border border-border-primary bg-bg-primary text-[11px] text-text-primary text-center focus:outline-none focus:ring-1 focus:ring-border-focus"
                                     />
-                                    <span className="text-[10px] text-text-tertiary">×</span>
+                                    <span className="text-[10px] text-text-tertiary shrink-0">×</span>
                                     <input
                                         type="number"
                                         placeholder="H"
                                         value={customHeight}
                                         onChange={(e) => setCustomHeight(e.target.value)}
-                                        className="flex-1 h-7 px-2 rounded-[var(--radius-sm)] border border-border-primary bg-bg-primary text-[11px] text-text-primary text-center focus:outline-none"
+                                        className="min-w-0 flex-1 h-7 px-2 rounded-[var(--radius-sm)] border border-border-primary bg-bg-primary text-[11px] text-text-primary text-center focus:outline-none focus:ring-1 focus:ring-border-focus"
                                     />
                                 </div>
                                 <button
