@@ -511,6 +511,7 @@ export function Canvas({ stageRef }: CanvasProps) {
     const [isAltHovering, setIsAltHovering] = useState(false);
     const isDragging = useRef(false);
     const isTransforming = useRef(false);
+    const clipBlocked = useRef(false);  // set when a mouseDown is blocked by clip bounds
 
     // Track start positions for multi-drag
     const dragStartLocs = useRef<Record<string, { x: number; y: number }>>({});
@@ -641,7 +642,6 @@ export function Canvas({ stageRef }: CanvasProps) {
         ) as FrameLayer | undefined;
 
         if (parentFrame && parentFrame.clipContent) {
-            // Check if click point is inside the frame's rectangle
             if (
                 canvasX < parentFrame.x ||
                 canvasX > parentFrame.x + parentFrame.width ||
@@ -657,16 +657,14 @@ export function Canvas({ stageRef }: CanvasProps) {
 
     const handleLayerSelect = useCallback((e: Konva.KonvaEventObject<MouseEvent>) => {
 
-        let id = e.target.id();
-        if (!id) return;
-
-        // Block selection if the click landed outside a clipped parent's bounds
-        const stage = e.target.getStage();
-        const pointer = stage?.getPointerPosition() ?? null;
-        if (isClickOutsideClipBounds(id, pointer)) {
-            selectLayer(null);
+        // If this click was already blocked by clip bounds in mouseDown, skip
+        if (clipBlocked.current) {
+            clipBlocked.current = false;
             return;
         }
+
+        let id = e.target.id();
+        if (!id) return;
 
         // Stop propagation so stage click doesn't deselect
         e.cancelBubble = true;
@@ -1156,9 +1154,60 @@ export function Canvas({ stageRef }: CanvasProps) {
             return;
         }
 
+        // ── Clip-bounds interception ──
+        // If the click targets a shape (not the stage background), check whether
+        // the pointer falls outside the clip bounds of any clipped parent.
+        // This MUST happen here because Konva fires shape-level onClick/onDragStart
+        // AFTER mousedown, and we can't reliably block them.
+        const target = e.target;
+        const stage = target.getStage();
+        if (stage && target !== stage) {
+            const pointer = stage.getPointerPosition();
+            if (pointer) {
+                const canvasX = (pointer.x - stage.x()) / stage.scaleX();
+                const canvasY = (pointer.y - stage.y()) / stage.scaleY();
+                const targetId = target.id();
+
+                let shouldBlock = false;
+
+                // Check ARTBOARD clip
+                if (artboardProps.clipContent) {
+                    if (canvasX < 0 || canvasX > canvasWidth || canvasY < 0 || canvasY > canvasHeight) {
+                        shouldBlock = true;
+                    }
+                }
+
+                // Check FRAME clip (if target is a frame child)
+                if (!shouldBlock && targetId) {
+                    const parentFrame = layers.find(
+                        l => l.type === 'frame' && (l as FrameLayer).childIds.includes(targetId)
+                    ) as FrameLayer | undefined;
+                    if (parentFrame && parentFrame.clipContent) {
+                        if (
+                            canvasX < parentFrame.x ||
+                            canvasX > parentFrame.x + parentFrame.width ||
+                            canvasY < parentFrame.y ||
+                            canvasY > parentFrame.y + parentFrame.height
+                        ) {
+                            shouldBlock = true;
+                        }
+                    }
+                }
+
+                if (shouldBlock) {
+                    // Prevent the shape from receiving any further events
+                    // by stopping the event and deselecting
+                    target.stopDrag();
+                    e.cancelBubble = true;
+                    clipBlocked.current = true;  // flag so onClick handler skips
+                    selectLayer(null);
+                    return;
+                }
+            }
+        }
+
         // If clicked on stage (background)
         if (e.target === e.target.getStage()) {
-            const stage = e.target.getStage();
             if (!stage) return;
             const pointer = stage.getPointerPosition();
             if (!pointer) return;
@@ -1189,7 +1238,7 @@ export function Canvas({ stageRef }: CanvasProps) {
                 stopTextEditing();
             }
         }
-    }, [selectLayer, isEditingText, stopTextEditing, isPanning]);
+    }, [selectLayer, isEditingText, stopTextEditing, isPanning, artboardProps.clipContent, canvasWidth, canvasHeight, layers]);
 
     const handleStageMouseMove = useCallback((e: Konva.KonvaEventObject<MouseEvent>) => {
         const stage = e.target.getStage();
