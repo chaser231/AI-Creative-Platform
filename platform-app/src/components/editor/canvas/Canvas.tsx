@@ -1330,7 +1330,36 @@ export function Canvas({ stageRef }: CanvasProps) {
             // Filter layers that intersect
             const intersectedIds = layers.filter(l => {
                 if (!l.visible || l.locked) return false;
-                // Simple AABB intersection
+
+                // ── Clip-bounds filtering ──
+                // Determine the effective clip rect for this layer's parent
+                let clipRect: { x: number; y: number; width: number; height: number } | null = null;
+
+                const parentFrame = layers.find(
+                    p => p.type === 'frame' && (p as FrameLayer).childIds.includes(l.id)
+                ) as FrameLayer | undefined;
+
+                if (parentFrame?.clipContent) {
+                    // Child of a clipped frame — restrict to frame bounds
+                    clipRect = { x: parentFrame.x, y: parentFrame.y, width: parentFrame.width, height: parentFrame.height };
+                } else if (artboardProps.clipContent && !parentFrame) {
+                    // Top-level layer on a clipped artboard — restrict to artboard bounds
+                    clipRect = { x: 0, y: 0, width: canvasWidth, height: canvasHeight };
+                }
+
+                // If a clip rect exists, ensure the selection box overlaps with the clip region
+                if (clipRect) {
+                    if (
+                        box.x >= clipRect.x + clipRect.width ||
+                        box.x + box.width <= clipRect.x ||
+                        box.y >= clipRect.y + clipRect.height ||
+                        box.y + box.height <= clipRect.y
+                    ) {
+                        return false; // selection box is entirely outside clip bounds
+                    }
+                }
+
+                // Simple AABB intersection with the layer itself
                 return (
                     box.x < l.x + l.width &&
                     box.x + box.width > l.x &&
@@ -1348,7 +1377,7 @@ export function Canvas({ stageRef }: CanvasProps) {
             }
             setSelectionBox(null);
         }
-    }, [selectionBox, layers, addToSelection, isPanning]);
+    }, [selectionBox, layers, addToSelection, isPanning, artboardProps.clipContent, canvasWidth, canvasHeight]);
 
     const handleContextMenu = useCallback(
         (e: Konva.KonvaEventObject<MouseEvent>) => {
