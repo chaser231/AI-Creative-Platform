@@ -84,3 +84,49 @@ export async function migrateBase64ToS3Map(
   await Promise.all(migrationTasks);
   return urlMap;
 }
+
+/**
+ * Validates and compresses an image file before uploading/storing it in the state.
+ * Returns a significantly smaller WebP/JPEG data URL for canvas rendering, preventing 10MB JSON payloads.
+ */
+export async function compressImageFile(file: File, maxDim: number = 2000): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new window.Image();
+      img.onload = () => {
+        let { width, height } = img;
+        
+        // Calculate dynamic scale to ensure dimensions fit inside maxDimxMaxDim box
+        if (width > maxDim || height > maxDim) {
+          const scale = Math.min(maxDim / width, maxDim / height);
+          width = Math.round(width * scale);
+          height = Math.round(height * scale);
+        }
+        
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        
+        if (!ctx) {
+          // Fallback if canvas context is unavailable
+          return resolve(reader.result as string);
+        }
+
+        ctx.clearRect(0, 0, width, height);
+        ctx.drawImage(img, 0, 0, width, height);
+        
+        // Use webp with 0.82 quality to radically reduce file size for fast JSON saves
+        // while preserving alpha channel for PNG uploads.
+        resolve(canvas.toDataURL("image/webp", 0.82));
+      };
+      
+      // If image loading fails, output original base64
+      img.onerror = () => resolve(reader.result as string);
+      img.src = reader.result as string;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}

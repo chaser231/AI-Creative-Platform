@@ -17,11 +17,11 @@ export function ImagePropsInline({
     const handleReplace = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
         if (!file) return;
-        const reader = new FileReader();
-        reader.onload = () => {
-            onChange({ src: reader.result as string });
-        };
-        reader.readAsDataURL(file);
+        import("@/utils/imageUpload").then(({ compressImageFile }) => {
+            compressImageFile(file).then((compressedBase64) => {
+                onChange({ src: compressedBase64 });
+            });
+        });
         e.target.value = "";
     };
 

@@ -268,7 +268,7 @@ export default function TemplateCatalogPage() {
                             console.warn("Failed to pre-save canvas state for template");
                         }
 
-                        router.push(`/editor/${backendProject.id}?mode=${selectedMode}`);
+                        router.push(`/editor/${backendProject.id}?mode=${selectedMode}&templateId=${pack.id}`);
                         return;
                     }
                 } catch {
@@ -284,7 +284,7 @@ export default function TemplateCatalogPage() {
                     goal: "banner",
                 });
                 store.setActiveProject(project.id);
-                router.push(`/editor/${project.id}?mode=${selectedMode}`);
+                router.push(`/editor/${project.id}?mode=${selectedMode}&templateId=${pack.id}`);
             }
         });
     };
