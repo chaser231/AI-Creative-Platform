@@ -100,10 +100,15 @@ RULES:
 - For gradient: "abstract gradient background, vibrant colors"
 - ALWAYS include: "no text, no letters, no words, no logos, no watermarks"
 ${hasReferenceDescriptions ? `- CRITICAL: The subject contains exact product descriptions from reference photos.
-  You MUST include EVERY SINGLE product described. Do NOT skip any products.
-  Describe each product precisely: its type, brand, color, material, shape.
-  For a composition: describe ALL products arranged together artistically.
-  Keep it under 100 words.` : '- Keep it under 50 words'}
+  You MUST include EVERY SINGLE product described. Do NOT skip any.
+  Describe each product precisely: type, brand, color, material, shape.
+  For a COMPOSITION of multiple products:
+    - Arrange them artistically together in an elegant still-life composition
+    - Use soft gradient background (light gray to white, or subtle pastel)
+    - Add professional studio lighting with soft shadows
+    - Products should be arranged at appealing angles, not just placed flat side by side
+    - Style: premium commercial photography, magazine-quality product hero shot
+  Keep it under 120 words.` : '- Keep it under 50 words'}
 - Return ONLY the prompt text`,
         },
         { role: "user", content: `Generate prompt for: ${subject}, style: ${style}` },

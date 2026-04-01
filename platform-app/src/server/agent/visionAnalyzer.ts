@@ -117,84 +117,90 @@ async function analyzeWithGPT4oVision(
   return parseVisionResponse(raw, images.length, userIntent);
 }
 
-// ─── Gemini 2.5 Flash via Replicate ──────────────────────
+// ─── Gemini 2.5 Flash via Replicate (per-image) ─────────
 
 async function analyzeWithGeminiFlash(
   images: string[],
   userIntent: string
 ): Promise<VisionAnalysisResult> {
   const token = process.env.REPLICATE_API_TOKEN!;
+  const imageDescriptions: string[] = [];
 
-  // Prepare image data URLs
-  const imageUrls = images.map((img) =>
-    img.startsWith("data:") ? img : `data:image/jpeg;base64,${img}`
-  );
+  // Process each image individually for guaranteed description coverage
+  for (let i = 0; i < images.length; i++) {
+    const imgUrl = images[i].startsWith("data:") ? images[i] : `data:image/jpeg;base64,${images[i]}`;
+    const sizeKB = Math.round(imgUrl.length / 1024);
 
-  console.log(`[VisionAnalyzer] Sending ${imageUrls.length} image(s) to Gemini 2.5 Flash...`);
+    console.log(`[VisionAnalyzer] Sending image ${i + 1}/${images.length} to Gemini Flash (${sizeKB} KB base64)...`);
 
-  const createRes = await fetch(
-    "https://api.replicate.com/v1/models/google/gemini-2.5-flash/predictions",
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-        Prefer: "wait",
-      },
-      body: JSON.stringify({
-        input: {
-          prompt: `You are a product identification expert. The user uploaded ${images.length} reference images.
+    try {
+      const createRes = await fetch(
+        "https://api.replicate.com/v1/models/google/gemini-2.5-flash/predictions",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+            Prefer: "wait",
+          },
+          body: JSON.stringify({
+            input: {
+              prompt: `Look at this product image carefully. Describe the EXACT product shown.
 
-For EACH image, describe the EXACT product/object:
-1. Product type (e.g. sneakers, electric kettle, Bluetooth speaker)
-2. Brand name if visible
-3. Color, material, shape, key details
-4. Photography style and background
+Answer these questions:
+1. What specific product is this? (e.g. running sneakers, electric kettle, portable Bluetooth speaker, perfume bottle)
+2. What brand is visible? (read any text/logos on the product)
+3. What color and material is it?
+4. What is the photography style?
 
-User's intent: "${userIntent}"
+Respond in Russian, one detailed paragraph. Be VERY PRECISE about the product type — do not confuse a speaker with headphones, or a kettle with a bottle.`,
+              images: [imgUrl],
+              max_output_tokens: 300,
+              temperature: 0.1,
+            },
+          }),
+        }
+      );
 
-Respond STRICTLY in JSON format:
-{
-  "descriptions": [
-    "Description of image 1 in Russian...",
-    "Description of image 2 in Russian..."
-  ],
-  "summary": "Brief combined summary in Russian of all objects and how they should be used together."
-}
+      if (!createRes.ok) {
+        const errText = await createRes.text();
+        console.error(`[VisionAnalyzer] Image ${i + 1} error: ${createRes.status} — ${errText.slice(0, 200)}`);
+        imageDescriptions.push(`Изображение ${i + 1} (описание недоступно)`);
+        continue;
+      }
 
-Be PRECISE about product types. Do NOT guess or invent products that are not shown.`,
-          images: imageUrls,
-          max_output_tokens: 1024,
-          temperature: 0.1,
-        },
-      }),
+      let result = await createRes.json();
+      while (result.status !== "succeeded" && result.status !== "failed") {
+        await new Promise((r) => setTimeout(r, 1000));
+        const poll = await fetch(`https://api.replicate.com/v1/predictions/${result.id}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        result = await poll.json();
+      }
+
+      if (result.status === "failed") {
+        console.error(`[VisionAnalyzer] Image ${i + 1} failed:`, result.error);
+        imageDescriptions.push(`Изображение ${i + 1} (описание недоступно)`);
+      } else {
+        const output = Array.isArray(result.output) ? result.output.join("") : String(result.output || "");
+        const desc = output.trim();
+        console.log(`[VisionAnalyzer] Image ${i + 1} ✓: "${desc.slice(0, 150)}"`);
+        imageDescriptions.push(desc);
+      }
+    } catch (e) {
+      console.error(`[VisionAnalyzer] Image ${i + 1} exception:`, e);
+      imageDescriptions.push(`Изображение ${i + 1} (описание недоступно)`);
     }
-  );
-
-  if (!createRes.ok) {
-    const errText = await createRes.text();
-    console.error(`[VisionAnalyzer] Gemini Flash error: ${createRes.status} — ${errText.slice(0, 300)}`);
-    throw new Error(`Gemini Flash Replicate error: ${createRes.status}`);
   }
 
-  let result = await createRes.json();
-  while (result.status !== "succeeded" && result.status !== "failed") {
-    await new Promise((r) => setTimeout(r, 1000));
-    const poll = await fetch(`https://api.replicate.com/v1/predictions/${result.id}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    result = await poll.json();
-  }
+  const combinedSummary = buildCombinedSummary(imageDescriptions, userIntent);
+  console.log(`[VisionAnalyzer] All ${images.length} images analyzed. Summary:\n${combinedSummary.slice(0, 400)}`);
 
-  if (result.status === "failed") {
-    console.error(`[VisionAnalyzer] Gemini Flash failed:`, result.error);
-    throw new Error(`Gemini Flash prediction failed: ${result.error || "unknown"}`);
-  }
-
-  const raw = Array.isArray(result.output) ? result.output.join("") : String(result.output || "");
-  console.log(`[VisionAnalyzer] Gemini Flash raw response (first 300 chars): "${raw.slice(0, 300)}"`);
-
-  return parseVisionResponse(raw, images.length, userIntent);
+  return {
+    descriptions: imageDescriptions,
+    combinedSummary,
+    imageCount: images.length,
+  };
 }
 
 // ─── Helpers ─────────────────────────────────────────────
