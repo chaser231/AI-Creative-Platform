@@ -62,7 +62,7 @@ export default function EditorPage({ params }: EditorPageProps) {
     // IMPORTANT: Load canvas state FIRST, then enable auto-save AFTER load completes.
     // This prevents the canvas-clear-on-mount from triggering an empty save.
     const { isLoaded: canvasLoaded } = useLoadCanvasState(id);
-    const { isSaving, getUnsavedState, saveNowSync } = useCanvasAutoSave(id, canvasLoaded);
+    const { isSaving, getUnsavedState, saveNowSync } = useCanvasAutoSave(id, canvasLoaded, stageRef);
     const searchParams = useSearchParams();
     const router = useRouter();
 
