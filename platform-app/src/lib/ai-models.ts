@@ -96,14 +96,14 @@ export const MODEL_REGISTRY: ModelEntry[] = [
         label: "Flux Dev",
         slug: "black-forest-labs/flux-dev",
         provider: "replicate",
-        caps: ["generate", "vision"],
+        caps: ["generate"],
     },
     {
         id: "flux-1.1-pro",
         label: "Flux 1.1 Pro",
         slug: "black-forest-labs/flux-1.1-pro",
         provider: "replicate",
-        caps: ["generate", "vision"],
+        caps: ["generate"],
     },
     {
         id: "dall-e-3",

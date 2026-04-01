@@ -21,6 +21,11 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ error: "Prompt is required" }, { status: 400 });
         }
 
+        // Debug: confirm referenceImages arrive at the route
+        if (referenceImages && referenceImages.length > 0) {
+            console.log(`[/api/ai/generate] referenceImages: ${referenceImages.length} image(s), first ~80 chars: ${String(referenceImages[0]).slice(0, 80)}`);
+        }
+
         const provider = getProvider(model || "nano-banana-2");
 
         const result = await provider.generate({

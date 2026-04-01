@@ -267,9 +267,24 @@ class ReplicateProvider implements AIProviderImplementation {
         }
         // Seedream, Qwen, GPT-Image: use model defaults (don't send output_format)
 
-        // Reference images (Flux 2 Pro, Nano Banana)
+        // ── Reference images — correct parameter per model family ──────
         if (params.referenceImages && params.referenceImages.length > 0) {
-            input.reference_images = params.referenceImages;
+            console.log(`[AI Provider] referenceImages received: ${params.referenceImages.length} image(s), model: ${slug}`);
+
+            if (isGoogle) {
+                // Nano Banana family: image_input accepts array of URLs or base64
+                input.image_input = params.referenceImages;
+            } else if (isSeedream) {
+                // Seedream: image_input
+                input.image_input = params.referenceImages;
+            } else if (slug === "black-forest-labs/flux-2-pro") {
+                // Flux 2 Pro: reference_images
+                input.reference_images = params.referenceImages;
+            } else if (slug.startsWith("openai/")) {
+                // GPT-Image: reference_images
+                input.reference_images = params.referenceImages;
+            }
+            // Flux Dev, Flux 1.1 Pro, DALL-E 3, Qwen: no reference image support
         }
 
         const result = await this.callReplicate(entry, input, token);
