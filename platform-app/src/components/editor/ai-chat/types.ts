@@ -34,4 +34,6 @@ export interface AIChatMessage {
     }>;
     /** Currently active variant index */
     activeVariantIndex?: number;
+    /** Reference images attached by user (base64 strings) */
+    attachments?: string[];
 }

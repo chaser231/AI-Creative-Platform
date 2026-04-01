@@ -9,7 +9,7 @@
 
 // ─── Model Registry ─────────────────────────────────────────────────────────
 
-export type ModelCap = "generate" | "edit" | "remove-bg" | "inpaint" | "outpaint" | "text";
+export type ModelCap = "generate" | "edit" | "remove-bg" | "inpaint" | "outpaint" | "text" | "vision";
 
 export interface ModelEntry {
     id: string;
@@ -30,35 +30,35 @@ export const MODEL_REGISTRY: ModelEntry[] = [
         label: "Nano Banana",
         slug: "google/nano-banana",
         provider: "replicate",
-        caps: ["generate", "edit", "remove-bg"],
+        caps: ["generate", "edit", "remove-bg", "vision"],
     },
     {
         id: "nano-banana-2",
         label: "Nano Banana 2",
         slug: "google/nano-banana-2",
         provider: "replicate",
-        caps: ["generate", "edit", "remove-bg"],
+        caps: ["generate", "edit", "remove-bg", "vision"],
     },
     {
         id: "nano-banana-pro",
         label: "Nano Banana Pro",
         slug: "google/nano-banana-pro",
         provider: "replicate",
-        caps: ["generate", "edit", "remove-bg"],
+        caps: ["generate", "edit", "remove-bg", "vision"],
     },
     {
         id: "flux-2-pro",
         label: "Flux 2 Pro",
         slug: "black-forest-labs/flux-2-pro",
         provider: "replicate",
-        caps: ["generate", "edit"],
+        caps: ["generate", "edit", "vision"],
     },
     {
         id: "gpt-image",
         label: "GPT Image 1.5",
         slug: "openai/gpt-image-1.5",
         provider: "replicate",
-        caps: ["generate", "edit"],
+        caps: ["generate", "edit", "vision"],
         byok: true,
     },
     {
@@ -80,7 +80,7 @@ export const MODEL_REGISTRY: ModelEntry[] = [
         label: "Seedream 4.5",
         slug: "bytedance/seedream-4.5",
         provider: "replicate",
-        caps: ["generate", "edit"],
+        caps: ["generate", "edit", "vision"],
     },
 
     // ── Image Generation Only ───────────────────────────────────────────
@@ -96,14 +96,14 @@ export const MODEL_REGISTRY: ModelEntry[] = [
         label: "Flux Dev",
         slug: "black-forest-labs/flux-dev",
         provider: "replicate",
-        caps: ["generate"],
+        caps: ["generate", "vision"],
     },
     {
         id: "flux-1.1-pro",
         label: "Flux 1.1 Pro",
         slug: "black-forest-labs/flux-1.1-pro",
         provider: "replicate",
-        caps: ["generate"],
+        caps: ["generate", "vision"],
     },
     {
         id: "dall-e-3",

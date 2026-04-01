@@ -15,6 +15,7 @@ import { useCanvasStore } from "@/store/canvasStore";
 import { useShallow } from "zustand/react/shallow";
 import { getModelsForCaps } from "@/lib/ai-models";
 import { Button } from "@/components/ui/Button";
+import { ReferenceImageInput } from "@/components/ui/ReferenceImageInput";
 import { trpc } from "@/lib/trpc";
 import { useWorkspace } from "@/providers/WorkspaceProvider";
 import type { Layer, MasterComponent } from "@/types";
@@ -50,6 +51,7 @@ export function AIChatPanel({ open, onClose, messages, onAddMessages, projectId 
     const [selectedTextModel, setSelectedTextModel] = useState("auto");
     const [selectedImageModel, setSelectedImageModel] = useState("auto");
     const [showModelSettings, setShowModelSettings] = useState(false);
+    const [attachedImages, setAttachedImages] = useState<string[]>([]);
     const scrollRef = useRef<HTMLDivElement>(null);
     const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -101,9 +103,11 @@ export function AIChatPanel({ open, onClose, messages, onAddMessages, projectId 
             type: "text",
             content: trimmed,
             timestamp: Date.now(),
+            attachments: attachedImages.length > 0 ? [...attachedImages] : undefined,
         };
 
         onAddMessages?.([userMsg]);
+        setAttachedImages([]); // Clear attachments after sending
 
         try {
             // Build conversation history for context
@@ -122,6 +126,9 @@ export function AIChatPanel({ open, onClose, messages, onAddMessages, projectId 
                 history,
                 selectedTextModel: selectedTextModel !== "auto" ? selectedTextModel : undefined,
                 selectedImageModel: selectedImageModel !== "auto" ? selectedImageModel : undefined,
+                referenceImages: userMsg.attachments && userMsg.attachments.length > 0
+                    ? userMsg.attachments
+                    : undefined,
             });
 
             const newMessages: AIChatMessage[] = [];
@@ -604,6 +611,22 @@ export function AIChatPanel({ open, onClose, messages, onAddMessages, projectId 
 
                 {/* Input */}
                 <div className="p-3 pt-1.5">
+                    {/* Attached images preview strip */}
+                    {attachedImages.length > 0 && (
+                        <div className="flex gap-1.5 pb-2 flex-wrap">
+                            {attachedImages.map((src, i) => (
+                                <div key={i} className="relative w-9 h-9 rounded-lg overflow-hidden border border-border-primary group">
+                                    <img src={src} alt={`attach-${i}`} className="w-full h-full object-cover" />
+                                    <button
+                                        onClick={() => setAttachedImages(imgs => imgs.filter((_, idx) => idx !== i))}
+                                        className="absolute inset-0 flex items-center justify-center bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity"
+                                    >
+                                        <X size={12} className="text-white" />
+                                    </button>
+                                </div>
+                            ))}
+                        </div>
+                    )}
                     <div className="flex items-end gap-2">
                         <textarea
                             ref={inputRef}
@@ -620,13 +643,21 @@ export function AIChatPanel({ open, onClose, messages, onAddMessages, projectId 
                                 t.style.height = Math.min(t.scrollHeight, 100) + "px";
                             }}
                         />
-                        <button
-                            onClick={handleSend}
-                            disabled={!input.trim() || isThinking}
-                            className="p-2.5 bg-violet-500 hover:bg-violet-600 disabled:opacity-30 disabled:cursor-not-allowed text-white rounded-xl transition-colors shrink-0 cursor-pointer"
-                        >
-                            <Send size={16} />
-                        </button>
+                        <div className="flex flex-col gap-1 shrink-0">
+                            <ReferenceImageInput
+                                images={attachedImages}
+                                onChange={setAttachedImages}
+                                max={3}
+                                label=""
+                            />
+                            <button
+                                onClick={handleSend}
+                                disabled={!input.trim() || isThinking}
+                                className="p-2.5 bg-violet-500 hover:bg-violet-600 disabled:opacity-30 disabled:cursor-not-allowed text-white rounded-xl transition-colors cursor-pointer"
+                            >
+                                <Send size={16} />
+                            </button>
+                        </div>
                     </div>
                 </div>
             </div>

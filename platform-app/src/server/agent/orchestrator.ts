@@ -74,8 +74,13 @@ export async function interpretAndExecute(
       }
 
       // Inject user's model preferences
-      if (step.actionId === "generate_image" && modelPreferences?.imageModel) {
-        step.parameters.model = modelPreferences.imageModel;
+      if (step.actionId === "generate_image") {
+        if (modelPreferences?.imageModel) {
+          step.parameters.model = modelPreferences.imageModel;
+        }
+        if (modelPreferences?.referenceImages && modelPreferences.referenceImages.length > 0) {
+          step.parameters.referenceImages = modelPreferences.referenceImages;
+        }
       }
 
       step.result = await executeAction(step.actionId, step.parameters, context);

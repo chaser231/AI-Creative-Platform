@@ -136,6 +136,8 @@ export const workflowRouter = createTRPCRouter({
           .optional(),
         selectedTextModel: z.string().optional(),
         selectedImageModel: z.string().optional(),
+        /** Reference images to pass to image generation (base64) */
+        referenceImages: z.array(z.string()).optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -158,6 +160,7 @@ export const workflowRouter = createTRPCRouter({
         {
           textModel: input.selectedTextModel,
           imageModel: input.selectedImageModel,
+          referenceImages: input.referenceImages,
         }
       );
 

@@ -13,6 +13,7 @@ import {
     Expand,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
+import { ReferenceImageInput } from "@/components/ui/ReferenceImageInput";
 import type { BusinessUnit } from "@/types";
 
 type EditorTool = "remove-bg" | "inpaint" | "text-edit" | "outpaint";
@@ -68,6 +69,7 @@ export function ImageEditorModal({ imageSrc, onApply, onClose }: ImageEditorModa
     const [outpaintMode, setOutpaintMode] = useState<"ratio" | "padding">("ratio");
     const [outpaintPadding, setOutpaintPadding] = useState({ top: 0, right: 0, bottom: 0, left: 0 });
     const [errorMsg, setErrorMsg] = useState<string | null>(null);
+    const [referenceImages, setReferenceImages] = useState<string[]>([]);
 
     const parseAiError = (e: Error) => {
         const msg = String(e.message || "");
@@ -109,6 +111,9 @@ export function ImageEditorModal({ imageSrc, onApply, onClose }: ImageEditorModa
                     imageBase64: currentImage,
                     maskBase64: maskB64 || undefined,
                     model: selectedModel,
+                    referenceImages: action === "text-edit" && referenceImages.length > 0
+                        ? referenceImages
+                        : undefined,
                 }),
             });
             const data = await response.json();
@@ -413,6 +418,15 @@ export function ImageEditorModal({ imageSrc, onApply, onClose }: ImageEditorModa
                                         onChange={(e) => setEditPrompt(e.target.value)}
                                         className="w-full h-20 px-3 py-2 rounded-[var(--radius-md)] border border-border-primary bg-bg-primary text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-border-focus resize-none placeholder:text-text-tertiary"
                                     />
+                                    <div>
+                                        <p className="text-[10px] font-medium text-text-secondary mb-1.5">Референсное фото (опционально)</p>
+                                        <ReferenceImageInput
+                                            images={referenceImages}
+                                            onChange={setReferenceImages}
+                                            max={2}
+                                            label="Добавить референс"
+                                        />
+                                    </div>
                                     <button
                                         onClick={handleTextEdit}
                                         disabled={isProcessing || !editPrompt.trim()}

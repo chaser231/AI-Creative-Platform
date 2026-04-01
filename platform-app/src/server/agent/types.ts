@@ -13,6 +13,8 @@ export interface AgentStep {
 export interface ModelPreferences {
   textModel?: string;
   imageModel?: string;
+  /** Reference images to inject into image generation steps (base64) */
+  referenceImages?: string[];
 }
 
 export interface AgentPlan {

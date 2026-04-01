@@ -2,10 +2,12 @@ import { useState, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { Sparkles, Wand2, Image as ImageIcon, Send, MessageCircle, Settings2, Ratio, Type, Grip, CheckCircle2, Circle, X } from "lucide-react";
 import { Button } from "@/components/ui/Button";
+import { ReferenceImageInput } from "@/components/ui/ReferenceImageInput";
 import { useCanvasStore } from "@/store/canvasStore";
 import { useShallow } from "zustand/react/shallow";
 import { RemoteTextProvider, RemoteImageProvider } from "@/services/aiService";
 import { ImageEditorModal } from "@/components/wizard/blocks/ImageEditorModal";
+import { getModelById } from "@/lib/ai-models";
 import type { ImageLayer } from "@/types";
 
 // Helper models lists
@@ -62,7 +64,12 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult 
     const [applyToSelection, setApplyToSelection] = useState(false);
     const [isGenerating, setIsGenerating] = useState(false);
     const [showEditorModal, setShowEditorModal] = useState(false);
+    const [referenceImages, setReferenceImages] = useState<string[]>([]);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+    // Check if current model supports vision (reference images)
+    const supportsVision = activeTab !== "text" &&
+        (getModelById(selectedModel)?.caps.includes("vision") ?? false);
 
     // Get selected image layer (if any)
     const selectedImageLayer = selectedLayerIds.length > 0
@@ -82,6 +89,15 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult 
         setActiveTab(tab);
         const models = tab === "text" ? TEXT_MODELS : tab === "image" ? IMAGE_MODELS : OUTPAINT_MODELS;
         setSelectedModel(models[0].id);
+        // Clear reference images when switching to text tab
+        if (tab === "text") setReferenceImages([]);
+    };
+
+    // When model changes, clear refs if new model has no vision
+    const handleModelChange = (modelId: string) => {
+        setSelectedModel(modelId);
+        const hasVision = getModelById(modelId)?.caps.includes("vision") ?? false;
+        if (!hasVision) setReferenceImages([]);
     };
 
     const handleGenerate = async () => {
@@ -96,6 +112,7 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult 
                 res = await RemoteImageProvider.generate(prompt, {
                     model: selectedModel,
                     aspectRatio: aspectRatio.id,
+                    referenceImages: referenceImages.length > 0 ? referenceImages : undefined,
                 });
             }
 
@@ -149,6 +166,7 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult 
                 prompt: prompt
             });
             setPrompt(""); // Clear prompt after success
+            setReferenceImages([]); // Clear references after use
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : "Unknown error";
             console.error("AI Generation Error:", message);
@@ -267,7 +285,7 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult 
                         <Settings2 size={14} className="text-text-tertiary group-hover:text-text-primary" />
                         <select
                             value={selectedModel}
-                            onChange={(e) => setSelectedModel(e.target.value)}
+                            onChange={(e) => handleModelChange(e.target.value)}
                             className="bg-transparent text-xs font-medium text-text-secondary focus:outline-none cursor-pointer hover:text-text-primary appearance-none min-w-[80px]"
                         >
                             {currentModels.map(m => (
@@ -293,6 +311,15 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult 
                     )}
 
                     <div className="flex-1" />
+
+                    {/* Reference Images (vision-capable models only) */}
+                    {supportsVision && (
+                        <ReferenceImageInput
+                            images={referenceImages}
+                            onChange={setReferenceImages}
+                            max={3}
+                        />
+                    )}
 
                     {/* Generate Button */}
                     <Button

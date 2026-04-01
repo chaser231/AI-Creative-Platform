@@ -8,11 +8,11 @@ import {
     Wand2,
     Pencil,
     Loader2,
-    Plus,
-    X,
     Settings2,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
+import { ReferenceImageInput } from "@/components/ui/ReferenceImageInput";
+import { getModelById } from "@/lib/ai-models";
 import type { ImageComponentProps, BusinessUnit } from "@/types";
 import { ImageEditorModal } from "./ImageEditorModal";
 
@@ -98,7 +98,6 @@ interface ImageContentBlockProps {
 
 export function ImageContentBlock({ id, name, props, value, onChange, businessUnit, productDescription }: ImageContentBlockProps) {
     const fileInputRef = useRef<HTMLInputElement>(null);
-    const multiFileInputRef = useRef<HTMLInputElement>(null);
     const [isGenerating, setIsGenerating] = useState(false);
     const [genError, setGenError] = useState<string | null>(null);
     const [showEditor, setShowEditor] = useState(false);
@@ -115,6 +114,9 @@ export function ImageContentBlock({ id, name, props, value, onChange, businessUn
     const [showAdvanced, setShowAdvanced] = useState(false);
     const [additionalPhotos, setAdditionalPhotos] = useState<string[]>([]);
 
+    // Whether selected model supports vision (reference images)
+    const supportsVision = getModelById(selectedModel)?.caps.includes("vision") ?? false;
+
     const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
         if (file) {
@@ -124,17 +126,6 @@ export function ImageContentBlock({ id, name, props, value, onChange, businessUn
                 });
             });
         }
-    };
-
-    const handleMultiFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const files = Array.from(e.target.files || []);
-        import("@/utils/imageUpload").then(({ compressImageFile }) => {
-            files.forEach(file => {
-                compressImageFile(file).then((compressedBase64) => {
-                    setAdditionalPhotos(prev => [...prev, compressedBase64]);
-                });
-            });
-        });
     };
 
     const handleGenerate = async () => {
@@ -206,7 +197,6 @@ export function ImageContentBlock({ id, name, props, value, onChange, businessUn
                     {/* Action buttons */}
                     <div className="flex-1 flex flex-col gap-2">
                         <input type="file" accept="image/*" className="hidden" ref={fileInputRef} onChange={handleFileUpload} />
-                        <input type="file" accept="image/*" multiple className="hidden" ref={multiFileInputRef} onChange={handleMultiFileUpload} />
 
                         <Button variant="secondary" className="w-full justify-start text-sm h-9" icon={<Upload size={16} />} onClick={() => fileInputRef.current?.click()}>
                             Загрузить файл
@@ -288,28 +278,17 @@ export function ImageContentBlock({ id, name, props, value, onChange, businessUn
                         </div>
 
                         {/* Reference photos */}
-                        <div>
-                            <div className="flex items-center justify-between mb-2">
-                                <p className="text-[11px] font-semibold text-text-secondary uppercase tracking-wider">Фото-референсы</p>
-                                <button onClick={() => multiFileInputRef.current?.click()} className="flex items-center gap-1 text-[11px] text-text-secondary hover:text-text-primary cursor-pointer transition-colors">
-                                    <Plus size={12} /> Добавить
-                                </button>
+                        {supportsVision && (
+                            <div>
+                                <p className="text-[11px] font-semibold text-text-secondary uppercase tracking-wider mb-2">Фото-референсы</p>
+                                <ReferenceImageInput
+                                    images={additionalPhotos}
+                                    onChange={setAdditionalPhotos}
+                                    max={3}
+                                    label="Добавить референс"
+                                />
                             </div>
-                            {additionalPhotos.length > 0 ? (
-                                <div className="flex gap-2 flex-wrap">
-                                    {additionalPhotos.map((photo, i) => (
-                                        <div key={i} className="relative w-14 h-14 rounded-[var(--radius-sm)] overflow-hidden border border-border-primary group">
-                                            <img src={photo} alt={`Ref ${i + 1}`} className="w-full h-full object-cover" />
-                                            <button onClick={() => setAdditionalPhotos(prev => prev.filter((_, idx) => idx !== i))} className="absolute top-0.5 right-0.5 w-4 h-4 bg-black/60 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer">
-                                                <X size={10} className="text-white" />
-                                            </button>
-                                        </div>
-                                    ))}
-                                </div>
-                            ) : (
-                                <p className="text-[10px] text-text-tertiary">Добавьте фото для мульти-фото генерации</p>
-                            )}
-                        </div>
+                        )}
 
                         {/* Advanced settings */}
                         <button onClick={() => setShowAdvanced(!showAdvanced)} className="flex items-center gap-1.5 text-[11px] text-text-secondary hover:text-text-primary cursor-pointer transition-colors">
