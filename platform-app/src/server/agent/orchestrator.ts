@@ -103,6 +103,12 @@ export async function interpretAndExecute(
           step.parameters.referenceImages = modelPreferences.referenceImages;
           console.log(`[Pipeline ▶4 Orchestrator] Injecting ${modelPreferences.referenceImages.length} referenceImages into generate_image step`);
         }
+        // Inject VLM descriptions directly into subject so prompt engineer has exact product details
+        if (visionContextStr) {
+          const existingSubject = (step.parameters.subject as string) || "";
+          step.parameters.subject = `${existingSubject}\n\nТОЧНЫЕ ОПИСАНИЯ ТОВАРОВ ИЗ РЕФЕРЕНСНЫХ ФОТО:\n${visionContextStr}`;
+          console.log(`[Pipeline ▶4 Orchestrator] Enriched subject with VLM descriptions (${visionContextStr.length} chars)`);
+        }
       }
 
       step.result = await executeAction(step.actionId, step.parameters, context);

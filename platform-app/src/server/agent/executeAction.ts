@@ -84,21 +84,26 @@ export async function executeAction(
       const style = (params.style as string) || "photo";
 
       // Build an English prompt for the image model
+      const hasReferenceDescriptions = subject.includes('ТОЧНЫЕ ОПИСАНИЯ ТОВАРОВ');
       const imagePrompt = await callLLM([
         {
           role: "system",
-          content: `You are an expert prompt engineer for AI image generation (Flux model).
+          content: `You are an expert prompt engineer for AI image generation.
 Convert the user's request into a detailed English prompt for image generation.
 
 RULES:
 - Write in ENGLISH only
 - Include style keywords: ${style}, high quality, commercial
-- For photo style: "professional product photography, studio lighting"
+- For photo style: "professional product photography, studio lighting, clean white background"
 - For illustration: "modern digital illustration, flat design"
 - For 3d: "3D render, isometric, soft shadows"
 - For gradient: "abstract gradient background, vibrant colors"
-- ALWAYS include: "no text, no letters, no words, no logos, no watermarks, no graphics, no UI elements"
-- Keep it under 50 words
+- ALWAYS include: "no text, no letters, no words, no logos, no watermarks"
+${hasReferenceDescriptions ? `- CRITICAL: The subject contains exact product descriptions from reference photos.
+  You MUST include EVERY SINGLE product described. Do NOT skip any products.
+  Describe each product precisely: its type, brand, color, material, shape.
+  For a composition: describe ALL products arranged together artistically.
+  Keep it under 100 words.` : '- Keep it under 50 words'}
 - Return ONLY the prompt text`,
         },
         { role: "user", content: `Generate prompt for: ${subject}, style: ${style}` },
