@@ -26,8 +26,19 @@ export function MessageBubble({
     if (msg.role === "user") {
         return (
             <div className="flex items-start gap-2 justify-end">
-                <div className="max-w-[85%] bg-violet-500/10 text-text-primary text-sm px-3.5 py-2.5 rounded-2xl rounded-tr-sm border border-violet-500/20">
-                    {msg.content}
+                <div className="max-w-[85%] space-y-2">
+                    <div className="bg-violet-500/10 text-text-primary text-sm px-3.5 py-2.5 rounded-2xl rounded-tr-sm border border-violet-500/20">
+                        {msg.content}
+                    </div>
+                    {msg.attachments && msg.attachments.length > 0 && (
+                        <div className="flex gap-1.5 justify-end">
+                            {msg.attachments.map((src, i) => (
+                                <div key={i} className="w-10 h-10 rounded-lg overflow-hidden border border-violet-500/20">
+                                    <img src={src} alt={`ref-${i}`} className="w-full h-full object-cover" />
+                                </div>
+                            ))}
+                        </div>
+                    )}
                 </div>
                 <div className="w-7 h-7 rounded-full bg-bg-tertiary flex items-center justify-center shrink-0">
                     <User size={14} className="text-text-tertiary" />
@@ -36,41 +47,71 @@ export function MessageBubble({
         );
     }
 
-    // Plan message — show steps
+    // Plan message — show steps with details
     if (msg.type === "plan" && msg.steps) {
         return (
             <div className="flex items-start gap-2">
                 <div className="w-7 h-7 rounded-full bg-gradient-to-br from-violet-500/20 to-blue-500/20 flex items-center justify-center shrink-0">
                     <Zap size={14} className="text-violet-400" />
                 </div>
-                <div className="flex-1 space-y-2">
+                <div className="flex-1 space-y-2 min-w-0">
                     {msg.content && (
-                        <p className="text-xs text-text-secondary">{msg.content}</p>
+                        <div className="bg-bg-tertiary text-sm text-text-primary px-3.5 py-2.5 rounded-2xl rounded-tl-sm whitespace-pre-wrap">
+                            {msg.content}
+                        </div>
                     )}
-                    <div className="bg-bg-tertiary/50 rounded-xl border border-border-primary p-2.5 space-y-1.5">
+                    <div className="bg-bg-tertiary/50 rounded-xl border border-border-primary p-3 space-y-2">
+                        <div className="text-[10px] text-text-tertiary font-medium uppercase tracking-wide mb-1">
+                            📋 Выполненные шаги
+                        </div>
                         {msg.steps.map((step, i) => (
                             <div
                                 key={`${step.actionId}-${i}`}
-                                className="flex items-center gap-2 text-xs"
+                                className="flex items-start gap-2.5 text-xs"
                             >
-                                {step.status === "done" ? (
-                                    <CheckCircle size={12} className="text-green-400 shrink-0" />
-                                ) : step.status === "error" ? (
-                                    <AlertCircle size={12} className="text-red-400 shrink-0" />
-                                ) : step.status === "running" ? (
-                                    <Loader2 size={12} className="animate-spin text-violet-400 shrink-0" />
-                                ) : (
-                                    <div className="w-3 h-3 rounded-full border border-border-primary shrink-0" />
-                                )}
-                                <span className={
-                                    step.status === "done"
-                                        ? "text-text-primary"
-                                        : step.status === "error"
-                                            ? "text-red-400"
-                                            : "text-text-tertiary"
-                                }>
-                                    {step.actionName}
-                                </span>
+                                {/* Status icon */}
+                                <div className="mt-0.5 shrink-0">
+                                    {step.status === "done" ? (
+                                        <CheckCircle size={14} className="text-green-400" />
+                                    ) : step.status === "error" ? (
+                                        <AlertCircle size={14} className="text-red-400" />
+                                    ) : step.status === "running" ? (
+                                        <Loader2 size={14} className="animate-spin text-violet-400" />
+                                    ) : (
+                                        <div className="w-3.5 h-3.5 rounded-full border border-border-primary" />
+                                    )}
+                                </div>
+                                {/* Step content */}
+                                <div className="flex-1 min-w-0">
+                                    <div className={`font-medium ${
+                                        step.status === "done"
+                                            ? "text-text-primary"
+                                            : step.status === "error"
+                                                ? "text-red-400"
+                                                : "text-text-tertiary"
+                                    }`}>
+                                        <span className="text-text-tertiary mr-1">{i + 1}.</span>
+                                        {step.actionName}
+                                    </div>
+                                    {/* Show result preview for completed steps */}
+                                    {step.status === "done" && step.result && (
+                                        <div className="mt-1">
+                                            {step.result.type === "image" && step.result.content && (
+                                                <div className="w-20 h-20 rounded-lg overflow-hidden border border-border-primary">
+                                                    <img src={step.result.content} alt="result" className="w-full h-full object-cover" />
+                                                </div>
+                                            )}
+                                            {step.result.type === "text" && step.result.content && (
+                                                <p className="text-[11px] text-text-tertiary line-clamp-2 italic">
+                                                    «{step.result.content.slice(0, 100)}{step.result.content.length > 100 ? "…" : ""}»
+                                                </p>
+                                            )}
+                                        </div>
+                                    )}
+                                    {step.status === "error" && step.result?.content && (
+                                        <p className="text-[11px] text-red-400/70 mt-0.5 line-clamp-2">{step.result.content.slice(0, 120)}</p>
+                                    )}
+                                </div>
                             </div>
                         ))}
                     </div>

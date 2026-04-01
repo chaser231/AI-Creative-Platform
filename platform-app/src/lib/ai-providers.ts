@@ -269,7 +269,7 @@ class ReplicateProvider implements AIProviderImplementation {
 
         // ── Reference images — correct parameter per model family ──────
         if (params.referenceImages && params.referenceImages.length > 0) {
-            console.log(`[AI Provider] referenceImages received: ${params.referenceImages.length} image(s), model: ${slug}`);
+            console.log(`[Pipeline ▶6 Provider] referenceImages: ${params.referenceImages.length} image(s), model: ${slug}`);
 
             if (isGoogle) {
                 // Nano Banana family: image_input accepts array of URLs or base64
@@ -286,6 +286,8 @@ class ReplicateProvider implements AIProviderImplementation {
             }
             // Flux Dev, Flux 1.1 Pro, DALL-E 3, Qwen: no reference image support
         }
+
+        console.log(`[Pipeline ▶6 Provider] Final Replicate input keys: ${Object.keys(input).join(", ")}`);
 
         const result = await this.callReplicate(entry, input, token);
         const output = Array.isArray(result) ? result[0] : result;

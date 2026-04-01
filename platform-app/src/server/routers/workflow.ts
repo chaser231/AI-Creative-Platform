@@ -141,6 +141,13 @@ export const workflowRouter = createTRPCRouter({
       })
     )
     .mutation(async ({ ctx, input }) => {
+      // ▶ STAGE 1: tRPC entry point
+      if (input.referenceImages && input.referenceImages.length > 0) {
+        console.log(`[Pipeline ▶1 tRPC] referenceImages: ${input.referenceImages.length} image(s), first ~60 chars: ${input.referenceImages[0].slice(0, 60)}...`);
+      } else {
+        console.log(`[Pipeline ▶1 tRPC] No referenceImages attached`);
+      }
+
       // Get workspace name for context
       const workspace = await ctx.prisma.workspace.findUnique({
         where: { id: input.workspaceId },

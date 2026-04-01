@@ -33,9 +33,9 @@ export async function analyzeReferenceImages(
     if (process.env.OPENAI_API_KEY) {
       return await analyzeWithGPT4oVision(images, userIntent);
     }
-    // Fallback: Gemini 2.5 Flash via Replicate (supports image_url input)
+    // Fallback: Llama 3.2 90B Vision via Replicate (proven image support)
     if (process.env.REPLICATE_API_TOKEN) {
-      return await analyzeWithGeminiFlash(images, userIntent);
+      return await analyzeWithLlamaVision(images, userIntent);
     }
     throw new Error("No VLM API key available (OPENAI_API_KEY or REPLICATE_API_TOKEN required)");
   } catch (e) {
@@ -117,25 +117,22 @@ async function analyzeWithGPT4oVision(
   return parseVisionResponse(raw, images.length, userIntent);
 }
 
-// ─── Gemini 2.5 Flash via Replicate ──────────────────────
+// ─── Llama 3.2 90B Vision via Replicate ──────────────────
 
-async function analyzeWithGeminiFlash(
+async function analyzeWithLlamaVision(
   images: string[],
   userIntent: string
 ): Promise<VisionAnalysisResult> {
   const token = process.env.REPLICATE_API_TOKEN!;
-
-  // Gemini Flash on Replicate accepts image_urls as separate input
-  // We can only pass one image at a time through the standard Replicate API,
-  // so we either pass the first image or batch with prompting tricks.
-  // For multi-image: concatenate base64 into a structured prompt.
   const imageDescriptions: string[] = [];
 
   for (let i = 0; i < images.length; i++) {
     const imgUrl = images[i].startsWith("data:") ? images[i] : `data:image/jpeg;base64,${images[i]}`;
 
+    console.log(`[VisionAnalyzer] Sending image ${i + 1}/${images.length} to Llama 3.2 Vision (${imgUrl.slice(0, 30)}...)`);
+
     const createRes = await fetch(
-      "https://api.replicate.com/v1/models/google/gemini-2.5-flash/predictions",
+      "https://api.replicate.com/v1/models/meta/meta-llama-3.2-90b-vision-instruct/predictions",
       {
         method: "POST",
         headers: {
@@ -145,18 +142,31 @@ async function analyzeWithGeminiFlash(
         },
         body: JSON.stringify({
           input: {
-            prompt: `Опиши объект/товар на этом изображении для использования как референс при AI-генерации изображений. 
-Укажи: что за предмет, цвет, материал, бренд если виден, стиль съёмки. 
-Намерение пользователя: "${userIntent}". 
-Ответь одним абзацем на русском.`,
+            prompt: `You are a product identification expert. Look at this image carefully.
+
+Describe the EXACT product/object shown:
+1. What is the specific product? (e.g. sneakers, kettle, speaker, phone)
+2. Brand name if visible
+3. Color, material, shape
+4. Photography style and background
+
+User's intent: "${userIntent}"
+
+Respond in Russian, one concise paragraph. Be PRECISE about the product type.`,
             image: imgUrl,
-            max_tokens: 256,
+            max_tokens: 300,
+            temperature: 0.1,
           },
         }),
       }
     );
 
-    if (!createRes.ok) throw new Error(`Gemini Replicate error: ${createRes.status}`);
+    if (!createRes.ok) {
+      const errText = await createRes.text();
+      console.error(`[VisionAnalyzer] Llama Vision error for image ${i + 1}: ${createRes.status} — ${errText.slice(0, 200)}`);
+      imageDescriptions.push(`Изображение ${i + 1} (описание недоступно)`);
+      continue;
+    }
 
     let result = await createRes.json();
     while (result.status !== "succeeded" && result.status !== "failed") {
@@ -168,15 +178,17 @@ async function analyzeWithGeminiFlash(
     }
 
     if (result.status === "failed") {
+      console.error(`[VisionAnalyzer] Image ${i + 1} failed:`, result.error);
       imageDescriptions.push(`Изображение ${i + 1} (описание недоступно)`);
     } else {
       const output = Array.isArray(result.output) ? result.output.join("") : String(result.output || "");
+      console.log(`[VisionAnalyzer] Image ${i + 1} description: "${output.trim().slice(0, 120)}"`);
       imageDescriptions.push(output.trim());
     }
   }
 
   const combinedSummary = buildCombinedSummary(imageDescriptions, userIntent);
-  console.log(`[VisionAnalyzer] Gemini analysis complete: "${combinedSummary.slice(0, 100)}"`);
+  console.log(`[VisionAnalyzer] Llama Vision analysis complete. Summary (first 200 chars): "${combinedSummary.slice(0, 200)}"`);
 
   return {
     descriptions: imageDescriptions,

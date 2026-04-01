@@ -26,20 +26,22 @@ export async function interpretAndExecute(
   // the text-only planning LLM can reason about the visual content.
   let visionContextStr = "";
   if (modelPreferences?.referenceImages && modelPreferences.referenceImages.length > 0) {
+    console.log(`[Pipeline ▶2 VLM] Calling analyzeReferenceImages for ${modelPreferences.referenceImages.length} image(s)...`);
     const visionResult = await analyzeReferenceImages(
       modelPreferences.referenceImages,
       userMessage
     );
     if (visionResult.imageCount > 0) {
-      visionContextStr = `\n\n⚠️ ВИЗУАЛЬНЫЙ КОНТЕКСТ (загруженные референсы):
-${visionResult.combinedSummary}
-
-Инструкция: Используй эти описания при составлении промптов для генерации изображений. Описывай объекты конкретно.`;
+      visionContextStr = `\n\n⚠️ ВИЗУАЛЬНЫЙ КОНТЕКСТ (загруженные референсы):\n${visionResult.combinedSummary}\n\nИнструкция: Используй эти описания при составлении промптов для генерации изображений. Описывай объекты конкретно.`;
+      console.log(`[Pipeline ▶2 VLM] Vision analysis DONE. Summary (first 200 chars): ${visionResult.combinedSummary.slice(0, 200)}`);
     }
   }
 
+  const systemContent = SYSTEM_PROMPT + contextInfo + visionContextStr;
+  console.log(`[Pipeline ▶3 LLM] System context length: ${systemContent.length} chars, has vision context: ${visionContextStr.length > 0}`);
+
   const messages: ChatMessage[] = [
-    { role: "system", content: SYSTEM_PROMPT + contextInfo + visionContextStr },
+    { role: "system", content: systemContent },
     ...(conversationHistory || []),
     { role: "user", content: userMessage },
   ];
@@ -99,6 +101,7 @@ ${visionResult.combinedSummary}
         }
         if (modelPreferences?.referenceImages && modelPreferences.referenceImages.length > 0) {
           step.parameters.referenceImages = modelPreferences.referenceImages;
+          console.log(`[Pipeline ▶4 Orchestrator] Injecting ${modelPreferences.referenceImages.length} referenceImages into generate_image step`);
         }
       }
 
