@@ -84,40 +84,84 @@ export async function executeAction(
       const style = (params.style as string) || "photo";
 
       // Build an English prompt for the image model
-      const imagePrompt = await callLLM([
-        {
-          role: "system",
-          content: `You are an expert prompt engineer for AI image generation (Flux model).
+      const hasReferenceDescriptions = subject.includes('ТОЧНЫЕ ОПИСАНИЯ ТОВАРОВ');
+      const referenceImages = (params.referenceImages as string[] | undefined);
+      const hasActualRefs = referenceImages && referenceImages.length > 0;
+
+      let imagePrompt: string;
+
+      if (hasActualRefs && hasReferenceDescriptions) {
+        // Reference-based generation: use Google's recommended pattern
+        // [Reference Images] + [Relationship Instruction] + [New Scenario]
+        imagePrompt = await callLLM([
+          {
+            role: "system",
+            content: `You write prompts for AI image generation that uses attached reference product photos.
+
+CRITICAL RULES:
+- Write in ENGLISH only
+- The user has attached ${referenceImages.length} reference product photos
+- The model CAN SEE the attached photos — you must tell it to USE them
+- Start the prompt with: "Using the attached reference images as the exact products to include:"
+- Then describe the COMPOSITION/SCENE: how to arrange these exact products together
+- Do NOT describe individual products in detail (the model sees the photos)
+- Focus on: arrangement, lighting, background, angles, mood
+- Style: premium commercial ${style} photography, magazine-quality product hero shot
+- Background: soft gradient (light gray to white) or elegant surface
+- Lighting: professional studio lighting with soft shadows and subtle reflections
+- ALWAYS end with: "no text, no letters, no words, no logos, no watermarks"
+- Keep it under 80 words
+- Return ONLY the prompt text, no quotes, no "Here is the prompt:" prefix`,
+          },
+          {
+            role: "user",
+            content: `Create a composition prompt for ${referenceImages.length} attached product photos. ${subject}`,
+          },
+        ]);
+      } else {
+        // Standard generation without reference photos
+        imagePrompt = await callLLM([
+          {
+            role: "system",
+            content: `You are an expert prompt engineer for AI image generation.
 Convert the user's request into a detailed English prompt for image generation.
 
 RULES:
 - Write in ENGLISH only
 - Include style keywords: ${style}, high quality, commercial
-- For photo style: "professional product photography, studio lighting"
+- For photo style: "professional product photography, studio lighting, clean white background"
 - For illustration: "modern digital illustration, flat design"
 - For 3d: "3D render, isometric, soft shadows"
 - For gradient: "abstract gradient background, vibrant colors"
-- ALWAYS include: "no text, no letters, no words, no logos, no watermarks, no graphics, no UI elements"
+- ALWAYS include: "no text, no letters, no words, no logos, no watermarks"
 - Keep it under 50 words
-- Return ONLY the prompt text`,
-        },
-        { role: "user", content: `Generate prompt for: ${subject}, style: ${style}` },
-      ]);
+- Return ONLY the prompt text, no quotes, no "Here is the prompt:" prefix`,
+          },
+          { role: "user", content: `Generate prompt for: ${subject}, style: ${style}` },
+        ]);
+      }
+
+      // Clean up common LLM wrapper artifacts
+      let cleanPrompt = imagePrompt.trim();
+      cleanPrompt = cleanPrompt.replace(/^["']|["']$/g, ''); // strip surrounding quotes
+      cleanPrompt = cleanPrompt.replace(/^(Here is the prompt:?\s*)/i, ''); // strip wrapper
+      cleanPrompt = cleanPrompt.replace(/^["']|["']$/g, ''); // strip quotes again after wrapper removal
+      cleanPrompt = cleanPrompt.trim();
 
       // Call AI provider (use specified model or default to flux-schnell)
       const selectedModel = (params.model as string) || "flux-schnell";
-      const referenceImages = (params.referenceImages as string[] | undefined);
       const { getProvider: getAIProvider } = await import("@/lib/ai-providers");
       const imageProvider = getAIProvider(selectedModel);
 
-      console.log(`[Pipeline ▶5 executeAction] generate_image — model: ${selectedModel}, prompt: "${imagePrompt.trim().slice(0, 80)}...", referenceImages: ${referenceImages ? referenceImages.length : 0}`);
+      console.log(`[Pipeline ▶5 executeAction] generate_image — model: ${selectedModel}, hasRefImages: ${hasActualRefs ? referenceImages.length : 0}`);
+      console.log(`[Pipeline ▶5 executeAction] FULL PROMPT: "${cleanPrompt}"`);
 
       try {
         const aiResult = await imageProvider.generate({
-          prompt: imagePrompt.trim(),
+          prompt: cleanPrompt,
           type: "image",
           model: selectedModel,
-          referenceImages: referenceImages && referenceImages.length > 0 ? referenceImages : undefined,
+          referenceImages: hasActualRefs ? referenceImages : undefined,
         });
 
         return {
