@@ -614,12 +614,62 @@ export function Canvas({ stageRef }: CanvasProps) {
 
     /* ─── Layer Interactions ──────────────────────────── */
 
+    /**
+     * Check if a layer click should be ignored because it's outside
+     * a clipped parent (frame or artboard) bounds.
+     *
+     * Uses the STORE data (not Konva DOM) to reliably determine
+     * whether the pointer in canvas-space falls inside the clipping container.
+     */
+    const isClickOutsideClipBounds = useCallback((layerId: string, stagePointer: { x: number; y: number } | null): boolean => {
+        if (!stagePointer) return false;
+
+        // Convert screen pointer to canvas coordinates
+        const canvasX = (stagePointer.x - stageX) / zoom;
+        const canvasY = (stagePointer.y - stageY) / zoom;
+
+        // 1. Check ARTBOARD clip
+        if (artboardProps.clipContent) {
+            if (canvasX < 0 || canvasX > canvasWidth || canvasY < 0 || canvasY > canvasHeight) {
+                return true;
+            }
+        }
+
+        // 2. Check if the layer is a child of a FRAME with clipContent
+        const parentFrame = layers.find(
+            l => l.type === 'frame' && (l as FrameLayer).childIds.includes(layerId)
+        ) as FrameLayer | undefined;
+
+        if (parentFrame && parentFrame.clipContent) {
+            // Check if click point is inside the frame's rectangle
+            if (
+                canvasX < parentFrame.x ||
+                canvasX > parentFrame.x + parentFrame.width ||
+                canvasY < parentFrame.y ||
+                canvasY > parentFrame.y + parentFrame.height
+            ) {
+                return true;
+            }
+        }
+
+        return false;
+    }, [layers, artboardProps.clipContent, canvasWidth, canvasHeight, stageX, stageY, zoom]);
+
     const handleLayerSelect = useCallback((e: Konva.KonvaEventObject<MouseEvent>) => {
-        // Stop propagation so stage click doesn't deselect
-        e.cancelBubble = true;
 
         let id = e.target.id();
         if (!id) return;
+
+        // Block selection if the click landed outside a clipped parent's bounds
+        const stage = e.target.getStage();
+        const pointer = stage?.getPointerPosition() ?? null;
+        if (isClickOutsideClipBounds(id, pointer)) {
+            selectLayer(null);
+            return;
+        }
+
+        // Stop propagation so stage click doesn't deselect
+        e.cancelBubble = true;
 
         const isMulti = e.evt?.shiftKey;
         const isDeepSelect = e.evt?.metaKey || e.evt?.ctrlKey || (e.evt as any)?._isDeepSelect;
@@ -646,12 +696,21 @@ export function Canvas({ stageRef }: CanvasProps) {
             // So if we click safely, yes, select just this one.
             selectLayer(id);
         }
-    }, [toggleSelection, selectLayer, layers]);
+    }, [toggleSelection, selectLayer, layers, isClickOutsideClipBounds]);
 
     const handleLayerDragStart = useCallback((e: Konva.KonvaEventObject<DragEvent>) => {
         setStageDraggable(false);
         isDragging.current = true;
         let id = e.target.id();
+
+        // Block drag if the grab point is outside a clipped parent's bounds
+        const stage = e.target.getStage();
+        const pointer = stage?.getPointerPosition() ?? null;
+        if (isClickOutsideClipBounds(id, pointer)) {
+            e.target.stopDrag();
+            selectLayer(null);
+            return;
+        }
 
         const isDeepSelect = e.evt?.metaKey || e.evt?.ctrlKey;
 
