@@ -173,6 +173,7 @@ export const projectRouter = createTRPCRouter({
           canvasWidth: z.number().optional(),
           canvasHeight: z.number().optional(),
         }),
+        thumbnail: z.string().nullable().optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -180,6 +181,7 @@ export const projectRouter = createTRPCRouter({
         where: { id: input.id },
         data: {
           canvasState: input.canvasState,
+          ...(input.thumbnail !== undefined && { thumbnail: input.thumbnail }),
           status: "IN_PROGRESS",
         },
       });

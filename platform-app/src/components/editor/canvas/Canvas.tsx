@@ -69,6 +69,7 @@ function CanvasLayer({
         width: layer.width,
         height: layer.height,
         rotation: layer.rotation,
+        opacity: layer.opacity ?? 1,
         draggable: !layer.locked && !isEditing && !isAutoLayoutChild,
         onClick: onSelect,
         onTap: onSelect,
@@ -95,9 +96,9 @@ function CanvasLayer({
                 <Rect
                     ref={shapeRef as React.RefObject<Konva.Rect | null>}
                     {...commonProps}
-                    fill={layer.fill}
-                    stroke={layer.stroke || undefined}
-                    strokeWidth={layer.strokeWidth}
+                    fill={layer.fillEnabled === false ? "transparent" : layer.fill}
+                    stroke={layer.strokeEnabled === false ? undefined : (layer.stroke || undefined)}
+                    strokeWidth={layer.strokeEnabled === false ? 0 : layer.strokeWidth}
                     cornerRadius={layer.cornerRadius}
                 />
             )}
@@ -111,7 +112,7 @@ function CanvasLayer({
                     fontSize={layer.fontSize}
                     fontFamily={layer.fontFamily}
                     fontStyle={layer.fontWeight === "700" || layer.fontWeight === "bold" ? "bold" : layer.fontWeight === "600" ? "600" : "normal"}
-                    fill={layer.fill}
+                    fill={layer.fillEnabled === false ? "transparent" : layer.fill}
                     align={layer.align}
                     letterSpacing={layer.letterSpacing}
                     lineHeight={layer.lineHeight}
@@ -241,7 +242,7 @@ function BadgeLayerRenderer({
             <Rect
                 width={layer.width}
                 height={layer.height}
-                fill={layer.fill}
+                fill={layer.fillEnabled === false ? "transparent" : layer.fill}
                 cornerRadius={radius}
             />
             <Text
@@ -431,9 +432,9 @@ function FrameLayerRenderer({
                     id={layer.id}
                     width={layer.width}
                     height={layer.height}
-                    fill={layer.fill || undefined}
-                    stroke={isHighlighted ? FRAME_HIGHLIGHT_STROKE : (layer.stroke || undefined)}
-                    strokeWidth={isHighlighted ? FRAME_HIGHLIGHT_WIDTH : layer.strokeWidth}
+                    fill={layer.fillEnabled === false ? undefined : (layer.fill || undefined)}
+                    stroke={isHighlighted ? FRAME_HIGHLIGHT_STROKE : (layer.strokeEnabled === false ? undefined : (layer.stroke || undefined))}
+                    strokeWidth={isHighlighted ? FRAME_HIGHLIGHT_WIDTH : (layer.strokeEnabled === false ? 0 : layer.strokeWidth)}
                     cornerRadius={layer.cornerRadius}
                 />
                 {childLayers.map((child) => {

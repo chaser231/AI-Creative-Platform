@@ -74,10 +74,19 @@ export function ProjectCard({ project, onUpdate, onDelete, onFavorite, isFavorit
             >
                 {/* Thumbnail */}
                 <div className="relative aspect-[4/3] bg-bg-tertiary flex items-center justify-center overflow-hidden rounded-t-[var(--radius-xl)]">
-                    <FolderKanban
-                        size={40}
-                        className="text-text-tertiary/50 group-hover:scale-110 transition-transform duration-[var(--transition-slow)]"
-                    />
+                    {project.thumbnail ? (
+                        <img
+                            src={project.thumbnail}
+                            alt={project.name}
+                            className="w-full h-full object-cover"
+                            draggable={false}
+                        />
+                    ) : (
+                        <FolderKanban
+                            size={40}
+                            className="text-text-tertiary/50 group-hover:scale-110 transition-transform duration-[var(--transition-slow)]"
+                        />
+                    )}
                     <div className="absolute top-2.5 right-2.5">
                         <Badge status={project.status} />
                     </div>

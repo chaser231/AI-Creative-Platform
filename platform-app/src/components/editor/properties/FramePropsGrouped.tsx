@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { LayoutDashboard, Paintbrush, Scissors } from "lucide-react";
+import { LayoutDashboard, Paintbrush, Scissors, Eye, EyeOff } from "lucide-react";
 import { Popover, PopoverButton } from "@/components/ui/Popover";
 import type { FrameLayer } from "@/types";
 import { ColorInput } from "./ColorInput";
@@ -124,14 +124,66 @@ export function FramePropsGrouped({
                 />
                 <Popover isOpen={activePopover === "style"} onClose={() => setActivePopover(null)}>
                     <div className="space-y-3">
+                        {/* Opacity */}
+                        <div>
+                            <label className="text-[9px] text-text-tertiary uppercase tracking-wider font-medium mb-1.5 block">Непрозрачность</label>
+                            <div className="flex items-center gap-1.5">
+                                <input
+                                    type="range"
+                                    min={0}
+                                    max={100}
+                                    value={Math.round((layer.opacity ?? 1) * 100)}
+                                    onChange={(e) => onChange({ opacity: Number(e.target.value) / 100 })}
+                                    className="flex-1 h-1.5 accent-accent-primary cursor-pointer"
+                                />
+                                <input
+                                    type="number"
+                                    min={0}
+                                    max={100}
+                                    value={Math.round((layer.opacity ?? 1) * 100)}
+                                    onChange={(e) => {
+                                        const v = Math.max(0, Math.min(100, Number(e.target.value)));
+                                        onChange({ opacity: v / 100 });
+                                    }}
+                                    className="w-12 h-7 px-1 rounded-[var(--radius-sm)] border border-border-primary bg-bg-secondary text-[10px] text-text-primary text-center focus:outline-none focus:ring-1 focus:ring-border-focus"
+                                />
+                                <span className="text-[10px] text-text-tertiary">%</span>
+                            </div>
+                        </div>
+                        <div className="w-full h-px bg-border-primary" />
+                        {/* Fill */}
                         <div>
                             <label className="text-[9px] text-text-tertiary uppercase tracking-wider font-medium mb-1.5 block">Заливка</label>
-                            <ColorInput value={layer.fill} onChange={(v) => onChange({ fill: v })} />
+                            <div className="flex items-center gap-1.5">
+                                <div className={`transition-opacity ${layer.fillEnabled !== false ? '' : 'opacity-30 pointer-events-none'}`}>
+                                    <ColorInput value={layer.fill} onChange={(v) => onChange({ fill: v })} />
+                                </div>
+                                <button
+                                    onClick={() => onChange({ fillEnabled: !(layer.fillEnabled !== false) })}
+                                    className={`p-1 rounded-[var(--radius-sm)] transition-colors cursor-pointer ${layer.fillEnabled !== false ? 'text-text-secondary hover:text-text-primary' : 'text-text-tertiary/40 hover:text-text-tertiary'}`}
+                                    title={layer.fillEnabled !== false ? "Скрыть заливку" : "Показать заливку"}
+                                >
+                                    {layer.fillEnabled !== false ? <Eye size={12} /> : <EyeOff size={12} />}
+                                </button>
+                            </div>
                         </div>
+                        {/* Stroke */}
                         <div>
                             <label className="text-[9px] text-text-tertiary uppercase tracking-wider font-medium mb-1.5 block">Обводка</label>
-                            <ColorInput value={layer.stroke || "#000000"} onChange={(v) => onChange({ stroke: v })} />
+                            <div className="flex items-center gap-1.5">
+                                <div className={`transition-opacity ${layer.strokeEnabled !== false ? '' : 'opacity-30 pointer-events-none'}`}>
+                                    <ColorInput value={layer.stroke || "#000000"} onChange={(v) => onChange({ stroke: v })} />
+                                </div>
+                                <button
+                                    onClick={() => onChange({ strokeEnabled: !(layer.strokeEnabled !== false) })}
+                                    className={`p-1 rounded-[var(--radius-sm)] transition-colors cursor-pointer ${layer.strokeEnabled !== false ? 'text-text-secondary hover:text-text-primary' : 'text-text-tertiary/40 hover:text-text-tertiary'}`}
+                                    title={layer.strokeEnabled !== false ? "Скрыть обводку" : "Показать обводку"}
+                                >
+                                    {layer.strokeEnabled !== false ? <Eye size={12} /> : <EyeOff size={12} />}
+                                </button>
+                            </div>
                         </div>
+                        {/* Corner Radius */}
                         <div>
                             <label className="text-[9px] text-text-tertiary uppercase tracking-wider font-medium mb-1.5 block">Радиус</label>
                             <input type="number" min={0} value={layer.cornerRadius} onChange={(e) => onChange({ cornerRadius: Math.max(0, Number(e.target.value)) })}

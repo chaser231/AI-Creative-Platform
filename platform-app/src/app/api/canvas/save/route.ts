@@ -15,7 +15,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const { projectId, canvasState } = await req.json();
+    const { projectId, canvasState, thumbnail } = await req.json();
 
     if (!projectId || !canvasState) {
       return NextResponse.json({ error: "Missing data" }, { status: 400 });
@@ -30,6 +30,7 @@ export async function POST(req: Request) {
       where: { id: projectId },
       data: {
         canvasState,
+        ...(thumbnail !== undefined && { thumbnail }),
         status: "IN_PROGRESS",
         updatedAt: new Date(),
       },

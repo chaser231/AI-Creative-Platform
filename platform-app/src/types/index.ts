@@ -82,6 +82,7 @@ export interface BaseComponentProps {
     rotation: number;
     visible: boolean;
     locked: boolean;
+    opacity?: number; // 0–1, default 1
     slotId?: TemplateSlotRole;
     constraints?: {
         horizontal: "left" | "right" | "center" | "stretch" | "scale";
@@ -100,6 +101,7 @@ export interface TextComponentProps extends BaseComponentProps {
     fontFamily: string;
     fontWeight: string;
     fill: string;
+    fillEnabled?: boolean; // default true
     align: "left" | "center" | "right";
     letterSpacing: number;
     lineHeight: number;
@@ -112,7 +114,9 @@ export interface TextComponentProps extends BaseComponentProps {
 export interface RectangleComponentProps extends BaseComponentProps {
     type: "rectangle";
     fill: string;
+    fillEnabled?: boolean; // default true
     stroke: string;
+    strokeEnabled?: boolean; // default true
     strokeWidth: number;
     cornerRadius: number;
 }
@@ -137,6 +141,7 @@ export interface BadgeComponentProps extends BaseComponentProps {
     label: string;
     shape: "pill" | "rectangle" | "circle";
     fill: string;
+    fillEnabled?: boolean; // default true
     textColor: string;
     fontSize: number;
 }
@@ -144,7 +149,9 @@ export interface BadgeComponentProps extends BaseComponentProps {
 export interface FrameComponentProps extends BaseComponentProps {
     type: "frame";
     fill: string;
+    fillEnabled?: boolean; // default true
     stroke: string;
+    strokeEnabled?: boolean; // default true
     strokeWidth: number;
     cornerRadius: number;
     clipContent: boolean;
@@ -265,6 +272,7 @@ export interface BaseLayer {
     rotation: number;
     visible: boolean;
     locked: boolean;
+    opacity?: number; // 0–1, default 1
     masterId?: string; // link to master component
     constraints?: LayerConstraints; // behaviour when parent frame resizes
     slotId?: TemplateSlotRole; // Smart Resize slot
@@ -281,6 +289,7 @@ export interface TextLayer extends BaseLayer {
     fontFamily: string;
     fontWeight: string;
     fill: string;
+    fillEnabled?: boolean; // default true
     align: "left" | "center" | "right";
     letterSpacing: number;
     lineHeight: number;
@@ -293,7 +302,9 @@ export interface TextLayer extends BaseLayer {
 export interface RectangleLayer extends BaseLayer {
     type: "rectangle";
     fill: string;
+    fillEnabled?: boolean; // default true
     stroke: string;
+    strokeEnabled?: boolean; // default true
     strokeWidth: number;
     cornerRadius: number;
 }
@@ -309,6 +320,7 @@ export interface BadgeLayer extends BaseLayer {
     label: string;
     shape: "pill" | "rectangle" | "circle";
     fill: string;
+    fillEnabled?: boolean; // default true
     textColor: string;
     fontSize: number;
 }
@@ -316,7 +328,9 @@ export interface BadgeLayer extends BaseLayer {
 export interface FrameLayer extends BaseLayer {
     type: "frame";
     fill: string;
+    fillEnabled?: boolean; // default true
     stroke: string;
+    strokeEnabled?: boolean; // default true
     strokeWidth: number;
     cornerRadius: number;
     clipContent: boolean;

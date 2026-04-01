@@ -9,6 +9,8 @@ import {
     AlignCenter,
     AlignRight,
     Paintbrush,
+    Eye,
+    EyeOff,
 } from "lucide-react";
 import { Popover, PopoverButton } from "@/components/ui/Popover";
 import { PREINSTALLED_FONTS, saveUserFont, getUserFonts } from "@/lib/customFonts";
@@ -31,6 +33,35 @@ export function TextPropsGrouped({
     const [activePopover, setActivePopover] = useState<string | null>(null);
     const [availableFonts, setAvailableFonts] = useState<string[]>(SYSTEM_FONTS);
     const [isUploadingFont, setIsUploadingFont] = useState(false);
+    const [availableWeights, setAvailableWeights] = useState<string[]>([]);
+
+    useEffect(() => {
+        if (!activePopover) return;
+        
+        let weights = new Set<string>();
+        let isVariable = false;
+
+        document.fonts.forEach((font) => {
+            const familyName = font.family.replace(/['"]/g, '');
+            if (familyName === layer.fontFamily) {
+                if (font.weight.includes(" ")) {
+                    isVariable = true; // "100 900" variable font supports all
+                } else {
+                    let w = font.weight;
+                    if (w === 'normal') w = '400';
+                    if (w === 'bold') w = '700';
+                    weights.add(w);
+                }
+            }
+        });
+
+        if (isVariable || weights.size === 0) {
+            // Either a variable font, or a system font not loaded via FontFace API
+            setAvailableWeights(["100", "200", "300", "400", "500", "600", "700", "800", "900"]);
+        } else {
+            setAvailableWeights(Array.from(weights).sort());
+        }
+    }, [layer.fontFamily, activePopover]);
 
     useEffect(() => {
         const loadFonts = async () => {
@@ -122,15 +153,15 @@ export function TextPropsGrouped({
                                 onChange={(e) => onChange({ fontWeight: e.target.value })}
                                 className="w-full h-8 px-2 rounded-[var(--radius-md)] border border-border-primary bg-bg-secondary text-[11px] text-text-primary cursor-pointer focus:outline-none focus:ring-1 focus:ring-border-focus"
                             >
-                                <option value="100">Thin</option>
-                                <option value="200">ExtraLight</option>
-                                <option value="300">Light</option>
-                                <option value="400">Regular</option>
-                                <option value="500">Medium</option>
-                                <option value="600">SemiBold</option>
-                                <option value="700">Bold</option>
-                                <option value="800">ExtraBold / Heavy</option>
-                                <option value="900">Black</option>
+                                {availableWeights.includes("100") && <option value="100">Thin</option>}
+                                {availableWeights.includes("200") && <option value="200">ExtraLight</option>}
+                                {availableWeights.includes("300") && <option value="300">Light</option>}
+                                {(availableWeights.includes("400") || availableWeights.length === 0) && <option value="400">Regular</option>}
+                                {availableWeights.includes("500") && <option value="500">Medium</option>}
+                                {availableWeights.includes("600") && <option value="600">SemiBold</option>}
+                                {(availableWeights.includes("700") || availableWeights.length === 0) && <option value="700">Bold</option>}
+                                {availableWeights.includes("800") && <option value="800">ExtraBold / Heavy</option>}
+                                {availableWeights.includes("900") && <option value="900">Black</option>}
                             </select>
                         </div>
                     </div>
@@ -249,9 +280,48 @@ export function TextPropsGrouped({
                 />
                 <Popover isOpen={activePopover === "style"} onClose={() => setActivePopover(null)}>
                     <div className="space-y-4">
+                        {/* Opacity */}
+                        <div>
+                            <label className="text-[9px] text-text-tertiary uppercase tracking-wider font-medium mb-1.5 block">Непрозрачность</label>
+                            <div className="flex items-center gap-1.5">
+                                <input
+                                    type="range"
+                                    min={0}
+                                    max={100}
+                                    value={Math.round((layer.opacity ?? 1) * 100)}
+                                    onChange={(e) => onChange({ opacity: Number(e.target.value) / 100 })}
+                                    className="flex-1 h-1.5 accent-accent-primary cursor-pointer"
+                                />
+                                <input
+                                    type="number"
+                                    min={0}
+                                    max={100}
+                                    value={Math.round((layer.opacity ?? 1) * 100)}
+                                    onChange={(e) => {
+                                        const v = Math.max(0, Math.min(100, Number(e.target.value)));
+                                        onChange({ opacity: v / 100 });
+                                    }}
+                                    className="w-12 h-7 px-1 rounded-[var(--radius-sm)] border border-border-primary bg-bg-secondary text-[10px] text-text-primary text-center focus:outline-none focus:ring-1 focus:ring-border-focus"
+                                />
+                                <span className="text-[10px] text-text-tertiary">%</span>
+                            </div>
+                        </div>
+                        <div className="w-full h-px bg-border-primary" />
+                        {/* Fill */}
                         <div>
                             <label className="text-[9px] text-text-tertiary uppercase tracking-wider font-medium mb-1.5 block">Цвет текста</label>
-                            <ColorInput value={layer.fill} onChange={(v) => onChange({ fill: v })} />
+                            <div className="flex items-center gap-1.5">
+                                <div className={`transition-opacity ${layer.fillEnabled !== false ? '' : 'opacity-30 pointer-events-none'}`}>
+                                    <ColorInput value={layer.fill} onChange={(v) => onChange({ fill: v })} />
+                                </div>
+                                <button
+                                    onClick={() => onChange({ fillEnabled: !(layer.fillEnabled !== false) })}
+                                    className={`p-1 rounded-[var(--radius-sm)] transition-colors cursor-pointer ${layer.fillEnabled !== false ? 'text-text-secondary hover:text-text-primary' : 'text-text-tertiary/40 hover:text-text-tertiary'}`}
+                                    title={layer.fillEnabled !== false ? "Скрыть цвет" : "Показать цвет"}
+                                >
+                                    {layer.fillEnabled !== false ? <Eye size={12} /> : <EyeOff size={12} />}
+                                </button>
+                            </div>
                         </div>
                         <div>
                             <label className="text-[9px] text-text-tertiary uppercase tracking-wider font-medium mb-1.5 block">Выравнивание</label>

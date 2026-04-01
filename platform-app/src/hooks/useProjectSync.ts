@@ -1,6 +1,8 @@
 /**
  * useProjectSync Hook
  *
+ * Also generates a thumbnail from the Konva stage on save.
+ *
  * Syncs project data between Zustand (in-memory) and backend (tRPC/Prisma).
  * Handles:
  * - Loading project list from backend on mount
@@ -15,10 +17,11 @@
 
 "use client";
 
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useRef, useCallback, type RefObject } from "react";
 import { trpc } from "@/lib/trpc";
 import { useCanvasStore } from "@/store/canvasStore";
 import { useWorkspace } from "@/providers/WorkspaceProvider";
+import type Konva from "konva";
 
 // Default workspace ID — will be replaced by WorkspaceProvider later
 // For now, we use a hardcoded fallback that gets resolved on first load
@@ -65,14 +68,20 @@ export function useProjectListSync(onlyMine?: boolean) {
  * @param projectId - CUID of the project
  * @param enabled   - Set to true only AFTER the initial canvas load completes.
  *                    This prevents the clear-on-mount from triggering an empty save.
+ * @param stageRef  - Optional Konva.Stage ref for thumbnail capture.
  */
-export function useCanvasAutoSave(projectId: string, enabled: boolean = true) {
+export function useCanvasAutoSave(
+  projectId: string,
+  enabled: boolean = true,
+  stageRef?: RefObject<Konva.Stage | null>,
+) {
   const saveStateMutation = trpc.project.saveState.useMutation();
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
   const lastSavedRef = useRef<string>("");
   const enabledRef = useRef(enabled);
   const hasEverLoadedRef = useRef(false);
   const isMigratingRef = useRef(false);
+  const saveCountRef = useRef(0);
   enabledRef.current = enabled;
 
   // Track when the first successful load happens
@@ -83,6 +92,48 @@ export function useCanvasAutoSave(projectId: string, enabled: boolean = true) {
       return () => clearTimeout(t);
     }
   }, [enabled]);
+
+  /** Capture a high-res JPEG thumbnail of just the artboard from the Konva stage */
+  const captureThumbnail = useCallback((): string | null => {
+    try {
+      const stage = stageRef?.current;
+      if (!stage) return null;
+
+      const store = useCanvasStore.getState();
+      const w = store.canvasWidth;
+      const h = store.canvasHeight;
+
+      // Un-zoom and un-pan stage temporarily
+      const oldScaleX = stage.scaleX();
+      const oldScaleY = stage.scaleY();
+      const oldX = stage.x();
+      const oldY = stage.y();
+
+      stage.scale({ x: 1, y: 1 });
+      stage.position({ x: 0, y: 0 });
+      stage.draw(); // Synchronous draw to apply transform safely
+
+      // Capture exact artboard coordinates at higher resolution
+      const dataUrl = stage.toDataURL({
+        x: 0,
+        y: 0,
+        width: w,
+        height: h,
+        pixelRatio: 0.5, // Higher quality preview
+        mimeType: "image/jpeg",
+        quality: 0.8
+      });
+
+      // Restore zoom/pan immediately
+      stage.scale({ x: oldScaleX, y: oldScaleY });
+      stage.position({ x: oldX, y: oldY });
+      stage.draw();
+
+      return dataUrl;
+    } catch {
+      return null;
+    }
+  }, [stageRef]);
 
   const saveNow = useCallback(async () => {
     // Guard: don't save until initial load is complete
@@ -151,15 +202,19 @@ export function useCanvasAutoSave(projectId: string, enabled: boolean = true) {
     if (serialized === lastSavedRef.current) return;
     lastSavedRef.current = serialized;
 
+    // Capture thumbnail every 3rd save to reduce overhead
+    saveCountRef.current += 1;
+    const thumbnail = (saveCountRef.current % 3 === 1) ? captureThumbnail() : undefined;
+
     saveStateMutation.mutate(
-      { id: projectId, canvasState },
+      { id: projectId, canvasState, thumbnail: thumbnail ?? undefined },
       {
       onError: (err: { message: string }) => {
           console.error("Auto-save failed:", err.message);
         },
       }
     );
-  }, [projectId, saveStateMutation]);
+  }, [projectId, saveStateMutation, captureThumbnail]);
 
   const getUnsavedState = useCallback(() => {
     return !!timeoutRef.current || isMigratingRef.current || saveStateMutation.isPending;
@@ -187,8 +242,11 @@ export function useCanvasAutoSave(projectId: string, enabled: boolean = true) {
     if (serialized === lastSavedRef.current) return;
     lastSavedRef.current = serialized;
 
+    // Always capture thumbnail on exit
+    const thumbnail = captureThumbnail();
+
     // Use sendBeacon for reliable delivery during navigation/unload
-    const payload = JSON.stringify({ projectId, canvasState });
+    const payload = JSON.stringify({ projectId, canvasState, thumbnail });
     const blob = new Blob([payload], { type: "application/json" });
     
     let sent = false;
@@ -206,7 +264,7 @@ export function useCanvasAutoSave(projectId: string, enabled: boolean = true) {
         body: payload,
       }).catch(() => { /* best-effort */ });
     }
-  }, [projectId]);
+  }, [projectId, captureThumbnail]);
 
   // Subscribe to canvas store changes and debounce saves
   useEffect(() => {
@@ -275,7 +333,10 @@ export function useCanvasAutoSave(projectId: string, enabled: boolean = true) {
       const serialized = JSON.stringify(canvasState);
       if (serialized === lastSavedRef.current) return;
 
-      const payload = JSON.stringify({ projectId, canvasState });
+      // Capture thumbnail on page unload
+      const thumbnail = captureThumbnail();
+
+      const payload = JSON.stringify({ projectId, canvasState, thumbnail });
       const blob = new Blob([payload], { type: "application/json" });
 
       // sendBeacon has a ~64KB limit; fallback to fetch+keepalive for larger payloads
