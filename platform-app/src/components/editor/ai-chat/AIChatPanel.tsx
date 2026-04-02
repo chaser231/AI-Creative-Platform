@@ -209,6 +209,15 @@ export function AIChatPanel({ open, onClose, messages, onAddMessages, projectId 
                                 fallbackActions: step.result.fallbackActions,
                                 templateTopic: trimmed,
                             });
+                        } else if (step.result.type === "preset_choices" && step.result.presetChoices) {
+                            newMessages.push({
+                                id: `presets-${Date.now()}`,
+                                role: "assistant",
+                                type: "preset_choices",
+                                content: step.result.content,
+                                timestamp: Date.now(),
+                                presetChoices: step.result.presetChoices,
+                            });
                         } else if (step.result.type === "canvas_action") {
                             // Check if Market template with text variants
                             const variants = (step.result.metadata as any)?.textVariants;
@@ -499,6 +508,17 @@ export function AIChatPanel({ open, onClose, messages, onAddMessages, projectId 
                             onTemplateSelect={handleTemplateSelect}
                             onFallbackAction={handleFallbackAction}
                             onVariantSelect={handleVariantSelect}
+                            onPresetSelect={(presetId, promptSuffix) => {
+                                // Store the selected preset's prompt suffix for the next generation
+                                // Send a follow-up message indicating the selection
+                                const presetName = msg.presetChoices?.find(p => p.id === presetId)?.name || "стиль";
+                                setInput(`Используй стиль: ${presetName}`);
+                                // Auto-trigger with the style info stored
+                                setTimeout(() => {
+                                    const event = new CustomEvent("preset-selected", { detail: { presetId, promptSuffix } });
+                                    window.dispatchEvent(event);
+                                }, 50);
+                            }}
                             isThinking={isThinking}
                         />
                     ))

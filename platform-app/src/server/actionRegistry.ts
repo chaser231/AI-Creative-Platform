@@ -43,7 +43,7 @@ export interface FallbackAction {
 
 export interface ActionResult {
   success: boolean;
-  type: "text" | "image" | "data" | "error" | "canvas_action" | "template_choices" | "fallback_actions";
+  type: "text" | "image" | "data" | "error" | "canvas_action" | "template_choices" | "fallback_actions" | "preset_choices";
   content: string;
   metadata?: Record<string, unknown>;
   /** Instructions for the client-side canvas */
@@ -54,6 +54,13 @@ export interface ActionResult {
     name: string;
     description: string;
     thumbnailUrl?: string;
+  }>;
+  /** Style preset choices for user to select */
+  presetChoices?: Array<{
+    id: string;
+    name: string;
+    description: string;
+    promptSuffix: string;
   }>;
   /** Fallback actions when templates not found */
   fallbackActions?: FallbackAction[];
@@ -139,6 +146,15 @@ export const ACTIONS: ActionDefinition[] = [
       goal: { type: "string", description: "Цель: banner, text, video", enum: ["banner", "text", "video"] },
     },
     required: ["name"],
+  },
+  {
+    id: "search_style_presets",
+    name: "Поиск стилевых пресетов",
+    description: "Ищет стилевые пресеты для генерации изображений в текущем воркспейсе. Вызывай перед generate_image, чтобы предложить пользователю выбор стиля. Если пользователь уже указал стиль — не вызывай.",
+    parameters: {
+      taskType: { type: "string", description: "Тип задачи: product_composition, banner_background, lifestyle, promotional" },
+    },
+    required: [],
   },
 ];
 

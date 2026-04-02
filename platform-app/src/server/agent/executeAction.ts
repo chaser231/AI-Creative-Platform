@@ -576,6 +576,80 @@ RULES:
       };
     }
 
+    case "search_style_presets": {
+      // Search for image style presets in the workspace's AIPreset table
+      const presets = await context.prisma.aIPreset.findMany({
+        where: {
+          workspaceId: context.workspaceId,
+          type: "image",
+          isActive: true,
+        },
+        orderBy: { name: "asc" },
+      });
+
+      // Default presets if none exist in DB
+      const defaultPresets = [
+        {
+          id: "default-lifestyle",
+          name: "📸 Лайфстайл",
+          description: "Реалистичная фотография в современном интерьере с тёплым естественным освещением",
+          promptSuffix: "realistic lifestyle photography, modern interior setting, natural warm lighting, depth of field, 4K resolution",
+        },
+        {
+          id: "default-studio",
+          name: "🏢 Студийная съёмка",
+          description: "Профессиональная студийная съёмка на чистом фоне с мягким светом",
+          promptSuffix: "professional studio photography, clean white/gray background, product hero shot, soft studio lighting, commercial quality",
+        },
+        {
+          id: "default-minimal",
+          name: "🎯 Минимализм",
+          description: "Минималистичная композиция с простым геометрическим фоном и приглушёнными тонами",
+          promptSuffix: "minimalist composition, simple geometric backdrop, muted pastel tones, clean negative space, elegant simplicity",
+        },
+        {
+          id: "default-3d",
+          name: "🎭 3D Рендер",
+          description: "3D-сцена с мягкими тенями и изометрической перспективой",
+          promptSuffix: "3D rendered scene, soft ambient occlusion, isometric perspective, clean shadows, modern 3D design",
+        },
+        {
+          id: "default-gradient",
+          name: "🌈 Градиент",
+          description: "Абстрактный градиентный фон с яркими современными цветами",
+          promptSuffix: "abstract gradient background, vibrant modern colors, soft color transitions, premium feel",
+        },
+        {
+          id: "default-illustration",
+          name: "✏️ Иллюстрация",
+          description: "Современная цифровая иллюстрация с яркими плоскими цветами",
+          promptSuffix: "modern digital illustration, bold flat colors, clean vector style, contemporary design",
+        },
+      ];
+
+      interface PresetConfig {
+        promptSuffix?: string;
+        negativePrompt?: string;
+        defaultModel?: string;
+      }
+
+      const choices = presets.length > 0
+        ? presets.map((p: { id: string; name: string; description: string; config: unknown }) => ({
+            id: p.id,
+            name: p.name,
+            description: p.description,
+            promptSuffix: (p.config as PresetConfig)?.promptSuffix || "",
+          }))
+        : defaultPresets;
+
+      return {
+        success: true,
+        type: "preset_choices" as const,
+        content: `Доступно ${choices.length} стилевых пресетов. Выберите стиль генерации:`,
+        presetChoices: choices,
+      };
+    }
+
     default:
       return { success: false, type: "error", content: `Неизвестное действие: ${actionId}` };
   }

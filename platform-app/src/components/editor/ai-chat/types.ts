@@ -1,7 +1,7 @@
 export interface AIChatMessage {
     id: string;
     role: "user" | "assistant";
-    type: "text" | "image" | "outpaint" | "plan" | "error" | "template_choices" | "fallback_actions" | "text_variants";
+    type: "text" | "image" | "outpaint" | "plan" | "error" | "template_choices" | "fallback_actions" | "text_variants" | "preset_choices";
     content: string;
     prompt?: string;
     timestamp: number;
@@ -36,4 +36,11 @@ export interface AIChatMessage {
     activeVariantIndex?: number;
     /** Reference images attached by user (base64 strings) */
     attachments?: string[];
+    /** Style preset choices (from search_style_presets) */
+    presetChoices?: Array<{
+        id: string;
+        name: string;
+        description: string;
+        promptSuffix: string;
+    }>;
 }

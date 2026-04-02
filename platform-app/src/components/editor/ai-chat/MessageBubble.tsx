@@ -14,6 +14,7 @@ export function MessageBubble({
     onTemplateSelect,
     onFallbackAction,
     onVariantSelect,
+    onPresetSelect,
     isThinking,
 }: {
     msg: AIChatMessage;
@@ -21,6 +22,7 @@ export function MessageBubble({
     onTemplateSelect?: (templateId: string, templateName: string, topic: string) => void;
     onFallbackAction?: (actionId: string, topic: string) => void;
     onVariantSelect?: (msgId: string, variantIndex: number, variant: { title: string; subtitle: string }) => void;
+    onPresetSelect?: (presetId: string, promptSuffix: string) => void;
     isThinking?: boolean;
 }) {
     if (msg.role === "user") {
@@ -274,6 +276,40 @@ export function MessageBubble({
                         >
                             <Copy size={10} />
                         </button>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    // Style preset choices — show preset selection cards
+    if (msg.type === "preset_choices" && msg.presetChoices) {
+        return (
+            <div className="flex items-start gap-2">
+                <div className="w-7 h-7 rounded-full bg-gradient-to-br from-pink-500/20 to-purple-500/20 flex items-center justify-center shrink-0">
+                    <Sparkles size={14} className="text-pink-400" />
+                </div>
+                <div className="flex-1 space-y-2 min-w-0">
+                    <p className="text-xs text-text-secondary">{msg.content}</p>
+                    <div className="space-y-1.5">
+                        {msg.presetChoices.map((preset) => (
+                            <button
+                                key={preset.id}
+                                onClick={() => onPresetSelect?.(preset.id, preset.promptSuffix)}
+                                disabled={isThinking}
+                                className="w-full text-left bg-bg-tertiary/50 hover:bg-pink-500/10 rounded-xl border border-border-primary hover:border-pink-500/30 p-2.5 transition-all cursor-pointer group disabled:opacity-50"
+                            >
+                                <div className="flex items-center gap-2">
+                                    <span className="text-xs font-medium text-text-primary group-hover:text-pink-300">
+                                        {preset.name}
+                                    </span>
+                                    <ChevronRight size={12} className="text-text-tertiary group-hover:text-pink-400 ml-auto shrink-0" />
+                                </div>
+                                {preset.description && (
+                                    <p className="text-[10px] text-text-tertiary mt-0.5 line-clamp-2">{preset.description}</p>
+                                )}
+                            </button>
+                        ))}
                     </div>
                 </div>
             </div>
