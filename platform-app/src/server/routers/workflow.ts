@@ -186,6 +186,8 @@ export const workflowRouter = createTRPCRouter({
         topic: z.string(),
         workspaceId: z.string(),
         selectedImageModel: z.string().optional(),
+        referenceImages: z.array(z.string()).optional(),
+        lastGeneratedImageUrl: z.string().optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -195,6 +197,8 @@ export const workflowRouter = createTRPCRouter({
           templateId: input.templateId,
           topic: input.topic,
           ...(input.selectedImageModel ? { imageModel: input.selectedImageModel } : {}),
+          ...(input.referenceImages ? { referenceImages: input.referenceImages } : {}),
+          ...(input.lastGeneratedImageUrl ? { lastGeneratedImageUrl: input.lastGeneratedImageUrl } : {}),
         },
         {
           userId: ctx.user.id,
