@@ -277,13 +277,17 @@ RULES:
 
       const searchTerms = serviceMap[service] || [service];
 
-      // Search by name, categories, or tags (deduplicated by name)
+      // Search by name, categories, or tags — include official templates from other workspaces
       const templates = await context.prisma.template.findMany({
         where: {
-          workspaceId: context.workspaceId,
-          OR: [
-            { name: { contains: service, mode: "insensitive" } },
-            { categories: { hasSome: searchTerms } },
+          AND: [
+            // Visibility: own workspace + official (cross-workspace)
+            { OR: [{ workspaceId: context.workspaceId }, { isOfficial: true }] },
+            // Content filter: match service name or categories
+            { OR: [
+              { name: { contains: service, mode: "insensitive" } },
+              { categories: { hasSome: searchTerms } },
+            ]},
           ],
         },
         select: {
@@ -403,6 +407,28 @@ RULES:
       const hasSubhead = slots.some(s => s.slotId === "subhead" && s.type === "text");
       const hasPairedTextSlots = hasHeadline && hasSubhead;
 
+      // ─── Clean topic: extract actual product/promo theme ───────
+      // The raw `topic` is often the user's meta-request like "Сгенерируй баннеры для Маркета",
+      // which leaks into generated headlines. We need to extract the ACTUAL theme.
+      let cleanTopic = topic;
+      if (templateVisionCtx) {
+        // VLM described the products — use that as the copywriting brief
+        cleanTopic = `Товары: ${templateVisionCtx}`;
+        console.log(`[Template Fill] Using VLM context for text generation (${cleanTopic.slice(0, 80)}...)`);
+      } else {
+        // Strip meta-request patterns, leaving just the subject
+        cleanTopic = await callLLM([
+          { role: "system", content: `Ты извлекаешь тему из запроса пользователя.
+Пользователь попросил создать баннер. Из его запроса извлеки ТОЛЬКО предмет/тему рекламы.
+Убери все мета-инструкции (сгенерируй, сделай, создай, баннер, шаблон, маркет, лавка).
+Если тема не ясна — придумай подходящую для ${isMarketTemplate ? "Яндекс Маркета" : "рекламного баннера"}.
+Ответь 3-5 словами. Только тема, ничего больше.` },
+          { role: "user", content: topic },
+        ]);
+        cleanTopic = cleanTopic.trim();
+        console.log(`[Template Fill] Cleaned topic: "${topic}" → "${cleanTopic}"`);
+      }
+
       // ─── Market paired title+subtitle generation ───────
       if (isMarketTemplate && hasPairedTextSlots) {
         // Use specialized Market copywriting prompt (versioned in prompts/market-title-subtitle-v1.md)
@@ -439,7 +465,7 @@ RULES:
 
         const pairsResponse = await callLLM([
           { role: "system", content: MARKET_SYSTEM_PROMPT },
-          { role: "user", content: topic },
+          { role: "user", content: cleanTopic },
         ]);
 
         // Parse JSON pairs from the response
@@ -473,7 +499,7 @@ RULES:
           if (slot.slotId === "cta" && slot.type === "text") {
             const cta = await callLLM([
               { role: "system", content: "Ты — копирайтер. Напиши текст для кнопки призыва к действию (CTA). 1-3 слова. Без кавычек. Только текст." },
-              { role: "user", content: `CTA для: ${topic}` },
+              { role: "user", content: `CTA для: ${cleanTopic}` },
             ]);
             canvasActions.push({
               action: "update_layer",
@@ -565,7 +591,7 @@ ${templateStyleSuffix ? `- Additional style: ${templateStyleSuffix}` : ''}
         if (slot.slotId === "headline" && slot.type === "text") {
           const headline = await callLLM([
             { role: "system", content: "Ты — копирайтер. Напиши ОДИН заголовок для баннера. Максимум 5 слов. Без кавычек, без точки. Только текст." },
-            { role: "user", content: `Заголовок для: ${topic}` },
+            { role: "user", content: `Заголовок для: ${cleanTopic}` },
           ]);
           canvasActions.push({
             action: "update_layer",
@@ -574,7 +600,7 @@ ${templateStyleSuffix ? `- Additional style: ${templateStyleSuffix}` : ''}
         } else if (slot.slotId === "subhead" && slot.type === "text") {
           const subtitle = await callLLM([
             { role: "system", content: "Ты — копирайтер. Напиши подзаголовок для баннера. 8-15 слов. Без кавычек. Только текст." },
-            { role: "user", content: `Подзаголовок для: ${topic}` },
+            { role: "user", content: `Подзаголовок для: ${cleanTopic}` },
           ]);
           canvasActions.push({
             action: "update_layer",
@@ -583,7 +609,7 @@ ${templateStyleSuffix ? `- Additional style: ${templateStyleSuffix}` : ''}
         } else if (slot.slotId === "cta" && slot.type === "text") {
           const cta = await callLLM([
             { role: "system", content: "Ты — копирайтер. Напиши текст для кнопки призыва к действию (CTA). 1-3 слова. Без кавычек. Только текст." },
-            { role: "user", content: `CTA для: ${topic}` },
+            { role: "user", content: `CTA для: ${cleanTopic}` },
           ]);
           canvasActions.push({
             action: "update_layer",
