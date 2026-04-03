@@ -565,6 +565,7 @@ export function AIChatPanel({ open, onClose, messages, onAddMessages, projectId 
                                     referenceImages: pendingReferenceImages.current.length > 0 ? pendingReferenceImages.current : undefined,
                                 }).then((result) => {
                                     const newMsgs: AIChatMessage[] = [];
+                                    let didGenerateImage = false;
                                     // Process results like normal handleSend
                                     if (result.plan.steps.length > 0) {
                                         newMsgs.push({
@@ -595,6 +596,7 @@ export function AIChatPanel({ open, onClose, messages, onAddMessages, projectId 
                                                 });
                                             } else if (step.result.type === "image" && step.result.content) {
                                                 lastGeneratedImageUrl.current = step.result.content;
+                                                didGenerateImage = true;
                                                 newMsgs.push({
                                                     id: `result-${Date.now()}-${Math.random()}`,
                                                     role: "assistant",
@@ -623,6 +625,86 @@ export function AIChatPanel({ open, onClose, messages, onAddMessages, projectId 
                                         });
                                     }
                                     onAddMessages?.(newMsgs);
+
+                                    // ── Auto-continue: after image generation → search templates ──
+                                    if (didGenerateImage) {
+                                        console.log("[AIChatPanel] Image generated, auto-continuing to search_templates...");
+                                        const nextMsg = "Теперь найди подходящие шаблоны";
+                                        const nextHistory = [
+                                            ...history,
+                                            { role: "user" as const, content: followUpMsg },
+                                            { role: "assistant" as const, content: result.textResponse },
+                                            { role: "user" as const, content: nextMsg },
+                                        ];
+
+                                        agentMutation.mutateAsync({
+                                            message: nextMsg,
+                                            workspaceId: currentWorkspace!.id,
+                                            projectId,
+                                            history: nextHistory,
+                                            selectedTextModel: selectedTextModel !== "auto" ? selectedTextModel : undefined,
+                                            selectedImageModel: selectedImageModel !== "auto" ? selectedImageModel : undefined,
+                                        }).then((templateResult) => {
+                                            const templateMsgs: AIChatMessage[] = [];
+                                            if (templateResult.plan.steps.length > 0) {
+                                                templateMsgs.push({
+                                                    id: `plan-tmpl-${Date.now()}`,
+                                                    role: "assistant",
+                                                    type: "plan",
+                                                    content: templateResult.textResponse,
+                                                    timestamp: Date.now(),
+                                                    steps: templateResult.plan.steps.map((s) => ({
+                                                        actionId: s.actionId,
+                                                        actionName: s.actionName,
+                                                        status: s.status,
+                                                        result: s.result ? { type: s.result.type, content: s.result.content } : undefined,
+                                                    })),
+                                                });
+                                            }
+                                            for (const step of templateResult.plan.steps) {
+                                                if (step.result?.success && step.result.type === "template_choices" && step.result.templateChoices) {
+                                                    templateMsgs.push({
+                                                        id: `templates-${Date.now()}`,
+                                                        role: "assistant",
+                                                        type: "template_choices",
+                                                        content: step.result.content,
+                                                        timestamp: Date.now(),
+                                                        templateChoices: step.result.templateChoices,
+                                                        templateTopic: msg.content || "",
+                                                    });
+                                                } else if (step.result?.success && step.result.type !== "error" && step.result.type !== "data" && step.result.type !== "canvas_action") {
+                                                    templateMsgs.push({
+                                                        id: `result-tmpl-${Date.now()}-${Math.random()}`,
+                                                        role: "assistant",
+                                                        type: step.result.type as "text",
+                                                        content: step.result.content,
+                                                        timestamp: Date.now(),
+                                                    });
+                                                }
+                                            }
+                                            if (templateResult.plan.steps.length === 0 && templateResult.textResponse) {
+                                                templateMsgs.push({
+                                                    id: `response-tmpl-${Date.now()}`,
+                                                    role: "assistant",
+                                                    type: "text",
+                                                    content: templateResult.textResponse,
+                                                    timestamp: Date.now(),
+                                                });
+                                            }
+                                            onAddMessages?.(templateMsgs);
+                                        }).catch((err: Error) => {
+                                            onAddMessages?.([{
+                                                id: `error-tmpl-${Date.now()}`,
+                                                role: "assistant",
+                                                type: "error",
+                                                content: `Ошибка при поиске шаблонов: ${err.message}`,
+                                                timestamp: Date.now(),
+                                            }]);
+                                        }).finally(() => setIsThinking(false));
+                                    } else {
+                                        // No auto-continue needed, stop the spinner
+                                        setIsThinking(false);
+                                    }
                                 }).catch((err: Error) => {
                                     onAddMessages?.([{
                                         id: `error-${Date.now()}`,
@@ -631,7 +713,8 @@ export function AIChatPanel({ open, onClose, messages, onAddMessages, projectId 
                                         content: err.message || "Ошибка при выполнении",
                                         timestamp: Date.now(),
                                     }]);
-                                }).finally(() => setIsThinking(false));
+                                    setIsThinking(false);
+                                });
                             }}
                             isThinking={isThinking}
                         />
