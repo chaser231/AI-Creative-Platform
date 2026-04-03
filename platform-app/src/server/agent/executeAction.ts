@@ -326,6 +326,10 @@ RULES:
       const templateId = params.templateId as string;
       const topic = params.topic as string;
       const imageModel = (params.imageModel as string) || "flux-schnell";
+      const templateRefImages = params.referenceImages as string[] | undefined;
+      const templateVisionCtx = params.visionContext as string | undefined;
+      const templateStyleSuffix = params.stylePromptSuffix as string | undefined;
+      const hasTemplateRefs = templateRefImages && templateRefImages.length > 0;
 
       // Fetch the full template
       const template = await context.prisma.template.findUnique({
@@ -472,17 +476,48 @@ RULES:
               params: { slotId: "cta", updates: { text: cta.trim().replace(/^["«]|["»]$/g, "").replace(/\.$/, "") } },
             });
           } else if ((slot.slotId === "background" || slot.slotId === "image-primary") && slot.type === "image") {
-            const imgPrompt = await callLLM([
-              { role: "system", content: "You are an expert prompt engineer. Convert the request into a detailed English prompt for AI image generation. Include: high quality, commercial, professional. CRITICAL: always add 'no text, no letters, no words, no logos, no watermarks, no graphics, no UI elements' to the prompt. Max 40 words. Return ONLY the prompt." },
-              { role: "user", content: `Image for banner about: ${topic}` },
-            ]);
+            // Build image prompt — reference-aware if user uploaded photos
+            let imgPrompt: string;
+            if (hasTemplateRefs && templateVisionCtx) {
+              imgPrompt = await callLLM([
+                { role: "system", content: `You write prompts for AI image generation that uses attached reference product photos.
+CRITICAL RULES:
+- Write in ENGLISH only
+- The user has attached ${templateRefImages.length} reference product photos
+- The model CAN SEE the attached photos — tell it to USE them
+- Start with: "Using the attached reference images as the exact products:"
+- Describe COMPOSITION/SCENE: arrangement, lighting, background, angles
+- Do NOT describe products in detail (the model sees the photos)
+- Style: premium commercial photography, banner-quality hero shot
+${templateStyleSuffix ? `- Additional style: ${templateStyleSuffix}` : ''}
+- ALWAYS end with: "no text, no letters, no words, no logos, no watermarks"
+- Keep under 80 words. Return ONLY the prompt text.` },
+                { role: "user", content: `Create a banner image prompt for a ${topic} banner. ${templateVisionCtx}` },
+              ]);
+            } else {
+              imgPrompt = await callLLM([
+                { role: "system", content: `You are an expert prompt engineer. Convert the request into a detailed English prompt for AI image generation. Include: high quality, commercial, professional.${templateStyleSuffix ? ` Style: ${templateStyleSuffix}.` : ''} CRITICAL: always add 'no text, no letters, no words, no logos, no watermarks, no graphics, no UI elements' to the prompt. Max 40 words. Return ONLY the prompt.` },
+                { role: "user", content: `Image for banner about: ${topic}` },
+              ]);
+            }
+
+            // Clean up LLM wrapper artifacts
+            let cleanImgPrompt = imgPrompt.trim();
+            cleanImgPrompt = cleanImgPrompt.replace(/^["']|["']$/g, '');
+            cleanImgPrompt = cleanImgPrompt.replace(/^(Here is the prompt:?\s*)/i, '');
+            cleanImgPrompt = cleanImgPrompt.trim();
+
+            console.log(`[Template Fill] Image prompt for slot "${slot.slotId}": "${cleanImgPrompt.slice(0, 120)}..."`);
+            console.log(`[Template Fill] hasRefImages: ${hasTemplateRefs ? templateRefImages.length : 0}`);
+
             try {
               const { getProvider: getAIProvider } = await import("@/lib/ai-providers");
               const imgProvider = getAIProvider(imageModel);
               const imgResult = await imgProvider.generate({
-                prompt: imgPrompt.trim(),
+                prompt: cleanImgPrompt,
                 type: "image",
                 model: imageModel,
+                referenceImages: hasTemplateRefs ? templateRefImages : undefined,
               });
               canvasActions.push({
                 action: "update_layer",
@@ -542,17 +577,48 @@ RULES:
             params: { slotId: "cta", updates: { text: cta.trim().replace(/^["«]|["»]$/g, "") } },
           });
         } else if ((slot.slotId === "background" || slot.slotId === "image-primary") && (slot.type === "image")) {
-          const imgPrompt = await callLLM([
-            { role: "system", content: "You are an expert prompt engineer. Convert the request into a detailed English prompt for AI image generation. Include: high quality, commercial, professional. CRITICAL: always add 'no text, no letters, no words, no logos, no watermarks, no graphics, no UI elements' to the prompt. Max 40 words. Return ONLY the prompt." },
-            { role: "user", content: `Image for banner about: ${topic}` },
-          ]);
+          // Build image prompt — reference-aware if user uploaded photos
+          let imgPrompt: string;
+          if (hasTemplateRefs && templateVisionCtx) {
+            imgPrompt = await callLLM([
+              { role: "system", content: `You write prompts for AI image generation that uses attached reference product photos.
+CRITICAL RULES:
+- Write in ENGLISH only
+- The user has attached ${templateRefImages.length} reference product photos
+- The model CAN SEE the attached photos — tell it to USE them
+- Start with: "Using the attached reference images as the exact products:"
+- Describe COMPOSITION/SCENE: arrangement, lighting, background, angles
+- Do NOT describe products in detail (the model sees the photos)
+- Style: premium commercial photography, banner-quality hero shot
+${templateStyleSuffix ? `- Additional style: ${templateStyleSuffix}` : ''}
+- ALWAYS end with: "no text, no letters, no words, no logos, no watermarks"
+- Keep under 80 words. Return ONLY the prompt text.` },
+              { role: "user", content: `Create a banner image prompt for a ${topic} banner. ${templateVisionCtx}` },
+            ]);
+          } else {
+            imgPrompt = await callLLM([
+              { role: "system", content: `You are an expert prompt engineer. Convert the request into a detailed English prompt for AI image generation. Include: high quality, commercial, professional.${templateStyleSuffix ? ` Style: ${templateStyleSuffix}.` : ''} CRITICAL: always add 'no text, no letters, no words, no logos, no watermarks, no graphics, no UI elements' to the prompt. Max 40 words. Return ONLY the prompt.` },
+              { role: "user", content: `Image for banner about: ${topic}` },
+            ]);
+          }
+
+          // Clean up LLM wrapper artifacts
+          let cleanImgPrompt = imgPrompt.trim();
+          cleanImgPrompt = cleanImgPrompt.replace(/^["']|["']$/g, '');
+          cleanImgPrompt = cleanImgPrompt.replace(/^(Here is the prompt:?\s*)/i, '');
+          cleanImgPrompt = cleanImgPrompt.trim();
+
+          console.log(`[Template Fill Generic] Image prompt for slot "${slot.slotId}": "${cleanImgPrompt.slice(0, 120)}..."`);
+          console.log(`[Template Fill Generic] hasRefImages: ${hasTemplateRefs ? templateRefImages.length : 0}`);
+
           try {
             const { getProvider: getAIProvider } = await import("@/lib/ai-providers");
             const imgProvider = getAIProvider(imageModel);
             const imgResult = await imgProvider.generate({
-              prompt: imgPrompt.trim(),
+              prompt: cleanImgPrompt,
               type: "image",
               model: imageModel,
+              referenceImages: hasTemplateRefs ? templateRefImages : undefined,
             });
             canvasActions.push({
               action: "update_layer",

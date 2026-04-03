@@ -117,6 +117,24 @@ export async function interpretAndExecute(
         }
       }
 
+      // Inject reference images into apply_and_fill_template too
+      if (step.actionId === "apply_and_fill_template") {
+        if (modelPreferences?.imageModel) {
+          step.parameters.imageModel = modelPreferences.imageModel;
+        }
+        if (modelPreferences?.referenceImages && modelPreferences.referenceImages.length > 0) {
+          step.parameters.referenceImages = modelPreferences.referenceImages;
+          console.log(`[Pipeline ▶4 Orchestrator] Injecting ${modelPreferences.referenceImages.length} referenceImages into apply_and_fill_template step`);
+        }
+        if (visionContextStr) {
+          step.parameters.visionContext = visionContextStr;
+          console.log(`[Pipeline ▶4 Orchestrator] Injecting VLM context (${visionContextStr.length} chars) into template filler`);
+        }
+        if (modelPreferences?.stylePromptSuffix) {
+          step.parameters.stylePromptSuffix = modelPreferences.stylePromptSuffix;
+        }
+      }
+
       step.result = await executeAction(step.actionId, step.parameters, context);
       step.status = "done";
 
