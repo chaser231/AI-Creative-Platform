@@ -5,6 +5,10 @@ export interface AIChatMessage {
     content: string;
     prompt?: string;
     timestamp: number;
+    /** AI model used for this generation (e.g. "nano-banana-2") */
+    model?: string;
+    /** Cost in USD for this generation (from MODEL_REGISTRY.costPerRun) */
+    costUnits?: number;
     /** Agent plan steps (only for plan-type messages) */
     steps?: Array<{
         actionId: string;

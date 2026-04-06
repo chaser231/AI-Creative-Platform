@@ -17,6 +17,8 @@ export interface ModelEntry {
     slug: string;             // Replicate slug or "openai-direct"
     provider: "replicate" | "openai";
     caps: ModelCap[];
+    /** Estimated cost per single run in USD (for analytics) */
+    costPerRun: number;
     /** Version hash (only for community models that need it) */
     version?: string;
     /** If true, requires OPENAI_API_KEY for BYOK billing */
@@ -31,6 +33,7 @@ export const MODEL_REGISTRY: ModelEntry[] = [
         slug: "google/nano-banana",
         provider: "replicate",
         caps: ["generate", "edit", "remove-bg", "vision"],
+        costPerRun: 0.045,
     },
     {
         id: "nano-banana-2",
@@ -38,6 +41,7 @@ export const MODEL_REGISTRY: ModelEntry[] = [
         slug: "google/nano-banana-2",
         provider: "replicate",
         caps: ["generate", "edit", "remove-bg", "vision"],
+        costPerRun: 0.045,
     },
     {
         id: "nano-banana-pro",
@@ -45,6 +49,7 @@ export const MODEL_REGISTRY: ModelEntry[] = [
         slug: "google/nano-banana-pro",
         provider: "replicate",
         caps: ["generate", "edit", "remove-bg", "vision"],
+        costPerRun: 0.067,
     },
     {
         id: "flux-2-pro",
@@ -52,6 +57,7 @@ export const MODEL_REGISTRY: ModelEntry[] = [
         slug: "black-forest-labs/flux-2-pro",
         provider: "replicate",
         caps: ["generate", "edit", "vision"],
+        costPerRun: 0.05,
     },
     {
         id: "gpt-image",
@@ -59,6 +65,7 @@ export const MODEL_REGISTRY: ModelEntry[] = [
         slug: "openai/gpt-image-1.5",
         provider: "replicate",
         caps: ["generate", "edit", "vision"],
+        costPerRun: 0.04,
         byok: true,
     },
     {
@@ -67,6 +74,7 @@ export const MODEL_REGISTRY: ModelEntry[] = [
         slug: "qwen/qwen-image",
         provider: "replicate",
         caps: ["generate"],
+        costPerRun: 0.03,
     },
     {
         id: "qwen-image-edit",
@@ -74,6 +82,7 @@ export const MODEL_REGISTRY: ModelEntry[] = [
         slug: "qwen/qwen-image-edit",
         provider: "replicate",
         caps: ["edit"],
+        costPerRun: 0.03,
     },
     {
         id: "seedream",
@@ -81,6 +90,7 @@ export const MODEL_REGISTRY: ModelEntry[] = [
         slug: "bytedance/seedream-4.5",
         provider: "replicate",
         caps: ["generate", "edit", "vision"],
+        costPerRun: 0.04,
     },
 
     // ── Image Generation Only ───────────────────────────────────────────
@@ -90,6 +100,7 @@ export const MODEL_REGISTRY: ModelEntry[] = [
         slug: "black-forest-labs/flux-schnell",
         provider: "replicate",
         caps: ["generate"],
+        costPerRun: 0.003, // $3/1000 images
     },
     {
         id: "flux-dev",
@@ -97,6 +108,7 @@ export const MODEL_REGISTRY: ModelEntry[] = [
         slug: "black-forest-labs/flux-dev",
         provider: "replicate",
         caps: ["generate"],
+        costPerRun: 0.025,
     },
     {
         id: "flux-1.1-pro",
@@ -104,6 +116,7 @@ export const MODEL_REGISTRY: ModelEntry[] = [
         slug: "black-forest-labs/flux-1.1-pro",
         provider: "replicate",
         caps: ["generate"],
+        costPerRun: 0.04,
     },
     {
         id: "dall-e-3",
@@ -111,6 +124,7 @@ export const MODEL_REGISTRY: ModelEntry[] = [
         slug: "openai-direct",
         provider: "openai",
         caps: ["generate"],
+        costPerRun: 0.04,
     },
 
     // ── Specialized Image Tools ─────────────────────────────────────────
@@ -120,6 +134,7 @@ export const MODEL_REGISTRY: ModelEntry[] = [
         slug: "black-forest-labs/flux-fill-dev",
         provider: "replicate",
         caps: ["inpaint", "outpaint"],
+        costPerRun: 0.025,
     },
     {
         id: "bria-expand",
@@ -127,6 +142,7 @@ export const MODEL_REGISTRY: ModelEntry[] = [
         slug: "bria/expand-image",
         provider: "replicate",
         caps: ["outpaint"],
+        costPerRun: 0.025,
     },
     {
         id: "rembg",
@@ -134,6 +150,7 @@ export const MODEL_REGISTRY: ModelEntry[] = [
         slug: "cjwbw/rembg",
         provider: "replicate",
         caps: ["remove-bg"],
+        costPerRun: 0.002,
         version: "fb8af171cfa1616ddcf1242c093f9c46bcada5ad4cf6f2fbe8b81b330ec5c003",
     },
 
@@ -144,6 +161,7 @@ export const MODEL_REGISTRY: ModelEntry[] = [
         slug: "deepseek-ai/deepseek-v3",
         provider: "replicate",
         caps: ["text"],
+        costPerRun: 0.005,
     },
     {
         id: "gemini-flash",
@@ -151,6 +169,7 @@ export const MODEL_REGISTRY: ModelEntry[] = [
         slug: "google/gemini-2.5-flash",
         provider: "replicate",
         caps: ["text"],
+        costPerRun: 0.003,
     },
 ];
 

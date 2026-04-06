@@ -6,6 +6,7 @@
  */
 
 import { z } from "zod";
+import { Prisma } from "@prisma/client";
 import { createTRPCRouter, superAdminProcedure } from "../trpc";
 
 export const adminRouter = createTRPCRouter({
@@ -16,13 +17,28 @@ export const adminRouter = createTRPCRouter({
       totalWorkspaces,
       totalProjects,
       totalTemplates,
-      totalAISessions,
+      totalAIGenerations,
+      totalAICostResult,
     ] = await Promise.all([
       ctx.prisma.user.count(),
       ctx.prisma.workspace.count(),
       ctx.prisma.project.count(),
       ctx.prisma.template.count(),
-      ctx.prisma.aISession.count(),
+      // Count actual AI generations (assistant messages), not sessions
+      ctx.prisma.aIMessage.count({
+        where: {
+          role: "assistant",
+          type: { in: ["image", "text"] },
+        },
+      }),
+      // Sum cost across all messages
+      ctx.prisma.aIMessage.aggregate({
+        where: {
+          role: "assistant",
+          costUnits: { not: null },
+        },
+        _sum: { costUnits: true },
+      }),
     ]);
 
     return {
@@ -30,7 +46,8 @@ export const adminRouter = createTRPCRouter({
       totalWorkspaces,
       totalProjects,
       totalTemplates,
-      totalAISessions,
+      totalAIGenerations,
+      totalAICost: totalAICostResult._sum.costUnits ?? 0,
     };
   }),
 
@@ -46,7 +63,7 @@ export const adminRouter = createTRPCRouter({
     .query(async ({ ctx, input }) => {
       const { search, limit = 50, offset = 0 } = input || {};
 
-      const where = search
+      const where: Prisma.UserWhereInput = search
         ? {
             OR: [
               { name: { contains: search, mode: "insensitive" as const } },
@@ -80,7 +97,55 @@ export const adminRouter = createTRPCRouter({
         ctx.prisma.user.count({ where }),
       ]);
 
-      return { users, total };
+      // Get per-user AI generation count & cost
+      // Use separate queries per user for simplicity + type safety
+      const userIds = users.map(user => user.id);
+
+      // Get all sessions for these users in one query
+      const userSessions = userIds.length > 0
+        ? await ctx.prisma.aISession.findMany({
+            where: { userId: { in: userIds } },
+            select: { id: true, userId: true },
+          })
+        : [];
+
+      const sessionIds = userSessions.map(s => s.id);
+      const sessionUserMap = new Map<string, string>();
+      userSessions.forEach(s => sessionUserMap.set(s.id, s.userId));
+
+      // Get message stats for all these sessions
+      const messageStats = sessionIds.length > 0
+        ? await ctx.prisma.aIMessage.findMany({
+            where: {
+              sessionId: { in: sessionIds },
+              role: "assistant",
+              type: { in: ["image", "text"] },
+            },
+            select: {
+              sessionId: true,
+              costUnits: true,
+            },
+          })
+        : [];
+
+      // Aggregate into per-user counts
+      const userGenMap = new Map<string, { count: number; cost: number }>();
+      for (const msg of messageStats) {
+        const userId = sessionUserMap.get(msg.sessionId);
+        if (!userId) continue;
+        const existing = userGenMap.get(userId) ?? { count: 0, cost: 0 };
+        existing.count += 1;
+        existing.cost += msg.costUnits ?? 0;
+        userGenMap.set(userId, existing);
+      }
+
+      const enrichedUsers = users.map(user => ({
+        ...user,
+        aiGenerations: userGenMap.get(user.id)?.count ?? 0,
+        aiCost: userGenMap.get(user.id)?.cost ?? 0,
+      }));
+
+      return { users: enrichedUsers, total };
     }),
 
   /** List all workspaces with computed counts */
@@ -104,6 +169,99 @@ export const adminRouter = createTRPCRouter({
     });
 
     return workspaces;
+  }),
+
+  /** AI cost analytics — breakdown by model, user, workspace */
+  aiCostAnalytics: superAdminProcedure.query(async ({ ctx }) => {
+    // Fetch all assistant image/text messages with their session + project + workspace info
+    const allMessages = await ctx.prisma.aIMessage.findMany({
+      where: {
+        role: "assistant",
+        type: { in: ["image", "text"] },
+      },
+      select: {
+        model: true,
+        costUnits: true,
+        session: {
+          select: {
+            userId: true,
+            projectId: true,
+            user: { select: { name: true, email: true } },
+            project: {
+              select: {
+                name: true,
+                workspaceId: true,
+                workspace: { select: { name: true } },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    // Aggregate by model
+    const modelAgg = new Map<string, { count: number; cost: number }>();
+    // Aggregate by user
+    const userAgg = new Map<string, { name: string; email: string; count: number; cost: number }>();
+    // Aggregate by project
+    const projectAgg = new Map<string, { name: string; workspaceName: string; count: number; cost: number }>();
+    // Aggregate by workspace
+    const wsAgg = new Map<string, { name: string; count: number; cost: number }>();
+
+    for (const msg of allMessages) {
+      const cost = msg.costUnits ?? 0;
+      const model = msg.model ?? "unknown";
+      const session = msg.session;
+
+      // Model
+      const mEntry = modelAgg.get(model) ?? { count: 0, cost: 0 };
+      mEntry.count += 1;
+      mEntry.cost += cost;
+      modelAgg.set(model, mEntry);
+
+      // User
+      const uid = session.userId;
+      const uEntry = userAgg.get(uid) ?? { name: session.user.name ?? "—", email: session.user.email ?? "", count: 0, cost: 0 };
+      uEntry.count += 1;
+      uEntry.cost += cost;
+      userAgg.set(uid, uEntry);
+
+      // Project
+      const pid = session.projectId;
+      const pEntry = projectAgg.get(pid) ?? {
+        name: session.project.name ?? "—",
+        workspaceName: session.project.workspace?.name ?? "—",
+        count: 0,
+        cost: 0,
+      };
+      pEntry.count += 1;
+      pEntry.cost += cost;
+      projectAgg.set(pid, pEntry);
+
+      // Workspace
+      const wid = session.project.workspaceId;
+      if (wid) {
+        const wEntry = wsAgg.get(wid) ?? { name: session.project.workspace?.name ?? "—", count: 0, cost: 0 };
+        wEntry.count += 1;
+        wEntry.cost += cost;
+        wsAgg.set(wid, wEntry);
+      }
+    }
+
+    return {
+      byModel: Array.from(modelAgg.entries())
+        .map(([model, d]) => ({ model, ...d }))
+        .sort((a, b) => b.count - a.count),
+      byUser: Array.from(userAgg.entries())
+        .map(([id, d]) => ({ id, ...d }))
+        .sort((a, b) => b.cost - a.cost),
+      byProject: Array.from(projectAgg.entries())
+        .map(([id, d]) => ({ id, ...d }))
+        .sort((a, b) => b.cost - a.cost),
+      byWorkspace: Array.from(wsAgg.entries())
+        .map(([id, d]) => ({ id, ...d }))
+        .sort((a, b) => b.cost - a.cost),
+    };
   }),
 
   /** Update user's global role */

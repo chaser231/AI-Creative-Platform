@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import {
-    Users, Building2, FolderKanban, LayoutTemplate, Sparkles,
+    Users, Building2, FolderKanban, LayoutTemplate, Sparkles, DollarSign,
     Search, Shield, ShieldCheck, ChevronDown, MoreHorizontal, ShieldX,
 } from "lucide-react";
 import { AppShell } from "@/components/layout/AppShell";
@@ -51,6 +51,133 @@ function RoleBadge({ role }: { role: string }) {
     );
 }
 
+/* ─── Cost Analytics Tabs ──────────────────────────────── */
+
+type CostTab = "users" | "models" | "projects" | "workspaces";
+
+function CostAnalyticsSection({ data }: {
+    data: {
+        byModel: { model: string; count: number; cost: number }[];
+        byUser: { id: string; name: string; email: string; count: number; cost: number }[];
+        byProject: { id: string; name: string; workspaceName: string; count: number; cost: number }[];
+        byWorkspace: { id: string; name: string; count: number; cost: number }[];
+    };
+}) {
+    const [tab, setTab] = useState<CostTab>("users");
+
+    const tabs: { id: CostTab; label: string }[] = [
+        { id: "users", label: "По пользователям" },
+        { id: "models", label: "По моделям" },
+        { id: "projects", label: "По проектам" },
+        { id: "workspaces", label: "По воркспейсам" },
+    ];
+
+    return (
+        <section>
+            <h2 className="text-lg font-semibold text-text-primary mb-4">Аналитика AI-затрат</h2>
+
+            {/* Tabs */}
+            <div className="flex gap-1 mb-4">
+                {tabs.map(t => (
+                    <button
+                        key={t.id}
+                        onClick={() => setTab(t.id)}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
+                            tab === t.id
+                                ? "bg-accent-primary text-white"
+                                : "bg-bg-secondary text-text-tertiary hover:text-text-primary"
+                        }`}
+                    >
+                        {t.label}
+                    </button>
+                ))}
+            </div>
+
+            {/* Table */}
+            <div className="bg-bg-surface border border-border-primary rounded-2xl overflow-hidden">
+                <table className="w-full text-xs">
+                    <thead>
+                        <tr className="border-b border-border-primary bg-bg-secondary/50">
+                            {tab === "users" && (
+                                <>
+                                    <th className="text-left px-4 py-3 font-medium text-text-tertiary">Пользователь</th>
+                                    <th className="text-left px-4 py-3 font-medium text-text-tertiary">Email</th>
+                                    <th className="text-center px-4 py-3 font-medium text-text-tertiary">Генерации</th>
+                                    <th className="text-right px-4 py-3 font-medium text-text-tertiary">Затраты ($)</th>
+                                </>
+                            )}
+                            {tab === "models" && (
+                                <>
+                                    <th className="text-left px-4 py-3 font-medium text-text-tertiary">Модель</th>
+                                    <th className="text-center px-4 py-3 font-medium text-text-tertiary">Генерации</th>
+                                    <th className="text-right px-4 py-3 font-medium text-text-tertiary">Затраты ($)</th>
+                                </>
+                            )}
+                            {tab === "projects" && (
+                                <>
+                                    <th className="text-left px-4 py-3 font-medium text-text-tertiary">Проект</th>
+                                    <th className="text-left px-4 py-3 font-medium text-text-tertiary">Воркспейс</th>
+                                    <th className="text-center px-4 py-3 font-medium text-text-tertiary">Генерации</th>
+                                    <th className="text-right px-4 py-3 font-medium text-text-tertiary">Затраты ($)</th>
+                                </>
+                            )}
+                            {tab === "workspaces" && (
+                                <>
+                                    <th className="text-left px-4 py-3 font-medium text-text-tertiary">Воркспейс</th>
+                                    <th className="text-center px-4 py-3 font-medium text-text-tertiary">Генерации</th>
+                                    <th className="text-right px-4 py-3 font-medium text-text-tertiary">Затраты ($)</th>
+                                </>
+                            )}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {tab === "users" && data.byUser.map(u => (
+                            <tr key={u.id} className="border-b border-border-primary/50 hover:bg-bg-secondary/30 transition-colors">
+                                <td className="px-4 py-3 font-medium text-text-primary">{u.name}</td>
+                                <td className="px-4 py-3 text-text-secondary">{u.email}</td>
+                                <td className="px-4 py-3 text-center text-text-secondary">{u.count}</td>
+                                <td className="px-4 py-3 text-right font-mono text-text-primary">${u.cost.toFixed(3)}</td>
+                            </tr>
+                        ))}
+                        {tab === "models" && data.byModel.map(m => (
+                            <tr key={m.model} className="border-b border-border-primary/50 hover:bg-bg-secondary/30 transition-colors">
+                                <td className="px-4 py-3 font-medium text-text-primary">{m.model}</td>
+                                <td className="px-4 py-3 text-center text-text-secondary">{m.count}</td>
+                                <td className="px-4 py-3 text-right font-mono text-text-primary">${m.cost.toFixed(3)}</td>
+                            </tr>
+                        ))}
+                        {tab === "projects" && data.byProject.map(p => (
+                            <tr key={p.id} className="border-b border-border-primary/50 hover:bg-bg-secondary/30 transition-colors">
+                                <td className="px-4 py-3 font-medium text-text-primary">{p.name}</td>
+                                <td className="px-4 py-3 text-text-tertiary">{p.workspaceName}</td>
+                                <td className="px-4 py-3 text-center text-text-secondary">{p.count}</td>
+                                <td className="px-4 py-3 text-right font-mono text-text-primary">${p.cost.toFixed(3)}</td>
+                            </tr>
+                        ))}
+                        {tab === "workspaces" && data.byWorkspace.map(w => (
+                            <tr key={w.id} className="border-b border-border-primary/50 hover:bg-bg-secondary/30 transition-colors">
+                                <td className="px-4 py-3 font-medium text-text-primary">{w.name}</td>
+                                <td className="px-4 py-3 text-center text-text-secondary">{w.count}</td>
+                                <td className="px-4 py-3 text-right font-mono text-text-primary">${w.cost.toFixed(3)}</td>
+                            </tr>
+                        ))}
+                        {((tab === "users" && data.byUser.length === 0) ||
+                          (tab === "models" && data.byModel.length === 0) ||
+                          (tab === "projects" && data.byProject.length === 0) ||
+                          (tab === "workspaces" && data.byWorkspace.length === 0)) && (
+                            <tr>
+                                <td colSpan={4} className="px-4 py-8 text-center text-text-tertiary">
+                                    Пока нет данных. Расходы начнут отображаться после новых генераций.
+                                </td>
+                            </tr>
+                        )}
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    );
+}
+
 /* ─── Main Page ──────────────────────────────────────── */
 
 export default function AdminDashboardPage() {
@@ -69,6 +196,7 @@ export default function AdminDashboardPage() {
         offset: 0,
     }, { enabled: isSuperAdmin });
     const { data: workspaces, isLoading: wsLoading } = trpc.admin.workspaces.useQuery(undefined, { enabled: isSuperAdmin });
+    const { data: costAnalytics, isLoading: costLoading } = trpc.admin.aiCostAnalytics.useQuery(undefined, { enabled: isSuperAdmin });
 
     const updateRoleMutation = trpc.admin.updateUserRole.useMutation();
 
@@ -125,7 +253,7 @@ export default function AdminDashboardPage() {
                     </div>
 
                     {/* KPI Cards */}
-                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
+                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
                         <KPICard
                             label="Пользователи"
                             value={statsLoading ? "..." : stats?.totalUsers ?? 0}
@@ -151,10 +279,16 @@ export default function AdminDashboardPage() {
                             color="bg-amber-500/15 text-amber-400"
                         />
                         <KPICard
-                            label="AI-сессии"
-                            value={statsLoading ? "..." : stats?.totalAISessions ?? 0}
+                            label="AI-генерации"
+                            value={statsLoading ? "..." : stats?.totalAIGenerations ?? 0}
                             icon={Sparkles}
                             color="bg-pink-500/15 text-pink-400"
+                        />
+                        <KPICard
+                            label="AI-затраты"
+                            value={statsLoading ? "..." : `$${(stats?.totalAICost ?? 0).toFixed(2)}`}
+                            icon={DollarSign}
+                            color="bg-green-500/15 text-green-400"
                         />
                     </div>
 
@@ -183,14 +317,15 @@ export default function AdminDashboardPage() {
                                         <th className="text-left px-4 py-3 font-medium text-text-tertiary">Роль</th>
                                         <th className="text-center px-4 py-3 font-medium text-text-tertiary">Воркспейсы</th>
                                         <th className="text-center px-4 py-3 font-medium text-text-tertiary">Проекты</th>
-                                        <th className="text-center px-4 py-3 font-medium text-text-tertiary">AI-сессии</th>
+                                        <th className="text-center px-4 py-3 font-medium text-text-tertiary">AI-генерации</th>
+                                        <th className="text-right px-4 py-3 font-medium text-text-tertiary">AI-затраты</th>
                                         <th className="text-right px-4 py-3 font-medium text-text-tertiary">Создан</th>
                                         <th className="w-10"></th>
                                     </tr>
                                 </thead>
                                 <tbody>
                                     {usersLoading ? (
-                                        <tr><td colSpan={8} className="px-4 py-8 text-center text-text-tertiary">Загрузка...</td></tr>
+                                        <tr><td colSpan={9} className="px-4 py-8 text-center text-text-tertiary">Загрузка...</td></tr>
                                     ) : usersData?.users.map((user) => (
                                         <tr key={user.id} className="border-b border-border-primary/50 hover:bg-bg-secondary/30 transition-colors">
                                             <td className="px-4 py-3 font-medium text-text-primary">{user.name}</td>
@@ -198,7 +333,10 @@ export default function AdminDashboardPage() {
                                             <td className="px-4 py-3"><RoleBadge role={user.role} /></td>
                                             <td className="px-4 py-3 text-center text-text-secondary">{user._count.memberships}</td>
                                             <td className="px-4 py-3 text-center text-text-secondary">{user._count.projects}</td>
-                                            <td className="px-4 py-3 text-center text-text-secondary">{user._count.aiSessions}</td>
+                                            <td className="px-4 py-3 text-center text-text-secondary">{user.aiGenerations}</td>
+                                            <td className="px-4 py-3 text-right font-mono text-text-secondary">
+                                                {user.aiCost > 0 ? `$${user.aiCost.toFixed(3)}` : "—"}
+                                            </td>
                                             <td className="px-4 py-3 text-right text-text-tertiary">
                                                 {new Date(user.createdAt).toLocaleDateString("ru-RU")}
                                             </td>
@@ -226,6 +364,11 @@ export default function AdminDashboardPage() {
                             )}
                         </div>
                     </section>
+
+                    {/* Cost Analytics Section */}
+                    {!costLoading && costAnalytics && (
+                        <CostAnalyticsSection data={costAnalytics} />
+                    )}
 
                     {/* Workspaces Table */}
                     <section>
