@@ -14,7 +14,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { ReferenceImageInput } from "@/components/ui/ReferenceImageInput";
-import { getMaxRefs } from "@/lib/ai-models";
+import { getMaxRefs, resolveRefTags } from "@/lib/ai-models";
 import type { BusinessUnit } from "@/types";
 
 type EditorTool = "remove-bg" | "inpaint" | "text-edit" | "outpaint";
@@ -108,7 +108,7 @@ export function ImageEditorModal({ imageSrc, onApply, onClose }: ImageEditorModa
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     action,
-                    prompt: prompt || "",
+                    prompt: resolveRefTags(prompt || "", selectedModel),
                     imageBase64: currentImage,
                     maskBase64: maskB64 || undefined,
                     model: selectedModel,

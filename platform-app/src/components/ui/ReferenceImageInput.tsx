@@ -7,6 +7,9 @@
  * Supports click-to-upload, drag & drop, preview thumbnails, and
  * automatic JPEG compression to keep payloads small.
  *
+ * Each image gets a label (@ref1, @ref2, ...) that users can type
+ * in their prompt to reference specific images.
+ *
  * Only shown when the selected AI model has the "vision" capability.
  */
 
@@ -21,6 +24,15 @@ export interface ReferenceImageInputProps {
     disabled?: boolean;
     /** Label shown on the upload trigger (default: "Референс") */
     label?: string;
+    /** Show @refN labels on thumbnails (default: true) */
+    showLabels?: boolean;
+    /** Called when user clicks an @refN badge — use to insert into prompt */
+    onTagClick?: (tag: string) => void;
+}
+
+/** Get the @ref tag for a given index (0-based → @ref1, @ref2, ...) */
+export function getRefTag(index: number): string {
+    return `@ref${index + 1}`;
 }
 
 /** Compress an image File to JPEG base64, max 1024px on longest side */
@@ -54,6 +66,8 @@ export function ReferenceImageInput({
     max = 3,
     disabled = false,
     label = "Референс",
+    showLabels = true,
+    onTagClick,
 }: ReferenceImageInputProps) {
     const fileInputRef = useRef<HTMLInputElement>(null);
     const [isDragging, setIsDragging] = useState(false);
@@ -101,16 +115,29 @@ export function ReferenceImageInput({
             {images.map((src, idx) => (
                 <div
                     key={idx}
-                    className="relative w-8 h-8 rounded-lg overflow-hidden border border-border-primary group flex-shrink-0"
+                    className="relative flex-shrink-0 group"
                 >
-                    <img src={src} alt={`ref-${idx}`} className="w-full h-full object-cover" />
-                    <button
-                        onClick={() => removeImage(idx)}
-                        className="absolute inset-0 flex items-center justify-center bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity"
-                        title="Удалить"
-                    >
-                        <X size={12} className="text-white" />
-                    </button>
+                    <div className="w-8 h-8 rounded-lg overflow-hidden border border-border-primary">
+                        <img src={src} alt={`ref-${idx}`} className="w-full h-full object-cover" />
+                        <button
+                            onClick={() => removeImage(idx)}
+                            className="absolute inset-0 flex items-center justify-center bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity rounded-lg"
+                            title="Удалить"
+                        >
+                            <X size={12} className="text-white" />
+                        </button>
+                    </div>
+                    {/* @refN label — clickable to insert into prompt */}
+                    {showLabels && (
+                        <button
+                            type="button"
+                            onClick={() => onTagClick?.(getRefTag(idx))}
+                            title={`Вставить ${getRefTag(idx)} в промпт`}
+                            className="absolute -bottom-1 left-1/2 -translate-x-1/2 text-[8px] font-mono font-bold bg-accent-primary text-text-inverse px-1 rounded-sm whitespace-nowrap leading-tight cursor-pointer hover:bg-accent-primary/80 transition-colors"
+                        >
+                            {getRefTag(idx)}
+                        </button>
+                    )}
                 </div>
             ))}
 
