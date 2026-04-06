@@ -11,6 +11,11 @@
 
 export type ModelCap = "generate" | "edit" | "remove-bg" | "inpaint" | "outpaint" | "text" | "vision";
 
+export interface ResolutionOption {
+    id: string;   // value sent to API (e.g. "1024px", "1", "high")
+    label: string; // user-facing label
+}
+
 export interface ModelEntry {
     id: string;
     label: string;
@@ -21,11 +26,49 @@ export interface ModelEntry {
     costPerRun: number;
     /** Max reference images supported (0 or omit = no ref support) */
     maxRefs?: number;
+    /** Supported aspect ratios (omit = uses DEFAULT_ASPECT_RATIOS) */
+    aspectRatios?: string[];
+    /** Available resolution options (omit = no resolution control) */
+    resolutions?: ResolutionOption[];
     /** Version hash (only for community models that need it) */
     version?: string;
     /** If true, requires OPENAI_API_KEY for BYOK billing */
     byok?: boolean;
 }
+
+// ─── Shared Constants ───────────────────────────────────────────────────────
+
+/** Aspect ratios shared by Google and Flux models */
+const WIDE_ASPECT_RATIOS = ["1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9"];
+
+/** Google Nano Banana resolution options (output_resolution param) */
+const GOOGLE_RESOLUTIONS: ResolutionOption[] = [
+    { id: "1024px", label: "1K" },
+    { id: "2048px", label: "2K" },
+    { id: "4096px", label: "4K" },
+    { id: "512px",  label: "512px" },
+];
+
+/** Flux megapixel resolution options */
+const FLUX_RESOLUTIONS_FULL: ResolutionOption[] = [
+    { id: "1",    label: "1 MP" },
+    { id: "4",    label: "4 MP" },
+    { id: "0.25", label: "0.25 MP" },
+];
+
+const FLUX_RESOLUTIONS_BASIC: ResolutionOption[] = [
+    { id: "1",    label: "1 MP" },
+    { id: "0.25", label: "0.25 MP" },
+];
+
+/** GPT Image quality-based resolution */
+const GPT_RESOLUTIONS: ResolutionOption[] = [
+    { id: "medium", label: "Medium" },
+    { id: "high",   label: "High" },
+    { id: "low",    label: "Low" },
+];
+
+// ─── Registry ───────────────────────────────────────────────────────────────
 
 export const MODEL_REGISTRY: ModelEntry[] = [
     // ── Image Generation + Editing ──────────────────────────────────────
@@ -37,6 +80,8 @@ export const MODEL_REGISTRY: ModelEntry[] = [
         caps: ["generate", "edit", "remove-bg", "vision"],
         costPerRun: 0.045,
         maxRefs: 14,
+        aspectRatios: WIDE_ASPECT_RATIOS,
+        resolutions: GOOGLE_RESOLUTIONS,
     },
     {
         id: "nano-banana-2",
@@ -46,6 +91,8 @@ export const MODEL_REGISTRY: ModelEntry[] = [
         caps: ["generate", "edit", "remove-bg", "vision"],
         costPerRun: 0.045,
         maxRefs: 14,
+        aspectRatios: WIDE_ASPECT_RATIOS,
+        resolutions: GOOGLE_RESOLUTIONS,
     },
     {
         id: "nano-banana-pro",
@@ -55,6 +102,8 @@ export const MODEL_REGISTRY: ModelEntry[] = [
         caps: ["generate", "edit", "remove-bg", "vision"],
         costPerRun: 0.067,
         maxRefs: 14,
+        aspectRatios: WIDE_ASPECT_RATIOS,
+        resolutions: GOOGLE_RESOLUTIONS,
     },
     {
         id: "flux-2-pro",
@@ -64,6 +113,8 @@ export const MODEL_REGISTRY: ModelEntry[] = [
         caps: ["generate", "edit", "vision"],
         costPerRun: 0.05,
         maxRefs: 4,
+        aspectRatios: WIDE_ASPECT_RATIOS,
+        resolutions: FLUX_RESOLUTIONS_FULL,
     },
     {
         id: "gpt-image",
@@ -73,6 +124,8 @@ export const MODEL_REGISTRY: ModelEntry[] = [
         caps: ["generate", "edit", "vision"],
         costPerRun: 0.04,
         maxRefs: 4,
+        aspectRatios: ["1:1", "3:4", "4:3", "9:16", "16:9"],
+        resolutions: GPT_RESOLUTIONS,
         byok: true,
     },
     {
@@ -82,6 +135,7 @@ export const MODEL_REGISTRY: ModelEntry[] = [
         provider: "replicate",
         caps: ["generate"],
         costPerRun: 0.03,
+        aspectRatios: ["1:1", "3:2", "2:3", "16:9", "9:16"],
     },
     {
         id: "qwen-image-edit",
@@ -99,6 +153,7 @@ export const MODEL_REGISTRY: ModelEntry[] = [
         caps: ["generate", "edit", "vision"],
         costPerRun: 0.04,
         maxRefs: 4,
+        aspectRatios: ["1:1", "2:3", "3:2", "3:4", "4:3", "9:16", "16:9"],
     },
 
     // ── Image Generation Only ───────────────────────────────────────────
@@ -108,7 +163,9 @@ export const MODEL_REGISTRY: ModelEntry[] = [
         slug: "black-forest-labs/flux-schnell",
         provider: "replicate",
         caps: ["generate"],
-        costPerRun: 0.003, // $3/1000 images
+        costPerRun: 0.003,
+        aspectRatios: WIDE_ASPECT_RATIOS,
+        resolutions: FLUX_RESOLUTIONS_BASIC,
     },
     {
         id: "flux-dev",
@@ -117,6 +174,8 @@ export const MODEL_REGISTRY: ModelEntry[] = [
         provider: "replicate",
         caps: ["generate"],
         costPerRun: 0.025,
+        aspectRatios: WIDE_ASPECT_RATIOS,
+        resolutions: FLUX_RESOLUTIONS_BASIC,
     },
     {
         id: "flux-1.1-pro",
@@ -125,6 +184,8 @@ export const MODEL_REGISTRY: ModelEntry[] = [
         provider: "replicate",
         caps: ["generate"],
         costPerRun: 0.04,
+        aspectRatios: WIDE_ASPECT_RATIOS,
+        resolutions: FLUX_RESOLUTIONS_BASIC,
     },
     {
         id: "dall-e-3",
@@ -133,6 +194,7 @@ export const MODEL_REGISTRY: ModelEntry[] = [
         provider: "openai",
         caps: ["generate"],
         costPerRun: 0.04,
+        aspectRatios: ["1:1", "16:9", "9:16"],
     },
 
     // ── Specialized Image Tools ─────────────────────────────────────────
@@ -181,6 +243,10 @@ export const MODEL_REGISTRY: ModelEntry[] = [
     },
 ];
 
+// ─── Default fallback ───────────────────────────────────────────────────────
+
+const DEFAULT_ASPECT_RATIOS = ["1:1", "16:9", "9:16", "4:3", "3:4", "3:2"];
+
 // ─── Helpers for UI ─────────────────────────────────────────────────────────
 
 /** Get all models that have ALL specified capabilities. */
@@ -196,4 +262,14 @@ export function getModelById(id: string): ModelEntry | undefined {
 /** Get maximum reference images allowed for a model (0 = no refs). */
 export function getMaxRefs(modelId: string): number {
     return getModelById(modelId)?.maxRefs ?? 0;
+}
+
+/** Get supported aspect ratios for a model. */
+export function getAspectRatios(modelId: string): string[] {
+    return getModelById(modelId)?.aspectRatios ?? DEFAULT_ASPECT_RATIOS;
+}
+
+/** Get available resolution options for a model (empty = no resolution control). */
+export function getResolutions(modelId: string): ResolutionOption[] {
+    return getModelById(modelId)?.resolutions ?? [];
 }

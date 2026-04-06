@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { ReferenceImageInput } from "@/components/ui/ReferenceImageInput";
-import { getModelById, getMaxRefs } from "@/lib/ai-models";
+import { getModelById, getMaxRefs, getAspectRatios, getResolutions } from "@/lib/ai-models";
 import type { ImageComponentProps, BusinessUnit } from "@/types";
 import { ImageEditorModal } from "./ImageEditorModal";
 
@@ -32,14 +32,7 @@ const IMAGE_GEN_MODELS = [
     { id: "dall-e-3", label: "DALL-E 3" },
 ];
 
-const ASPECT_RATIOS = [
-    { id: "1:1", label: "1:1" },
-    { id: "4:3", label: "4:3" },
-    { id: "3:4", label: "3:4" },
-    { id: "16:9", label: "16:9" },
-    { id: "9:16", label: "9:16" },
-    { id: "3:2", label: "3:2" },
-];
+// Aspect ratios and resolutions are now dynamic per model — see ai-models.ts
 
 const STYLE_PRESETS = [
     {
@@ -109,13 +102,16 @@ export function ImageContentBlock({ id, name, props, value, onChange, businessUn
     const [aspectRatio, setAspectRatio] = useState("1:1");
     const [genCount, setGenCount] = useState(1);
     const [seed, setSeed] = useState("");
-    const [scale, setScale] = useState("1x");
+    const [scale, setScale] = useState("");
     const [stylePreset, setStylePreset] = useState("none");
     const [showAdvanced, setShowAdvanced] = useState(false);
     const [additionalPhotos, setAdditionalPhotos] = useState<string[]>([]);
 
     // Whether selected model supports vision (reference images)
     const supportsVision = getModelById(selectedModel)?.caps.includes("vision") ?? false;
+    // Dynamic per-model options
+    const modelAspectRatios = getAspectRatios(selectedModel);
+    const modelResolutions = getResolutions(selectedModel);
 
     const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
@@ -152,7 +148,7 @@ export function ImageContentBlock({ id, name, props, value, onChange, businessUn
                     aspectRatio: aspectRatio,
                     count: genCount,
                     seed: seed ? Number(seed) : undefined,
-                    scale,
+                    scale: scale || undefined,
                     referenceImages: additionalPhotos.length > 0 ? additionalPhotos : undefined,
                 }),
             });
@@ -268,10 +264,10 @@ export function ImageContentBlock({ id, name, props, value, onChange, businessUn
                         <div>
                             <p className="text-[11px] font-semibold text-text-secondary uppercase tracking-wider mb-2">Соотношение сторон</p>
                             <div className="flex gap-1.5 flex-wrap">
-                                {ASPECT_RATIOS.map(r => (
-                                    <button key={r.id} onClick={() => setAspectRatio(r.id)}
-                                        className={`px-3 py-1.5 text-[11px] font-medium rounded-[var(--radius-sm)] border transition-all cursor-pointer ${aspectRatio === r.id ? "bg-accent-primary text-text-inverse border-accent-primary" : "bg-bg-primary text-text-secondary border-border-primary hover:bg-bg-tertiary"}`}>
-                                        {r.label}
+                                {modelAspectRatios.map(r => (
+                                    <button key={r} onClick={() => setAspectRatio(r)}
+                                        className={`px-3 py-1.5 text-[11px] font-medium rounded-[var(--radius-sm)] border transition-all cursor-pointer ${aspectRatio === r ? "bg-accent-primary text-text-inverse border-accent-primary" : "bg-bg-primary text-text-secondary border-border-primary hover:bg-bg-tertiary"}`}>
+                                        {r}
                                     </button>
                                 ))}
                             </div>
@@ -297,21 +293,21 @@ export function ImageContentBlock({ id, name, props, value, onChange, businessUn
                         </button>
 
                         {showAdvanced && (
-                            <div className="grid grid-cols-3 gap-3 pt-1">
+                            <div className="grid grid-cols-2 gap-3 pt-1">
                                 <div>
                                     <p className="text-[10px] font-medium text-text-secondary mb-1">Количество</p>
                                     <select value={genCount} onChange={(e) => setGenCount(Number(e.target.value))} className="w-full h-8 px-2 text-[11px] bg-bg-primary border border-border-primary rounded-[var(--radius-sm)] text-text-primary cursor-pointer">
                                         {[1, 2, 3, 4].map(n => <option key={n} value={n}>{n}</option>)}
                                     </select>
                                 </div>
-                                <div>
-                                    <p className="text-[10px] font-medium text-text-secondary mb-1">Масштаб</p>
-                                    <div className="flex gap-1">
-                                        {SCALE_OPTIONS.map(s => (
-                                            <button key={s} onClick={() => setScale(s)} className={`flex-1 h-8 text-[11px] rounded-[var(--radius-sm)] border cursor-pointer transition-all ${scale === s ? "bg-accent-primary text-text-inverse border-accent-primary" : "bg-bg-primary text-text-secondary border-border-primary hover:bg-bg-tertiary"}`}>{s}</button>
-                                        ))}
+                                {modelResolutions.length > 0 && (
+                                    <div>
+                                        <p className="text-[10px] font-medium text-text-secondary mb-1">Разрешение</p>
+                                        <select value={scale} onChange={(e) => setScale(e.target.value)} className="w-full h-8 px-2 text-[11px] bg-bg-primary border border-border-primary rounded-[var(--radius-sm)] text-text-primary cursor-pointer">
+                                            {modelResolutions.map(r => <option key={r.id} value={r.id}>{r.label}</option>)}
+                                        </select>
                                     </div>
-                                </div>
+                                )}
                                 <div>
                                     <p className="text-[10px] font-medium text-text-secondary mb-1">Seed</p>
                                     <input type="text" placeholder="Авто" value={seed} onChange={(e) => setSeed(e.target.value.replace(/\D/g, ""))} className="w-full h-8 px-2 text-[11px] bg-bg-primary border border-border-primary rounded-[var(--radius-sm)] text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-1 focus:ring-border-focus" />

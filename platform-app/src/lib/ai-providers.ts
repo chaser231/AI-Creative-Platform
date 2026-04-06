@@ -261,11 +261,18 @@ class ReplicateProvider implements AIProviderImplementation {
             input.output_format = "webp";
             input.output_quality = 90;
             if (params.count && params.count > 1) input.num_outputs = Math.min(params.count, 4);
+            // Flux resolution: megapixels
+            if (params.scale) input.megapixels = params.scale; // "0.25", "1", "4"
         } else if (isGoogle) {
             // Nano Banana models: only jpg or png
             input.output_format = "png";
+            // Google resolution: output_resolution
+            if (params.scale) input.output_resolution = params.scale; // "512px", "1024px", "2048px", "4096px"
+        } else if (slug.startsWith("openai/")) {
+            // GPT Image: quality
+            if (params.scale) input.quality = params.scale; // "low", "medium", "high"
         }
-        // Seedream, Qwen, GPT-Image: use model defaults (don't send output_format)
+        // Seedream, Qwen: no resolution control
 
         // ── Reference images — correct parameter per model family ──────
         if (params.referenceImages && params.referenceImages.length > 0) {
