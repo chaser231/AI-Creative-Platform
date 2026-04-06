@@ -13,7 +13,7 @@
 import { useState, useRef, useEffect } from "react";
 import { useCanvasStore } from "@/store/canvasStore";
 import { useShallow } from "zustand/react/shallow";
-import { getModelsForCaps } from "@/lib/ai-models";
+import { getModelsForCaps, getMaxRefs } from "@/lib/ai-models";
 import { Button } from "@/components/ui/Button";
 import { ReferenceImageInput } from "@/components/ui/ReferenceImageInput";
 import { trpc } from "@/lib/trpc";
@@ -847,7 +847,7 @@ export function AIChatPanel({ open, onClose, messages, onAddMessages, projectId 
                                 <ReferenceImageInput
                                     images={attachedImages}
                                     onChange={setAttachedImages}
-                                    max={3}
+                                    max={selectedImageModel === "auto" ? 14 : (getMaxRefs(selectedImageModel) || 4)}
                                     label=""
                                 />
                                 <button

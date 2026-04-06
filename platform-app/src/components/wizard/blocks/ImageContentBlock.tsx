@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { ReferenceImageInput } from "@/components/ui/ReferenceImageInput";
-import { getModelById } from "@/lib/ai-models";
+import { getModelById, getMaxRefs } from "@/lib/ai-models";
 import type { ImageComponentProps, BusinessUnit } from "@/types";
 import { ImageEditorModal } from "./ImageEditorModal";
 
@@ -284,7 +284,7 @@ export function ImageContentBlock({ id, name, props, value, onChange, businessUn
                                 <ReferenceImageInput
                                     images={additionalPhotos}
                                     onChange={setAdditionalPhotos}
-                                    max={3}
+                                    max={getMaxRefs(selectedModel)}
                                     label="Добавить референс"
                                 />
                             </div>
