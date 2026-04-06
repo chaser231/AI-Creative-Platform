@@ -1,13 +1,14 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { Sparkles, Wand2, Image as ImageIcon, Send, MessageCircle, Settings2, Ratio, Type, Grip, CheckCircle2, Circle, X } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { ReferenceImageInput } from "@/components/ui/ReferenceImageInput";
+import { RefAutocompleteTextarea, type RefAutocompleteTextareaHandle } from "@/components/ui/RefAutocompleteTextarea";
 import { useCanvasStore } from "@/store/canvasStore";
 import { useShallow } from "zustand/react/shallow";
 import { RemoteTextProvider, RemoteImageProvider } from "@/services/aiService";
 import { ImageEditorModal } from "@/components/wizard/blocks/ImageEditorModal";
-import { getModelById, getMaxRefs, getAspectRatios, getResolutions } from "@/lib/ai-models";
+import { getModelById, getMaxRefs, getAspectRatios, getResolutions, resolveRefTags } from "@/lib/ai-models";
 import { persistImageToS3 } from "@/utils/imageUpload";
 import type { ImageLayer } from "@/types";
 
@@ -62,7 +63,7 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
     const [isGenerating, setIsGenerating] = useState(false);
     const [showEditorModal, setShowEditorModal] = useState(false);
     const [referenceImages, setReferenceImages] = useState<string[]>([]);
-    const textareaRef = useRef<HTMLTextAreaElement>(null);
+    const promptRef = useRef<RefAutocompleteTextareaHandle>(null);
 
     // Check if current model supports vision (reference images)
     const supportsVision = activeTab !== "text" &&
@@ -72,14 +73,6 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
     const selectedImageLayer = selectedLayerIds.length > 0
         ? layers.find(l => l.id === selectedLayerIds[0] && l.type === "image") as ImageLayer | undefined
         : undefined;
-
-    // Auto-resize textarea
-    useEffect(() => {
-        if (textareaRef.current) {
-            textareaRef.current.style.height = "auto";
-            textareaRef.current.style.height = Math.min(textareaRef.current.scrollHeight, 180) + "px";
-        }
-    }, [prompt, activeTab]);
 
     // Reset model on tab change
     const handleTabChange = (tab: "text" | "image" | "outpaint") => {
@@ -116,7 +109,8 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
             if (activeTab === "text") {
                 res = await RemoteTextProvider.generate(prompt, { model: selectedModel });
             } else {
-                res = await RemoteImageProvider.generate(prompt, {
+                const resolvedPrompt = resolveRefTags(prompt, selectedModel);
+                res = await RemoteImageProvider.generate(resolvedPrompt, {
                     model: selectedModel,
                     aspectRatio,
                     scale: scale || undefined,
@@ -280,16 +274,16 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                     )}
                 </div>
 
-                {/* PROMPT INPUT */}
                 <div className="flex-1 px-4 py-2">
-                    <textarea
-                        ref={textareaRef}
+                    <RefAutocompleteTextarea
+                        ref={promptRef}
                         value={prompt}
-                        onChange={(e) => setPrompt(e.target.value)}
+                        onChange={setPrompt}
+                        referenceImages={referenceImages}
                         placeholder={activeTab === "text" ? "Например: Заголовок для распродажи кроссовок..." : "Например: Футуристичный город в неоновых тонах..."}
                         className="w-full h-full min-h-[80px] bg-transparent text-lg text-text-primary placeholder:text-text-tertiary/50 focus:outline-none resize-none leading-relaxed"
                         onKeyDown={(e) => {
-                            e.stopPropagation(); // Stop event from bubble to canvas (prevents Panning)
+                            e.stopPropagation();
                             if (e.key === "Enter" && !e.shiftKey) {
                                 e.preventDefault();
                                 handleGenerate();
@@ -353,6 +347,7 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                             images={referenceImages}
                             onChange={setReferenceImages}
                             max={getMaxRefs(selectedModel)}
+                            onTagClick={(tag) => promptRef.current?.insertAtCursor(tag)}
                         />
                     )}
 

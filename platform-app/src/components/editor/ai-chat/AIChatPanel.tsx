@@ -16,6 +16,7 @@ import { useShallow } from "zustand/react/shallow";
 import { getModelsForCaps, getMaxRefs } from "@/lib/ai-models";
 import { Button } from "@/components/ui/Button";
 import { ReferenceImageInput } from "@/components/ui/ReferenceImageInput";
+import { RefAutocompleteTextarea, type RefAutocompleteTextareaHandle } from "@/components/ui/RefAutocompleteTextarea";
 import { trpc } from "@/lib/trpc";
 import { useWorkspace } from "@/providers/WorkspaceProvider";
 import type { Layer, MasterComponent } from "@/types";
@@ -54,7 +55,7 @@ export function AIChatPanel({ open, onClose, messages, onAddMessages, projectId 
     const [openDropdown, setOpenDropdown] = useState<"text" | "image" | null>(null);
     const [attachedImages, setAttachedImages] = useState<string[]>([]);
     const scrollRef = useRef<HTMLDivElement>(null);
-    const inputRef = useRef<HTMLTextAreaElement>(null);
+    const inputRef = useRef<RefAutocompleteTextareaHandle>(null);
 
     // ─── Persistent state across conversation turns ────────
     /** Reference images from the user's original message — persist across template/preset selections */
@@ -825,20 +826,15 @@ export function AIChatPanel({ open, onClose, messages, onAddMessages, projectId 
                 {/* Input */}
                 <div className="px-3 pb-3">
                     <div className="relative bg-bg-surface border border-border-primary rounded-xl overflow-hidden focus-within:border-violet-500/50 transition-colors">
-                        <textarea
+                        <RefAutocompleteTextarea
                             ref={inputRef}
                             value={input}
-                            onChange={(e) => setInput(e.target.value)}
+                            onChange={setInput}
+                            referenceImages={attachedImages}
                             onKeyDown={handleKeyDown}
                             placeholder="Спросите что-нибудь..."
                             rows={3}
-                            style={{ scrollbarWidth: "none", msOverflowStyle: "none", height: "80px" }}
                             className="w-full resize-none bg-transparent px-3.5 pt-3 pb-12 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none min-h-[80px] max-h-[160px] [&::-webkit-scrollbar]:hidden"
-                            onInput={(e) => {
-                                const t = e.target as HTMLTextAreaElement;
-                                t.style.height = "80px";
-                                t.style.height = Math.min(t.scrollHeight, 160) + "px";
-                            }}
                         />
                         
                         <div className="absolute bottom-1.5 left-2 right-1.5 flex items-end justify-between pointer-events-none">
@@ -849,6 +845,7 @@ export function AIChatPanel({ open, onClose, messages, onAddMessages, projectId 
                                     onChange={setAttachedImages}
                                     max={selectedImageModel === "auto" ? 14 : (getMaxRefs(selectedImageModel) || 4)}
                                     label=""
+                                    onTagClick={(tag) => inputRef.current?.insertAtCursor(tag)}
                                 />
                                 <button
                                     onClick={handleSend}

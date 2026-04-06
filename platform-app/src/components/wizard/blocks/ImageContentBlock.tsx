@@ -12,7 +12,8 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { ReferenceImageInput } from "@/components/ui/ReferenceImageInput";
-import { getModelById, getMaxRefs, getAspectRatios, getResolutions } from "@/lib/ai-models";
+import { RefAutocompleteTextarea, type RefAutocompleteTextareaHandle } from "@/components/ui/RefAutocompleteTextarea";
+import { getModelById, getMaxRefs, getAspectRatios, getResolutions, resolveRefTags } from "@/lib/ai-models";
 import type { ImageComponentProps, BusinessUnit } from "@/types";
 import { ImageEditorModal } from "./ImageEditorModal";
 
@@ -96,6 +97,7 @@ export function ImageContentBlock({ id, name, props, value, onChange, businessUn
     const [showEditor, setShowEditor] = useState(false);
     const [showGenPanel, setShowGenPanel] = useState(false);
     const [genPrompt, setGenPrompt] = useState("");
+    const promptRef = useRef<RefAutocompleteTextareaHandle>(null);
 
     // Generation params
     const [selectedModel, setSelectedModel] = useState("flux-dev");
@@ -142,7 +144,7 @@ export function ImageContentBlock({ id, name, props, value, onChange, businessUn
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
-                    prompt: finalPrompt,
+                    prompt: resolveRefTags(finalPrompt, selectedModel),
                     type: "image",
                     model: selectedModel,
                     aspectRatio: aspectRatio,
@@ -232,10 +234,12 @@ export function ImageContentBlock({ id, name, props, value, onChange, businessUn
                         </div>
 
                         {/* Prompt */}
-                        <textarea
-                            placeholder={productDescription || "Опишите изображение..."}
+                        <RefAutocompleteTextarea
+                            ref={promptRef}
                             value={genPrompt}
-                            onChange={(e) => { setGenPrompt(e.target.value); setGenError(null); }}
+                            onChange={(v) => { setGenPrompt(v); setGenError(null); }}
+                            referenceImages={additionalPhotos}
+                            placeholder={productDescription || "Опишите изображение..."}
                             className="w-full h-16 px-3 py-2 rounded-[var(--radius-md)] border border-border-primary bg-bg-primary text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-border-focus resize-none placeholder:text-text-tertiary"
                         />
 
@@ -282,6 +286,7 @@ export function ImageContentBlock({ id, name, props, value, onChange, businessUn
                                     onChange={setAdditionalPhotos}
                                     max={getMaxRefs(selectedModel)}
                                     label="Добавить референс"
+                                    onTagClick={(tag) => promptRef.current?.insertAtCursor(tag)}
                                 />
                             </div>
                         )}

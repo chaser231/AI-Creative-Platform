@@ -1,5 +1,6 @@
 import type { ActionResult, ActionContext, CanvasInstruction } from "../actionRegistry";
 import { callLLM } from "./llmProviders";
+import { resolveRefTags } from "@/lib/ai-models";
 
 // ─── Action Executors ────────────────────────────────────
 
@@ -158,7 +159,7 @@ RULES:
 
       try {
         const aiResult = await imageProvider.generate({
-          prompt: cleanPrompt,
+          prompt: resolveRefTags(cleanPrompt, selectedModel),
           type: "image",
           model: selectedModel,
           referenceImages: hasActualRefs ? referenceImages : undefined,

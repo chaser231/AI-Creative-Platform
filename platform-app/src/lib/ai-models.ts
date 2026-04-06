@@ -273,3 +273,38 @@ export function getAspectRatios(modelId: string): string[] {
 export function getResolutions(modelId: string): ResolutionOption[] {
     return getModelById(modelId)?.resolutions ?? [];
 }
+
+// ─── Reference tag resolution ───────────────────────────────────────────────
+
+/** Ordinal words for Google/Seedream models (1-based) */
+const ORDINALS = [
+    "first", "second", "third", "fourth", "fifth",
+    "sixth", "seventh", "eighth", "ninth", "tenth",
+    "eleventh", "twelfth", "thirteenth", "fourteenth",
+];
+
+/**
+ * Replace @refN tags in the prompt with model-native image references.
+ *
+ * - Google/Seedream: @ref1 → "the first image", @ref2 → "the second image"
+ * - Flux/GPT/others: @ref1 → "image 1", @ref2 → "image 2"
+ *
+ * If no @ref tags are found, returns the prompt unchanged.
+ */
+export function resolveRefTags(prompt: string, modelId: string): string {
+    const entry = getModelById(modelId);
+    const isGoogle = entry?.slug.startsWith("google/");
+    const isSeedream = entry?.slug.startsWith("bytedance/");
+
+    // Replace @ref1 through @ref14
+    return prompt.replace(/@ref(\d+)/gi, (_match, numStr: string) => {
+        const num = parseInt(numStr, 10);
+        if (num < 1 || num > 14) return _match; // leave unknown refs untouched
+
+        if (isGoogle || isSeedream) {
+            const word = ORDINALS[num - 1] || `${num}th`;
+            return `the ${word} image`;
+        }
+        return `image ${num}`;
+    });
+}
