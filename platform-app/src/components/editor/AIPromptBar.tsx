@@ -50,7 +50,7 @@ interface AIPromptBarProps {
     onClose: () => void;
     onToggleChat: () => void;
     isChatOpen: boolean;
-    onResult: (result: { type: string; content: string; prompt: string }) => void;
+    onResult: (result: { type: string; content: string; prompt: string; model?: string }) => void;
     /** Project ID for S3 image persistence */
     projectId?: string;
 }
@@ -177,7 +177,8 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
             onResult({
                 type: activeTab,
                 content: persistedContent,
-                prompt: prompt
+                prompt: prompt,
+                model: res.model,
             });
             setPrompt(""); // Clear prompt after success
             setReferenceImages([]); // Clear references after use

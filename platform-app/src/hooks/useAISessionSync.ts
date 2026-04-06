@@ -116,6 +116,8 @@ export function useAISessionSync(projectId: string) {
               role: msg.role as "user" | "assistant" | "system",
               content: msg.content,
               type: msg.type as "text" | "image" | "error",
+              model: msg.model,
+              costUnits: msg.costUnits,
             })
             .catch((err: Error) => {
               console.error("Failed to save AI message:", err);

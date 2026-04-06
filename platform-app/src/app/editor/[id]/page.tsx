@@ -24,6 +24,7 @@ import { useShallow } from "zustand/react/shallow";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { useCanvasAutoSave, useLoadCanvasState } from "@/hooks/useProjectSync";
 import { useAISessionSync } from "@/hooks/useAISessionSync";
+import { getModelById } from "@/lib/ai-models";
 import { trpc } from "@/lib/trpc";
 import { loadAllCustomFonts } from "@/lib/customFonts";
 import Konva from "konva";
@@ -353,7 +354,9 @@ export default function EditorPage({ params }: EditorPageProps) {
                                     role: "assistant",
                                     content: res.content,
                                     type: res.type as "text" | "image" | "outpaint",
-                                    timestamp: Date.now()
+                                    timestamp: Date.now(),
+                                    model: res.model,
+                                    costUnits: res.model ? (getModelById(res.model)?.costPerRun ?? 0) : undefined,
                                 }])}
                             />
                         </div>
