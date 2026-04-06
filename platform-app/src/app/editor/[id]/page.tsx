@@ -341,6 +341,7 @@ export default function EditorPage({ params }: EditorPageProps) {
                                 onClose={() => setAiPanelOpen(false)}
                                 onToggleChat={() => setAiChatOpen(!aiChatOpen)}
                                 isChatOpen={aiChatOpen}
+                                projectId={id}
                                 onResult={(res) => addAiMessages([{
                                     id: Date.now().toString(),
                                     role: "user",

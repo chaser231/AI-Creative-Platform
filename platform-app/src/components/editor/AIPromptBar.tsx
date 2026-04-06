@@ -8,6 +8,7 @@ import { useShallow } from "zustand/react/shallow";
 import { RemoteTextProvider, RemoteImageProvider } from "@/services/aiService";
 import { ImageEditorModal } from "@/components/wizard/blocks/ImageEditorModal";
 import { getModelById } from "@/lib/ai-models";
+import { persistImageToS3 } from "@/utils/imageUpload";
 import type { ImageLayer } from "@/types";
 
 // Helper models lists
@@ -50,9 +51,11 @@ interface AIPromptBarProps {
     onToggleChat: () => void;
     isChatOpen: boolean;
     onResult: (result: { type: string; content: string; prompt: string }) => void;
+    /** Project ID for S3 image persistence */
+    projectId?: string;
 }
 
-export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult }: AIPromptBarProps) {
+export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult, projectId }: AIPromptBarProps) {
     const { addTextLayer, addImageLayer, selectedLayerIds, updateLayer, layers } = useCanvasStore(useShallow((s) => ({
         addTextLayer: s.addTextLayer, addImageLayer: s.addImageLayer,
         selectedLayerIds: s.selectedLayerIds, updateLayer: s.updateLayer, layers: s.layers,
@@ -116,22 +119,33 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult 
                 });
             }
 
+            // Persist AI-generated image to S3 immediately (before adding to canvas)
+            // This prevents storing temporary Replicate/OpenAI URLs that expire in ~1hr
+            let persistedContent = res.content;
+            if (activeTab !== "text" && projectId) {
+                try {
+                    persistedContent = await persistImageToS3(res.content, projectId);
+                } catch (e) {
+                    console.warn("Image S3 persistence failed, using original URL:", e);
+                }
+            }
+
             // AUTO-ADD to Canvas Logic
             if (applyToSelection && selectedLayerIds.length > 0) {
                 // Update existing layer if checkbox is checked
                 const layerId = selectedLayerIds[0]; // Naive: take first
                 if (activeTab === "text") {
-                    updateLayer(layerId, { text: res.content });
+                    updateLayer(layerId, { text: persistedContent });
                 } else {
                     // For image, we can only update source if it's an image layer or update fill of rect
                     // This logic depends on layer type, simplified here:
-                    updateLayer(layerId, { src: res.content } as any);
+                    updateLayer(layerId, { src: persistedContent } as any);
                 }
             } else {
                 // Creates NEW layer
                 if (activeTab === "text") {
                     addTextLayer({
-                        text: res.content,
+                        text: persistedContent,
                         fontSize: 40,
                         x: 100,
                         y: 100,
@@ -149,20 +163,20 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult 
                             w *= scale;
                             h *= scale;
                         }
-                        addImageLayer(res.content, w, h);
+                        addImageLayer(persistedContent, w, h);
                     };
                     img.onerror = () => {
                         // Fallback in case of loading error
-                        addImageLayer(res.content, 512, 512);
+                        addImageLayer(persistedContent, 512, 512);
                     };
-                    img.src = res.content;
+                    img.src = persistedContent;
                 }
             }
 
             // Pass result up to chat history
             onResult({
                 type: activeTab,
-                content: res.content,
+                content: persistedContent,
                 prompt: prompt
             });
             setPrompt(""); // Clear prompt after success
@@ -339,6 +353,15 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult 
                 <ImageEditorModal
                     imageSrc={selectedImageLayer.src}
                     onApply={async (editedSrc) => {
+                        // Persist the edited image to S3 immediately
+                        let persistedSrc = editedSrc;
+                        if (projectId) {
+                            try {
+                                persistedSrc = await persistImageToS3(editedSrc, projectId);
+                            } catch (e) {
+                                console.warn("Failed to persist edited image to S3:", e);
+                            }
+                        }
                         try {
                             // Load both old and new images to measure how much pixel dimensions changed
                             const oldImg = new Image();
@@ -352,30 +375,23 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult 
                             await new Promise((resolve, reject) => {
                                 newImg.onload = resolve;
                                 newImg.onerror = reject;
-                                newImg.src = editedSrc;
+                                newImg.src = persistedSrc;
                             });
                             
-                            // If the AI expanded the image from 1000px to 1500px, 
-                            // we must multiply the layer width on canvas by 1.5
-                            // This guarantees the original object stays the same visual size, 
-                            // and the layer simply grows outwards as expected.
                             const scaleX = newImg.naturalWidth / oldImg.naturalWidth;
                             const scaleY = newImg.naturalHeight / oldImg.naturalHeight;
                             
                             const newWidth = selectedImageLayer.width * scaleX;
                             const newHeight = selectedImageLayer.height * scaleY;
                             
-                            // Calculate the central offset so it expands evenly around the center
-                            // (or just expand from top-left. For now, we'll keep it simple and expand from top-left, 
-                            // which is the origin, but users can move it afterwards)
                             updateLayer(selectedImageLayer.id, { 
-                                src: editedSrc,
+                                src: persistedSrc,
                                 width: newWidth,
                                 height: newHeight 
                             } as any);
                         } catch (e) {
                             console.error("Failed to measure new image dimensions", e);
-                            updateLayer(selectedImageLayer.id, { src: editedSrc } as any);
+                            updateLayer(selectedImageLayer.id, { src: persistedSrc } as any);
                         }
                         
                         setShowEditorModal(false);

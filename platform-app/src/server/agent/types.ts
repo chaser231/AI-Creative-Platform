@@ -15,6 +15,10 @@ export interface ModelPreferences {
   imageModel?: string;
   /** Reference images to inject into image generation steps (base64) */
   referenceImages?: string[];
+  /** Selected style preset ID (from search_style_presets) */
+  stylePresetId?: string;
+  /** Style preset prompt suffix to inject into image generation */
+  stylePromptSuffix?: string;
 }
 
 export interface AgentPlan {

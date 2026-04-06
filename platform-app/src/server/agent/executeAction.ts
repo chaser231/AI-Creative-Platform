@@ -277,13 +277,17 @@ RULES:
 
       const searchTerms = serviceMap[service] || [service];
 
-      // Search by name, categories, or tags (deduplicated by name)
+      // Search by name, categories, or tags — include official templates from other workspaces
       const templates = await context.prisma.template.findMany({
         where: {
-          workspaceId: context.workspaceId,
-          OR: [
-            { name: { contains: service, mode: "insensitive" } },
-            { categories: { hasSome: searchTerms } },
+          AND: [
+            // Visibility: own workspace + official (cross-workspace)
+            { OR: [{ workspaceId: context.workspaceId }, { isOfficial: true }] },
+            // Content filter: match service name or categories
+            { OR: [
+              { name: { contains: service, mode: "insensitive" } },
+              { categories: { hasSome: searchTerms } },
+            ]},
           ],
         },
         select: {
@@ -326,6 +330,14 @@ RULES:
       const templateId = params.templateId as string;
       const topic = params.topic as string;
       const imageModel = (params.imageModel as string) || "flux-schnell";
+      const templateRefImages = params.referenceImages as string[] | undefined;
+      const templateVisionCtx = params.visionContext as string | undefined;
+      const templateStyleSuffix = params.stylePromptSuffix as string | undefined;
+      const preGeneratedImageUrl = params.lastGeneratedImageUrl as string | undefined;
+      const hasTemplateRefs = templateRefImages && templateRefImages.length > 0;
+
+      console.log(`[Template Fill] lastGeneratedImageUrl: ${preGeneratedImageUrl ? preGeneratedImageUrl.slice(0, 60) + '...' : 'NONE'}`);
+      console.log(`[Template Fill] referenceImages: ${hasTemplateRefs ? templateRefImages.length : 0}`);
 
       // Fetch the full template
       const template = await context.prisma.template.findUnique({
@@ -395,6 +407,28 @@ RULES:
       const hasSubhead = slots.some(s => s.slotId === "subhead" && s.type === "text");
       const hasPairedTextSlots = hasHeadline && hasSubhead;
 
+      // ─── Clean topic: extract actual product/promo theme ───────
+      // The raw `topic` is often the user's meta-request like "Сгенерируй баннеры для Маркета",
+      // which leaks into generated headlines. We need to extract the ACTUAL theme.
+      let cleanTopic = topic;
+      if (templateVisionCtx) {
+        // VLM described the products — use that as the copywriting brief
+        cleanTopic = `Товары: ${templateVisionCtx}`;
+        console.log(`[Template Fill] Using VLM context for text generation (${cleanTopic.slice(0, 80)}...)`);
+      } else {
+        // Strip meta-request patterns, leaving just the subject
+        cleanTopic = await callLLM([
+          { role: "system", content: `Ты извлекаешь тему из запроса пользователя.
+Пользователь попросил создать баннер. Из его запроса извлеки ТОЛЬКО предмет/тему рекламы.
+Убери все мета-инструкции (сгенерируй, сделай, создай, баннер, шаблон, маркет, лавка).
+Если тема не ясна — придумай подходящую для ${isMarketTemplate ? "Яндекс Маркета" : "рекламного баннера"}.
+Ответь 3-5 словами. Только тема, ничего больше.` },
+          { role: "user", content: topic },
+        ]);
+        cleanTopic = cleanTopic.trim();
+        console.log(`[Template Fill] Cleaned topic: "${topic}" → "${cleanTopic}"`);
+      }
+
       // ─── Market paired title+subtitle generation ───────
       if (isMarketTemplate && hasPairedTextSlots) {
         // Use specialized Market copywriting prompt (versioned in prompts/market-title-subtitle-v1.md)
@@ -431,7 +465,7 @@ RULES:
 
         const pairsResponse = await callLLM([
           { role: "system", content: MARKET_SYSTEM_PROMPT },
-          { role: "user", content: topic },
+          { role: "user", content: cleanTopic },
         ]);
 
         // Parse JSON pairs from the response
@@ -465,31 +499,71 @@ RULES:
           if (slot.slotId === "cta" && slot.type === "text") {
             const cta = await callLLM([
               { role: "system", content: "Ты — копирайтер. Напиши текст для кнопки призыва к действию (CTA). 1-3 слова. Без кавычек. Только текст." },
-              { role: "user", content: `CTA для: ${topic}` },
+              { role: "user", content: `CTA для: ${cleanTopic}` },
             ]);
             canvasActions.push({
               action: "update_layer",
               params: { slotId: "cta", updates: { text: cta.trim().replace(/^["«]|["»]$/g, "").replace(/\.$/, "") } },
             });
           } else if ((slot.slotId === "background" || slot.slotId === "image-primary") && slot.type === "image") {
-            const imgPrompt = await callLLM([
-              { role: "system", content: "You are an expert prompt engineer. Convert the request into a detailed English prompt for AI image generation. Include: high quality, commercial, professional. CRITICAL: always add 'no text, no letters, no words, no logos, no watermarks, no graphics, no UI elements' to the prompt. Max 40 words. Return ONLY the prompt." },
-              { role: "user", content: `Image for banner about: ${topic}` },
-            ]);
-            try {
-              const { getProvider: getAIProvider } = await import("@/lib/ai-providers");
-              const imgProvider = getAIProvider(imageModel);
-              const imgResult = await imgProvider.generate({
-                prompt: imgPrompt.trim(),
-                type: "image",
-                model: imageModel,
-              });
+            // Priority 1: Use pre-generated image from an earlier pipeline step
+            if (preGeneratedImageUrl) {
+              console.log(`[Template Fill] Using pre-generated image for slot "${slot.slotId}"`);
               canvasActions.push({
                 action: "update_layer",
-                params: { slotId: slot.slotId, updates: { src: imgResult.content } },
+                params: { slotId: slot.slotId, updates: { src: preGeneratedImageUrl } },
               });
-            } catch {
-              // skip failed image
+            } else {
+              // Priority 2/3: Generate image (reference-aware or basic)
+              let imgPrompt: string;
+              if (hasTemplateRefs && templateVisionCtx) {
+                imgPrompt = await callLLM([
+                  { role: "system", content: `You write prompts for AI image generation that uses attached reference product photos.
+CRITICAL RULES:
+- Write in ENGLISH only
+- The user has attached ${templateRefImages!.length} reference product photos
+- The model CAN SEE the attached photos — tell it to USE them
+- Start with: "Using the attached reference images as the exact products:"
+- Describe COMPOSITION/SCENE: arrangement, lighting, background, angles
+- Do NOT describe products in detail (the model sees the photos)
+- Style: premium commercial photography, banner-quality hero shot
+${templateStyleSuffix ? `- Additional style: ${templateStyleSuffix}` : ''}
+- ALWAYS end with: "no text, no letters, no words, no logos, no watermarks"
+- Keep under 80 words. Return ONLY the prompt text.` },
+                  { role: "user", content: `Create a banner image prompt for a ${topic} banner. ${templateVisionCtx}` },
+                ]);
+              } else {
+                imgPrompt = await callLLM([
+                  { role: "system", content: `You are an expert prompt engineer. Convert the request into a detailed English prompt for AI image generation. Include: high quality, commercial, professional.${templateStyleSuffix ? ` Style: ${templateStyleSuffix}.` : ''} CRITICAL: always add 'no text, no letters, no words, no logos, no watermarks, no graphics, no UI elements' to the prompt. Max 40 words. Return ONLY the prompt.` },
+                  { role: "user", content: `Image for banner about: ${topic}` },
+                ]);
+              }
+
+              // Clean up LLM wrapper artifacts
+              let cleanImgPrompt = imgPrompt.trim();
+              cleanImgPrompt = cleanImgPrompt.replace(/^["']|["']$/g, '');
+              cleanImgPrompt = cleanImgPrompt.replace(/^(Here is the prompt:?\s*)/i, '');
+              cleanImgPrompt = cleanImgPrompt.trim();
+
+              console.log(`[Template Fill] Image prompt for slot "${slot.slotId}": "${cleanImgPrompt.slice(0, 120)}..."`);
+              console.log(`[Template Fill] hasRefImages: ${hasTemplateRefs ? templateRefImages!.length : 0}`);
+
+              try {
+                const { getProvider: getAIProvider } = await import("@/lib/ai-providers");
+                const imgProvider = getAIProvider(imageModel);
+                const imgResult = await imgProvider.generate({
+                  prompt: cleanImgPrompt,
+                  type: "image",
+                  model: imageModel,
+                  referenceImages: hasTemplateRefs ? templateRefImages : undefined,
+                });
+                canvasActions.push({
+                  action: "update_layer",
+                  params: { slotId: slot.slotId, updates: { src: imgResult.content } },
+                });
+              } catch {
+                // skip failed image
+              }
             }
           }
         }
@@ -517,7 +591,7 @@ RULES:
         if (slot.slotId === "headline" && slot.type === "text") {
           const headline = await callLLM([
             { role: "system", content: "Ты — копирайтер. Напиши ОДИН заголовок для баннера. Максимум 5 слов. Без кавычек, без точки. Только текст." },
-            { role: "user", content: `Заголовок для: ${topic}` },
+            { role: "user", content: `Заголовок для: ${cleanTopic}` },
           ]);
           canvasActions.push({
             action: "update_layer",
@@ -526,7 +600,7 @@ RULES:
         } else if (slot.slotId === "subhead" && slot.type === "text") {
           const subtitle = await callLLM([
             { role: "system", content: "Ты — копирайтер. Напиши подзаголовок для баннера. 8-15 слов. Без кавычек. Только текст." },
-            { role: "user", content: `Подзаголовок для: ${topic}` },
+            { role: "user", content: `Подзаголовок для: ${cleanTopic}` },
           ]);
           canvasActions.push({
             action: "update_layer",
@@ -535,31 +609,71 @@ RULES:
         } else if (slot.slotId === "cta" && slot.type === "text") {
           const cta = await callLLM([
             { role: "system", content: "Ты — копирайтер. Напиши текст для кнопки призыва к действию (CTA). 1-3 слова. Без кавычек. Только текст." },
-            { role: "user", content: `CTA для: ${topic}` },
+            { role: "user", content: `CTA для: ${cleanTopic}` },
           ]);
           canvasActions.push({
             action: "update_layer",
             params: { slotId: "cta", updates: { text: cta.trim().replace(/^["«]|["»]$/g, "") } },
           });
         } else if ((slot.slotId === "background" || slot.slotId === "image-primary") && (slot.type === "image")) {
-          const imgPrompt = await callLLM([
-            { role: "system", content: "You are an expert prompt engineer. Convert the request into a detailed English prompt for AI image generation. Include: high quality, commercial, professional. CRITICAL: always add 'no text, no letters, no words, no logos, no watermarks, no graphics, no UI elements' to the prompt. Max 40 words. Return ONLY the prompt." },
-            { role: "user", content: `Image for banner about: ${topic}` },
-          ]);
-          try {
-            const { getProvider: getAIProvider } = await import("@/lib/ai-providers");
-            const imgProvider = getAIProvider(imageModel);
-            const imgResult = await imgProvider.generate({
-              prompt: imgPrompt.trim(),
-              type: "image",
-              model: imageModel,
-            });
+          // Priority 1: Use pre-generated image from an earlier pipeline step
+          if (preGeneratedImageUrl) {
+            console.log(`[Template Fill Generic] Using pre-generated image for slot "${slot.slotId}"`);
             canvasActions.push({
               action: "update_layer",
-              params: { slotId: slot.slotId, updates: { src: imgResult.content } },
+              params: { slotId: slot.slotId, updates: { src: preGeneratedImageUrl } },
             });
-          } catch {
-            // Image generation failed, skip this slot
+          } else {
+            // Priority 2/3: Generate image (reference-aware or basic)
+            let imgPrompt: string;
+            if (hasTemplateRefs && templateVisionCtx) {
+              imgPrompt = await callLLM([
+                { role: "system", content: `You write prompts for AI image generation that uses attached reference product photos.
+CRITICAL RULES:
+- Write in ENGLISH only
+- The user has attached ${templateRefImages!.length} reference product photos
+- The model CAN SEE the attached photos — tell it to USE them
+- Start with: "Using the attached reference images as the exact products:"
+- Describe COMPOSITION/SCENE: arrangement, lighting, background, angles
+- Do NOT describe products in detail (the model sees the photos)
+- Style: premium commercial photography, banner-quality hero shot
+${templateStyleSuffix ? `- Additional style: ${templateStyleSuffix}` : ''}
+- ALWAYS end with: "no text, no letters, no words, no logos, no watermarks"
+- Keep under 80 words. Return ONLY the prompt text.` },
+                { role: "user", content: `Create a banner image prompt for a ${topic} banner. ${templateVisionCtx}` },
+              ]);
+            } else {
+              imgPrompt = await callLLM([
+                { role: "system", content: `You are an expert prompt engineer. Convert the request into a detailed English prompt for AI image generation. Include: high quality, commercial, professional.${templateStyleSuffix ? ` Style: ${templateStyleSuffix}.` : ''} CRITICAL: always add 'no text, no letters, no words, no logos, no watermarks, no graphics, no UI elements' to the prompt. Max 40 words. Return ONLY the prompt.` },
+                { role: "user", content: `Image for banner about: ${topic}` },
+              ]);
+            }
+
+            // Clean up LLM wrapper artifacts
+            let cleanImgPrompt = imgPrompt.trim();
+            cleanImgPrompt = cleanImgPrompt.replace(/^["']|["']$/g, '');
+            cleanImgPrompt = cleanImgPrompt.replace(/^(Here is the prompt:?\s*)/i, '');
+            cleanImgPrompt = cleanImgPrompt.trim();
+
+            console.log(`[Template Fill Generic] Image prompt for slot "${slot.slotId}": "${cleanImgPrompt.slice(0, 120)}..."`);
+            console.log(`[Template Fill Generic] hasRefImages: ${hasTemplateRefs ? templateRefImages!.length : 0}`);
+
+            try {
+              const { getProvider: getAIProvider } = await import("@/lib/ai-providers");
+              const imgProvider = getAIProvider(imageModel);
+              const imgResult = await imgProvider.generate({
+                prompt: cleanImgPrompt,
+                type: "image",
+                model: imageModel,
+                referenceImages: hasTemplateRefs ? templateRefImages : undefined,
+              });
+              canvasActions.push({
+                action: "update_layer",
+                params: { slotId: slot.slotId, updates: { src: imgResult.content } },
+              });
+            } catch {
+              // Image generation failed, skip this slot
+            }
           }
         }
       }
@@ -573,6 +687,80 @@ RULES:
           : `Шаблон «${template.name}» применён. Слоты не найдены — добавляю новые элементы.`,
         canvasActions,
         metadata: { templateId, templateName: template.name, slotsFound: slots.length },
+      };
+    }
+
+    case "search_style_presets": {
+      // Search for image style presets in the workspace's AIPreset table
+      const presets = await context.prisma.aIPreset.findMany({
+        where: {
+          workspaceId: context.workspaceId,
+          type: "image",
+          isActive: true,
+        },
+        orderBy: { name: "asc" },
+      });
+
+      // Default presets if none exist in DB
+      const defaultPresets = [
+        {
+          id: "default-lifestyle",
+          name: "📸 Лайфстайл",
+          description: "Реалистичная фотография в современном интерьере с тёплым естественным освещением",
+          promptSuffix: "realistic lifestyle photography, modern interior setting, natural warm lighting, depth of field, 4K resolution",
+        },
+        {
+          id: "default-studio",
+          name: "🏢 Студийная съёмка",
+          description: "Профессиональная студийная съёмка на чистом фоне с мягким светом",
+          promptSuffix: "professional studio photography, clean white/gray background, product hero shot, soft studio lighting, commercial quality",
+        },
+        {
+          id: "default-minimal",
+          name: "🎯 Минимализм",
+          description: "Минималистичная композиция с простым геометрическим фоном и приглушёнными тонами",
+          promptSuffix: "minimalist composition, simple geometric backdrop, muted pastel tones, clean negative space, elegant simplicity",
+        },
+        {
+          id: "default-3d",
+          name: "🎭 3D Рендер",
+          description: "3D-сцена с мягкими тенями и изометрической перспективой",
+          promptSuffix: "3D rendered scene, soft ambient occlusion, isometric perspective, clean shadows, modern 3D design",
+        },
+        {
+          id: "default-gradient",
+          name: "🌈 Градиент",
+          description: "Абстрактный градиентный фон с яркими современными цветами",
+          promptSuffix: "abstract gradient background, vibrant modern colors, soft color transitions, premium feel",
+        },
+        {
+          id: "default-illustration",
+          name: "✏️ Иллюстрация",
+          description: "Современная цифровая иллюстрация с яркими плоскими цветами",
+          promptSuffix: "modern digital illustration, bold flat colors, clean vector style, contemporary design",
+        },
+      ];
+
+      interface PresetConfig {
+        promptSuffix?: string;
+        negativePrompt?: string;
+        defaultModel?: string;
+      }
+
+      const choices = presets.length > 0
+        ? presets.map((p: { id: string; name: string; description: string; config: unknown }) => ({
+            id: p.id,
+            name: p.name,
+            description: p.description,
+            promptSuffix: (p.config as PresetConfig)?.promptSuffix || "",
+          }))
+        : defaultPresets;
+
+      return {
+        success: true,
+        type: "preset_choices" as const,
+        content: `Доступно ${choices.length} стилевых пресетов. Выберите стиль генерации:`,
+        presetChoices: choices,
       };
     }
 

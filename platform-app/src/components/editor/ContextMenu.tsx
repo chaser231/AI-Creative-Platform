@@ -12,6 +12,7 @@ import {
     Lock,
     Unlock,
     Pencil,
+    Download,
 } from "lucide-react";
 
 export interface ContextMenuItem {
@@ -156,6 +157,7 @@ export function buildLayerContextMenuItems(
         toggleVisibility: () => void;
         toggleLock: () => void;
         rename?: () => void;
+        exportLayer?: () => void;
     }
 ): ContextMenuEntry[] {
     const items: ContextMenuEntry[] = [
@@ -200,6 +202,18 @@ export function buildLayerContextMenuItems(
         );
     }
 
+    // Export
+    if (actions.exportLayer) {
+        items.push(
+            { separator: true },
+            {
+                label: "Экспортировать как PNG",
+                icon: <Download size={13} />,
+                onClick: actions.exportLayer,
+            }
+        );
+    }
+
     items.push(
         { separator: true },
         {
@@ -212,4 +226,39 @@ export function buildLayerContextMenuItems(
     );
 
     return items;
+}
+
+/**
+ * Build context menu items for multi-selection scenarios.
+ */
+export function buildMultiSelectionContextMenuItems(
+    count: number,
+    actions: {
+        duplicateAll: () => void;
+        removeAll: () => void;
+        exportAll: () => void;
+    }
+): ContextMenuEntry[] {
+    return [
+        {
+            label: `Дублировать (${count})`,
+            icon: <Copy size={13} />,
+            shortcut: "⌘D",
+            onClick: actions.duplicateAll,
+        },
+        { separator: true },
+        {
+            label: `Экспортировать (${count}) как PNG`,
+            icon: <Download size={13} />,
+            onClick: actions.exportAll,
+        },
+        { separator: true },
+        {
+            label: `Удалить (${count})`,
+            icon: <Trash2 size={13} />,
+            shortcut: "⌫",
+            danger: true,
+            onClick: actions.removeAll,
+        },
+    ];
 }
