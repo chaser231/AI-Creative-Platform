@@ -7,7 +7,7 @@ import { useCanvasStore } from "@/store/canvasStore";
 import { useShallow } from "zustand/react/shallow";
 import { RemoteTextProvider, RemoteImageProvider } from "@/services/aiService";
 import { ImageEditorModal } from "@/components/wizard/blocks/ImageEditorModal";
-import { getModelById, getMaxRefs } from "@/lib/ai-models";
+import { getModelById, getMaxRefs, getAspectRatios, getResolutions } from "@/lib/ai-models";
 import { persistImageToS3 } from "@/utils/imageUpload";
 import type { ImageLayer } from "@/types";
 
@@ -36,14 +36,7 @@ const OUTPAINT_MODELS = [
     { id: "flux-fill", name: "Flux Fill" },
 ];
 
-const ASPECT_RATIOS = [
-    { id: "1:1", label: "1:1" },
-    { id: "16:9", label: "16:9" },
-    { id: "9:16", label: "9:16" },
-    { id: "4:3", label: "4:3" },
-    { id: "3:4", label: "3:4" },
-    { id: "3:2", label: "3:2" },
-];
+// Aspect ratios and resolutions are now dynamic per model — see ai-models.ts
 
 interface AIPromptBarProps {
     open: boolean;
@@ -63,7 +56,8 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
     const [activeTab, setActiveTab] = useState<"text" | "image" | "outpaint">("text");
     const [prompt, setPrompt] = useState("");
     const [selectedModel, setSelectedModel] = useState(TEXT_MODELS[0].id);
-    const [aspectRatio, setAspectRatio] = useState(ASPECT_RATIOS[0]);
+    const [aspectRatio, setAspectRatio] = useState("1:1");
+    const [scale, setScale] = useState("");
     const [applyToSelection, setApplyToSelection] = useState(false);
     const [isGenerating, setIsGenerating] = useState(false);
     const [showEditorModal, setShowEditorModal] = useState(false);
@@ -96,12 +90,22 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
         if (tab === "text") setReferenceImages([]);
     };
 
-    // When model changes, clear refs if new model has no vision
+    // When model changes, clear refs if new model has no vision + reset aspect/resolution
     const handleModelChange = (modelId: string) => {
         setSelectedModel(modelId);
-        const hasVision = getModelById(modelId)?.caps.includes("vision") ?? false;
-        if (!hasVision) setReferenceImages([]);
+        const model = getModelById(modelId);
+        if (!(model?.caps.includes("vision") ?? false)) setReferenceImages([]);
+        // Reset aspect ratio if current one is not supported by new model
+        const ratios = getAspectRatios(modelId);
+        if (!ratios.includes(aspectRatio)) setAspectRatio(ratios[0] || "1:1");
+        // Reset resolution
+        const res = getResolutions(modelId);
+        setScale(res.length > 0 ? res[0].id : "");
     };
+
+    // Current model's dynamic options
+    const modelAspectRatios = getAspectRatios(selectedModel);
+    const modelResolutions = getResolutions(selectedModel);
 
     const handleGenerate = async () => {
         if (!prompt) return;
@@ -114,7 +118,8 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
             } else {
                 res = await RemoteImageProvider.generate(prompt, {
                     model: selectedModel,
-                    aspectRatio: aspectRatio.id,
+                    aspectRatio,
+                    scale: scale || undefined,
                     referenceImages: referenceImages.length > 0 ? referenceImages : undefined,
                 });
             }
@@ -204,7 +209,7 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
     const hasSelection = selectedLayerIds.length > 0;
 
     return (
-        <div className="relative flex bg-bg-surface/95 backdrop-blur-xl border border-border-primary rounded-[24px] shadow-2xl w-[720px] max-w-[95vw] overflow-hidden animate-in slide-in-from-bottom-6 duration-300">
+        <div className="relative flex bg-bg-surface/95 backdrop-blur-xl border border-border-primary rounded-[24px] shadow-2xl w-[860px] max-w-[95vw] overflow-hidden animate-in slide-in-from-bottom-6 duration-300">
             {/* Close Button */}
             <button
                 onClick={onClose}
@@ -314,11 +319,26 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                         <div className="flex items-center gap-2 bg-bg-secondary/50 px-3 py-1.5 rounded-lg hover:bg-bg-secondary transition-colors group">
                             <Ratio size={14} className="text-text-tertiary group-hover:text-text-primary" />
                             <select
-                                value={aspectRatio.id}
-                                onChange={(e) => setAspectRatio(ASPECT_RATIOS.find(r => r.id === e.target.value) || ASPECT_RATIOS[0])}
+                                value={aspectRatio}
+                                onChange={(e) => setAspectRatio(e.target.value)}
                                 className="bg-transparent text-xs font-medium text-text-secondary focus:outline-none cursor-pointer hover:text-text-primary appearance-none min-w-[40px]"
                             >
-                                {ASPECT_RATIOS.map(r => (
+                                {modelAspectRatios.map(r => (
+                                    <option key={r} value={r}>{r}</option>
+                                ))}
+                            </select>
+                        </div>
+                    )}
+
+                    {/* Resolution (Image Only, if model supports) */}
+                    {activeTab !== "text" && modelResolutions.length > 0 && (
+                        <div className="flex items-center gap-2 bg-bg-secondary/50 px-3 py-1.5 rounded-lg hover:bg-bg-secondary transition-colors group">
+                            <select
+                                value={scale}
+                                onChange={(e) => setScale(e.target.value)}
+                                className="bg-transparent text-xs font-medium text-text-secondary focus:outline-none cursor-pointer hover:text-text-primary appearance-none min-w-[40px]"
+                            >
+                                {modelResolutions.map(r => (
                                     <option key={r.id} value={r.id}>{r.label}</option>
                                 ))}
                             </select>

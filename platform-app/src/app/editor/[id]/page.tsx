@@ -3,7 +3,7 @@
 import { useRef, useState, use, useEffect, useCallback } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
-import { Download, Share2, Wand2, PenTool, Copy, Check, HelpCircle, Settings, History, AlertTriangle } from "lucide-react";
+import { Download, Share2, Wand2, PenTool, Copy, Check, HelpCircle, Settings, History, AlertTriangle, FolderOpen } from "lucide-react";
 import { TopBar } from "@/components/layout/TopBar";
 import { Button } from "@/components/ui/Button";
 import { Dialog } from "@/components/ui/Dialog";
@@ -17,6 +17,7 @@ import { TemplatePanel } from "@/components/editor/TemplatePanel";
 import { AIPromptBar } from "@/components/editor/AIPromptBar";
 import { AIChatPanel } from "@/components/editor/ai-chat";
 import { VersionHistoryPanel } from "@/components/editor/VersionHistoryPanel";
+import { AssetLibraryModal } from "@/components/editor/AssetLibraryModal";
 import { WizardFlow } from "@/components/wizard/WizardFlow";
 import { useProjectStore } from "@/store/projectStore";
 import { useCanvasStore } from "@/store/canvasStore";
@@ -52,6 +53,7 @@ export default function EditorPage({ params }: EditorPageProps) {
     const [settingsOpen, setSettingsOpen] = useState(false);
     const [linkCopied, setLinkCopied] = useState(false);
     const [versionPanelOpen, setVersionPanelOpen] = useState(false);
+    const [assetLibraryOpen, setAssetLibraryOpen] = useState(false);
     const projects = useProjectStore((s) => s.projects);
     const updateProject = useProjectStore((s) => s.updateProject);
     const { editorMode, setEditorMode, undo, redo, history, future, artboardProps, updateArtboardProps } = useCanvasStore(useShallow((s) => ({
@@ -277,6 +279,14 @@ export default function EditorPage({ params }: EditorPageProps) {
                     }
                     actions={
                         <div className="flex items-center gap-2">
+                            <Button
+                                variant="ghost"
+                                size="sm"
+                                icon={<FolderOpen size={14} />}
+                                onClick={() => setAssetLibraryOpen(true)}
+                            >
+                                Ассеты
+                            </Button>
                             <Button
                                 variant="ghost"
                                 size="sm"
@@ -534,6 +544,13 @@ export default function EditorPage({ params }: EditorPageProps) {
                     // Reload canvas state from DB after restore
                     window.location.reload();
                 }}
+            />
+
+            {/* Asset Library Modal */}
+            <AssetLibraryModal
+                projectId={id}
+                open={assetLibraryOpen}
+                onClose={() => setAssetLibraryOpen(false)}
             />
 
             {/* Delete confirmation dialog */}

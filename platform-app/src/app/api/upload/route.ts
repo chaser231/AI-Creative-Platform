@@ -6,12 +6,11 @@
  * 2. url mode (NEW) — receives an external URL (e.g. Replicate/OpenAI temp URL),
  *    fetches the image server-side to avoid CORS, and uploads to S3
  *
- * Used by:
- * - Auto-save flow to migrate inline base64 images to S3 URLs
- * - "Upload on Add" flow to persist temporary AI-generated URLs immediately
+ * Also creates an Asset DB record for the Project Asset Library.
  */
 import { NextResponse } from "next/server";
 import { auth } from "@/server/auth";
+import { prisma } from "@/server/db";
 import {
   S3Client,
   PutObjectCommand,
@@ -45,7 +44,7 @@ export async function POST(req: Request) {
     if (url && typeof url === "string") {
       // ── Mode 2: Fetch external URL and re-upload to S3 ──
       const response = await fetch(url, {
-        signal: AbortSignal.timeout(30_000), // 30s timeout
+        signal: AbortSignal.timeout(30_000),
       });
 
       if (!response.ok) {
@@ -55,7 +54,6 @@ export async function POST(req: Request) {
         );
       }
 
-      // Determine content type from response headers or URL
       contentType = response.headers.get("content-type") || mimeType || "image/png";
       const arrayBuffer = await response.arrayBuffer();
       buffer = Buffer.from(arrayBuffer);
@@ -72,7 +70,8 @@ export async function POST(req: Request) {
     }
 
     const ext = contentType.split("/")[1]?.split(";")[0] || "png";
-    const key = `canvas-images/${projectId || "unknown"}/${randomUUID()}.${ext}`;
+    const filename = `${randomUUID()}.${ext}`;
+    const key = `canvas-images/${projectId || "unknown"}/${filename}`;
 
     await s3.send(
       new PutObjectCommand({
@@ -84,6 +83,34 @@ export async function POST(req: Request) {
     );
 
     const publicUrl = `${process.env.S3_ENDPOINT || "https://storage.yandexcloud.net"}/${BUCKET}/${key}`;
+
+    // ── Register asset in DB for the Asset Library ──
+    if (projectId) {
+      try {
+        const project = await prisma.project.findUnique({
+          where: { id: projectId },
+          select: { workspaceId: true },
+        });
+
+        if (project) {
+          await prisma.asset.create({
+            data: {
+              type: "IMAGE",
+              filename,
+              url: publicUrl,
+              mimeType: contentType,
+              sizeBytes: buffer.length,
+              workspaceId: project.workspaceId,
+              uploadedById: session.user.id!,
+              projectId,
+            },
+          });
+        }
+      } catch (dbErr) {
+        // Non-critical — log but don't fail the upload
+        console.warn("Asset DB record creation failed:", dbErr);
+      }
+    }
 
     return NextResponse.json({ url: publicUrl });
   } catch (err) {

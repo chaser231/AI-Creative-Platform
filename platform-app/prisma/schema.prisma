@@ -178,6 +178,7 @@ model Project {
   versions   ProjectVersion[]
   aiSessions AISession[]
   favorites  FavoriteProject[]
+  assets     Asset[]
 
   @@index([workspaceId, updatedAt])
 }
@@ -269,7 +270,11 @@ model Asset {
   uploadedBy   User      @relation("AssetUploader", fields: [uploadedById], references: [id])
   uploadedById String
 
+  project    Project?  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  projectId  String?
+
   @@index([workspaceId, type])
+  @@index([projectId])
 }
 
 enum AssetType {

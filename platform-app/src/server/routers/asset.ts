@@ -56,6 +56,35 @@ export const assetRouter = createTRPCRouter({
       return assets;
     }),
 
+  /** List assets for a specific project */
+  listByProject: protectedProcedure
+    .input(
+      z.object({
+        projectId: z.string(),
+        search: z.string().optional(),
+        sortBy: z.enum(["createdAt", "filename", "sizeBytes"]).default("createdAt"),
+        sortOrder: z.enum(["asc", "desc"]).default("desc"),
+      })
+    )
+    .query(async ({ ctx, input }) => {
+      const assets = await ctx.prisma.asset.findMany({
+        where: {
+          projectId: input.projectId,
+          ...(input.search && {
+            filename: { contains: input.search, mode: "insensitive" as const },
+          }),
+        },
+        include: {
+          uploadedBy: {
+            select: { id: true, name: true },
+          },
+        },
+        orderBy: { [input.sortBy]: input.sortOrder },
+      });
+
+      return assets;
+    }),
+
   /** Get a presigned upload URL */
   getUploadUrl: protectedProcedure
     .input(
@@ -121,7 +150,7 @@ export const assetRouter = createTRPCRouter({
       return { downloadUrl, asset };
     }),
 
-  /** Delete an asset */
+  /** Delete a single asset */
   delete: protectedProcedure
     .input(z.object({ id: z.string() }))
     .mutation(async ({ ctx, input }) => {
@@ -146,7 +175,6 @@ export const assetRouter = createTRPCRouter({
         );
       } catch (err) {
         console.error("Failed to delete from S3:", err);
-        // Continue with DB deletion even if S3 fails
       }
 
       await ctx.prisma.asset.delete({
@@ -154,5 +182,34 @@ export const assetRouter = createTRPCRouter({
       });
 
       return { success: true };
+    }),
+
+  /** Delete multiple assets at once */
+  deleteMany: protectedProcedure
+    .input(z.object({ ids: z.array(z.string()).min(1) }))
+    .mutation(async ({ ctx, input }) => {
+      const assets = await ctx.prisma.asset.findMany({
+        where: { id: { in: input.ids } },
+      });
+
+      // Delete from S3 concurrently
+      await Promise.allSettled(
+        assets.map(async (asset) => {
+          try {
+            const urlObj = new URL(asset.url);
+            const key = urlObj.pathname.replace(`/${BUCKET}/`, "");
+            await s3.send(new DeleteObjectCommand({ Bucket: BUCKET, Key: key }));
+          } catch (err) {
+            console.error(`Failed to delete ${asset.id} from S3:`, err);
+          }
+        })
+      );
+
+      // Delete from DB
+      await ctx.prisma.asset.deleteMany({
+        where: { id: { in: input.ids } },
+      });
+
+      return { success: true, deleted: assets.length };
     }),
 });
