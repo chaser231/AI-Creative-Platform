@@ -7,7 +7,7 @@ import { useCanvasStore } from "@/store/canvasStore";
 import { useShallow } from "zustand/react/shallow";
 import { RemoteTextProvider, RemoteImageProvider } from "@/services/aiService";
 import { ImageEditorModal } from "@/components/wizard/blocks/ImageEditorModal";
-import { getModelById } from "@/lib/ai-models";
+import { getModelById, getMaxRefs } from "@/lib/ai-models";
 import { persistImageToS3 } from "@/utils/imageUpload";
 import type { ImageLayer } from "@/types";
 
@@ -332,7 +332,7 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                         <ReferenceImageInput
                             images={referenceImages}
                             onChange={setReferenceImages}
-                            max={3}
+                            max={getMaxRefs(selectedModel)}
                         />
                     )}
 

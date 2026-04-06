@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { ReferenceImageInput } from "@/components/ui/ReferenceImageInput";
+import { getMaxRefs } from "@/lib/ai-models";
 import type { BusinessUnit } from "@/types";
 
 type EditorTool = "remove-bg" | "inpaint" | "text-edit" | "outpaint";
@@ -423,7 +424,7 @@ export function ImageEditorModal({ imageSrc, onApply, onClose }: ImageEditorModa
                                         <ReferenceImageInput
                                             images={referenceImages}
                                             onChange={setReferenceImages}
-                                            max={2}
+                                            max={getMaxRefs(selectedModel)}
                                             label="Добавить референс"
                                         />
                                     </div>

@@ -19,6 +19,8 @@ export interface ModelEntry {
     caps: ModelCap[];
     /** Estimated cost per single run in USD (for analytics) */
     costPerRun: number;
+    /** Max reference images supported (0 or omit = no ref support) */
+    maxRefs?: number;
     /** Version hash (only for community models that need it) */
     version?: string;
     /** If true, requires OPENAI_API_KEY for BYOK billing */
@@ -34,6 +36,7 @@ export const MODEL_REGISTRY: ModelEntry[] = [
         provider: "replicate",
         caps: ["generate", "edit", "remove-bg", "vision"],
         costPerRun: 0.045,
+        maxRefs: 14,
     },
     {
         id: "nano-banana-2",
@@ -42,6 +45,7 @@ export const MODEL_REGISTRY: ModelEntry[] = [
         provider: "replicate",
         caps: ["generate", "edit", "remove-bg", "vision"],
         costPerRun: 0.045,
+        maxRefs: 14,
     },
     {
         id: "nano-banana-pro",
@@ -50,6 +54,7 @@ export const MODEL_REGISTRY: ModelEntry[] = [
         provider: "replicate",
         caps: ["generate", "edit", "remove-bg", "vision"],
         costPerRun: 0.067,
+        maxRefs: 14,
     },
     {
         id: "flux-2-pro",
@@ -58,6 +63,7 @@ export const MODEL_REGISTRY: ModelEntry[] = [
         provider: "replicate",
         caps: ["generate", "edit", "vision"],
         costPerRun: 0.05,
+        maxRefs: 4,
     },
     {
         id: "gpt-image",
@@ -66,6 +72,7 @@ export const MODEL_REGISTRY: ModelEntry[] = [
         provider: "replicate",
         caps: ["generate", "edit", "vision"],
         costPerRun: 0.04,
+        maxRefs: 4,
         byok: true,
     },
     {
@@ -91,6 +98,7 @@ export const MODEL_REGISTRY: ModelEntry[] = [
         provider: "replicate",
         caps: ["generate", "edit", "vision"],
         costPerRun: 0.04,
+        maxRefs: 4,
     },
 
     // ── Image Generation Only ───────────────────────────────────────────
@@ -183,4 +191,9 @@ export function getModelsForCaps(...caps: ModelCap[]): ModelEntry[] {
 /** Lookup a single model by its ID. */
 export function getModelById(id: string): ModelEntry | undefined {
     return MODEL_REGISTRY.find(m => m.id === id);
+}
+
+/** Get maximum reference images allowed for a model (0 = no refs). */
+export function getMaxRefs(modelId: string): number {
+    return getModelById(modelId)?.maxRefs ?? 0;
 }
