@@ -20,6 +20,7 @@ import { trpc } from "@/lib/trpc";
 import { useWorkspace } from "@/providers/WorkspaceProvider";
 import type { Layer, MasterComponent } from "@/types";
 import type { TemplatePackV2 } from "@/services/templateService";
+import { persistImageToS3 } from "@/utils/imageUpload";
 import {
     Copy, Plus, X, Send, Loader2, Bot, User, Sparkles,
     CheckCircle, AlertCircle, ChevronRight, Zap, LayoutTemplate, Search,
@@ -83,7 +84,7 @@ export function AIChatPanel({ open, onClose, messages, onAddMessages, projectId 
         }
     }, [open]);
 
-    const handleAddToCanvas = (msg: AIChatMessage) => {
+    const handleAddToCanvas = async (msg: AIChatMessage) => {
         if (msg.type === "text") {
             addTextLayer({
                 text: msg.content,
@@ -93,7 +94,12 @@ export function AIChatPanel({ open, onClose, messages, onAddMessages, projectId 
                 width: 600,
             });
         } else if (msg.type === "image") {
-            addImageLayer(msg.content, 500, 500);
+            // Persist temporary URL to S3 before adding to canvas
+            let src = msg.content;
+            if (projectId) {
+                try { src = await persistImageToS3(src, projectId); } catch {}
+            }
+            addImageLayer(src, 500, 500);
         }
     };
 
@@ -153,7 +159,12 @@ export function AIChatPanel({ open, onClose, messages, onAddMessages, projectId 
                         addTextLayer(ca.params as any);
                     } else if (ca.action === "add_image") {
                         const p = ca.params as { src: string; width: number; height: number };
-                        addImageLayer(p.src, p.width, p.height);
+                        // Persist temporary URL to S3 before adding to canvas
+                        let src = p.src;
+                        if (projectId) {
+                            try { src = await persistImageToS3(src, projectId); } catch {}
+                        }
+                        addImageLayer(src, p.width, p.height);
                     } else if (ca.action === "load_template") {
                         // Load template onto canvas
                         const { applyTemplatePack } = await import("@/services/templateService");
@@ -256,14 +267,21 @@ export function AIChatPanel({ open, onClose, messages, onAddMessages, projectId 
                         } else {
                             // Track generated images for template application
                             if (step.result.type === "image" && step.result.content) {
-                                lastGeneratedImageUrl.current = step.result.content;
-                                console.log(`[AIChatPanel] Stored lastGeneratedImageUrl: ${step.result.content.slice(0, 60)}...`);
+                                // Persist temporary URL to S3 before storing
+                                let persistedUrl = step.result.content;
+                                if (projectId) {
+                                    try { persistedUrl = await persistImageToS3(persistedUrl, projectId); } catch {}
+                                }
+                                lastGeneratedImageUrl.current = persistedUrl;
+                                console.log(`[AIChatPanel] Stored lastGeneratedImageUrl: ${persistedUrl.slice(0, 60)}...`);
                             }
                             newMessages.push({
                                 id: `result-${step.actionId}-${Date.now()}-${Math.random()}`,
                                 role: "assistant",
                                 type: step.result.type as "text" | "image",
-                                content: step.result.content,
+                                content: step.result.type === "image" && projectId
+                                    ? (await persistImageToS3(step.result.content, projectId).catch(() => step.result!.content))
+                                    : step.result.content,
                                 timestamp: Date.now(),
                             });
                         }
@@ -413,7 +431,11 @@ export function AIChatPanel({ open, onClose, messages, onAddMessages, projectId 
                         addTextLayer(ca.params as any);
                     } else if (ca.action === "add_image") {
                         const p = ca.params as { src: string; width: number; height: number };
-                        addImageLayer(p.src, p.width, p.height);
+                        let src = p.src;
+                        if (projectId) {
+                            try { src = await persistImageToS3(src, projectId); } catch {}
+                        }
+                        addImageLayer(src, p.width, p.height);
                     }
                 }
             }

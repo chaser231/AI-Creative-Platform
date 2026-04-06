@@ -18,7 +18,7 @@ import { useShallow } from "zustand/react/shallow";
 import type { FrameLayer } from "@/types";
 import { cn } from "@/lib/cn";
 import { useState, useRef } from "react";
-import { ContextMenu, buildLayerContextMenuItems } from "./ContextMenu";
+import { ContextMenu, buildLayerContextMenuItems, buildMultiSelectionContextMenuItems } from "./ContextMenu";
 
 const layerIcons: Record<string, React.ReactNode> = {
     text: <Type size={14} />,
@@ -69,7 +69,7 @@ function LayerRow({
     const [isDragOver, setIsDragOver] = useState(false);
     const [isRenaming, setIsRenaming] = useState(false);
     const [renameName, setRenameName] = useState("");
-    const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
+    const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; multiIds?: string[] } | null>(null);
     const rowRef = useRef<HTMLDivElement>(null);
     const renameInputRef = useRef<HTMLInputElement>(null);
 
@@ -191,8 +191,13 @@ function LayerRow({
                     // If right clicking something not in selection, select it
                     if (!isSelected) {
                         selectLayer(layer.id);
+                        setCtxMenu({ x: e.clientX, y: e.clientY });
+                    } else if (selectedLayerIds.length > 1) {
+                        // Multi-selection right-click
+                        setCtxMenu({ x: e.clientX, y: e.clientY, multiIds: [...selectedLayerIds] });
+                    } else {
+                        setCtxMenu({ x: e.clientX, y: e.clientY });
                     }
-                    setCtxMenu({ x: e.clientX, y: e.clientY });
                 }}
                 className={cn(
                     "group flex items-center gap-1 py-1.5 mx-1 rounded-[var(--radius-sm)] cursor-pointer transition-colors",
@@ -302,7 +307,24 @@ function LayerRow({
             ))}
 
             {/* Context menu for this layer */}
-            {ctxMenu && (
+            {ctxMenu && ctxMenu.multiIds && ctxMenu.multiIds.length > 1 ? (
+                <ContextMenu
+                    x={ctxMenu.x}
+                    y={ctxMenu.y}
+                    onClose={() => setCtxMenu(null)}
+                    items={buildMultiSelectionContextMenuItems(
+                        ctxMenu.multiIds.length,
+                        {
+                            duplicateAll: duplicateSelectedLayers,
+                            removeAll: deleteSelectedLayers,
+                            exportAll: () => {
+                                // Export from LayersPanel is not available (no stage access)
+                                // Use the canvas context menu for export
+                            },
+                        }
+                    )}
+                />
+            ) : ctxMenu ? (
                 <ContextMenu
                     x={ctxMenu.x}
                     y={ctxMenu.y}
@@ -313,13 +335,8 @@ function LayerRow({
                         layer.visible,
                         layer.locked,
                         {
-                            // If selected, use bulk actions?
-                            // But context menu is specific to the row clicked?
-                            // Standard behavior: context menu on selection acts on selection.
-                            // If isSelected is true:
                             duplicate: isSelected ? duplicateSelectedLayers : () => duplicateLayer(layer.id),
                             remove: isSelected ? deleteSelectedLayers : () => removeLayer(layer.id),
-
                             bringToFront: () => bringToFront(layer.id),
                             sendToBack: () => sendToBack(layer.id),
                             toggleVisibility: () => toggleLayerVisibility(layer.id),
@@ -331,7 +348,7 @@ function LayerRow({
                         }
                     )}
                 />
-            )}
+            ) : null}
         </>
     );
 }

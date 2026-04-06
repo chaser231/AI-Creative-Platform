@@ -7,7 +7,7 @@ import { useCanvasStore, computeConstrainedPosition } from "@/store/canvasStore"
 import { useShallow } from "zustand/react/shallow";
 import type { Layer as LayerType, TextLayer, BadgeLayer, FrameLayer, ImageLayer } from "@/types";
 import { computeImageFitProps } from "@/utils/imageFitUtils";
-import { ContextMenu, buildLayerContextMenuItems } from "../ContextMenu";
+import { ContextMenu, buildLayerContextMenuItems, buildMultiSelectionContextMenuItems } from "../ContextMenu";
 import { computeSnap, computeHoverDistances, computeResizeSnap, SnapResult, DistanceMeasurement, SpacingGuide } from "@/services/snapService";
 import type { ActiveEdge, NodeBounds } from "@/services/snapService";
 import { isFocusedOnInput } from "@/utils/keyboard";
@@ -499,7 +499,7 @@ export function Canvas({ stageRef }: CanvasProps) {
 
     const [stageDraggable, setStageDraggable] = useState(true);
     const [isDraggingFile, setIsDraggingFile] = useState(false);
-    const [contextMenu, setContextMenu] = useState<{ x: number; y: number; layerId: string } | null>(null);
+    const [contextMenu, setContextMenu] = useState<{ x: number; y: number; layerIds: string[] } | null>(null);
 
     // Marquee State
     const [selectionBox, setSelectionBox] = useState<{ x: number; y: number; width: number; height: number; startX: number; startY: number } | null>(null);
@@ -1209,6 +1209,10 @@ export function Canvas({ stageRef }: CanvasProps) {
 
         // If clicked on stage (background)
         if (e.target === e.target.getStage()) {
+            // Right-click on background: don't clear selection or start marquee
+            // (the contextmenu handler will decide what to show)
+            if (e.evt.button === 2) return;
+
             if (!stage) return;
             const pointer = stage.getPointerPosition();
             if (!pointer) return;
@@ -1389,6 +1393,35 @@ export function Canvas({ stageRef }: CanvasProps) {
             const target = e.target;
 
             if (target === stage) {
+                // Right-click on background with active selection:
+                // Check if click falls inside the bounding box of selected layers
+                if (selectedLayerIds.length > 0) {
+                    const pointer = stage.getPointerPosition();
+                    if (pointer) {
+                        const sceneX = (pointer.x - stage.x()) / stage.scaleX();
+                        const sceneY = (pointer.y - stage.y()) / stage.scaleY();
+
+                        const selectedLayers = layers.filter(l => selectedLayerIds.includes(l.id));
+                        if (selectedLayers.length > 0) {
+                            // Compute union bounding box of all selected layers
+                            const PAD = 10; // Extra padding so it's easier to hit
+                            const minX = Math.min(...selectedLayers.map(l => l.x)) - PAD;
+                            const minY = Math.min(...selectedLayers.map(l => l.y)) - PAD;
+                            const maxX = Math.max(...selectedLayers.map(l => l.x + l.width)) + PAD;
+                            const maxY = Math.max(...selectedLayers.map(l => l.y + l.height)) + PAD;
+
+                            if (sceneX >= minX && sceneX <= maxX && sceneY >= minY && sceneY <= maxY) {
+                                // Click is inside selection area — show multi-selection menu
+                                setContextMenu({
+                                    x: e.evt.clientX,
+                                    y: e.evt.clientY,
+                                    layerIds: [...selectedLayerIds],
+                                });
+                                return;
+                            }
+                        }
+                    }
+                }
                 setContextMenu(null);
                 return;
             }
@@ -1408,17 +1441,22 @@ export function Canvas({ stageRef }: CanvasProps) {
                 return;
             }
 
-            // Should we select the right-clicked layer?
-            // If it's not already in selection, yes.
-            // If it IS in selection, keep selection?
-            if (!selectedLayerIds.includes(matchedLayer.id)) {
-                selectLayer(matchedLayer.id);
+            // If right-clicked layer is part of multi-selection, keep all selected
+            // Otherwise, select only the right-clicked layer
+            let targetIds: string[];
+            if (selectedLayerIds.includes(matchedLayer.id) && selectedLayerIds.length > 1) {
+                targetIds = [...selectedLayerIds];
+            } else {
+                if (!selectedLayerIds.includes(matchedLayer.id)) {
+                    selectLayer(matchedLayer.id);
+                }
+                targetIds = [matchedLayer.id];
             }
 
             setContextMenu({
                 x: e.evt.clientX,
                 y: e.evt.clientY,
-                layerId: matchedLayer.id,
+                layerIds: targetIds,
             });
         },
         [layers, selectLayer, stageRef, selectedLayerIds]
@@ -1482,6 +1520,118 @@ export function Canvas({ stageRef }: CanvasProps) {
         },
         [addImageLayer]
     );
+
+    /* ─── Export Layers Utility ────────────────────────── */
+    const exportLayers = useCallback(async (layerIds: string[]) => {
+        const stage = stageRef.current;
+        if (!stage) return;
+
+        const targetLayers = layers.filter(l => layerIds.includes(l.id));
+        if (targetLayers.length === 0) return;
+
+        // Helper: export a single layer as a blob
+        const exportSingleLayer = async (layer: LayerType): Promise<{ name: string; blob: Blob }> => {
+            const safeName = (layer.name || layer.type || "layer").replace(/[^a-zA-Zа-яА-Я0-9_-]/g, "_");
+
+            // For image layers with an HTTP src, download the original directly
+            if (layer.type === "image" && (layer as ImageLayer).src) {
+                const src = (layer as ImageLayer).src;
+                if (src.startsWith("http")) {
+                    try {
+                        const res = await fetch(src);
+                        const blob = await res.blob();
+                        const ext = blob.type.includes("png") ? "png" : blob.type.includes("webp") ? "webp" : "png";
+                        return { name: `${safeName}.${ext}`, blob };
+                    } catch {
+                        // Fall through to Konva rendering
+                    }
+                }
+            }
+
+            // Render via Konva node
+            // Find the Konva node by ID
+            const node = stage.findOne(`#${layer.id}`);
+            if (node) {
+                const oldScale = stage.scaleX();
+                const oldPos = stage.position();
+                stage.scale({ x: 1, y: 1 });
+                stage.position({ x: 0, y: 0 });
+
+                const dataURL = node.toDataURL({
+                    pixelRatio: 2,
+                    mimeType: "image/png",
+                });
+
+                stage.scale({ x: oldScale, y: oldScale });
+                stage.position(oldPos);
+                stage.batchDraw();
+
+                const res = await fetch(dataURL);
+                const blob = await res.blob();
+                return { name: `${safeName}.png`, blob };
+            }
+
+            // Fallback: render the layer bounds from the stage
+            const oldScale = stage.scaleX();
+            const oldPos = stage.position();
+            stage.scale({ x: 1, y: 1 });
+            stage.position({ x: 0, y: 0 });
+
+            const dataURL = stage.toDataURL({
+                x: layer.x,
+                y: layer.y,
+                width: layer.width,
+                height: layer.height,
+                pixelRatio: 2,
+                mimeType: "image/png",
+            });
+
+            stage.scale({ x: oldScale, y: oldScale });
+            stage.position(oldPos);
+            stage.batchDraw();
+
+            const res = await fetch(dataURL);
+            const blob = await res.blob();
+            return { name: `${safeName}.png`, blob };
+        };
+
+        if (targetLayers.length === 1) {
+            // Single layer → direct download
+            const { name, blob } = await exportSingleLayer(targetLayers[0]);
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement("a");
+            link.download = name;
+            link.href = url;
+            link.click();
+            URL.revokeObjectURL(url);
+        } else {
+            // Multiple layers → ZIP
+            const JSZip = (await import("jszip")).default;
+            const { saveAs } = await import("file-saver");
+            const zip = new JSZip();
+
+            // Deduplicate filenames to prevent overwrites in ZIP
+            const usedNames = new Set<string>();
+            for (const layer of targetLayers) {
+                let { name, blob } = await exportSingleLayer(layer);
+
+                // Ensure unique filename
+                if (usedNames.has(name)) {
+                    const ext = name.lastIndexOf(".") > 0 ? name.slice(name.lastIndexOf(".")) : ".png";
+                    const base = name.slice(0, name.lastIndexOf(".") > 0 ? name.lastIndexOf(".") : name.length);
+                    let counter = 2;
+                    while (usedNames.has(`${base}_${counter}${ext}`)) counter++;
+                    name = `${base}_${counter}${ext}`;
+                }
+                usedNames.add(name);
+
+                zip.file(name, blob);
+            }
+
+            const content = await zip.generateAsync({ type: "blob" });
+            saveAs(content, `export-${targetLayers.length}-layers.zip`);
+        }
+    }, [layers, stageRef]);
 
     const editingLayer = useMemo(() => {
         if (!isEditingText || !editingLayerId) return undefined;
@@ -1661,8 +1811,31 @@ export function Canvas({ stageRef }: CanvasProps) {
             )}
 
             {contextMenu && (() => {
-                const layer = layers.find((l) => l.id === contextMenu.layerId);
-                if (!layer) return null;
+                const menuLayerIds = contextMenu.layerIds;
+                const menuLayers = layers.filter(l => menuLayerIds.includes(l.id));
+                if (menuLayers.length === 0) return null;
+
+                // Multi-selection menu
+                if (menuLayers.length > 1) {
+                    return (
+                        <ContextMenu
+                            x={contextMenu.x}
+                            y={contextMenu.y}
+                            onClose={() => setContextMenu(null)}
+                            items={buildMultiSelectionContextMenuItems(
+                                menuLayers.length,
+                                {
+                                    duplicateAll: () => menuLayerIds.forEach(id => duplicateLayer(id)),
+                                    removeAll: () => menuLayerIds.forEach(id => removeLayer(id)),
+                                    exportAll: () => exportLayers(menuLayerIds),
+                                }
+                            )}
+                        />
+                    );
+                }
+
+                // Single-layer menu
+                const layer = menuLayers[0];
                 return (
                     <ContextMenu
                         x={contextMenu.x}
@@ -1680,6 +1853,7 @@ export function Canvas({ stageRef }: CanvasProps) {
                                 sendToBack: () => sendToBack(layer.id),
                                 toggleVisibility: () => toggleLayerVisibility(layer.id),
                                 toggleLock: () => toggleLayerLock(layer.id),
+                                exportLayer: () => exportLayers([layer.id]),
                             }
                         )}
                     />

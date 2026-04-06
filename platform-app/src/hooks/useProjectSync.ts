@@ -151,18 +151,24 @@ export function useCanvasAutoSave(
       return;
     }
 
-    // Migrate base64 images to S3 URLs before saving
+    // Migrate non-permanent images (base64 + temp external URLs) to S3 before saving
     let layers = store.layers;
-    const hasBase64 = layers.some(
-      (l: { type: string; src?: string }) =>
-        l.type === "image" && l.src && (l.src.startsWith("data:") || l.src.length > 500)
+    const hasUnpersistedImages = layers.some(
+      (l: { type: string; src?: string }) => {
+        if (l.type !== "image" || !l.src) return false;
+        // base64 check (legacy)
+        if (l.src.startsWith("data:") || l.src.length > 500) return true;
+        // external URL check (Replicate, OpenAI, etc.)
+        if ((l.src.startsWith("http://") || l.src.startsWith("https://")) && !l.src.includes("storage.yandexcloud.net")) return true;
+        return false;
+      }
     );
 
-    if (hasBase64) {
+    if (hasUnpersistedImages) {
       try {
         isMigratingRef.current = true;
-        const { migrateBase64ToS3Map } = await import("@/utils/imageUpload");
-        const migratedUrls = await migrateBase64ToS3Map(
+        const { migrateImagesToS3Map } = await import("@/utils/imageUpload");
+        const migratedUrls = await migrateImagesToS3Map(
           layers as unknown as Array<{ id: string; type: string; src?: string; [key: string]: unknown }>,
           projectId
         );
