@@ -318,27 +318,43 @@ class ReplicateProvider implements AIProviderImplementation {
 
         console.log(`[Replicate] Creating prediction for ${entry.slug}...`);
 
-        const createRes = await fetch(url, {
-            method: "POST",
-            headers: {
-                "Authorization": `Bearer ${token}`,
-                "Content-Type": "application/json",
-                "Prefer": "wait",
-            },
-            body: JSON.stringify(body),
-        });
+        // Create prediction WITHOUT Prefer:wait — just fire and poll
+        // Prefer:wait caused TCP timeouts on slow models (nano-banana-pro ~60s)
+        const abortCtl = new AbortController();
+        const createTimeout = setTimeout(() => abortCtl.abort(), 30_000);
 
-        if (!createRes.ok) {
-            const errBody = await createRes.text();
-            console.error(`Replicate API error [${entry.slug}]:`, errBody);
-            throw new Error(`Replicate error (${createRes.status}): ${errBody.slice(0, 300)}`);
+        let prediction: any;
+        try {
+            const createRes = await fetch(url, {
+                method: "POST",
+                headers: {
+                    "Authorization": `Bearer ${token}`,
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify(body),
+                signal: abortCtl.signal,
+            });
+            clearTimeout(createTimeout);
+
+            if (!createRes.ok) {
+                const errBody = await createRes.text();
+                console.error(`Replicate API error [${entry.slug}]:`, errBody);
+                throw new Error(`Replicate error (${createRes.status}): ${errBody.slice(0, 300)}`);
+            }
+
+            prediction = await createRes.json();
+        } catch (err: unknown) {
+            clearTimeout(createTimeout);
+            const msg = err instanceof Error ? err.message : String(err);
+            if (msg.includes("abort")) {
+                throw new Error(`Replicate: Не удалось создать запрос для ${entry.slug} (таймаут 30s)`);
+            }
+            throw err;
         }
 
-        let prediction = await createRes.json();
-
-        // If inline result (Prefer: wait succeeded)
+        // If prediction already completed (fast models)
         if (prediction.output !== undefined && prediction.output !== null) {
-            console.log(`[Replicate] Inline result for ${entry.slug}, status: ${prediction.status}`);
+            console.log(`[Replicate] Instant result for ${entry.slug}, status: ${prediction.status}`);
             return prediction.output;
         }
 
