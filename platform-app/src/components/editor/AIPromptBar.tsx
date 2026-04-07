@@ -4,11 +4,13 @@ import { Sparkles, Wand2, Image as ImageIcon, Send, MessageCircle, Settings2, Ra
 import { Button } from "@/components/ui/Button";
 import { ReferenceImageInput } from "@/components/ui/ReferenceImageInput";
 import { RefAutocompleteTextarea, type RefAutocompleteTextareaHandle } from "@/components/ui/RefAutocompleteTextarea";
+import { ImageStylePresetPicker, TextStylePresetPicker } from "@/components/ui/StylePresetPicker";
 import { useCanvasStore } from "@/store/canvasStore";
 import { useShallow } from "zustand/react/shallow";
 import { RemoteTextProvider, RemoteImageProvider } from "@/services/aiService";
 import { ImageEditorModal } from "@/components/wizard/blocks/ImageEditorModal";
 import { getModelById, getMaxRefs, getAspectRatios, getResolutions, resolveRefTags } from "@/lib/ai-models";
+import { SYSTEM_IMAGE_PRESETS, SYSTEM_TEXT_PRESETS, getImagePresetPromptSuffix, getTextPresetInstruction } from "@/lib/stylePresets";
 import { persistImageToS3 } from "@/utils/imageUpload";
 import type { ImageLayer } from "@/types";
 
@@ -63,6 +65,8 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
     const [isGenerating, setIsGenerating] = useState(false);
     const [showEditorModal, setShowEditorModal] = useState(false);
     const [referenceImages, setReferenceImages] = useState<string[]>([]);
+    const [imageStyleId, setImageStyleId] = useState("none");
+    const [textStyleId, setTextStyleId] = useState<string | undefined>(undefined);
     const promptRef = useRef<RefAutocompleteTextareaHandle>(null);
 
     // Check if current model supports vision (reference images)
@@ -107,14 +111,23 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
         try {
             let res;
             if (activeTab === "text") {
-                res = await RemoteTextProvider.generate(prompt, { model: selectedModel });
+                // Inject text style instruction if selected
+                const textInstruction = textStyleId ? getTextPresetInstruction(textStyleId) : "";
+                const textPromptWithStyle = textInstruction
+                    ? `${textInstruction}\n\n${prompt}`
+                    : prompt;
+                res = await RemoteTextProvider.generate(textPromptWithStyle, { model: selectedModel, projectId });
             } else {
-                const resolvedPrompt = resolveRefTags(prompt, selectedModel);
+                // Inject image style suffix if selected
+                const styleSuffix = getImagePresetPromptSuffix(imageStyleId);
+                const styledPrompt = styleSuffix ? `${prompt}. Style: ${styleSuffix}` : prompt;
+                const resolvedPrompt = resolveRefTags(styledPrompt, selectedModel);
                 res = await RemoteImageProvider.generate(resolvedPrompt, {
                     model: selectedModel,
                     aspectRatio,
                     scale: scale || undefined,
                     referenceImages: referenceImages.length > 0 ? referenceImages : undefined,
+                    projectId,
                 });
             }
 
@@ -337,6 +350,26 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                                 ))}
                             </select>
                         </div>
+                    )}
+
+                    {/* Style Preset (Image mode) */}
+                    {activeTab !== "text" && (
+                        <ImageStylePresetPicker
+                            presets={SYSTEM_IMAGE_PRESETS}
+                            selectedId={imageStyleId}
+                            onChange={setImageStyleId}
+                            variant="compact"
+                        />
+                    )}
+
+                    {/* Style Preset (Text mode) */}
+                    {activeTab === "text" && (
+                        <TextStylePresetPicker
+                            presets={SYSTEM_TEXT_PRESETS}
+                            selectedId={textStyleId}
+                            onChange={setTextStyleId}
+                            variant="compact"
+                        />
                     )}
 
                     <div className="flex-1" />

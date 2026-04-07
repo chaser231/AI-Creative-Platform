@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getProvider } from "@/lib/ai-providers";
 import { auth } from "@/server/auth";
+import { prisma } from "@/server/db";
+import { getModelById } from "@/lib/ai-models";
 
 export async function POST(req: NextRequest) {
     try {
@@ -14,7 +16,7 @@ export async function POST(req: NextRequest) {
             prompt, type, model,
             aspectRatio, count, seed, scale,
             referenceImages, systemPrompt,
-            imageBase64,
+            imageBase64, projectId,
         } = body;
 
         if (!prompt) {
@@ -40,6 +42,46 @@ export async function POST(req: NextRequest) {
             systemPrompt,
             imageBase64,
         });
+
+        // ── Track AI cost ──────────────────────────────────────────
+        try {
+            const modelEntry = getModelById(model);
+            const costPerRun = modelEntry?.costPerRun ?? 0;
+            const userId = session.user.id;
+
+            // Find or create an AI session for this project/user
+            let aiSessionId: string | undefined;
+            if (projectId) {
+                const existing = await prisma.aISession.findFirst({
+                    where: { projectId, userId },
+                    orderBy: { updatedAt: "desc" },
+                    select: { id: true },
+                });
+                aiSessionId = existing?.id;
+                if (!aiSessionId) {
+                    const newSession = await prisma.aISession.create({
+                        data: { projectId, userId },
+                    });
+                    aiSessionId = newSession.id;
+                }
+            }
+
+            if (aiSessionId) {
+                await prisma.aIMessage.create({
+                    data: {
+                        sessionId: aiSessionId,
+                        role: "assistant",
+                        content: typeof result.content === "string" ? result.content.slice(0, 200) : "image generated",
+                        type: (type as string) || "image",
+                        model: model || "nano-banana-2",
+                        costUnits: costPerRun,
+                    },
+                });
+            }
+        } catch (costErr) {
+            console.error("[/api/ai/generate] Cost tracking failed:", costErr);
+            // Non-blocking — don't fail the generation if tracking fails
+        }
 
         return NextResponse.json(result);
 
