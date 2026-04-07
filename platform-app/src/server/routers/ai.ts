@@ -164,7 +164,7 @@ export const aiRouter = createTRPCRouter({
           ...(input.type && { type: input.type }),
           isActive: true,
         },
-        orderBy: { name: "asc" },
+        orderBy: [{ order: "asc" }, { name: "asc" }],
       });
     }),
 
@@ -177,6 +177,9 @@ export const aiRouter = createTRPCRouter({
         description: z.string().default(""),
         type: z.string(),
         config: z.any(),
+        category: z.string().default("custom"),
+        thumbnailUrl: z.string().optional(),
+        order: z.number().default(0),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -194,6 +197,9 @@ export const aiRouter = createTRPCRouter({
         description: z.string().optional(),
         config: z.any().optional(),
         isActive: z.boolean().optional(),
+        category: z.string().optional(),
+        thumbnailUrl: z.string().optional(),
+        order: z.number().optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {

@@ -16,7 +16,8 @@ import { Button } from "@/components/ui/Button";
 import { ReferenceImageInput } from "@/components/ui/ReferenceImageInput";
 import { ImageStylePresetPicker } from "@/components/ui/StylePresetPicker";
 import { getMaxRefs, resolveRefTags } from "@/lib/ai-models";
-import { SYSTEM_IMAGE_PRESETS, getImagePresetPromptSuffix } from "@/lib/stylePresets";
+import { getImagePresetPromptSuffix } from "@/lib/stylePresets";
+import { useStylePresets } from "@/hooks/useStylePresets";
 import type { BusinessUnit } from "@/types";
 
 type EditorTool = "remove-bg" | "inpaint" | "text-edit" | "outpaint";
@@ -74,6 +75,8 @@ export function ImageEditorModal({ imageSrc, onApply, onClose }: ImageEditorModa
     const [errorMsg, setErrorMsg] = useState<string | null>(null);
     const [referenceImages, setReferenceImages] = useState<string[]>([]);
     const [editStyleId, setEditStyleId] = useState("none");
+    // Workspace-aware presets
+    const { imagePresets } = useStylePresets();
 
     const parseAiError = (e: Error) => {
         const msg = String(e.message || "");
@@ -408,7 +411,7 @@ export function ImageEditorModal({ imageSrc, onApply, onClose }: ImageEditorModa
                                     <div>
                                         <p className="text-[10px] font-medium text-text-secondary mb-1.5">Стиль</p>
                                         <ImageStylePresetPicker
-                                            presets={SYSTEM_IMAGE_PRESETS}
+                                            presets={imagePresets}
                                             selectedId={editStyleId}
                                             onChange={setEditStyleId}
                                             variant="inline"
@@ -452,7 +455,7 @@ export function ImageEditorModal({ imageSrc, onApply, onClose }: ImageEditorModa
                                     <div>
                                         <p className="text-[10px] font-medium text-text-secondary mb-1.5">Стиль</p>
                                         <ImageStylePresetPicker
-                                            presets={SYSTEM_IMAGE_PRESETS}
+                                            presets={imagePresets}
                                             selectedId={editStyleId}
                                             onChange={setEditStyleId}
                                             variant="inline"

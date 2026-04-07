@@ -14,7 +14,8 @@ import { Button } from "@/components/ui/Button";
 import { ReferenceImageInput } from "@/components/ui/ReferenceImageInput";
 import { RefAutocompleteTextarea, type RefAutocompleteTextareaHandle } from "@/components/ui/RefAutocompleteTextarea";
 import { getModelById, getMaxRefs, getAspectRatios, getResolutions, resolveRefTags } from "@/lib/ai-models";
-import { SYSTEM_IMAGE_PRESETS, getImagePresetPromptSuffix } from "@/lib/stylePresets";
+import { getImagePresetPromptSuffix } from "@/lib/stylePresets";
+import { useStylePresets } from "@/hooks/useStylePresets";
 import type { ImageComponentProps, BusinessUnit } from "@/types";
 import { ImageEditorModal } from "./ImageEditorModal";
 
@@ -35,9 +36,6 @@ const IMAGE_GEN_MODELS = [
 ];
 
 // Aspect ratios and resolutions are now dynamic per model — see ai-models.ts
-
-// Style presets sourced from unified module (stylePresets.ts)
-const STYLE_PRESETS = SYSTEM_IMAGE_PRESETS;
 
 const SCALE_OPTIONS = ["1x", "2x", "4x"];
 
@@ -75,6 +73,8 @@ export function ImageContentBlock({ id, name, props, value, onChange, businessUn
     // Dynamic per-model options
     const modelAspectRatios = getAspectRatios(selectedModel);
     const modelResolutions = getResolutions(selectedModel);
+    // Workspace-aware presets (system + custom from DB)
+    const { imagePresets } = useStylePresets();
 
     const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
@@ -97,7 +97,7 @@ export function ImageContentBlock({ id, name, props, value, onChange, businessUn
         setIsGenerating(true);
         try {
             // User prompt is primary; style is appended as context, not prefix
-            const styleSuffix = getImagePresetPromptSuffix(stylePreset);
+            const styleSuffix = getImagePresetPromptSuffix(stylePreset, imagePresets);
             const styleContext = styleSuffix ? `. Style: ${styleSuffix}` : "";
             const finalPrompt = `${basePrompt}${styleContext}`;
 
@@ -208,7 +208,7 @@ export function ImageContentBlock({ id, name, props, value, onChange, businessUn
                         <div>
                             <p className="text-[11px] font-semibold text-text-secondary uppercase tracking-wider mb-2">Стиль</p>
                             <div className="grid grid-cols-4 gap-2">
-                                {STYLE_PRESETS.map(s => (
+                                {imagePresets.map(s => (
                                     <button key={s.id} onClick={() => setStylePreset(s.id)}
                                         className={`relative rounded-[var(--radius-md)] overflow-hidden border-2 transition-all cursor-pointer aspect-square ${stylePreset === s.id ? "border-accent-lime-hover shadow-[0_0_0_1px_var(--accent-lime)]" : "border-border-primary hover:border-border-secondary"}`}>
                                         <img src={s.thumbnailUrl} alt={s.label} className="w-full h-full object-cover" />

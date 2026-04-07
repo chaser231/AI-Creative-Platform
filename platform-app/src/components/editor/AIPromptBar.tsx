@@ -10,7 +10,8 @@ import { useShallow } from "zustand/react/shallow";
 import { RemoteTextProvider, RemoteImageProvider } from "@/services/aiService";
 import { ImageEditorModal } from "@/components/wizard/blocks/ImageEditorModal";
 import { getModelById, getMaxRefs, getAspectRatios, getResolutions, resolveRefTags } from "@/lib/ai-models";
-import { SYSTEM_IMAGE_PRESETS, SYSTEM_TEXT_PRESETS, getImagePresetPromptSuffix, getTextPresetInstruction } from "@/lib/stylePresets";
+import { getImagePresetPromptSuffix, getTextPresetInstruction } from "@/lib/stylePresets";
+import { useStylePresets } from "@/hooks/useStylePresets";
 import { persistImageToS3 } from "@/utils/imageUpload";
 import type { ImageLayer } from "@/types";
 
@@ -97,6 +98,9 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
     const [textStyleId, setTextStyleId] = useState<string | undefined>(undefined);
     const promptRef = useRef<RefAutocompleteTextareaHandle>(null);
 
+    // Workspace-aware presets (system + custom from DB)
+    const { imagePresets, textPresets } = useStylePresets();
+
     // Check if current model supports vision (reference images)
     const supportsVision = activeTab !== "text" &&
         (getModelById(selectedModel)?.caps.includes("vision") ?? false);
@@ -140,14 +144,14 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
             let res;
             if (activeTab === "text") {
                 // Inject text style instruction if selected
-                const textInstruction = textStyleId ? getTextPresetInstruction(textStyleId) : "";
+                const textInstruction = textStyleId ? getTextPresetInstruction(textStyleId, textPresets) : "";
                 const textPromptWithStyle = textInstruction
                     ? `${textInstruction}\n\n${prompt}`
                     : prompt;
                 res = await RemoteTextProvider.generate(textPromptWithStyle, { model: selectedModel, projectId });
             } else {
                 // Inject image style suffix if selected
-                const styleSuffix = getImagePresetPromptSuffix(imageStyleId);
+                const styleSuffix = getImagePresetPromptSuffix(imageStyleId, imagePresets);
                 const styledPrompt = styleSuffix ? `${prompt}. Style: ${styleSuffix}` : prompt;
                 const resolvedPrompt = resolveRefTags(styledPrompt, selectedModel);
                 res = await RemoteImageProvider.generate(resolvedPrompt, {
@@ -413,7 +417,7 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                         {/* Style Preset (Image mode) */}
                         {activeTab !== "text" && (
                             <ImageStylePresetPicker
-                                presets={SYSTEM_IMAGE_PRESETS}
+                                presets={imagePresets}
                                 selectedId={imageStyleId}
                                 onChange={setImageStyleId}
                                 variant="compact"
@@ -423,7 +427,7 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                         {/* Style Preset (Text mode) */}
                         {activeTab === "text" && (
                             <TextStylePresetPicker
-                                presets={SYSTEM_TEXT_PRESETS}
+                                presets={textPresets}
                                 selectedId={textStyleId}
                                 onChange={setTextStyleId}
                                 variant="compact"

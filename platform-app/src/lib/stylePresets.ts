@@ -305,6 +305,9 @@ export function mergeImagePresets(
     description: string;
     config: unknown;
     isActive?: boolean;
+    thumbnailUrl?: string | null;
+    category?: string;
+    order?: number;
   }>,
 ): ImageStylePreset[] {
   const dbMap = new Map(dbPresets.map((p) => [p.id, p]));
@@ -329,20 +332,20 @@ export function mergeImagePresets(
   }
 
   // Append remaining custom DB presets
-  let customOrder = 100;
-  for (const [, dbPreset] of dbMap) {
+  const customs = [...dbMap.values()].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+  for (const dbPreset of customs) {
     const cfg = dbPreset.config as DBPresetConfig;
     result.push({
       id: dbPreset.id,
       name: dbPreset.name,
       label: dbPreset.name,
       description: dbPreset.description,
-      thumbnailUrl: "/style-presets/none.jpg", // fallback
+      thumbnailUrl: dbPreset.thumbnailUrl || "/style-presets/none.jpg",
       promptSuffix: cfg?.promptSuffix || "",
       negativePrompt: cfg?.negativePrompt,
-      category: "custom",
+      category: (dbPreset.category as ImageStyleCategory) || "custom",
       isSystem: false,
-      order: customOrder++,
+      order: dbPreset.order ?? 100,
     });
   }
 
@@ -358,6 +361,8 @@ export function mergeTextPresets(
     name: string;
     description: string;
     config: unknown;
+    category?: string;
+    order?: number;
   }>,
 ): TextStylePreset[] {
   const dbMap = new Map(dbPresets.map((p) => [p.id, p]));
@@ -379,8 +384,8 @@ export function mergeTextPresets(
     }
   }
 
-  let customOrder = 100;
-  for (const [, dbPreset] of dbMap) {
+  const customs = [...dbMap.values()].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+  for (const dbPreset of customs) {
     const cfg = dbPreset.config as DBPresetConfig;
     result.push({
       id: dbPreset.id,
@@ -389,9 +394,9 @@ export function mergeTextPresets(
       description: dbPreset.description,
       instruction: cfg?.instruction || "",
       icon: cfg?.icon || "✨",
-      category: "custom",
+      category: (dbPreset.category as TextStyleCategory) || "custom",
       isSystem: false,
-      order: customOrder++,
+      order: dbPreset.order ?? 100,
     });
   }
 
