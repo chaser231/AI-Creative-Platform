@@ -41,12 +41,11 @@ export interface ModelEntry {
 /** Aspect ratios shared by Google and Flux models */
 const WIDE_ASPECT_RATIOS = ["1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9"];
 
-/** Google Nano Banana resolution options (output_resolution param) */
+/** Google Nano Banana resolution options ("resolution" param, enum: 1K | 2K | 4K) */
 const GOOGLE_RESOLUTIONS: ResolutionOption[] = [
-    { id: "1024px", label: "1K" },
-    { id: "2048px", label: "2K" },
-    { id: "4096px", label: "4K" },
-    { id: "512px",  label: "512px" },
+    { id: "1K", label: "1K" },
+    { id: "2K", label: "2K" },
+    { id: "4K", label: "4K" },
 ];
 
 /** Flux megapixel resolution options */

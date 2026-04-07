@@ -266,8 +266,8 @@ class ReplicateProvider implements AIProviderImplementation {
         } else if (isGoogle) {
             // Nano Banana models: only jpg or png
             input.output_format = "png";
-            // Google resolution: output_resolution
-            if (params.scale) input.output_resolution = params.scale; // "512px", "1024px", "2048px", "4096px"
+            // Google resolution: "1K" | "2K" | "4K"
+            if (params.scale) input.resolution = params.scale;
         } else if (slug.startsWith("openai/")) {
             // GPT Image: quality
             if (params.scale) input.quality = params.scale; // "low", "medium", "high"
