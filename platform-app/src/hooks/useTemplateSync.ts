@@ -107,11 +107,19 @@ export function useSaveTemplateSync() {
       }
 
       try {
+        // Merge businessUnits into categories so they're searchable in Prisma
+        const mergedCategories = [
+          ...new Set([
+            ...((pack.categories || []) as string[]),
+            ...((pack.businessUnits || []) as string[]),
+          ]),
+        ];
+
         const template = await createMutation.mutateAsync({
           workspaceId: wsId,
           name: pack.name,
           description: pack.description,
-          categories: pack.categories as string[],
+          categories: mergedCategories,
           contentType: pack.contentType,
           occasion: pack.occasion,
           tags: pack.tags,

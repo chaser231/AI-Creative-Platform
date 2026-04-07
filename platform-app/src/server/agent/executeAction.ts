@@ -280,14 +280,20 @@ RULES:
       const searchTerms = serviceMap[service] || [service];
 
       // Search by name, categories, or tags — include official templates from other workspaces
+      // Build name search conditions for ALL service name variants
+      const nameSearchConditions = searchTerms.map(term => ({
+        name: { contains: term, mode: "insensitive" as const },
+      }));
+
       const templates = await context.prisma.template.findMany({
         where: {
           AND: [
             // Visibility: own workspace + official (cross-workspace)
             { OR: [{ workspaceId: context.workspaceId }, { isOfficial: true }] },
-            // Content filter: match service name or categories
+            // Content filter: match ANY variant in name/description OR categories
             { OR: [
-              { name: { contains: service, mode: "insensitive" } },
+              ...nameSearchConditions,
+              { description: { contains: service, mode: "insensitive" } },
               { categories: { hasSome: searchTerms } },
             ]},
           ],
@@ -299,8 +305,8 @@ RULES:
           thumbnailUrl: true,
         },
         distinct: ["name"],
-        orderBy: { popularity: "desc" },
-        take: 5,
+        orderBy: [{ isOfficial: "desc" }, { updatedAt: "desc" }],
+        take: 8,
       });
 
       if (templates.length === 0) {

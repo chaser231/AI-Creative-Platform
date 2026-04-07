@@ -50,6 +50,8 @@ export default function AdminTemplatesPage() {
     const [editName, setEditName] = useState("");
     const [editDesc, setEditDesc] = useState("");
     const [editOfficial, setEditOfficial] = useState(false);
+    const [editCategories, setEditCategories] = useState<string[]>([]);
+    const [editContentType, setEditContentType] = useState("visual");
 
     // Context menu state
     const [contextMenu, setContextMenu] = useState<{ id: string; x: number; y: number } | null>(null);
@@ -57,11 +59,35 @@ export default function AdminTemplatesPage() {
     // Delete confirm
     const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
 
-    const openEditModal = (template: { id: string; name: string; description: string | null; isOfficial: boolean }) => {
+    // All available category+BU values
+    const CATEGORY_OPTIONS = [
+        { value: "yandex-market", label: "Маркет" },
+        { value: "yandex-food", label: "Еда" },
+        { value: "yandex-go", label: "Go" },
+        { value: "yandex-lavka", label: "Лавка" },
+        { value: "in-app", label: "In-App" },
+        { value: "performance", label: "Перформанс" },
+        { value: "smm", label: "SMM" },
+        { value: "digital", label: "Диджитал" },
+        { value: "showcase", label: "Витрины" },
+        { value: "email", label: "Email" },
+        { value: "e-commerce", label: "E-commerce" },
+        { value: "other", label: "Другое" },
+    ];
+
+    const CONTENT_TYPE_OPTIONS = [
+        { value: "visual", label: "Визуальный" },
+        { value: "video", label: "Видео" },
+        { value: "generative", label: "Генеративный" },
+        { value: "mixed", label: "Смешанный" },
+    ];
+
+    const openEditModal = (template: { id: string; name: string; description: string | null; isOfficial: boolean; categories: string[] }) => {
         setEditingTemplate(template);
         setEditName(template.name);
         setEditDesc(template.description || "");
         setEditOfficial(template.isOfficial);
+        setEditCategories(template.categories || []);
     };
 
     const handleSaveEdit = async () => {
@@ -71,6 +97,7 @@ export default function AdminTemplatesPage() {
             name: editName,
             description: editDesc,
             isOfficial: editOfficial,
+            categories: editCategories,
         });
         setEditingTemplate(null);
     };
@@ -373,6 +400,31 @@ export default function AdminTemplatesPage() {
                             className="w-full px-3 py-2 text-sm rounded-xl border border-border-primary bg-bg-secondary text-text-primary focus:outline-none focus:ring-2 focus:ring-accent-primary/20 transition-all resize-none"
                         />
                     </div>
+
+                    {/* Categories / BU chips */}
+                    <div>
+                        <label className="text-xs font-medium text-text-secondary mb-1.5 block">Категории / Сервис</label>
+                        <div className="flex flex-wrap gap-1.5">
+                            {CATEGORY_OPTIONS.map(opt => {
+                                const active = editCategories.includes(opt.value);
+                                return (
+                                    <button
+                                        key={opt.value}
+                                        onClick={() => setEditCategories(prev =>
+                                            active ? prev.filter(c => c !== opt.value) : [...prev, opt.value]
+                                        )}
+                                        className={`px-2.5 py-1 rounded-full text-[11px] font-medium transition-all cursor-pointer border ${active
+                                            ? "bg-accent-primary text-white border-accent-primary"
+                                            : "bg-bg-secondary text-text-secondary border-border-primary hover:border-accent-primary/30"
+                                        }`}
+                                    >
+                                        {opt.label}
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    </div>
+
                     <label className="flex items-center gap-2 cursor-pointer">
                         <input
                             type="checkbox"
