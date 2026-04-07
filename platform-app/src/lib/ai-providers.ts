@@ -316,47 +316,98 @@ class ReplicateProvider implements AIProviderImplementation {
             url = `https://api.replicate.com/v1/models/${entry.slug}/predictions`;
         }
 
-        const createRes = await fetch(url, {
-            method: "POST",
-            headers: {
-                "Authorization": `Bearer ${token}`,
-                "Content-Type": "application/json",
-                "Prefer": "wait",
-            },
-            body: JSON.stringify(body),
-        });
+        console.log(`[Replicate] Creating prediction for ${entry.slug}...`);
 
-        if (!createRes.ok) {
-            const errBody = await createRes.text();
-            console.error(`Replicate API error [${entry.slug}]:`, errBody);
-            throw new Error(`Replicate error (${createRes.status}): ${errBody.slice(0, 300)}`);
+        // Create prediction WITHOUT Prefer:wait — just fire and poll
+        // Prefer:wait caused TCP timeouts on slow models (nano-banana-pro ~60s)
+        const abortCtl = new AbortController();
+        const createTimeout = setTimeout(() => abortCtl.abort(), 30_000);
+
+        let prediction: any;
+        try {
+            const createRes = await fetch(url, {
+                method: "POST",
+                headers: {
+                    "Authorization": `Bearer ${token}`,
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify(body),
+                signal: abortCtl.signal,
+            });
+            clearTimeout(createTimeout);
+
+            if (!createRes.ok) {
+                const errBody = await createRes.text();
+                console.error(`Replicate API error [${entry.slug}]:`, errBody);
+                throw new Error(`Replicate error (${createRes.status}): ${errBody.slice(0, 300)}`);
+            }
+
+            prediction = await createRes.json();
+        } catch (err: unknown) {
+            clearTimeout(createTimeout);
+            const msg = err instanceof Error ? err.message : String(err);
+            if (msg.includes("abort")) {
+                throw new Error(`Replicate: Не удалось создать запрос для ${entry.slug} (таймаут 30s)`);
+            }
+            throw err;
         }
 
-        let prediction = await createRes.json();
-
-        // If inline result (Prefer: wait succeeded)
+        // If prediction already completed (fast models)
         if (prediction.output !== undefined && prediction.output !== null) {
+            console.log(`[Replicate] Instant result for ${entry.slug}, status: ${prediction.status}`);
             return prediction.output;
         }
 
-        // Poll for result (up to 120 seconds)
+        // Poll for result (up to 180 seconds with retry on network errors)
         const predictionId = prediction.id;
-        for (let i = 0; i < 60; i++) {
-            await new Promise(r => setTimeout(r, 2000));
-            const pollRes = await fetch(`https://api.replicate.com/v1/predictions/${predictionId}`, {
-                headers: { "Authorization": `Bearer ${token}` },
-            });
-            const poll = await pollRes.json();
+        console.log(`[Replicate] Polling prediction ${predictionId} for ${entry.slug}...`);
+        const maxPolls = 90; // 90 * 2s = 180s
+        let consecutiveNetworkErrors = 0;
 
-            if (poll.status === "succeeded") {
-                return poll.output;
-            }
-            if (poll.status === "failed" || poll.status === "canceled") {
-                throw new Error(`Replicate prediction ${poll.status}: ${poll.error || "unknown error"}`);
+        for (let i = 0; i < maxPolls; i++) {
+            await new Promise(r => setTimeout(r, 2000));
+            
+            try {
+                const pollRes = await fetch(`https://api.replicate.com/v1/predictions/${predictionId}`, {
+                    headers: { "Authorization": `Bearer ${token}` },
+                });
+
+                if (!pollRes.ok) {
+                    console.warn(`[Replicate] Poll ${i + 1} HTTP error: ${pollRes.status}`);
+                    consecutiveNetworkErrors++;
+                    if (consecutiveNetworkErrors >= 5) {
+                        throw new Error(`Replicate polling failed after ${consecutiveNetworkErrors} consecutive HTTP errors`);
+                    }
+                    continue;
+                }
+
+                consecutiveNetworkErrors = 0; // Reset on success
+                const poll = await pollRes.json();
+
+                if (poll.status === "succeeded") {
+                    console.log(`[Replicate] Prediction ${predictionId} succeeded after ${(i + 1) * 2}s`);
+                    return poll.output;
+                }
+                if (poll.status === "failed" || poll.status === "canceled") {
+                    throw new Error(`Replicate prediction ${poll.status}: ${poll.error || "unknown error"}`);
+                }
+                // Still processing — continue polling
+            } catch (fetchErr: unknown) {
+                const errMsg = fetchErr instanceof Error ? fetchErr.message : String(fetchErr);
+                // If it's our own thrown error, rethrow
+                if (errMsg.includes("Replicate prediction") || errMsg.includes("polling failed")) {
+                    throw fetchErr;
+                }
+                // Network error during fetch — retry up to 5 times
+                consecutiveNetworkErrors++;
+                console.warn(`[Replicate] Poll ${i + 1} network error (${consecutiveNetworkErrors}/5): ${errMsg}`);
+                if (consecutiveNetworkErrors >= 5) {
+                    throw new Error(`Replicate polling failed: ${errMsg}`);
+                }
             }
         }
 
-        throw new Error("Replicate prediction timed out after 120 seconds");
+        throw new Error("Replicate prediction timed out after 180 seconds");
     }
 }
 

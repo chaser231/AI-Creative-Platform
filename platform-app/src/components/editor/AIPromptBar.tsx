@@ -231,8 +231,12 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
             console.error("AI Generation Error:", message);
             
             let displayMsg = message;
-            if (message.includes("fetch failed") || message.includes("E003")) {
-                displayMsg = "Сервер перегружен или недоступен (слишком много запросов). Попробуйте еще раз через 10 секунд.";
+            if (message.includes("fetch failed") || message.includes("E003") || message.includes("polling failed")) {
+                displayMsg = "Сетевая ошибка при обращении к сервису генерации. Проверьте интернет-соединение и попробуйте снова.";
+            } else if (message.includes("timed out")) {
+                displayMsg = "Генерация заняла слишком много времени. Попробуйте снова или выберите более быструю модель.";
+            } else if (message.includes("Replicate error (429)")) {
+                displayMsg = "Слишком много запросов. Попробуйте через 10 секунд.";
             }
             alert("Ошибка генерации: " + displayMsg);
         } finally {
