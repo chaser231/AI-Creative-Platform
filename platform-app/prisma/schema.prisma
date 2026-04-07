@@ -311,12 +311,18 @@ model AIPreset {
   type        String // "text", "image"
   config      Json
   isActive    Boolean @default(true)
+  isSystem    Boolean @default(false)
+  category    String  @default("custom")  // photography, digital, artistic, tone, length, custom
+  thumbnailUrl String?
+  order       Int     @default(0)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   workspaceId String
+
+  @@index([workspaceId, type, isActive])
 }
 
 model AISession {

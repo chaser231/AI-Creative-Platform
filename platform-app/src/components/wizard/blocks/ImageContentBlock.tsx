@@ -14,6 +14,8 @@ import { Button } from "@/components/ui/Button";
 import { ReferenceImageInput } from "@/components/ui/ReferenceImageInput";
 import { RefAutocompleteTextarea, type RefAutocompleteTextareaHandle } from "@/components/ui/RefAutocompleteTextarea";
 import { getModelById, getMaxRefs, getAspectRatios, getResolutions, resolveRefTags } from "@/lib/ai-models";
+import { getImagePresetPromptSuffix } from "@/lib/stylePresets";
+import { useStylePresets } from "@/hooks/useStylePresets";
 import type { ImageComponentProps, BusinessUnit } from "@/types";
 import { ImageEditorModal } from "./ImageEditorModal";
 
@@ -34,49 +36,6 @@ const IMAGE_GEN_MODELS = [
 ];
 
 // Aspect ratios and resolutions are now dynamic per model — see ai-models.ts
-
-const STYLE_PRESETS = [
-    {
-        id: "none", label: "Без стиля",
-        img: "/style-presets/none.jpg",
-        prompt: "",
-    },
-    {
-        id: "product", label: "Продуктовая",
-        img: "/style-presets/product.jpg",
-        prompt: "Professional commercial product photography on pure white background, studio lighting with soft dramatic shadows, centered composition, crisp detail, clean and premium look.",
-    },
-    {
-        id: "food", label: "Фуд",
-        img: "/style-presets/food.jpg",
-        prompt: "Professional food photography with vibrant appetizing colors, natural organic styling, warm restaurant lighting, shallow depth of field with beautiful bokeh, absolutely mouth-watering presentation.",
-    },
-    {
-        id: "lifestyle", label: "Лайфстайл",
-        img: "/style-presets/lifestyle.jpg",
-        prompt: "Authentic lifestyle brand photography, candid real moments, warm golden hour natural light, casual and approachable atmosphere, genuine emotions, editorial quality.",
-    },
-    {
-        id: "tech", label: "Технологии",
-        img: "/style-presets/tech.jpg",
-        prompt: "Futuristic technology product photography, sleek on dark background with neon digital glow elements, circuit and data visualization accents, premium high-tech aesthetic.",
-    },
-    {
-        id: "minimal", label: "Минимализм",
-        img: "/style-presets/minimal.jpg",
-        prompt: "Extreme minimalism photography, single subject on vast clean background, maximum negative space, zen-like aesthetic, ultra clean and simple composition, timeless and refined.",
-    },
-    {
-        id: "vibrant", label: "Яркий",
-        img: "/style-presets/vibrant.jpg",
-        prompt: "Bold vibrant pop art style, explosive vivid colors, high saturation, energetic and eye-catching visual impact, playful graphic design aesthetic with maximum visual contrast.",
-    },
-    {
-        id: "cinematic", label: "Кинематогр.",
-        img: "/style-presets/cinematic.jpg",
-        prompt: "Epic cinematic photography with dramatic film-grade color grading, blue-orange teal LUT, wide aspect ratio feel, atmospheric moody lighting, film grain texture, Hollywood blockbuster aesthetic.",
-    },
-];
 
 const SCALE_OPTIONS = ["1x", "2x", "4x"];
 
@@ -114,6 +73,8 @@ export function ImageContentBlock({ id, name, props, value, onChange, businessUn
     // Dynamic per-model options
     const modelAspectRatios = getAspectRatios(selectedModel);
     const modelResolutions = getResolutions(selectedModel);
+    // Workspace-aware presets (system + custom from DB)
+    const { imagePresets } = useStylePresets();
 
     const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
@@ -135,9 +96,9 @@ export function ImageContentBlock({ id, name, props, value, onChange, businessUn
         setGenError(null);
         setIsGenerating(true);
         try {
-            const style = STYLE_PRESETS.find(s => s.id === stylePreset);
             // User prompt is primary; style is appended as context, not prefix
-            const styleContext = style?.prompt ? `. Style: ${style.prompt}` : "";
+            const styleSuffix = getImagePresetPromptSuffix(stylePreset, imagePresets);
+            const styleContext = styleSuffix ? `. Style: ${styleSuffix}` : "";
             const finalPrompt = `${basePrompt}${styleContext}`;
 
             const response = await fetch("/api/ai/generate", {
@@ -243,14 +204,14 @@ export function ImageContentBlock({ id, name, props, value, onChange, businessUn
                             className="w-full h-16 px-3 py-2 rounded-[var(--radius-md)] border border-border-primary bg-bg-primary text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-border-focus resize-none placeholder:text-text-tertiary"
                         />
 
-                        {/* Style Presets — real images */}
+                        {/* Style Presets — unified from stylePresets.ts */}
                         <div>
                             <p className="text-[11px] font-semibold text-text-secondary uppercase tracking-wider mb-2">Стиль</p>
                             <div className="grid grid-cols-4 gap-2">
-                                {STYLE_PRESETS.map(s => (
+                                {imagePresets.map(s => (
                                     <button key={s.id} onClick={() => setStylePreset(s.id)}
                                         className={`relative rounded-[var(--radius-md)] overflow-hidden border-2 transition-all cursor-pointer aspect-square ${stylePreset === s.id ? "border-accent-lime-hover shadow-[0_0_0_1px_var(--accent-lime)]" : "border-border-primary hover:border-border-secondary"}`}>
-                                        <img src={s.img} alt={s.label} className="w-full h-full object-cover" />
+                                        <img src={s.thumbnailUrl} alt={s.label} className="w-full h-full object-cover" />
                                         <div className={`absolute inset-0 flex items-end justify-center pb-1.5 bg-gradient-to-t from-black/60 to-transparent`}>
                                             <span className={`text-[10px] font-semibold leading-tight text-center px-1 ${stylePreset === s.id ? "text-white" : "text-white/90"}`}>{s.label}</span>
                                         </div>

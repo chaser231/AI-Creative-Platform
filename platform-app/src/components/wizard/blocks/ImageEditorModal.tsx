@@ -14,7 +14,10 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { ReferenceImageInput } from "@/components/ui/ReferenceImageInput";
+import { ImageStylePresetPicker } from "@/components/ui/StylePresetPicker";
 import { getMaxRefs, resolveRefTags } from "@/lib/ai-models";
+import { getImagePresetPromptSuffix } from "@/lib/stylePresets";
+import { useStylePresets } from "@/hooks/useStylePresets";
 import type { BusinessUnit } from "@/types";
 
 type EditorTool = "remove-bg" | "inpaint" | "text-edit" | "outpaint";
@@ -71,6 +74,9 @@ export function ImageEditorModal({ imageSrc, onApply, onClose }: ImageEditorModa
     const [outpaintPadding, setOutpaintPadding] = useState({ top: 0, right: 0, bottom: 0, left: 0 });
     const [errorMsg, setErrorMsg] = useState<string | null>(null);
     const [referenceImages, setReferenceImages] = useState<string[]>([]);
+    const [editStyleId, setEditStyleId] = useState("none");
+    // Workspace-aware presets
+    const { imagePresets } = useStylePresets();
 
     const parseAiError = (e: Error) => {
         const msg = String(e.message || "");
@@ -130,12 +136,19 @@ export function ImageEditorModal({ imageSrc, onApply, onClose }: ImageEditorModa
     };
 
     const handleRemoveBg = () => callImageEdit("remove-bg");
-    const handleTextEdit = () => { if (editPrompt.trim()) callImageEdit("text-edit", editPrompt); };
+    const handleTextEdit = () => {
+        if (!editPrompt.trim()) return;
+        const styleSuffix = getImagePresetPromptSuffix(editStyleId);
+        const styledPrompt = styleSuffix ? `${editPrompt}. Style: ${styleSuffix}` : editPrompt;
+        callImageEdit("text-edit", styledPrompt);
+    };
     const handleInpaint = () => {
         if (!editPrompt.trim()) return;
         const canvas = canvasRef.current;
         const maskB64 = canvas ? canvas.toDataURL("image/png") : undefined;
-        callImageEdit("inpaint", editPrompt, maskB64);
+        const styleSuffix = getImagePresetPromptSuffix(editStyleId);
+        const styledPrompt = styleSuffix ? `${editPrompt}. Style: ${styleSuffix}` : editPrompt;
+        callImageEdit("inpaint", styledPrompt, maskB64);
     };
     const handleOutpaint = async () => {
         setIsProcessing(true);
@@ -394,6 +407,16 @@ export function ImageEditorModal({ imageSrc, onApply, onClose }: ImageEditorModa
                                         onChange={(e) => setEditPrompt(e.target.value)}
                                         className="w-full h-20 px-3 py-2 rounded-[var(--radius-md)] border border-border-primary bg-bg-primary text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-border-focus resize-none placeholder:text-text-tertiary"
                                     />
+                                    {/* Style Preset for inpaint */}
+                                    <div>
+                                        <p className="text-[10px] font-medium text-text-secondary mb-1.5">Стиль</p>
+                                        <ImageStylePresetPicker
+                                            presets={imagePresets}
+                                            selectedId={editStyleId}
+                                            onChange={setEditStyleId}
+                                            variant="inline"
+                                        />
+                                    </div>
                                     <button
                                         onClick={handleInpaint}
                                         disabled={isProcessing || !editPrompt.trim()}
@@ -426,6 +449,16 @@ export function ImageEditorModal({ imageSrc, onApply, onClose }: ImageEditorModa
                                             onChange={setReferenceImages}
                                             max={getMaxRefs(selectedModel)}
                                             label="Добавить референс"
+                                        />
+                                    </div>
+                                    {/* Style Preset for text-edit */}
+                                    <div>
+                                        <p className="text-[10px] font-medium text-text-secondary mb-1.5">Стиль</p>
+                                        <ImageStylePresetPicker
+                                            presets={imagePresets}
+                                            selectedId={editStyleId}
+                                            onChange={setEditStyleId}
+                                            variant="inline"
                                         />
                                     </div>
                                     <button

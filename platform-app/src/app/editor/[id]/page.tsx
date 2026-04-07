@@ -336,7 +336,7 @@ export default function EditorPage({ params }: EditorPageProps) {
                     <PropertiesPanel />
 
                     {/* Floating Toolbar — moves up when AI is open */}
-                    <div className={`absolute left-1/2 -translate-x-1/2 transition-all duration-300 z-10 ${aiPanelOpen ? "bottom-56" : "bottom-3"}`}>
+                    <div className={`absolute left-1/2 -translate-x-1/2 transition-all duration-300 z-10 ${aiPanelOpen ? "bottom-52" : "bottom-3"}`}>
                         <Toolbar
                             onOpenTemplates={() => setTemplatesOpen(true)}
                             onToggleAI={() => setAiPanelOpen(!aiPanelOpen)}

@@ -67,18 +67,32 @@ export default function SettingsPage() {
                     {/* Links to other settings */}
                     <section>
                         <h2 className="text-sm font-medium text-text-primary mb-4">Другие настройки</h2>
-                        <Link
-                            href="/settings/brand-kit"
-                            className="flex items-center gap-3 p-4 rounded-[var(--radius-lg)] border border-border-primary bg-bg-surface hover:bg-bg-secondary transition-colors"
-                        >
-                            <div className="w-10 h-10 rounded-[var(--radius-md)] bg-gradient-to-br from-purple-400 to-pink-400 flex items-center justify-center">
-                                <span className="text-white text-lg">🎨</span>
-                            </div>
-                            <div>
-                                <p className="text-sm font-medium text-text-primary">Бренд-кит</p>
-                                <p className="text-xs text-text-secondary">Цвета, типографика, тон коммуникации</p>
-                            </div>
-                        </Link>
+                        <div className="space-y-3">
+                            <Link
+                                href="/settings/brand-kit"
+                                className="flex items-center gap-3 p-4 rounded-[var(--radius-lg)] border border-border-primary bg-bg-surface hover:bg-bg-secondary transition-colors"
+                            >
+                                <div className="w-10 h-10 rounded-[var(--radius-md)] bg-gradient-to-br from-purple-400 to-pink-400 flex items-center justify-center">
+                                    <span className="text-white text-lg">🎨</span>
+                                </div>
+                                <div>
+                                    <p className="text-sm font-medium text-text-primary">Бренд-кит</p>
+                                    <p className="text-xs text-text-secondary">Цвета, типографика, тон коммуникации</p>
+                                </div>
+                            </Link>
+                            <Link
+                                href="/settings/styles"
+                                className="flex items-center gap-3 p-4 rounded-[var(--radius-lg)] border border-border-primary bg-bg-surface hover:bg-bg-secondary transition-colors"
+                            >
+                                <div className="w-10 h-10 rounded-[var(--radius-md)] bg-gradient-to-br from-violet-400 to-indigo-500 flex items-center justify-center">
+                                    <span className="text-white text-lg">✨</span>
+                                </div>
+                                <div>
+                                    <p className="text-sm font-medium text-text-primary">AI Стили генерации</p>
+                                    <p className="text-xs text-text-secondary">Кастомные стили для изображений и текста</p>
+                                </div>
+                            </Link>
+                        </div>
                     </section>
                 </div>
             </div>
