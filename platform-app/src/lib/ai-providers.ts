@@ -362,10 +362,10 @@ class ReplicateProvider implements AIProviderImplementation {
             return prediction.output;
         }
 
-        // Poll for result (up to 180 seconds with retry on network errors)
+        // Poll for result (up to 300 seconds with retry on network errors)
         const predictionId = prediction.id;
         console.log(`[Replicate] Polling prediction ${predictionId} for ${entry.slug}...`);
-        const maxPolls = 90; // 90 * 2s = 180s
+        const maxPolls = 150; // 150 * 2s = 300s
         let consecutiveNetworkErrors = 0;
 
         for (let i = 0; i < maxPolls; i++) {
@@ -411,7 +411,7 @@ class ReplicateProvider implements AIProviderImplementation {
             }
         }
 
-        throw new Error("Replicate prediction timed out after 180 seconds");
+        throw new Error("Replicate prediction timed out after 300 seconds");
     }
 }
 
@@ -515,9 +515,9 @@ class FalProvider implements AIProviderImplementation {
             return this.parseResult(submitData, entry);
         }
 
-        // ── Poll for result (up to 180s) ───────────────────────────
+        // ── Poll for result (up to 300s) ───────────────────────────
         console.log(`[fal.ai] Polling request ${requestId}...`);
-        for (let i = 0; i < 90; i++) {
+        for (let i = 0; i < 150; i++) {
             await new Promise(r => setTimeout(r, 2000));
 
             try {
@@ -551,7 +551,7 @@ class FalProvider implements AIProviderImplementation {
             }
         }
 
-        throw new Error("fal.ai prediction timed out after 180 seconds");
+        throw new Error("fal.ai prediction timed out after 300 seconds");
     }
 
     /** Parse fal.ai response, extracting image URL and dimensions */
@@ -593,70 +593,133 @@ const FAL_PRIMARY_MODELS = new Set([
     "nano-banana-pro",
 ]);
 
+
+
+/**
+ * Model fallback chains — if original model is unavailable on all providers,
+ * try sibling models from the same family.
+ */
+const MODEL_FALLBACK_CHAIN: Record<string, string[]> = {
+    "nano-banana-2":   ["nano-banana", "nano-banana-pro"],
+    "nano-banana":     ["nano-banana-2", "nano-banana-pro"],
+    "nano-banana-pro": ["nano-banana-2", "nano-banana"],
+};
+
+/**
+ * Try a single generation attempt on a specific provider.
+ * Returns result or throws.
+ */
+async function tryProvider(
+    provider: AIProviderImplementation,
+    params: AIRequestParams,
+    label: string,
+): Promise<AIResponse> {
+    console.log(`[Provider] Trying ${label} for ${params.model}...`);
+    return await provider.generate(params);
+}
+
+/**
+ * Try generation with retry (up to `maxAttempts`) on a single provider.
+ * Adds a short delay between retries.
+ */
+async function tryWithRetry(
+    provider: AIProviderImplementation,
+    params: AIRequestParams,
+    label: string,
+    maxAttempts = 2,
+): Promise<AIResponse> {
+    let lastErr: unknown;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+            return await tryProvider(provider, params, `${label} (attempt ${attempt}/${maxAttempts})`);
+        } catch (err: unknown) {
+            lastErr = err;
+            const msg = err instanceof Error ? err.message : String(err);
+            console.warn(`[Provider] ${label} attempt ${attempt} failed: ${msg}`);
+            // Don't retry on "Service unavailable" — it won't help
+            if (msg.includes("Service is currently unavailable") || msg.includes("high demand")) {
+                break;
+            }
+            // Wait before retry (5s)
+            if (attempt < maxAttempts) {
+                await new Promise(r => setTimeout(r, 5000));
+            }
+        }
+    }
+    throw lastErr;
+}
+
 export function getProvider(modelId: string): AIProviderImplementation {
     const entry = getModelById(modelId);
     if (entry?.provider === "openai") return openaiDirect;
-    // Everything else goes through Replicate (including BYOK models like gpt-image)
     return replicate;
 }
 
 /**
- * Generate with automatic multi-provider fallback.
+ * Generate with maximum resilience:
  *
- * Routing strategy:
- * - nano-banana family → fal.ai primary, Replicate fallback (when FAL_KEY set)
- * - Other models with fal.ai support → Replicate primary, fal.ai fallback
- * - Models without fal.ai → Replicate only
+ * 1. Try primary provider (fal.ai for nano-banana, Replicate for others)
+ *    with up to 2 retries
+ * 2. Try secondary provider with up to 2 retries
+ * 3. If both fail, try sibling models from same family
+ *    (e.g. nano-banana-2 → nano-banana → nano-banana-pro)
  */
 export async function generateWithFallback(params: AIRequestParams): Promise<AIResponse> {
     const modelId = params.model || "nano-banana-2";
+    const errors: string[] = [];
 
     // Determine provider order
     const useFalPrimary = FAL_PRIMARY_MODELS.has(modelId) && hasFalSupport(modelId);
+    const providers: { impl: AIProviderImplementation; label: string }[] = useFalPrimary
+        ? [
+            { impl: falProvider, label: "fal.ai" },
+            { impl: replicate, label: "Replicate" },
+          ]
+        : hasFalSupport(modelId)
+            ? [
+                { impl: replicate, label: "Replicate" },
+                { impl: falProvider, label: "fal.ai" },
+              ]
+            : [
+                { impl: getProvider(modelId), label: "Replicate" },
+              ];
 
-    if (useFalPrimary) {
-        // ── fal.ai primary, Replicate fallback ──
+    // ── Step 1: Try each provider with retries for the original model ──
+    for (const { impl, label } of providers) {
         try {
-            console.log(`[Provider] Using fal.ai as primary for ${modelId}`);
-            return await falProvider.generate(params);
-        } catch (falErr: unknown) {
-            const falMsg = falErr instanceof Error ? falErr.message : String(falErr);
-            console.error(`[Provider] fal.ai primary failed for ${modelId}: ${falMsg}`);
+            return await tryWithRetry(impl, params, `${label}/${modelId}`);
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            errors.push(`${label}: ${msg}`);
+        }
+    }
 
-            // Try Replicate as fallback
-            console.log(`[Provider] Falling back to Replicate for ${modelId}...`);
-            try {
-                return await replicate.generate(params);
-            } catch (repErr: unknown) {
-                const repMsg = repErr instanceof Error ? repErr.message : String(repErr);
-                console.error(`[Provider] Replicate fallback also failed: ${repMsg}`);
-                // Show both errors for debugging
-                throw new Error(`Генерация не удалась.\nfal.ai: ${falMsg}\nReplicate: ${repMsg}`);
+    // ── Step 2: Try sibling models from the same family ──
+    const siblings = MODEL_FALLBACK_CHAIN[modelId];
+    if (siblings && siblings.length > 0) {
+        for (const siblingId of siblings) {
+            console.log(`[Provider] Trying sibling model ${siblingId} instead of ${modelId}...`);
+            const siblingParams = { ...params, model: siblingId };
+
+            // Determine providers for sibling
+            const sibFalPrimary = FAL_PRIMARY_MODELS.has(siblingId) && hasFalSupport(siblingId);
+            const sibProviders = sibFalPrimary
+                ? [{ impl: falProvider, label: "fal.ai" }, { impl: replicate, label: "Replicate" }]
+                : [{ impl: replicate, label: "Replicate" }, ...(hasFalSupport(siblingId) ? [{ impl: falProvider, label: "fal.ai" }] : [])];
+
+            for (const { impl, label } of sibProviders) {
+                try {
+                    const result = await tryWithRetry(impl, siblingParams, `${label}/${siblingId}`, 1);
+                    console.log(`[Provider] ✓ Sibling model ${siblingId} succeeded on ${label}`);
+                    return result;
+                } catch (err: unknown) {
+                    const msg = err instanceof Error ? err.message : String(err);
+                    errors.push(`${label}/${siblingId}: ${msg}`);
+                }
             }
         }
     }
 
-    // ── Replicate primary, fal.ai fallback ──
-    const primary = getProvider(modelId);
-    try {
-        return await primary.generate(params);
-    } catch (primaryErr: unknown) {
-        const errMsg = primaryErr instanceof Error ? primaryErr.message : String(primaryErr);
-        console.error(`[Provider] Primary (${primary.id}) failed for ${modelId}: ${errMsg}`);
-
-        // Attempt fal.ai fallback for supported models
-        if (hasFalSupport(modelId)) {
-            console.log(`[Provider] Falling back to fal.ai for ${modelId}...`);
-            try {
-                return await falProvider.generate(params);
-            } catch (falErr: unknown) {
-                const falMsg = falErr instanceof Error ? falErr.message : String(falErr);
-                console.error(`[Provider] fal.ai fallback also failed: ${falMsg}`);
-                // Show both errors
-                throw new Error(`Генерация не удалась.\nReplicate: ${errMsg}\nfal.ai: ${falMsg}`);
-            }
-        }
-
-        throw primaryErr;
-    }
+    // All providers and models exhausted
+    throw new Error(`Генерация не удалась. Все провайдеры и модели недоступны:\n${errors.join("\n")}`);
 }

@@ -521,19 +521,14 @@
     <header class="hero">
       <div class="eyebrow">AI Creative Platform • Отчёт по канвасу</div>
       <h1>Как устроена функциональность канваса</h1>
-      <p>
-        Презентационный HTML-отчёт по канвасу AI Creative Platform. Основан на коде редактора,
-        Zustand store, AI-потоках, шаблонах, resize-архитектуре и продуктовой документации.
-        Источник истины: сначала код, затем docs.
-      </p>
       <div class="hero-meta">
         <div class="hero-stat">
           <strong>5</strong>
           <span>типов слоёв на канвасе</span>
         </div>
         <div class="hero-stat">
-          <strong>3</strong>
-          <span>AI-поверхности: промпт-бар, редактор изображения, чат-ассистент</span>
+          <strong>4</strong>
+          <span>AI-поверхности: промпт-бар, редактор изображения, чат-ассистент, ai-поля в Wizard</span>
         </div>
         <div class="hero-stat">
           <strong>2</strong>
@@ -553,6 +548,7 @@
         <a href="#subsystems">Подсистемы канваса</a>
         <a href="#tools">Инструменты</a>
         <a href="#properties">Слои и свойства</a>
+        <a href="#autolayout">Auto-layout и frame</a>
         <a href="#ai">AI</a>
         <a href="#scenarios">Сценарии работы</a>
         <a href="#gaps">Расхождения и задачи</a>
@@ -561,15 +557,10 @@
 
       <main class="content">
         <section class="section" id="overview">
-          <div class="badge-row">
-            <span class="badge ok">Реализовано в коде</span>
-            <span class="badge plan">Описано в docs / запланировано</span>
-            <span class="badge gap">Расхождение / нужна задача</span>
-          </div>
           <h2>Общая карта канваса</h2>
           <p class="lead">
             Редактор проекта состоит из двух режимов: Wizard для пошаговой сборки шаблона и Studio
-            для полноценной ручной работы с канвасом. В текущем коде Studio является главным центром
+            для полноценной ручной работы с канвасом. В текущей структуре Studio является главным центром
             функциональности: там живут слойная модель, resize-архитектура, AI и экспорт.
           </p>
 
@@ -626,15 +617,15 @@
             </article>
             <article class="card">
               <h3>Properties Panel</h3>
-              <p>Артборд без selection, полный инспектор для single selection и type-specific controls для текста, shape, image, badge и frame.</p>
+              <p>Свйоства артборда без selection, полный инспектор для single selection и type-specific свойства для текста, shape, image, badge и frame.</p>
             </article>
             <article class="card">
               <h3>Панель форматов</h3>
-              <p>Master resize, custom sizes, rename/remove, linked/unlinked content cascade, smart resize и синхронизация layers на активный формат.</p>
+              <p>Master resize, custom sizes, rename/remove, linked/unlinked content cascade, smart resize и синхронизация слоев на активный формат.</p>
             </article>
             <article class="card">
               <h3>Взаимодействия на канвасе</h3>
-              <p>Selection, marquee, deep-select внутри frame, drag, resize, snap guides, clipping rules, pan/zoom, измерение расстояний через Alt и file drag-and-drop.</p>
+              <p>Selection, marquee (выделение рамкой), deep-select внутри frame, drag, resize, snap guides, clipping rules, pan/zoom, измерение расстояний через Alt и file drag-and-drop.</p>
             </article>
           </div>
         </section>
@@ -643,7 +634,6 @@
           <h2>Инструменты и режимы</h2>
           <p class="lead">
             Текущий toolbar ведёт себя скорее как набор instant actions, чем как классическая система draw-tools.
-            Это важная характеристика реализации и одно из заметных расхождений с тем, как интерфейс читается из docs.
           </p>
 
           <table>
@@ -690,7 +680,7 @@
                 <td><strong>Image</strong></td>
                 <td>Клик по `ImagePlus`</td>
                 <td>Открывает file picker и добавляет image</td>
-                <td>Файл сжимается, размер вставки ограничивается `500px` по большей стороне</td>
+                <td>Файл вставляется в оригинальном размере, если он больше, чем артборд, то применяется fit to artboard</td>
               </tr>
               <tr>
                 <td><strong>Snapping</strong></td>
@@ -733,7 +723,7 @@
                 <li><strong>Связь с шаблоном:</strong> `slotId`, `masterId`</li>
                 <li><strong>Поведение в resize:</strong> `constraints.horizontal`, `constraints.vertical`</li>
                 <li><strong>Контекст auto-layout:</strong> `layoutSizingWidth`, `layoutSizingHeight`, `isAbsolutePositioned`</li>
-                <li><strong>Нюанс инстанса:</strong> `detachedSizeSync` для отключения синхронизации размера image</li>
+                <li><strong>Нюанс инстанса:</strong> `detachedSizeSync` для отключения синхронизации размера image в instance-форматах</li>
               </ul>
             </div>
           </details>
@@ -789,6 +779,127 @@
             <div class="details-body">
               `childIds`, `clipContent`, `layoutMode`, paddings, spacing, primary/counter axis alignment,
               sizing modes, style props и `groupSlotId` для совместной AI-генерации вложенных текстов.
+            </div>
+          </details>
+        </section>
+
+        <section class="section" id="autolayout">
+          <h2>Auto-layout, вложенные frame и corner cases</h2>
+          <p class="lead">
+            Frame в текущем редакторе работает не просто как прямоугольный контейнер. Он может хранить детей через `childIds`,
+            включать clipping, раскладывать слои по auto-layout и сам быть дочерним элементом другого frame. Это одна из самых
+            “системных” подсистем канваса, потому что она влияет и на ручное редактирование, и на шаблоны, и на smart resize.
+          </p>
+
+          <div class="grid-2">
+            <article class="card">
+              <h3>Как устроен auto-layout</h3>
+              <p>Auto-layout включается через `layoutMode = horizontal | vertical`. У frame задаются paddings, spacing, primary/counter axis alignment и sizing modes, а у дочерних слоёв учитываются `layoutSizingWidth`, `layoutSizingHeight` и `isAbsolutePositioned`.</p>
+            </article>
+            <article class="card">
+              <h3>Как считается layout</h3>
+              <p>Layout engine идёт снизу вверх: сначала считает внутренние frame, потом внешние. Для nested frame делается два прохода, чтобы сначала стабилизировать размеры, а затем доуточнить позиции после пересчёта родительских контейнеров.</p>
+            </article>
+            <article class="card">
+              <h3>Кто участвует в flow</h3>
+              <p>В auto-layout участвуют только видимые дети без `isAbsolutePositioned`. Absolute-positioned слои исключаются из flow, но остаются связанными с frame и двигаются каскадно вместе с ним.</p>
+            </article>
+            <article class="card">
+              <h3>`fixed`, `fill`, `hug`</h3>
+              <p>Для детей используются `fixed` и `fill`, а для frame ещё и `hug`. `fill` делит свободное место по оси, `hug` вычисляет размер контейнера по дочерним слоям. Для текста с `auto_height` высота может быть пересчитана повторно, если ширина изменилась через `fill`.</p>
+            </article>
+          </div>
+
+          <div style="margin-top:16px;">
+            <table>
+              <thead>
+                <tr>
+                  <th>Аспект</th>
+                  <th>Как работает сейчас</th>
+                  <th>Что важно понимать</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>Вложенность frame</strong></td>
+                  <td>Структура хранится через `frame.childIds`, а для шаблонов дополнительно сериализуется в `layerTree`.</td>
+                  <td>Runtime-модель редактора остаётся плоской: вложенность задаётся ссылками, а не живым деревом объектов.</td>
+                </tr>
+                <tr>
+                  <td><strong>Клик по дочернему элементу</strong></td>
+                  <td>Без deep-select клик по child layer внутри frame выбирает родительский frame.</td>
+                  <td>Для точечного выбора внутреннего слоя нужен Cmd/Ctrl или специальный deep-select flow.</td>
+                </tr>
+                <tr>
+                  <td><strong>Drag дочернего слоя</strong></td>
+                  <td>Без deep-select drag может быть делегирован родительскому frame.</td>
+                  <td>Это защищает композицию контейнера, но может ощущаться как “двигается не тот объект”.</td>
+                </tr>
+                <tr>
+                  <td><strong>Drop в frame</strong></td>
+                  <td>При drop внутрь frame слой переносится в `childIds`; для auto-layout frame вычисляется `dropIndex` по позиции относительно соседей.</td>
+                  <td>Для обычного frame важен сам факт вложения, а для auto-layout frame ещё и порядок дочерних элементов.</td>
+                </tr>
+                <tr>
+                  <td><strong>Clipping</strong></td>
+                  <td>Если включён `clipContent`, клики, drag-start и marquee selection за пределами frame блокируются.</td>
+                  <td>Clip работает и на рендер, и на интеракции, поэтому слой может существовать внутри frame, но перестать быть доступным для клика вне clip bounds.</td>
+                </tr>
+                <tr>
+                  <td><strong>Resize frame</strong></td>
+                  <td>У non-auto-layout frame дети пересчитываются по constraints. У auto-layout frame они переукладываются через layout engine.</td>
+                  <td>Поведение зависит не только от типа слоя, но и от режима родительского frame.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <details open>
+            <summary>
+              <span>Принципы вложенности frame</span>
+              <span class="summary-meta">runtime + interaction model</span>
+            </summary>
+            <div class="details-body">
+              <ul class="clean">
+                <li>Frame может содержать любые слои, включая другие frame.</li>
+                <li>Все слои лежат в одном store, а вложенность определяется через `childIds`.</li>
+                <li>Top-level render исключает детей frame из корневого списка, чтобы они не рендерились дважды.</li>
+                <li>Auto-layout frame считаются bottom-up: сначала более глубокие контейнеры, затем внешние.</li>
+                <li>При движении frame его unmanaged-дети получают каскадный `dx/dy`, чтобы абсолютные координаты оставались консистентными.</li>
+                <li>Для template/export сценариев вложенность дополнительно сохраняется в `layerTree`.</li>
+              </ul>
+            </div>
+          </details>
+
+          <details>
+            <summary>
+              <span>Corner cases для frame внутри frame</span>
+              <span class="summary-meta">что может удивлять</span>
+            </summary>
+            <div class="details-body">
+              <ul class="clean">
+                <li><strong>Self-reference:</strong> если frame случайно содержит сам себя в `childIds`, layout engine удаляет такую ссылку защитно перед расчётом.</li>
+                <li><strong>Циклические связи:</strong> глубина nested frame считается с защитой от circular reference, чтобы расчёт не уходил в бесконечную рекурсию.</li>
+                <li><strong>Invisible или absolute children:</strong> они не участвуют в auto-layout flow, но при движении родителя должны сохранить корректные абсолютные координаты.</li>
+                <li><strong>Nested auto-layout:</strong> внутренний frame сначала может изменить собственный размер через `hug`, и только потом внешний frame измерит его как ребёнка.</li>
+                <li><strong>Manual resize дочернего слоя:</strong> если слой внутри auto-layout вручную растягивается transformer’ом, `fill`/`hug` могут быть сброшены в `fixed`, чтобы не конфликтовать с ручной геометрией.</li>
+                <li><strong>Text inside auto-layout:</strong> для текста `auto_width` и `auto_height` возможна повторная переоценка размеров, особенно когда ширина меняется через `fill`.</li>
+                <li><strong>Drop outside frame:</strong> если слой вытаскивается полностью вне любого frame, он удаляется из родительского `childIds` и возвращается на верхний уровень.</li>
+                <li><strong>Clip vs selection:</strong> слой может оставаться частью frame, но перестаёт быть кликабельным, если курсор или marquee находятся за clip bounds контейнера.</li>
+              </ul>
+            </div>
+          </details>
+
+          <details>
+            <summary>
+              <span>Что это значит для продукта</span>
+              <span class="summary-meta">UX-следствия</span>
+            </summary>
+            <div class="details-body">
+              Текущая frame-модель уже достаточно сильная для template-driven composition и smart resize, но она требует хорошей UX-обвязки.
+              Без явных подсказок пользователю может быть неочевидно, почему клик выбирает frame вместо child layer, почему часть детей не участвует
+              в auto-layout, или почему после ручного resize поведение `fill` меняется на `fixed`. Поэтому auto-layout и nested frame здесь лучше
+              описывать как отдельную подсистему редактора, а не как одну настройку в свойствах.
             </div>
           </details>
         </section>
@@ -910,101 +1021,7 @@
           </div>
         </section>
 
-        <section class="section" id="gaps">
-          <h2>Расхождения и набор задач</h2>
-          <p class="lead">
-            Самые заметные разрывы между docs и текущей реализацией уже разложены на backlog.
-            Ниже короткая карта того, что стоит либо довести до продукта, либо синхронизировать в документации.
-          </p>
 
-          <div class="grid-2">
-            <article class="callout">
-              <h3>Что docs обещают шире, чем код</h3>
-              <p>Экспорт в JPEG/PDF/SVG, готовые format presets как polished UI, template versioning и более широкий AI-agent с прямым canvas editing.</p>
-            </article>
-            <article class="callout">
-              <h3>Что код уже сильнее, чем docs</h3>
-              <p>Image editing через inpaint / outpaint, тонкая clip-bound логика, deep-select внутри frame и развитая resize-архитектура на уровне store.</p>
-            </article>
-          </div>
-
-          <div style="margin-top:16px;">
-            <table>
-              <thead>
-                <tr>
-                  <th>Gap</th>
-                  <th>Сейчас</th>
-                  <th>Желаемое состояние</th>
-                  <th>Тип задачи</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr>
-                  <td><strong>Форматы</strong></td>
-                  <td>Панель создаёт custom size вручную</td>
-                  <td>Preset picker для соцсетей, IAB и видео форматов</td>
-                  <td>UX + Frontend</td>
-                </tr>
-                <tr>
-                  <td><strong>Экспорт</strong></td>
-                  <td>PNG, ZIP PNG, template JSON</td>
-                  <td>Либо честно синхронизировать docs, либо довести JPEG/PDF/SVG</td>
-                  <td>Product + Frontend</td>
-                </tr>
-                <tr>
-                  <td><strong>Toolbar model</strong></td>
-                  <td>Instant insert actions</td>
-                  <td>Явное решение: либо desktop-like drawing, либо официально закреплённый insert-first UX</td>
-                  <td>Product + UX</td>
-                </tr>
-                <tr>
-                  <td><strong>AI Chat</strong></td>
-                  <td>Ограниченный action registry</td>
-                  <td>Более широкий набор canvas edit actions и более явные safe-guards</td>
-                  <td>Backend + Frontend</td>
-                </tr>
-                <tr>
-                  <td><strong>Properties</strong></td>
-                  <td>Нет bulk edit для multi-selection</td>
-                  <td>Минимальный batch inspector для alignment, opacity, fill и position</td>
-                  <td>Frontend</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </section>
-
-        <section class="section" id="conclusion">
-          <h2>Итог</h2>
-          <p class="lead">
-            Канвас AI Creative Platform уже нельзя считать “черновой заготовкой”: это рабочий
-            редактор с реальной multi-format архитектурой, AI-generation, AI-editing, template packs,
-            history, autosave и project asset loop. Главный следующий шаг не в “добавить основу”,
-            а в том, чтобы product-уровень догнал инженерную глубину реализации.
-          </p>
-
-          <div class="grid-3">
-            <article class="card">
-              <h3>Сильная сторона</h3>
-              <p>Глубокая канвас-логика: frame nesting, clipping, snapping, resize instances и smart resize уже на месте.</p>
-            </article>
-            <article class="card">
-              <h3>Реальная ценность</h3>
-              <p>Редактор уже способен закрывать production-like сценарии баннерной работы, а не только демо-флоу.</p>
-            </article>
-            <article class="card">
-              <h3>Главный долг</h3>
-              <p>Синхронизировать продуктовую подачу, UX и docs с тем, как система реально устроена в коде.</p>
-            </article>
-          </div>
-        </section>
-
-        <div class="footer">
-          <strong>Связанные файлы:</strong>
-          `documentation/canvas_functionality_analysis.md`,
-          `documentation/canvas_product_summary.md`,
-          `documentation/canvas_gap_backlog.md`.
-        </div>
       </main>
     </div>
   </div>

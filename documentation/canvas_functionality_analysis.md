@@ -166,6 +166,95 @@ Docs и архитектура описывают ту же master/instance мо
 
 - Docs подают master/instance как полностью зрелую систему для всех сценариев; в коде она реально работает, но часть UI вокруг неё всё ещё довольно инженерная и не полностью productized.
 
+## 3.1.1 Auto-layout, вложенные frame и corner cases
+
+### Реализовано в коде
+
+Frame в текущем редакторе является полноценным контейнером, а не просто прямоугольником с рамкой.
+
+Для `frame` используются:
+
+| Поле | Назначение |
+|------|------------|
+| `childIds` | список дочерних слоёв |
+| `clipContent` | клип по границам frame |
+| `layoutMode` | `none / horizontal / vertical` |
+| `paddingTop / Right / Bottom / Left` | внутренние отступы |
+| `spacing` | расстояние между детьми |
+| `primaryAxisAlignItems` | выравнивание по основной оси |
+| `counterAxisAlignItems` | выравнивание по поперечной оси |
+| `primaryAxisSizingMode` | sizing по основной оси |
+| `counterAxisSizingMode` | sizing по поперечной оси |
+| `groupSlotId` | логическая группа для совместной AI-генерации вложенных текстов |
+
+Для дочерних слоёв дополнительно важны:
+
+| Поле | Назначение |
+|------|------------|
+| `layoutSizingWidth` | `fixed / fill / hug` |
+| `layoutSizingHeight` | `fixed / fill / hug` |
+| `isAbsolutePositioned` | исключение слоя из flow auto-layout |
+
+### Как работает auto-layout
+
+Поведение подтверждается `layoutEngine.ts` и canvas interaction logic:
+
+- Auto-layout работает только если `frame.layoutMode !== none`.
+- В расчёт включаются только дочерние слои, которые:
+  - существуют,
+  - `visible = true`,
+  - `isAbsolutePositioned = false`.
+- Для текста размер может вычисляться заново через canvas measurement:
+  - `auto_width`
+  - `auto_height`
+- Для nested frame движок делает bottom-up пересчёт:
+  - сначала внутренние frame,
+  - затем внешние.
+- Полный проход делается дважды:
+  - первый стабилизирует размеры,
+  - второй доуточняет позиции после пересчёта вложенных контейнеров.
+- Если frame был сдвинут, unmanaged-дети получают каскадный `dx/dy`, чтобы их абсолютные координаты оставались консистентными.
+
+### Принципы вложенности frame
+
+- Frame может содержать любые слои, включая другие frame.
+- Runtime store остаётся плоским: все слои лежат в одном массиве, а вложенность задаётся через `childIds`.
+- При сериализации шаблонов дополнительно строится `layerTree`, чтобы сохранить структуру `frame → children`.
+- На канвасе top-level render исключает детей frame из корневого списка, чтобы они не рендерились дважды.
+- Обычный клик по дочернему слою внутри frame по умолчанию выбирает родительский frame.
+- Для “точечного” выбора внутреннего элемента нужен deep-select через `Cmd/Ctrl`.
+- Drag дочернего элемента без deep-select также может быть переадресован родительскому frame.
+
+### Как auto-layout влияет на UX
+
+- В auto-layout frame важен порядок дочерних элементов.
+- Drop внутрь auto-layout frame вычисляет `dropIndex` относительно соседей.
+- Ручной transform дочернего слоя может сбросить `fill` / `hug` в `fixed`, чтобы геометрия не конфликтовала с автоматическим раскладыванием.
+- Для текста внутри auto-layout ширина и высота могут переоцениваться повторно после resize.
+- Для non-auto-layout frame resize детей идёт через `constraints`, а не через auto-layout.
+
+### Corner cases
+
+| Corner case | Что делает система |
+|-------------|--------------------|
+| Frame содержит сам себя в `childIds` | self-reference защитно удаляется перед layout-pass |
+| Есть цикл `frame → frame → frame` | глубина считается с защитой от circular reference |
+| Дочерний слой invisible | исключается из auto-layout flow |
+| Дочерний слой absolute-positioned | исключается из flow, но остаётся связан с frame |
+| Внутренний `hug` frame лежит во внешнем `hug` frame | сначала считается внутренний размер, потом внешний |
+| Drop слоя вне всех frame | слой удаляется из родительского `childIds` и возвращается на верхний уровень |
+| `clipContent = true` | блокируются клики, drag-start и marquee-взаимодействие вне clip bounds |
+| Manual resize внутри auto-layout | режим sizing может быть нормализован в `fixed` |
+
+### Описано в docs / запланировано
+
+Docs говорят о frame, шаблонах и resize, но auto-layout и nested frame как самостоятельная подсистема описаны слабее, чем они реально реализованы в коде.
+
+### Расхождения и пробелы
+
+- В docs frame чаще выглядит как композиционный контейнер высокого уровня, тогда как в коде это ещё и сложная interaction-подсистема со своими правилами выбора, drag/drop и clipping.
+- Corner cases nested frame и auto-layout почти не артикулированы в docs, хотя именно они сильнее всего влияют на UX редактора.
+
 ## 3.2 Типы слоёв и их свойства
 
 ### Реализовано в коде
@@ -1196,4 +1285,3 @@ Docs описывают template lifecycle, pack structure, save/apply/catalogiz
 - широта canvas-агентности в AI chat
 - bulk editing в properties
 - различие между “обещано в docs” и “выведено в стабильный UI”
-
