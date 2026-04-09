@@ -527,7 +527,10 @@ class FalProvider implements AIProviderImplementation {
                     { headers: { "Authorization": `Key ${apiKey}` } }
                 );
 
-                if (!statusRes.ok) continue;
+                if (!statusRes.ok) {
+                    console.warn(`[fal.ai] Status poll HTTP ${statusRes.status}`);
+                    continue;
+                }
                 const status = await statusRes.json();
 
                 if (status.status === "COMPLETED") {
@@ -536,8 +539,21 @@ class FalProvider implements AIProviderImplementation {
                         `https://queue.fal.run/${falEndpoint}/requests/${requestId}`,
                         { headers: { "Authorization": `Key ${apiKey}` } }
                     );
+
+                    if (!resultRes.ok) {
+                        const errText = await resultRes.text();
+                        throw new Error(`fal.ai result fetch failed (${resultRes.status}): ${errText.slice(0, 300)}`);
+                    }
+
                     const result = await resultRes.json();
                     console.log(`[fal.ai] Request ${requestId} completed after ${(i + 1) * 2}s`);
+                    // Debug: log response structure to diagnose parsing issues
+                    console.log(`[fal.ai] Response keys: ${Object.keys(result).join(", ")}`);
+                    if (result.images) {
+                        console.log(`[fal.ai] images[0]: url=${!!result.images[0]?.url}, w=${result.images[0]?.width}, h=${result.images[0]?.height}`);
+                    } else {
+                        console.log(`[fal.ai] No 'images' field. Full response: ${JSON.stringify(result).slice(0, 500)}`);
+                    }
                     return this.parseResult(result, entry);
                 }
                 if (status.status === "FAILED") {
@@ -546,9 +562,15 @@ class FalProvider implements AIProviderImplementation {
                 // IN_QUEUE or IN_PROGRESS — keep polling
             } catch (err: unknown) {
                 const msg = err instanceof Error ? err.message : String(err);
-                if (msg.includes("fal.ai prediction failed")) throw err;
-                // Network error — retry
-                console.warn(`[fal.ai] Poll error: ${msg}`);
+                // Rethrow application-level errors (parse failures, prediction failures, etc.)
+                // Only swallow actual network fetch errors (TypeError, AbortError)
+                if (err instanceof TypeError && msg.includes("fetch")) {
+                    // Actual network error — retry polling
+                    console.warn(`[fal.ai] Poll network error: ${msg}`);
+                    continue;
+                }
+                // Everything else should be rethrown (parse errors, result fetch errors, etc.)
+                throw err;
             }
         }
 
