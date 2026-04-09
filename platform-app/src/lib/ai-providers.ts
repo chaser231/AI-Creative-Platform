@@ -152,7 +152,7 @@ class ReplicateProvider implements AIProviderImplementation {
         const result = await this.callReplicate(entry, input, token);
         // LLMs return an array of strings or a single string
         const text = Array.isArray(result) ? result.join("") : String(result);
-        return { content: text, format: "text", model: entry.slug, provider: "replicate" };
+        return { content: text, format: "text", model: entry.id, provider: "replicate" };
     }
 
     // ── Image Generation / Editing ──────────────────────────────────────
@@ -167,7 +167,7 @@ class ReplicateProvider implements AIProviderImplementation {
             const rembgEntry = getModelById("rembg")!;
             const result = await this.callReplicate(rembgEntry, { image: params.imageBase64 }, token);
             const output = Array.isArray(result) ? result[0] : result;
-            return { content: output as string, format: "url", model: rembgEntry.slug, provider: "replicate" };
+            return { content: output as string, format: "url", model: rembgEntry.id, provider: "replicate" };
         }
 
         // ── Outpaint ────────────────────────────────────────────────
@@ -188,7 +188,7 @@ class ReplicateProvider implements AIProviderImplementation {
             
             const result = await this.callReplicate(expandEntry, expandInput, token);
             const output = Array.isArray(result) ? result[0] : result;
-            return { content: output as string, format: "url", model: expandEntry.slug, provider: "replicate" };
+            return { content: output as string, format: "url", model: expandEntry.id, provider: "replicate" };
         }
 
         // ── Inpaint ─────────────────────────────────────────────────
@@ -212,7 +212,7 @@ class ReplicateProvider implements AIProviderImplementation {
             
             const result = await this.callReplicate(entry, input, token);
             const output = Array.isArray(result) ? result[0] : result;
-            return { content: output as string, format: "url", model: entry.slug, provider: "replicate" };
+            return { content: output as string, format: "url", model: entry.id, provider: "replicate" };
         }
 
         // ── Edit (image + prompt → edited image) ────────────────────
@@ -241,7 +241,7 @@ class ReplicateProvider implements AIProviderImplementation {
 
             const result = await this.callReplicate(entry, input, token);
             const output = Array.isArray(result) ? result[0] : result;
-            return { content: output as string, format: "url", model: entry.slug, provider: "replicate" };
+            return { content: output as string, format: "url", model: entry.id, provider: "replicate" };
         }
 
         // ── Standard text-to-image generation ───────────────────────
@@ -298,7 +298,7 @@ class ReplicateProvider implements AIProviderImplementation {
 
         const result = await this.callReplicate(entry, input, token);
         const output = Array.isArray(result) ? result[0] : result;
-        return { content: output as string, format: "url", model: entry.slug, provider: "replicate" };
+        return { content: output as string, format: "url", model: entry.id, provider: "replicate" };
     }
 
     // ── Replicate API Call ───────────────────────────────────────────────
@@ -411,14 +411,175 @@ class ReplicateProvider implements AIProviderImplementation {
     }
 }
 
+// ─── fal.ai Fallback Provider ───────────────────────────────────────────────
+
+/** Model ID → fal.ai endpoint mapping */
+const FAL_MODEL_MAP: Record<string, string> = {
+    "nano-banana":     "fal-ai/nano-banana",
+    "nano-banana-2":   "fal-ai/nano-banana-2",
+    "nano-banana-pro": "fal-ai/nano-banana-pro",
+    "seedream":        "fal-ai/seedream-4.5",
+};
+
+class FalProvider implements AIProviderImplementation {
+    id = "fal";
+    name = "fal.ai";
+
+    async generate(params: AIRequestParams): Promise<AIResponse> {
+        const apiKey = process.env.FAL_KEY;
+        if (!apiKey) {
+            throw new Error("fal.ai API key not configured. Set FAL_KEY in .env.local");
+        }
+
+        const modelId = params.model || "nano-banana-2";
+        const entry = getModelById(modelId);
+        if (!entry) throw new Error(`Unknown model: ${modelId}`);
+
+        const falEndpoint = FAL_MODEL_MAP[modelId];
+        if (!falEndpoint) throw new Error(`Model ${modelId} is not available on fal.ai`);
+
+        // Text models not supported on fal.ai in this implementation
+        if (entry.caps.includes("text")) {
+            throw new Error(`Text models not supported on fal.ai fallback`);
+        }
+
+        const input: Record<string, unknown> = {};
+        input.prompt = params.prompt;
+        if (params.aspectRatio) input.aspect_ratio = params.aspectRatio;
+
+        // Resolution mapping: fal.ai uses same "1K"/"2K"/"4K" enum for Google models
+        if (params.scale) input.resolution = params.scale;
+
+        // Output format
+        input.output_format = "png";
+
+        // Reference images
+        if (params.referenceImages && params.referenceImages.length > 0) {
+            input.image_input = params.referenceImages;
+        }
+
+        // Image edit
+        if (params.type === "edit" && params.imageBase64) {
+            input.image_input = [params.imageBase64, ...(params.referenceImages || [])];
+        }
+
+        console.log(`[fal.ai] Submitting to ${falEndpoint}...`);
+
+        // Submit to queue
+        const submitRes = await fetch(`https://queue.fal.run/${falEndpoint}`, {
+            method: "POST",
+            headers: {
+                "Authorization": `Key ${apiKey}`,
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify(input),
+        });
+
+        if (!submitRes.ok) {
+            const errBody = await submitRes.text();
+            console.error(`[fal.ai] Submit error:`, errBody);
+            throw new Error(`fal.ai error (${submitRes.status}): ${errBody.slice(0, 300)}`);
+        }
+
+        const submitData = await submitRes.json();
+        const requestId = submitData.request_id;
+
+        if (!requestId) {
+            // Synchronous result
+            const imageUrl = submitData.images?.[0]?.url || submitData.output;
+            if (imageUrl) {
+                return { content: imageUrl, format: "url", model: entry.id, provider: "fal" };
+            }
+            throw new Error("fal.ai: no output in synchronous response");
+        }
+
+        // Poll for result (up to 180s)
+        console.log(`[fal.ai] Polling request ${requestId}...`);
+        for (let i = 0; i < 90; i++) {
+            await new Promise(r => setTimeout(r, 2000));
+
+            try {
+                const statusRes = await fetch(
+                    `https://queue.fal.run/${falEndpoint}/requests/${requestId}/status`,
+                    { headers: { "Authorization": `Key ${apiKey}` } }
+                );
+
+                if (!statusRes.ok) continue;
+                const status = await statusRes.json();
+
+                if (status.status === "COMPLETED") {
+                    // Fetch the actual result
+                    const resultRes = await fetch(
+                        `https://queue.fal.run/${falEndpoint}/requests/${requestId}`,
+                        { headers: { "Authorization": `Key ${apiKey}` } }
+                    );
+                    const result = await resultRes.json();
+                    const imageUrl = result.images?.[0]?.url || result.output;
+                    if (!imageUrl) throw new Error("fal.ai: no image URL in completed result");
+                    console.log(`[fal.ai] Request ${requestId} completed after ${(i + 1) * 2}s`);
+                    return { content: imageUrl, format: "url", model: entry.id, provider: "fal" };
+                }
+                if (status.status === "FAILED") {
+                    throw new Error(`fal.ai prediction failed: ${status.error || "unknown"}`);
+                }
+                // IN_QUEUE or IN_PROGRESS — keep polling
+            } catch (err: unknown) {
+                const msg = err instanceof Error ? err.message : String(err);
+                if (msg.includes("fal.ai prediction failed")) throw err;
+                // Network error — retry
+                console.warn(`[fal.ai] Poll error: ${msg}`);
+            }
+        }
+
+        throw new Error("fal.ai prediction timed out after 180 seconds");
+    }
+}
+
 // ─── Provider Factory ───────────────────────────────────────────────────────
 
 const openaiDirect = new OpenAIDirectProvider();
 const replicate = new ReplicateProvider();
+const falProvider = new FalProvider();
+
+/** Check if a model has fal.ai fallback available */
+function hasFalFallback(modelId: string): boolean {
+    return !!FAL_MODEL_MAP[modelId] && !!process.env.FAL_KEY;
+}
 
 export function getProvider(modelId: string): AIProviderImplementation {
     const entry = getModelById(modelId);
     if (entry?.provider === "openai") return openaiDirect;
     // Everything else goes through Replicate (including BYOK models like gpt-image)
     return replicate;
+}
+
+/**
+ * Generate with automatic fallback.
+ * Used internally — wraps getProvider().generate() with fal.ai retry for Google models.
+ */
+export async function generateWithFallback(params: AIRequestParams): Promise<AIResponse> {
+    const modelId = params.model || "nano-banana-2";
+    const primary = getProvider(modelId);
+
+    try {
+        return await primary.generate(params);
+    } catch (primaryErr: unknown) {
+        const errMsg = primaryErr instanceof Error ? primaryErr.message : String(primaryErr);
+        console.error(`[Provider] Primary (${primary.id}) failed for ${modelId}: ${errMsg}`);
+
+        // Attempt fal.ai fallback for supported models
+        if (hasFalFallback(modelId)) {
+            console.log(`[Provider] Falling back to fal.ai for ${modelId}...`);
+            try {
+                return await falProvider.generate(params);
+            } catch (falErr: unknown) {
+                const falMsg = falErr instanceof Error ? falErr.message : String(falErr);
+                console.error(`[Provider] fal.ai fallback also failed: ${falMsg}`);
+                // Throw original error — more informative
+                throw primaryErr;
+            }
+        }
+
+        throw primaryErr;
+    }
 }

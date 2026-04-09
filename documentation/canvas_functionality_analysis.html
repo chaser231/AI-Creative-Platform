@@ -1,0 +1,1012 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Creative Platform — Canvas Functionality Analysis</title>
+  <style>
+    :root {
+      --bg: #f4efe6;
+      --bg-soft: #fbf8f2;
+      --panel: rgba(255, 252, 245, 0.9);
+      --panel-strong: #fffaf0;
+      --ink: #161514;
+      --muted: #5e5a54;
+      --line: rgba(34, 31, 28, 0.12);
+      --line-strong: rgba(34, 31, 28, 0.22);
+      --accent: #0f766e;
+      --accent-soft: rgba(15, 118, 110, 0.12);
+      --accent-2: #b45309;
+      --accent-2-soft: rgba(180, 83, 9, 0.12);
+      --danger: #b91c1c;
+      --danger-soft: rgba(185, 28, 28, 0.1);
+      --success: #166534;
+      --success-soft: rgba(22, 101, 52, 0.1);
+      --shadow-lg: 0 22px 60px rgba(28, 24, 19, 0.12);
+      --shadow-md: 0 14px 32px rgba(28, 24, 19, 0.08);
+      --radius-xl: 28px;
+      --radius-lg: 20px;
+      --radius-md: 14px;
+      --radius-sm: 10px;
+      --content: 1240px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      margin: 0;
+      font-family: "Inter", "Segoe UI", Arial, sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at top left, rgba(15, 118, 110, 0.08), transparent 28%),
+        radial-gradient(circle at top right, rgba(180, 83, 9, 0.09), transparent 24%),
+        linear-gradient(180deg, #f8f3eb 0%, #f4efe6 100%);
+      line-height: 1.55;
+    }
+
+    a {
+      color: inherit;
+      text-decoration: none;
+    }
+
+    .page {
+      max-width: var(--content);
+      margin: 0 auto;
+      padding: 32px 24px 80px;
+    }
+
+    .hero {
+      position: relative;
+      overflow: hidden;
+      background:
+        linear-gradient(135deg, rgba(15, 118, 110, 0.95), rgba(22, 101, 52, 0.9));
+      color: #f8fbf9;
+      border-radius: 34px;
+      box-shadow: var(--shadow-lg);
+      padding: 36px 36px 30px;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+    }
+
+    .hero::after {
+      content: "";
+      position: absolute;
+      inset: auto -120px -120px auto;
+      width: 360px;
+      height: 360px;
+      border-radius: 999px;
+      background: radial-gradient(circle, rgba(255, 255, 255, 0.12), transparent 62%);
+      pointer-events: none;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.12);
+      color: rgba(255, 255, 255, 0.86);
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .hero h1 {
+      margin: 18px 0 10px;
+      font-size: clamp(34px, 5vw, 58px);
+      line-height: 1.02;
+      letter-spacing: -0.04em;
+      max-width: 900px;
+    }
+
+    .hero p {
+      margin: 0;
+      max-width: 840px;
+      color: rgba(248, 251, 249, 0.84);
+      font-size: 17px;
+    }
+
+    .hero-meta {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 28px;
+    }
+
+    .hero-stat {
+      padding: 16px 18px;
+      border-radius: var(--radius-lg);
+      background: rgba(255, 255, 255, 0.1);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      backdrop-filter: blur(10px);
+    }
+
+    .hero-stat strong {
+      display: block;
+      font-size: 28px;
+      line-height: 1;
+      margin-bottom: 6px;
+    }
+
+    .hero-stat span {
+      display: block;
+      font-size: 13px;
+      color: rgba(248, 251, 249, 0.8);
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 280px minmax(0, 1fr);
+      gap: 24px;
+      align-items: start;
+      margin-top: 24px;
+    }
+
+    .toc {
+      position: sticky;
+      top: 22px;
+      padding: 20px;
+      border-radius: 24px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      box-shadow: var(--shadow-md);
+      backdrop-filter: blur(18px);
+    }
+
+    .toc h2 {
+      margin: 0 0 12px;
+      font-size: 14px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .toc a {
+      display: block;
+      padding: 10px 12px;
+      border-radius: 12px;
+      color: var(--ink);
+      font-size: 14px;
+      transition: background 0.18s ease, transform 0.18s ease;
+    }
+
+    .toc a:hover {
+      background: rgba(15, 118, 110, 0.08);
+      transform: translateX(2px);
+    }
+
+    .content {
+      display: grid;
+      gap: 24px;
+    }
+
+    .section {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 28px;
+      box-shadow: var(--shadow-md);
+      padding: 28px;
+      backdrop-filter: blur(18px);
+    }
+
+    .section h2 {
+      margin: 0 0 10px;
+      font-size: 28px;
+      line-height: 1.08;
+      letter-spacing: -0.03em;
+    }
+
+    .section > p.lead {
+      margin: 0 0 20px;
+      color: var(--muted);
+      font-size: 16px;
+      max-width: 860px;
+    }
+
+    .grid-2,
+    .grid-3,
+    .grid-4 {
+      display: grid;
+      gap: 16px;
+    }
+
+    .grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .grid-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+
+    .card {
+      background: var(--panel-strong);
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      padding: 18px;
+    }
+
+    .card h3,
+    .card h4 {
+      margin: 0 0 8px;
+      font-size: 18px;
+      line-height: 1.2;
+    }
+
+    .card p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .badge-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      border: 1px solid transparent;
+    }
+
+    .badge.ok {
+      color: var(--success);
+      background: var(--success-soft);
+      border-color: rgba(22, 101, 52, 0.16);
+    }
+
+    .badge.plan {
+      color: var(--accent-2);
+      background: var(--accent-2-soft);
+      border-color: rgba(180, 83, 9, 0.16);
+    }
+
+    .badge.gap {
+      color: var(--danger);
+      background: var(--danger-soft);
+      border-color: rgba(185, 28, 28, 0.14);
+    }
+
+    .chip-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .chip {
+      padding: 8px 10px;
+      border-radius: 999px;
+      background: rgba(15, 118, 110, 0.07);
+      border: 1px solid rgba(15, 118, 110, 0.12);
+      font-size: 12px;
+      font-weight: 600;
+      color: #0f4c48;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      overflow: hidden;
+      border-radius: 18px;
+      border: 1px solid var(--line);
+      background: var(--panel-strong);
+    }
+
+    th,
+    td {
+      padding: 14px 16px;
+      text-align: left;
+      vertical-align: top;
+      border-bottom: 1px solid var(--line);
+      font-size: 14px;
+    }
+
+    th {
+      background: rgba(15, 118, 110, 0.07);
+      color: #104b47;
+      font-weight: 700;
+    }
+
+    tr:last-child td {
+      border-bottom: 0;
+    }
+
+    ul.clean,
+    ol.clean {
+      margin: 0;
+      padding-left: 20px;
+      color: var(--ink);
+    }
+
+    ul.clean li,
+    ol.clean li {
+      margin: 8px 0;
+    }
+
+    .timeline {
+      display: grid;
+      gap: 14px;
+    }
+
+    .timeline-item {
+      display: grid;
+      grid-template-columns: 44px 1fr;
+      gap: 14px;
+      padding: 16px;
+      border-radius: 20px;
+      background: var(--panel-strong);
+      border: 1px solid var(--line);
+    }
+
+    .timeline-step {
+      width: 44px;
+      height: 44px;
+      border-radius: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: linear-gradient(135deg, #0f766e, #115e59);
+      color: white;
+      font-weight: 800;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.15);
+    }
+
+    .timeline-item h3 {
+      margin: 2px 0 6px;
+      font-size: 17px;
+    }
+
+    .timeline-item p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    details {
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: var(--panel-strong);
+      padding: 0 18px;
+    }
+
+    details + details {
+      margin-top: 12px;
+    }
+
+    summary {
+      list-style: none;
+      cursor: pointer;
+      padding: 16px 0;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+    }
+
+    summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .summary-meta {
+      color: var(--muted);
+      font-weight: 600;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    .details-body {
+      padding: 0 0 18px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .callout {
+      padding: 18px 20px;
+      border-radius: 20px;
+      border: 1px solid var(--line);
+      background: linear-gradient(180deg, rgba(180, 83, 9, 0.09), rgba(180, 83, 9, 0.03));
+    }
+
+    .callout h3 {
+      margin: 0 0 8px;
+      font-size: 18px;
+    }
+
+    .callout p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .footer {
+      margin-top: 24px;
+      padding: 18px 22px;
+      border-radius: 20px;
+      background: rgba(22, 21, 20, 0.94);
+      color: rgba(255, 250, 240, 0.88);
+      font-size: 14px;
+    }
+
+    .footer strong {
+      color: white;
+    }
+
+    @media (max-width: 1100px) {
+      .layout {
+        grid-template-columns: 1fr;
+      }
+
+      .toc {
+        position: relative;
+        top: 0;
+      }
+
+      .hero-meta,
+      .grid-4 {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    @media (max-width: 760px) {
+      .page {
+        padding: 16px 14px 44px;
+      }
+
+      .hero {
+        padding: 24px 20px;
+        border-radius: 24px;
+      }
+
+      .hero-meta,
+      .grid-2,
+      .grid-3,
+      .grid-4 {
+        grid-template-columns: 1fr;
+      }
+
+      .section {
+        padding: 20px;
+        border-radius: 22px;
+      }
+
+      th,
+      td {
+        padding: 12px;
+      }
+    }
+
+    @media print {
+      body {
+        background: white;
+      }
+
+      .page {
+        max-width: none;
+        padding: 0;
+      }
+
+      .layout {
+        display: block;
+      }
+
+      .toc {
+        display: none;
+      }
+
+      .hero,
+      .section,
+      .footer {
+        box-shadow: none;
+        border: 1px solid #ddd;
+        background: white;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header class="hero">
+      <div class="eyebrow">AI Creative Platform • Canvas Report • 2026-04-08</div>
+      <h1>Функциональность канваса, как она устроена сейчас</h1>
+      <p>
+        Презентационный HTML-отчёт по канвасу AI Creative Platform. Основан на коде редактора,
+        Zustand store, AI-потоках, шаблонах, resize-архитектуре и продуктовой документации.
+        Источник истины: сначала код, затем docs.
+      </p>
+      <div class="hero-meta">
+        <div class="hero-stat">
+          <strong>5</strong>
+          <span>типов слоёв на канвасе</span>
+        </div>
+        <div class="hero-stat">
+          <strong>3</strong>
+          <span>AI-слоя: prompt bar, image edit, chat agent</span>
+        </div>
+        <div class="hero-stat">
+          <strong>2</strong>
+          <span>режима редактора: Wizard и Studio</span>
+        </div>
+        <div class="hero-stat">
+          <strong>1</strong>
+          <span>master/instance модель для multi-format</span>
+        </div>
+      </div>
+    </header>
+
+    <div class="layout">
+      <aside class="toc">
+        <h2>Навигация</h2>
+        <a href="#overview">Общая карта</a>
+        <a href="#subsystems">Подсистемы канваса</a>
+        <a href="#tools">Инструменты</a>
+        <a href="#properties">Слои и свойства</a>
+        <a href="#ai">AI</a>
+        <a href="#scenarios">Сценарии работы</a>
+        <a href="#gaps">Расхождения и задачи</a>
+        <a href="#conclusion">Итог</a>
+      </aside>
+
+      <main class="content">
+        <section class="section" id="overview">
+          <div class="badge-row">
+            <span class="badge ok">Реализовано в коде</span>
+            <span class="badge plan">Описано в docs / planned</span>
+            <span class="badge gap">Gap / требует задачи</span>
+          </div>
+          <h2>Общая карта канваса</h2>
+          <p class="lead">
+            Редактор проекта состоит из двух режимов: Wizard для пошаговой сборки шаблона и Studio
+            для полноценной ручной работы с канвасом. В текущем коде Studio является главным центром
+            функциональности: там живут слойная модель, resize-архитектура, AI и экспорт.
+          </p>
+
+          <div class="grid-3">
+            <article class="card">
+              <h3>Wizard</h3>
+              <p>Выбор шаблона, заполнение dynamic fields, AI-помощь по контенту, preview и переход в Studio.</p>
+              <div class="chip-row">
+                <span class="chip">Template-first</span>
+                <span class="chip">PreviewCanvas</span>
+                <span class="chip">Structured fields</span>
+              </div>
+            </article>
+            <article class="card">
+              <h3>Studio</h3>
+              <p>Konva-канвас, панель слоёв, панель свойств, форматные инстансы, AI prompt bar, AI chat и экспорт.</p>
+              <div class="chip-row">
+                <span class="chip">Canvas editing</span>
+                <span class="chip">Multi-format</span>
+                <span class="chip">Autosave</span>
+              </div>
+            </article>
+            <article class="card">
+              <h3>Редактор вокруг канваса</h3>
+              <p>TopBar с rename и status, resize panel, templates, versions, assets, help, share и project settings.</p>
+              <div class="chip-row">
+                <span class="chip">Project shell</span>
+                <span class="chip">Versioning</span>
+                <span class="chip">Asset library</span>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <section class="section" id="subsystems">
+          <h2>Подсистемы канваса</h2>
+          <p class="lead">
+            Ниже собраны основные рабочие блоки редактора: объектная модель, панели, resize,
+            взаимодействия на холсте и окружение проекта.
+          </p>
+
+          <div class="grid-2">
+            <article class="card">
+              <h3>Слойная модель</h3>
+              <p>На канвасе есть `text`, `rectangle`, `image`, `badge`, `frame`. Все слои получают общую геометрию, visibility, lock, opacity, constraints и template slot role.</p>
+            </article>
+            <article class="card">
+              <h3>Master / Instance</h3>
+              <p>Контент живёт в master component, локальный layout живёт в instance конкретного resize. При переключении resize канвас пересобирается из instance props.</p>
+            </article>
+            <article class="card">
+              <h3>Layers Panel</h3>
+              <p>Дерево frame hierarchy, inline rename, visibility, delete, контекстное меню, multi-select и drag-and-drop внутрь frame.</p>
+            </article>
+            <article class="card">
+              <h3>Properties Panel</h3>
+              <p>Артборд без selection, полный инспектор для single selection и type-specific controls для текста, shape, image, badge и frame.</p>
+            </article>
+            <article class="card">
+              <h3>Resize Panel</h3>
+              <p>Master resize, custom sizes, rename/remove, linked/unlinked content cascade, smart resize и синхронизация layers на активный формат.</p>
+            </article>
+            <article class="card">
+              <h3>Canvas interactions</h3>
+              <p>Selection, marquee, deep-select внутри frame, drag, resize, snap guides, clipping rules, pan/zoom, Alt distance measurement и file drag-and-drop.</p>
+            </article>
+          </div>
+        </section>
+
+        <section class="section" id="tools">
+          <h2>Инструменты и режимы</h2>
+          <p class="lead">
+            Текущий toolbar ведёт себя скорее как набор instant actions, чем как классическая система draw-tools.
+            Это важная характеристика реализации и одно из заметных расхождений с тем, как интерфейс читается из docs.
+          </p>
+
+          <table>
+            <thead>
+              <tr>
+                <th>Инструмент</th>
+                <th>Как запускается</th>
+                <th>Что делает</th>
+                <th>Ключевые параметры и поведение</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>Select</strong></td>
+                <td>Клик по `MousePointer2`</td>
+                <td>Включает режим выделения</td>
+                <td>Очищает текущий selection, дальше работают click / marquee / drag / transform</td>
+              </tr>
+              <tr>
+                <td><strong>Text</strong></td>
+                <td>Клик по `Type`</td>
+                <td>Сразу создаёт text layer</td>
+                <td>`48px`, `Inter`, `600`, `auto_width`, `x=100`, `y=100`; после вставки tool сбрасывается в `select`</td>
+              </tr>
+              <tr>
+                <td><strong>Rectangle</strong></td>
+                <td>Клик по `Square`</td>
+                <td>Сразу создаёт rectangle</td>
+                <td>`200x200`, fill `#E5E7EB`, stroke off, corner radius `0`</td>
+              </tr>
+              <tr>
+                <td><strong>Frame</strong></td>
+                <td>Клик по `SquareDashed`</td>
+                <td>Сразу создаёт frame</td>
+                <td>`400x300`, white fill, gray stroke, `clipContent=true`, `childIds=[]`</td>
+              </tr>
+              <tr>
+                <td><strong>Badge</strong></td>
+                <td>Клик по `Award`</td>
+                <td>Сразу создаёт badge</td>
+                <td>`120x36`, label `NEW`, shape `pill`, background `#6366F1`</td>
+              </tr>
+              <tr>
+                <td><strong>Image</strong></td>
+                <td>Клик по `ImagePlus`</td>
+                <td>Открывает file picker и добавляет image</td>
+                <td>Файл сжимается, размер вставки ограничивается `500px` по большей стороне</td>
+              </tr>
+              <tr>
+                <td><strong>Snapping</strong></td>
+                <td>Клик по `Magnet`</td>
+                <td>Открывает popover настроек привязок</td>
+                <td>`objectSnap`, `artboardSnap`, `pixelSnap`, `gridSnap`, `gridSize`</td>
+              </tr>
+              <tr>
+                <td><strong>Templates</strong></td>
+                <td>Кнопка `LayoutTemplate`</td>
+                <td>Открывает `TemplatePanel`</td>
+                <td>Это entrypoint к шаблонам, а не инструмент рисования</td>
+              </tr>
+              <tr>
+                <td><strong>AI</strong></td>
+                <td>Кнопка `Sparkles`</td>
+                <td>Открывает `AIPromptBar`</td>
+                <td>Быстрый доступ к text/image generation и image edit</td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section class="section" id="properties">
+          <h2>Слои и их свойства</h2>
+          <p class="lead">
+            Все типы слоёв разделяют базовые поля геометрии и состояния, а сверху получают
+            type-specific свойства. Для компактности детали сведены в раскрывающиеся блоки.
+          </p>
+
+          <details open>
+            <summary>
+              <span>Общие поля любого слоя</span>
+              <span class="summary-meta">base layer model</span>
+            </summary>
+            <div class="details-body">
+              <ul class="clean">
+                <li><strong>Геометрия:</strong> `x`, `y`, `width`, `height`, `rotation`</li>
+                <li><strong>Состояние:</strong> `visible`, `locked`, `opacity`</li>
+                <li><strong>Template linkage:</strong> `slotId`, `masterId`</li>
+                <li><strong>Resize behavior:</strong> `constraints.horizontal`, `constraints.vertical`</li>
+                <li><strong>Auto-layout context:</strong> `layoutSizingWidth`, `layoutSizingHeight`, `isAbsolutePositioned`</li>
+                <li><strong>Instance-only nuance:</strong> `detachedSizeSync` для image size sync</li>
+              </ul>
+            </div>
+          </details>
+
+          <details>
+            <summary>
+              <span>Text</span>
+              <span class="summary-meta">typography + container</span>
+            </summary>
+            <div class="details-body">
+              Контент `text`, typography (`fontSize`, `fontFamily`, `fontWeight`, `letterSpacing`, `lineHeight`),
+              цвет и opacity, align, `textAdjust = auto_width / auto_height / fixed`, `truncateText`,
+              `verticalTrim`, `textTransform`. Есть inline editor по double click.
+            </div>
+          </details>
+
+          <details>
+            <summary>
+              <span>Rectangle</span>
+              <span class="summary-meta">fill + stroke</span>
+            </summary>
+            <div class="details-body">
+              `fill`, `fillEnabled`, `stroke`, `strokeEnabled`, `strokeWidth`, `cornerRadius`, `opacity`.
+            </div>
+          </details>
+
+          <details>
+            <summary>
+              <span>Image</span>
+              <span class="summary-meta">source + fit modes</span>
+            </summary>
+            <div class="details-body">
+              `src`, `objectFit = cover / contain / fill / crop`, width/height, opacity. В properties есть
+              замена файла и переключение fit-mode, а в resize instances может отключаться sync размеров.
+            </div>
+          </details>
+
+          <details>
+            <summary>
+              <span>Badge</span>
+              <span class="summary-meta">label + shape</span>
+            </summary>
+            <div class="details-body">
+              `label`, `shape = pill / rectangle / circle`, `fill`, `fillEnabled`, `textColor`, `fontSize`, `opacity`.
+            </div>
+          </details>
+
+          <details>
+            <summary>
+              <span>Frame</span>
+              <span class="summary-meta">nesting + auto-layout</span>
+            </summary>
+            <div class="details-body">
+              `childIds`, `clipContent`, `layoutMode`, paddings, spacing, primary/counter axis alignment,
+              sizing modes, style props и `groupSlotId` для совместной AI-генерации вложенных текстов.
+            </div>
+          </details>
+        </section>
+
+        <section class="section" id="ai">
+          <h2>AI в редакторе</h2>
+          <p class="lead">
+            AI-подсистема уже разбита на три полноценных режима: быстрый prompt bar,
+            отдельный image editor и agent-like chat panel с планом шагов и canvas actions.
+          </p>
+
+          <div class="grid-3">
+            <article class="card">
+              <h3>AIPromptBar</h3>
+              <p>Text generation, image generation, style presets, model picker, aspect ratio, resolution, refs и apply-to-selection.</p>
+              <div class="chip-row">
+                <span class="chip">DeepSeek</span>
+                <span class="chip">Gemini Flash</span>
+                <span class="chip">Flux / Nano Banana</span>
+              </div>
+            </article>
+            <article class="card">
+              <h3>ImageEditorModal</h3>
+              <p>Remove background, inpaint по маске, text-edit и outpaint. Это одна из самых глубоких AI-фич текущего редактора.</p>
+              <div class="chip-row">
+                <span class="chip">Mask editing</span>
+                <span class="chip">Flux Fill</span>
+                <span class="chip">Bria Expand</span>
+              </div>
+            </article>
+            <article class="card">
+              <h3>AIChatPanel</h3>
+              <p>Natural language запросы, tool plan, template search/apply, canvas actions, preset choices и reference-image aware orchestration.</p>
+              <div class="chip-row">
+                <span class="chip">Plan steps</span>
+                <span class="chip">Canvas actions</span>
+                <span class="chip">Template choices</span>
+              </div>
+            </article>
+          </div>
+
+          <div style="margin-top:16px;">
+            <table>
+              <thead>
+                <tr>
+                  <th>AI surface</th>
+                  <th>Поддерживаемые режимы</th>
+                  <th>Ключевые параметры</th>
+                  <th>Как результат попадает в канвас</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>AIPromptBar</strong></td>
+                  <td>Text, image, image edit entrypoint</td>
+                  <td>model, refs, aspect ratio, resolution, style preset, apply-to-selection</td>
+                  <td>Создаёт новый text/image layer либо обновляет первый selected layer</td>
+                </tr>
+                <tr>
+                  <td><strong>ImageEditorModal</strong></td>
+                  <td>remove-bg, inpaint, text-edit, outpaint</td>
+                  <td>selected model, prompt, mask, refs, outpaint ratio/padding</td>
+                  <td>Возвращает edited image и обновляет выбранный image layer</td>
+                </tr>
+                <tr>
+                  <td><strong>AIChatPanel</strong></td>
+                  <td>Agent plan, template search/apply, generated text/image, fallback/preset choices</td>
+                  <td>history, selected text/image model, reference images, workspace/project context</td>
+                  <td>Через `add_text`, `add_image`, `load_template`, `update_layer` canvas actions</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="section" id="scenarios">
+          <h2>Ключевые сценарии работы</h2>
+          <p class="lead">
+            Ниже не абстрактные product flows, а те сценарии, которые действительно
+            выстраиваются из текущего UI, store-логики и AI-интеграций.
+          </p>
+
+          <div class="timeline">
+            <div class="timeline-item">
+              <div class="timeline-step">1</div>
+              <div>
+                <h3>С нуля в Studio</h3>
+                <p>Пользователь создаёт слои через toolbar, собирает композицию во frame, редактирует свойства, получает autosave и экспортирует PNG или ZIP по resize.</p>
+              </div>
+            </div>
+            <div class="timeline-item">
+              <div class="timeline-step">2</div>
+              <div>
+                <h3>Быстрый старт через Wizard</h3>
+                <p>Шаблон выбирается заранее, dynamic fields заполняются вручную или через AI, затем pack применяется на канвас и дорабатывается в Studio.</p>
+              </div>
+            </div>
+            <div class="timeline-item">
+              <div class="timeline-step">3</div>
+              <div>
+                <h3>Multi-format и smart resize</h3>
+                <p>К проекту добавляются новые форматы, instance layout расходится по resize, а smart resize подтягивает layout из template slot mapping при сохранении текущего контента мастеров.</p>
+              </div>
+            </div>
+            <div class="timeline-item">
+              <div class="timeline-step">4</div>
+              <div>
+                <h3>AI-гeneration и AI-edit</h3>
+                <p>Через prompt bar создаются тексты и изображения, а через image editor выбранный image layer можно доработать маской, prompt-ом или расширением холста.</p>
+              </div>
+            </div>
+            <div class="timeline-item">
+              <div class="timeline-step">5</div>
+              <div>
+                <h3>Agent-like canvas assistant</h3>
+                <p>AI chat строит план, предлагает style presets и templates, а затем исполняет ограниченный набор canvas actions для добавления контента и загрузки шаблонов.</p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="section" id="gaps">
+          <h2>Расхождения и набор задач</h2>
+          <p class="lead">
+            Самые заметные разрывы между docs и текущей реализацией уже разложены на backlog.
+            Ниже короткая карта того, что стоит либо довести до продукта, либо синхронизировать в документации.
+          </p>
+
+          <div class="grid-2">
+            <article class="callout">
+              <h3>Что docs обещают шире, чем код</h3>
+              <p>Экспорт в JPEG/PDF/SVG, готовые format presets как polished UI, template versioning и более широкий AI-agent с прямым canvas editing.</p>
+            </article>
+            <article class="callout">
+              <h3>Что код уже сильнее, чем docs</h3>
+              <p>Image editing через inpaint / outpaint, тонкая clip-bound логика, deep-select внутри frame и развитая resize-архитектура на уровне store.</p>
+            </article>
+          </div>
+
+          <div style="margin-top:16px;">
+            <table>
+              <thead>
+                <tr>
+                  <th>Gap</th>
+                  <th>Сейчас</th>
+                  <th>Желаемое состояние</th>
+                  <th>Тип задачи</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>Форматы</strong></td>
+                  <td>Панель создаёт custom size вручную</td>
+                  <td>Preset picker для соцсетей, IAB и видео форматов</td>
+                  <td>UX + Frontend</td>
+                </tr>
+                <tr>
+                  <td><strong>Экспорт</strong></td>
+                  <td>PNG, ZIP PNG, template JSON</td>
+                  <td>Либо честно синхронизировать docs, либо довести JPEG/PDF/SVG</td>
+                  <td>Product + Frontend</td>
+                </tr>
+                <tr>
+                  <td><strong>Toolbar model</strong></td>
+                  <td>Instant insert actions</td>
+                  <td>Явное решение: либо desktop-like drawing, либо официально закреплённый insert-first UX</td>
+                  <td>Product + UX</td>
+                </tr>
+                <tr>
+                  <td><strong>AI Chat</strong></td>
+                  <td>Ограниченный action registry</td>
+                  <td>Более широкий набор canvas edit actions и более явные safe-guards</td>
+                  <td>Backend + Frontend</td>
+                </tr>
+                <tr>
+                  <td><strong>Properties</strong></td>
+                  <td>Нет bulk edit для multi-selection</td>
+                  <td>Минимальный batch inspector для alignment, opacity, fill и position</td>
+                  <td>Frontend</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="section" id="conclusion">
+          <h2>Итог</h2>
+          <p class="lead">
+            Канвас AI Creative Platform уже нельзя считать “черновой заготовкой”: это рабочий
+            редактор с реальной multi-format архитектурой, AI-generation, AI-editing, template packs,
+            history, autosave и project asset loop. Главный следующий шаг не в “добавить основу”,
+            а в том, чтобы product-уровень догнал инженерную глубину реализации.
+          </p>
+
+          <div class="grid-3">
+            <article class="card">
+              <h3>Сильная сторона</h3>
+              <p>Глубокая канвас-логика: frame nesting, clipping, snapping, resize instances и smart resize уже на месте.</p>
+            </article>
+            <article class="card">
+              <h3>Реальная ценность</h3>
+              <p>Редактор уже способен закрывать production-like сценарии баннерной работы, а не только демо-флоу.</p>
+            </article>
+            <article class="card">
+              <h3>Главный долг</h3>
+              <p>Синхронизировать продуктовую подачу, UX и docs с тем, как система реально устроена в коде.</p>
+            </article>
+          </div>
+        </section>
+
+        <div class="footer">
+          <strong>Связанные файлы:</strong>
+          `documentation/canvas_functionality_analysis.md`,
+          `documentation/canvas_product_summary.md`,
+          `documentation/canvas_gap_backlog.md`.
+        </div>
+      </main>
+    </div>
+  </div>
+</body>
+</html>

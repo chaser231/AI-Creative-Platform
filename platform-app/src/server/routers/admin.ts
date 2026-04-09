@@ -8,6 +8,7 @@
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import { createTRPCRouter, superAdminProcedure } from "../trpc";
+import { getModelById } from "@/lib/ai-models";
 
 export const adminRouter = createTRPCRouter({
   /** Aggregate platform statistics */
@@ -24,11 +25,11 @@ export const adminRouter = createTRPCRouter({
       ctx.prisma.workspace.count(),
       ctx.prisma.project.count(),
       ctx.prisma.template.count(),
-      // Count actual AI generations (assistant messages), not sessions
+      // Count actual AI generations (all assistant messages with a model)
       ctx.prisma.aIMessage.count({
         where: {
           role: "assistant",
-          type: { in: ["image", "text"] },
+          model: { not: null },
         },
       }),
       // Sum cost across all messages
@@ -119,7 +120,7 @@ export const adminRouter = createTRPCRouter({
             where: {
               sessionId: { in: sessionIds },
               role: "assistant",
-              type: { in: ["image", "text"] },
+              model: { not: null },
             },
             select: {
               sessionId: true,
@@ -172,12 +173,30 @@ export const adminRouter = createTRPCRouter({
   }),
 
   /** AI cost analytics — breakdown by model, user, workspace */
-  aiCostAnalytics: superAdminProcedure.query(async ({ ctx }) => {
-    // Fetch all assistant image/text messages with their session + project + workspace info
+  aiCostAnalytics: superAdminProcedure
+    .input(
+      z.object({
+        dateFrom: z.string().optional(), // ISO date string
+        dateTo: z.string().optional(),   // ISO date string
+      }).optional()
+    )
+    .query(async ({ ctx, input }) => {
+    // Build date filter
+    const dateFilter: Record<string, Date> = {};
+    if (input?.dateFrom) dateFilter.gte = new Date(input.dateFrom);
+    if (input?.dateTo) {
+      const to = new Date(input.dateTo);
+      to.setHours(23, 59, 59, 999); // include the entire day
+      dateFilter.lte = to;
+    }
+    const createdAtFilter = Object.keys(dateFilter).length > 0 ? { createdAt: dateFilter } : {};
+
+    // Fetch all assistant messages with a model (cost-bearing actions)
     const allMessages = await ctx.prisma.aIMessage.findMany({
       where: {
         role: "assistant",
-        type: { in: ["image", "text"] },
+        model: { not: null },
+        ...createdAtFilter,
       },
       select: {
         model: true,
@@ -209,9 +228,13 @@ export const adminRouter = createTRPCRouter({
     const wsAgg = new Map<string, { name: string; count: number; cost: number }>();
 
     for (const msg of allMessages) {
-      const cost = msg.costUnits ?? 0;
-      const model = msg.model ?? "unknown";
       const session = msg.session;
+      const rawModel = msg.model ?? "unknown";
+      // Normalize model name: resolve slug → id (e.g. "google/nano-banana-pro" → "nano-banana-pro")
+      const modelEntry = getModelById(rawModel);
+      const model = modelEntry?.id ?? rawModel;
+      // Recalculate cost from registry if stored cost is 0 (legacy data)
+      const cost = (msg.costUnits && msg.costUnits > 0) ? msg.costUnits : (modelEntry?.costPerRun ?? 0);
 
       // Model
       const mEntry = modelAgg.get(model) ?? { count: 0, cost: 0 };

@@ -152,14 +152,13 @@ RULES:
 
       // Call AI provider (use specified model or default to flux-schnell)
       const selectedModel = (params.model as string) || "flux-schnell";
-      const { getProvider: getAIProvider } = await import("@/lib/ai-providers");
-      const imageProvider = getAIProvider(selectedModel);
+      const { generateWithFallback } = await import("@/lib/ai-providers");
 
       console.log(`[Pipeline ▶5 executeAction] generate_image — model: ${selectedModel}, hasRefImages: ${hasActualRefs ? referenceImages.length : 0}`);
       console.log(`[Pipeline ▶5 executeAction] FULL PROMPT: "${cleanPrompt}"`);
 
       try {
-        const aiResult = await imageProvider.generate({
+        const aiResult = await generateWithFallback({
           prompt: resolveRefTags(cleanPrompt, selectedModel),
           type: "image",
           model: selectedModel,
@@ -557,9 +556,8 @@ ${templateStyleSuffix ? `- Additional style: ${templateStyleSuffix}` : ''}
               console.log(`[Template Fill] hasRefImages: ${hasTemplateRefs ? templateRefImages!.length : 0}`);
 
               try {
-                const { getProvider: getAIProvider } = await import("@/lib/ai-providers");
-                const imgProvider = getAIProvider(imageModel);
-                const imgResult = await imgProvider.generate({
+                const { generateWithFallback } = await import("@/lib/ai-providers");
+                const imgResult = await generateWithFallback({
                   prompt: cleanImgPrompt,
                   type: "image",
                   model: imageModel,
@@ -667,9 +665,8 @@ ${templateStyleSuffix ? `- Additional style: ${templateStyleSuffix}` : ''}
             console.log(`[Template Fill Generic] hasRefImages: ${hasTemplateRefs ? templateRefImages!.length : 0}`);
 
             try {
-              const { getProvider: getAIProvider } = await import("@/lib/ai-providers");
-              const imgProvider = getAIProvider(imageModel);
-              const imgResult = await imgProvider.generate({
+              const { generateWithFallback } = await import("@/lib/ai-providers");
+              const imgResult = await generateWithFallback({
                 prompt: cleanImgPrompt,
                 type: "image",
                 model: imageModel,

@@ -1,0 +1,1090 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Creative Platform — Canvas Greenfield Plan</title>
+  <style>
+    :root {
+      --bg: #f3ede3;
+      --bg-soft: #faf6ef;
+      --panel: rgba(255, 251, 245, 0.92);
+      --panel-strong: #fffaf2;
+      --ink: #171412;
+      --muted: #5c5852;
+      --line: rgba(28, 24, 20, 0.12);
+      --line-strong: rgba(28, 24, 20, 0.2);
+      --brand: #0f766e;
+      --brand-soft: rgba(15, 118, 110, 0.12);
+      --amber: #b45309;
+      --amber-soft: rgba(180, 83, 9, 0.12);
+      --rose: #be123c;
+      --rose-soft: rgba(190, 18, 60, 0.1);
+      --blue: #1d4ed8;
+      --blue-soft: rgba(29, 78, 216, 0.1);
+      --success: #166534;
+      --success-soft: rgba(22, 101, 52, 0.1);
+      --shadow-lg: 0 24px 60px rgba(26, 22, 18, 0.12);
+      --shadow-md: 0 14px 30px rgba(26, 22, 18, 0.08);
+      --radius-xl: 30px;
+      --radius-lg: 22px;
+      --radius-md: 16px;
+      --radius-sm: 12px;
+      --content: 1280px;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+
+    body {
+      margin: 0;
+      font-family: "Inter", "Segoe UI", Arial, sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at top left, rgba(15, 118, 110, 0.08), transparent 28%),
+        radial-gradient(circle at top right, rgba(180, 83, 9, 0.08), transparent 22%),
+        linear-gradient(180deg, #f8f3ea 0%, #f3ede3 100%);
+      line-height: 1.58;
+    }
+
+    a {
+      color: inherit;
+      text-decoration: none;
+    }
+
+    .page {
+      max-width: var(--content);
+      margin: 0 auto;
+      padding: 32px 24px 72px;
+    }
+
+    .hero {
+      position: relative;
+      overflow: hidden;
+      border-radius: 36px;
+      padding: 38px 38px 32px;
+      background:
+        radial-gradient(circle at 85% 18%, rgba(255, 255, 255, 0.16), transparent 22%),
+        linear-gradient(135deg, rgba(15, 118, 110, 0.98), rgba(22, 101, 52, 0.92));
+      color: #f8fbf9;
+      box-shadow: var(--shadow-lg);
+      border: 1px solid rgba(255, 255, 255, 0.14);
+    }
+
+    .hero::after {
+      content: "";
+      position: absolute;
+      right: -120px;
+      bottom: -120px;
+      width: 360px;
+      height: 360px;
+      border-radius: 999px;
+      background: radial-gradient(circle, rgba(255, 255, 255, 0.14), transparent 64%);
+      pointer-events: none;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 14px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.12);
+      color: rgba(255, 255, 255, 0.86);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .hero h1 {
+      margin: 18px 0 10px;
+      font-size: clamp(34px, 5vw, 60px);
+      line-height: 1.02;
+      letter-spacing: -0.04em;
+      max-width: 980px;
+    }
+
+    .hero p {
+      margin: 0;
+      max-width: 920px;
+      color: rgba(248, 251, 249, 0.84);
+      font-size: 17px;
+    }
+
+    .hero-meta {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 30px;
+    }
+
+    .hero-stat {
+      padding: 16px 18px;
+      border-radius: var(--radius-lg);
+      background: rgba(255, 255, 255, 0.1);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      backdrop-filter: blur(10px);
+    }
+
+    .hero-stat strong {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 30px;
+      line-height: 1;
+    }
+
+    .hero-stat span {
+      display: block;
+      color: rgba(248, 251, 249, 0.8);
+      font-size: 13px;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 290px minmax(0, 1fr);
+      gap: 24px;
+      margin-top: 24px;
+      align-items: start;
+    }
+
+    .toc {
+      position: sticky;
+      top: 22px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      padding: 20px;
+      box-shadow: var(--shadow-md);
+      backdrop-filter: blur(16px);
+    }
+
+    .toc h2 {
+      margin: 0 0 12px;
+      font-size: 14px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+    }
+
+    .toc a {
+      display: block;
+      padding: 10px 12px;
+      border-radius: 12px;
+      font-size: 14px;
+      transition: background 0.18s ease, transform 0.18s ease;
+    }
+
+    .toc a:hover {
+      background: rgba(15, 118, 110, 0.08);
+      transform: translateX(2px);
+    }
+
+    .content {
+      display: grid;
+      gap: 24px;
+    }
+
+    .section {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 28px;
+      padding: 28px;
+      box-shadow: var(--shadow-md);
+      backdrop-filter: blur(18px);
+    }
+
+    .section h2 {
+      margin: 0 0 12px;
+      font-size: 30px;
+      line-height: 1.05;
+      letter-spacing: -0.035em;
+    }
+
+    .lead {
+      margin: 0 0 22px;
+      color: var(--muted);
+      font-size: 16px;
+      max-width: 900px;
+    }
+
+    .grid-2,
+    .grid-3,
+    .grid-4 {
+      display: grid;
+      gap: 16px;
+    }
+
+    .grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .grid-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+
+    .card {
+      background: var(--panel-strong);
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      padding: 18px;
+    }
+
+    .card h3,
+    .card h4 {
+      margin: 0 0 8px;
+      font-size: 18px;
+      line-height: 1.2;
+    }
+
+    .card p {
+      margin: 0;
+      font-size: 14px;
+      color: var(--muted);
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      margin-bottom: 10px;
+    }
+
+    .badge.brand { background: var(--brand-soft); color: var(--brand); }
+    .badge.amber { background: var(--amber-soft); color: var(--amber); }
+    .badge.rose { background: var(--rose-soft); color: var(--rose); }
+    .badge.blue { background: var(--blue-soft); color: var(--blue); }
+    .badge.success { background: var(--success-soft); color: var(--success); }
+
+    .phase-list {
+      display: grid;
+      gap: 14px;
+    }
+
+    .phase {
+      border: 1px solid var(--line);
+      background: linear-gradient(180deg, rgba(255,255,255,0.62), rgba(255,251,245,0.96));
+      border-radius: 22px;
+      padding: 18px;
+    }
+
+    .phase-top {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 10px;
+    }
+
+    .phase h3 {
+      margin: 0;
+      font-size: 22px;
+      line-height: 1.1;
+      letter-spacing: -0.03em;
+    }
+
+    .phase small {
+      color: var(--muted);
+      font-size: 13px;
+      white-space: nowrap;
+    }
+
+    .columns {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 14px;
+    }
+
+    .mini {
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 14px;
+      background: rgba(255, 255, 255, 0.6);
+    }
+
+    .mini h4 {
+      margin: 0 0 8px;
+      font-size: 14px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+    }
+
+    ul.clean {
+      margin: 0;
+      padding-left: 18px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    ul.clean li + li {
+      margin-top: 6px;
+    }
+
+    .matrix {
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: var(--panel-strong);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 820px;
+    }
+
+    th,
+    td {
+      padding: 14px 16px;
+      text-align: left;
+      vertical-align: top;
+      border-bottom: 1px solid var(--line);
+      font-size: 14px;
+    }
+
+    th {
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+      background: rgba(255, 255, 255, 0.65);
+    }
+
+    tr:last-child td {
+      border-bottom: none;
+    }
+
+    .pill-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 16px;
+    }
+
+    .pill {
+      padding: 9px 12px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.72);
+      border: 1px solid var(--line);
+      font-size: 13px;
+      color: var(--ink);
+    }
+
+    .timeline {
+      display: grid;
+      gap: 14px;
+    }
+
+    .timeline-item {
+      display: grid;
+      grid-template-columns: 120px minmax(0, 1fr);
+      gap: 16px;
+      align-items: start;
+    }
+
+    .timeline-tag {
+      position: sticky;
+      top: 104px;
+      display: inline-flex;
+      justify-content: center;
+      padding: 10px 12px;
+      border-radius: 14px;
+      background: var(--brand-soft);
+      color: var(--brand);
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .note {
+      padding: 18px;
+      border-radius: 20px;
+      border: 1px solid var(--line);
+      background:
+        linear-gradient(135deg, rgba(15, 118, 110, 0.08), rgba(180, 83, 9, 0.08)),
+        var(--panel-strong);
+    }
+
+    .note strong {
+      display: block;
+      margin-bottom: 8px;
+      font-size: 15px;
+    }
+
+    .footer {
+      margin-top: 22px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    @media (max-width: 1080px) {
+      .layout {
+        grid-template-columns: 1fr;
+      }
+
+      .toc {
+        position: static;
+      }
+
+      .hero-meta,
+      .grid-4,
+      .grid-3,
+      .grid-2,
+      .columns {
+        grid-template-columns: 1fr;
+      }
+
+      .timeline-item {
+        grid-template-columns: 1fr;
+      }
+
+      .timeline-tag {
+        position: static;
+        justify-content: flex-start;
+      }
+    }
+
+    @media (max-width: 760px) {
+      .page {
+        padding: 18px 14px 48px;
+      }
+
+      .hero,
+      .section {
+        padding: 22px;
+      }
+
+      .hero h1 {
+        font-size: 34px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <section class="hero">
+      <span class="eyebrow">AI Creative Platform • Canvas Greenfield Plan</span>
+      <h1>Roadmap, backlog и delivery model для запуска canvas-редактора почти с нуля</h1>
+      <p>
+        Презентационная версия greenfield-плана: как разложить разработку канваса на управляемые фазы,
+        как синхронизировать frontend и backend, и где заранее заложить инновационный scope под
+        <strong>smart resize</strong> и <strong>AI agent</strong>.
+      </p>
+      <div class="hero-meta">
+        <div class="hero-stat">
+          <strong>8</strong>
+          <span>фаз roadmap от foundation до hardening</span>
+        </div>
+        <div class="hero-stat">
+          <strong>10</strong>
+          <span>эпиков backlog с FE, BE, Shared и Research scope</span>
+        </div>
+        <div class="hero-stat">
+          <strong>16</strong>
+          <span>спринтов в примерной delivery-сетке</span>
+        </div>
+        <div class="hero-stat">
+          <strong>2</strong>
+          <span>advanced tracks: smart resize intelligence и agentic editing</span>
+        </div>
+      </div>
+    </section>
+
+    <div class="layout">
+      <aside class="toc">
+        <h2>Навигация</h2>
+        <a href="#operating-model">Operating Model</a>
+        <a href="#phases">Roadmap Phases</a>
+        <a href="#sync">Frontend / Backend Sync</a>
+        <a href="#milestones">Milestones</a>
+        <a href="#sprints">Sprint Slices</a>
+        <a href="#advanced">Advanced Scope</a>
+        <a href="#files">Связанные файлы</a>
+      </aside>
+
+      <main class="content">
+        <section class="section" id="operating-model">
+          <h2>Operating Model</h2>
+          <p class="lead">
+            Главная идея этого плана: не строить редактор как один монолитный поток задач, а разделить его
+            на параллельные workstreams, которые сходятся на shared contracts и integration milestones.
+          </p>
+
+          <div class="grid-4">
+            <article class="card">
+              <span class="badge brand">Stream A</span>
+              <h3>Frontend Editor Core</h3>
+              <p>Canvas engine, interaction model, editor layout, panels, toolbar, format UX, AI entrypoints.</p>
+            </article>
+            <article class="card">
+              <span class="badge amber">Stream B</span>
+              <h3>Backend Platform</h3>
+              <p>Persistence, assets, templates, exports, queues, provider gateway, audit, observability.</p>
+            </article>
+            <article class="card">
+              <span class="badge blue">Stream C</span>
+              <h3>Shared Contracts</h3>
+              <p>Canvas schema, layer contracts, slot taxonomy, multi-format model, action vocabulary.</p>
+            </article>
+            <article class="card">
+              <span class="badge rose">Stream D</span>
+              <h3>Research and Innovation</h3>
+              <p>Smart resize intelligence, scene graph, explainability, quality metrics, agent planning.</p>
+            </article>
+          </div>
+
+          <div class="note" style="margin-top: 18px;">
+            <strong>Ключевой принцип синхронизации</strong>
+            Frontend не ждёт “готовый backend”, а backend не ждёт “готовый UI”. Обе стороны работают
+            против общих схем: <code>CanvasDocument</code>, <code>Layer</code>, <code>Template</code>,
+            <code>FormatInstance</code>, <code>ResizeMapping</code>, <code>AIAction</code>.
+          </div>
+
+          <div class="pill-row">
+            <span class="pill">Mock-first editor</span>
+            <span class="pill">Contract-first APIs</span>
+            <span class="pill">Feature flags for risky scope</span>
+            <span class="pill">Milestone-based integration</span>
+            <span class="pill">Experimental tracks in isolation</span>
+          </div>
+        </section>
+
+        <section class="section" id="phases">
+          <h2>Roadmap Phases</h2>
+          <p class="lead">
+            Последовательность фаз построена так, чтобы сначала дойти до полезного editor MVP, затем
+            нарастить structured composition и multi-format, и только после этого поднимать truly smart
+            функции вроде resize intelligence и agent mode.
+          </p>
+
+          <div class="phase-list">
+            <article class="phase">
+              <div class="phase-top">
+                <h3>Phase 0. Foundation and Contracts</h3>
+                <small>2–3 недели</small>
+              </div>
+              <p class="lead" style="margin-bottom: 0;">Заморозка доменной модели, app shell, storage strategy, contract fixtures и feature-flag matrix.</p>
+              <div class="columns">
+                <div class="mini">
+                  <h4>Frontend</h4>
+                  <ul class="clean">
+                    <li>App shell редактора</li>
+                    <li>Mock store и canvas fixtures</li>
+                    <li>Interaction state model</li>
+                  </ul>
+                </div>
+                <div class="mini">
+                  <h4>Backend</h4>
+                  <ul class="clean">
+                    <li>Domain model и API contracts</li>
+                    <li>Storage architecture</li>
+                    <li>Queue foundation</li>
+                  </ul>
+                </div>
+                <div class="mini">
+                  <h4>Output</h4>
+                  <ul class="clean">
+                    <li><code>CanvasDocument</code> v1</li>
+                    <li><code>Template</code> v1</li>
+                    <li><code>AIAction</code> draft</li>
+                  </ul>
+                </div>
+              </div>
+            </article>
+
+            <article class="phase">
+              <div class="phase-top">
+                <h3>Phase 1. Editor Core MVP</h3>
+                <small>4–6 недель</small>
+              </div>
+              <p class="lead" style="margin-bottom: 0;">Single-format редактор: viewport, selection, move/resize, text, shape, image, layer panel, properties, save/load.</p>
+              <div class="columns">
+                <div class="mini">
+                  <h4>Frontend</h4>
+                  <ul class="clean">
+                    <li>Viewport, marquee, transform</li>
+                    <li>Базовые инструменты</li>
+                    <li>Layer и properties panel</li>
+                  </ul>
+                </div>
+                <div class="mini">
+                  <h4>Backend</h4>
+                  <ul class="clean">
+                    <li>Document CRUD</li>
+                    <li>Autosave endpoint</li>
+                    <li>Asset upload + metadata</li>
+                  </ul>
+                </div>
+                <div class="mini">
+                  <h4>Exit</h4>
+                  <ul class="clean">
+                    <li>Документ сохраняется и открывается</li>
+                    <li>Asset workflow замкнут</li>
+                    <li>MVP годится для простых креативов</li>
+                  </ul>
+                </div>
+              </div>
+            </article>
+
+            <article class="phase">
+              <div class="phase-top">
+                <h3>Phase 2. Structured Composition and Templates</h3>
+                <small>3–4 недели</small>
+              </div>
+              <p class="lead" style="margin-bottom: 0;">Frames, nested structure, clipping, auto-layout basis, slot roles, template apply/save, catalog foundation.</p>
+              <div class="columns">
+                <div class="mini">
+                  <h4>Frontend</h4>
+                  <ul class="clean">
+                    <li>Nested frames</li>
+                    <li>Slot editing UI</li>
+                    <li>Template apply/save</li>
+                  </ul>
+                </div>
+                <div class="mini">
+                  <h4>Backend</h4>
+                  <ul class="clean">
+                    <li>Template persistence</li>
+                    <li>Catalog metadata</li>
+                    <li>Thumbnails and import/export</li>
+                  </ul>
+                </div>
+                <div class="mini">
+                  <h4>Exit</h4>
+                  <ul class="clean">
+                    <li>Template-driven editing</li>
+                    <li>Slot taxonomy действует</li>
+                    <li>Основа под resize готова</li>
+                  </ul>
+                </div>
+              </div>
+            </article>
+
+            <article class="phase">
+              <div class="phase-top">
+                <h3>Phase 3. Multi-Format Foundation</h3>
+                <small>3–4 недели</small>
+              </div>
+              <p class="lead" style="margin-bottom: 0;">Master/instance model, format panel, inheritance, overrides, batch export, serialized multi-format document.</p>
+              <div class="columns">
+                <div class="mini">
+                  <h4>Frontend</h4>
+                  <ul class="clean">
+                    <li>Formats panel</li>
+                    <li>Override UI</li>
+                    <li>Batch export entrypoint</li>
+                  </ul>
+                </div>
+                <div class="mini">
+                  <h4>Backend</h4>
+                  <ul class="clean">
+                    <li>Multi-format persistence</li>
+                    <li>Export jobs</li>
+                    <li>Rendering pipeline</li>
+                  </ul>
+                </div>
+                <div class="mini">
+                  <h4>Exit</h4>
+                  <ul class="clean">
+                    <li>Несколько форматов в одном документе</li>
+                    <li>Master changes inherit correctly</li>
+                    <li>Batch export работает</li>
+                  </ul>
+                </div>
+              </div>
+            </article>
+
+            <article class="phase">
+              <div class="phase-top">
+                <h3>Phase 4. Smart Resize v1</h3>
+                <small>4–5 недель</small>
+              </div>
+              <p class="lead" style="margin-bottom: 0;">Slot-aware resize, mapping review, conflict handling, confidence indicators, reproducible resize job.</p>
+              <div class="columns">
+                <div class="mini">
+                  <h4>Frontend</h4>
+                  <ul class="clean">
+                    <li>Resize preview</li>
+                    <li>Mapping review UI</li>
+                    <li>Side-by-side compare</li>
+                  </ul>
+                </div>
+                <div class="mini">
+                  <h4>Backend</h4>
+                  <ul class="clean">
+                    <li>Mapping engine</li>
+                    <li>Rules + semantic matching</li>
+                    <li>Confidence and logs</li>
+                  </ul>
+                </div>
+                <div class="mini">
+                  <h4>Exit</h4>
+                  <ul class="clean">
+                    <li>Resize лучше простого scale</li>
+                    <li>Неуверенность системы видна</li>
+                    <li>Есть audit trail</li>
+                  </ul>
+                </div>
+              </div>
+            </article>
+
+            <article class="phase">
+              <div class="phase-top">
+                <h3>Phase 5. AI Generation Layer</h3>
+                <small>3–4 недели</small>
+              </div>
+              <p class="lead" style="margin-bottom: 0;">Prompt bar, image/text generation, image edit flows, reference controls, provider gateway, moderation, cost tracking.</p>
+              <div class="columns">
+                <div class="mini">
+                  <h4>Frontend</h4>
+                  <ul class="clean">
+                    <li>Prompt bar and tray</li>
+                    <li>Apply-to-selection UX</li>
+                    <li>History and retries</li>
+                  </ul>
+                </div>
+                <div class="mini">
+                  <h4>Backend</h4>
+                  <ul class="clean">
+                    <li>Provider abstraction</li>
+                    <li>Generation and edit APIs</li>
+                    <li>Safety + accounting</li>
+                  </ul>
+                </div>
+                <div class="mini">
+                  <h4>Exit</h4>
+                  <ul class="clean">
+                    <li>AI встроен в editor UX</li>
+                    <li>Результаты применяются к canvas</li>
+                    <li>История и экономика прозрачны</li>
+                  </ul>
+                </div>
+              </div>
+            </article>
+
+            <article class="phase">
+              <div class="phase-top">
+                <h3>Phase 6. AI Agent and Assisted Editing</h3>
+                <small>4–6 недель</small>
+              </div>
+              <p class="lead" style="margin-bottom: 0;">Plan-preview-approve execution model, action registry, orchestration, rollback, explainability and document-scoped memory.</p>
+              <div class="columns">
+                <div class="mini">
+                  <h4>Frontend</h4>
+                  <ul class="clean">
+                    <li>Agent panel</li>
+                    <li>Approval/reject/undo flows</li>
+                    <li>Diff and explainability UI</li>
+                  </ul>
+                </div>
+                <div class="mini">
+                  <h4>Backend</h4>
+                  <ul class="clean">
+                    <li>Action registry</li>
+                    <li>Orchestration engine</li>
+                    <li>Policy and audit layer</li>
+                  </ul>
+                </div>
+                <div class="mini">
+                  <h4>Exit</h4>
+                  <ul class="clean">
+                    <li>Надёжный ограниченный action set</li>
+                    <li>Все действия прозрачны и откатываемы</li>
+                    <li>Есть reasoning trace</li>
+                  </ul>
+                </div>
+              </div>
+            </article>
+
+            <article class="phase">
+              <div class="phase-top">
+                <h3>Phase 7. Hardening and Scale</h3>
+                <small>ongoing</small>
+              </div>
+              <p class="lead" style="margin-bottom: 0;">Performance, observability, quotas, keyboard completeness, reliability under export/AI/resize load.</p>
+              <div class="columns">
+                <div class="mini">
+                  <h4>Frontend</h4>
+                  <ul class="clean">
+                    <li>Perf budget and profiling</li>
+                    <li>Bulk editing and polish</li>
+                    <li>Error recovery and accessibility</li>
+                  </ul>
+                </div>
+                <div class="mini">
+                  <h4>Backend</h4>
+                  <ul class="clean">
+                    <li>Retry policies</li>
+                    <li>Dashboards and quotas</li>
+                    <li>Permission model</li>
+                  </ul>
+                </div>
+                <div class="mini">
+                  <h4>Exit</h4>
+                  <ul class="clean">
+                    <li>System is operable at scale</li>
+                    <li>Jobs are observable</li>
+                    <li>UX не деградирует под нагрузкой</li>
+                  </ul>
+                </div>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <section class="section" id="sync">
+          <h2>Frontend / Backend Sync</h2>
+          <p class="lead">
+            Если frontend уходит глубоко в редактор, backend всё равно может параллельно строить второй этаж
+            продукта. Это не “подготовка на потом”, а независимая работа над будущими точками силы платформы.
+          </p>
+
+          <div class="grid-2">
+            <article class="card">
+              <span class="badge brand">Пока frontend строит editor</span>
+              <h3>Backend может делать</h3>
+              <ul class="clean">
+                <li>Persistence model, save/load, autosave</li>
+                <li>Asset upload и media processing</li>
+                <li>Version snapshots и diff payloads</li>
+                <li>Template catalog и thumbnail pipeline</li>
+                <li>Export jobs и artifact storage</li>
+                <li>AI provider gateway, moderation, cost tracking</li>
+                <li>Action registry, audit trail, observability</li>
+              </ul>
+            </article>
+
+            <article class="card">
+              <span class="badge amber">Пока backend строит платформу</span>
+              <h3>Frontend может делать</h3>
+              <ul class="clean">
+                <li>Canvas engine и interaction model</li>
+                <li>Tool system и properties UI</li>
+                <li>Frames, templates, multi-format UX</li>
+                <li>Mock-driven AI entrypoints и generation UX</li>
+                <li>Resize review surfaces и agent approval flows</li>
+                <li>Keyboard editing и performance polish</li>
+              </ul>
+            </article>
+          </div>
+
+          <div class="note" style="margin-top: 18px;">
+            <strong>Практический механизм</strong>
+            Каждая milestone заканчивается заменой mock adapter на реальный backend capability без
+            переделки UI-модели. Это работает только если contracts frozen достаточно рано.
+          </div>
+        </section>
+
+        <section class="section" id="milestones">
+          <h2>Integration Milestones</h2>
+          <p class="lead">
+            Ниже вехи, в которых команды должны синхронизироваться явно. Это хорошие точки для demos,
+            re-planning и quality gates.
+          </p>
+
+          <div class="matrix">
+            <table>
+              <thead>
+                <tr>
+                  <th>Milestone</th>
+                  <th>Результат</th>
+                  <th>Frontend focus</th>
+                  <th>Backend focus</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>M1</td>
+                  <td>Contracts frozen, editor работает на моках</td>
+                  <td>Shell, store, fixtures, interaction skeleton</td>
+                  <td>API design, schemas, storage architecture</td>
+                </tr>
+                <tr>
+                  <td>M2</td>
+                  <td>Save/load and assets stable</td>
+                  <td>Editor lifecycle integration</td>
+                  <td>CRUD, autosave, upload, metadata</td>
+                </tr>
+                <tr>
+                  <td>M3</td>
+                  <td>Template and slot model stable</td>
+                  <td>Frames, slot UI, template flows</td>
+                  <td>Template persistence and catalog</td>
+                </tr>
+                <tr>
+                  <td>M4</td>
+                  <td>Multi-format stable</td>
+                  <td>Formats UX, overrides, export UX</td>
+                  <td>Inheritance model, export jobs, rendering</td>
+                </tr>
+                <tr>
+                  <td>M5</td>
+                  <td>Smart resize beta</td>
+                  <td>Preview, compare, review UI</td>
+                  <td>Mapping, rules, confidence</td>
+                </tr>
+                <tr>
+                  <td>M6</td>
+                  <td>AI generation stable</td>
+                  <td>Prompt/apply/history UX</td>
+                  <td>Providers, safety, accounting</td>
+                </tr>
+                <tr>
+                  <td>M7</td>
+                  <td>Agent alpha</td>
+                  <td>Plan preview, approval, diff</td>
+                  <td>Orchestration, audit, policy engine</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="section" id="sprints">
+          <h2>Sprint Slices</h2>
+          <p class="lead">
+            Примерная операционная сетка на 16 двухнедельных спринтов. Её можно упростить или ужать, но она
+            хорошо показывает, как большие эпики превращаются в последовательные delivery slices.
+          </p>
+
+          <div class="timeline">
+            <div class="timeline-item">
+              <div class="timeline-tag">S1–S2</div>
+              <div class="card">
+                <span class="badge brand">Foundation</span>
+                <h3>Contracts, app shell, storage model</h3>
+                <p>FE поднимает shell и state skeleton, BE фиксирует document schema, API contracts, storage и queues.</p>
+              </div>
+            </div>
+
+            <div class="timeline-item">
+              <div class="timeline-tag">S3–S5</div>
+              <div class="card">
+                <span class="badge amber">Editor MVP</span>
+                <h3>Canvas core, tools, save/load, assets</h3>
+                <p>Viewport, selection, text/image/rect/frame, layer panel, properties, document CRUD, autosave, upload.</p>
+              </div>
+            </div>
+
+            <div class="timeline-item">
+              <div class="timeline-tag">S6–S8</div>
+              <div class="card">
+                <span class="badge blue">Structured Editing</span>
+                <h3>Frames, slots, templates</h3>
+                <p>Nested frames, clipping, slot taxonomy, template apply/save, catalog APIs и thumbnails.</p>
+              </div>
+            </div>
+
+            <div class="timeline-item">
+              <div class="timeline-tag">S9–S10</div>
+              <div class="card">
+                <span class="badge success">Multi-Format</span>
+                <h3>Master/instance, overrides, export jobs</h3>
+                <p>Formats panel, inheritance logic, multi-format persistence, batch export UX и rendering pipeline.</p>
+              </div>
+            </div>
+
+            <div class="timeline-item">
+              <div class="timeline-tag">S11–S12</div>
+              <div class="card">
+                <span class="badge rose">AI Layer</span>
+                <h3>Prompt bar, generation APIs, history</h3>
+                <p>Text/image generation, image edit, safety, provider abstraction, cost tracking, apply-to-canvas flows.</p>
+              </div>
+            </div>
+
+            <div class="timeline-item">
+              <div class="timeline-tag">S13–S14</div>
+              <div class="card">
+                <span class="badge amber">Smart Resize</span>
+                <h3>Preview, mapping review, confidence</h3>
+                <p>Resize engine v1, rule layer, slot-aware mapping, human review surface и QA loop.</p>
+              </div>
+            </div>
+
+            <div class="timeline-item">
+              <div class="timeline-tag">S15–S16</div>
+              <div class="card">
+                <span class="badge brand">Agent Alpha</span>
+                <h3>Plan → approve → apply</h3>
+                <p>Action registry, orchestration, plan preview, rollback, diff view, audit trace и explainability.</p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="section" id="advanced">
+          <h2>Advanced Scope</h2>
+          <p class="lead">
+            Эти направления не стоит отталкивать “на потом”. Лучше рано заложить data model и contracts,
+            даже если часть работы пойдёт в research и feature-flagged delivery.
+          </p>
+
+          <div class="grid-2">
+            <article class="card">
+              <span class="badge amber">Track A</span>
+              <h3>Smart Resize Intelligence</h3>
+              <ul class="clean">
+                <li>Semantic slot taxonomy вместо purely geometric resize</li>
+                <li>Rule engine и human-readable constraints</li>
+                <li>Confidence scoring per layer and document</li>
+                <li>Alternative layout proposals</li>
+                <li>Learning loop по accepted/rejected mappings</li>
+              </ul>
+            </article>
+
+            <article class="card">
+              <span class="badge rose">Track B</span>
+              <h3>Agentic Canvas Operations</h3>
+              <ul class="clean">
+                <li>Scene graph / canvas AST</li>
+                <li>Action vocabulary и tool preconditions</li>
+                <li>Plan-preview-approve architecture</li>
+                <li>Brand constraints и policy engine</li>
+                <li>Explainable trace и diff before apply</li>
+              </ul>
+            </article>
+          </div>
+
+          <div class="note" style="margin-top: 18px;">
+            <strong>Почему это важно</strong>
+            Если не заложить семантику и action model рано, smart resize станет набором хрупких эвристик,
+            а AI agent будет привязан к UI-хаку вместо устойчивого языка действий.
+          </div>
+        </section>
+
+        <section class="section" id="files">
+          <h2>Связанные файлы</h2>
+          <p class="lead">
+            Полные markdown-версии и операционный sprint-план лежат рядом, чтобы презентацию можно было
+            быстро связать с рабочей документацией.
+          </p>
+
+          <div class="grid-3">
+            <article class="card">
+              <span class="badge brand">Markdown</span>
+              <h3><a href="./canvas_greenfield_roadmap.md">canvas_greenfield_roadmap.md</a></h3>
+              <p>Полное описание фаз, operating model и advanced scope.</p>
+            </article>
+            <article class="card">
+              <span class="badge amber">Markdown</span>
+              <h3><a href="./canvas_greenfield_backlog.md">canvas_greenfield_backlog.md</a></h3>
+              <p>Эпики, задачи, acceptance criteria и integration milestones.</p>
+            </article>
+            <article class="card">
+              <span class="badge blue">Markdown</span>
+              <h3><a href="./canvas_greenfield_sprint_slices.md">canvas_greenfield_sprint_slices.md</a></h3>
+              <p>Разбиение на milestones и 16 примерных спринтов с FE/BE ownership.</p>
+            </article>
+          </div>
+
+          <div class="footer">
+            Версия страницы подготовлена как презентационный слой над рабочими markdown-документами.
+          </div>
+        </section>
+      </main>
+    </div>
+  </div>
+</body>
+</html>

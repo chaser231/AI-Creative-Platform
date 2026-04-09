@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getProvider, getModelById } from "@/lib/ai-providers";
+import { getProvider, getModelById, generateWithFallback } from "@/lib/ai-providers";
+import { getModelById as getModelEntryById } from "@/lib/ai-models";
 import { auth } from "@/server/auth";
+import { prisma } from "@/server/db";
 
 export async function POST(req: NextRequest) {
     try {
@@ -10,7 +12,7 @@ export async function POST(req: NextRequest) {
         }
 
         const body = await req.json();
-        const { action, prompt, imageBase64, maskBase64, model, aspectRatio, canvasSize, originalSize, originalLocation, referenceImages } = body;
+        const { action, prompt, imageBase64, maskBase64, model, aspectRatio, canvasSize, originalSize, originalLocation, referenceImages, projectId } = body;
 
         if (!action) {
             return NextResponse.json(
@@ -20,10 +22,12 @@ export async function POST(req: NextRequest) {
         }
 
         let result;
+        let usedModel = model || "nano-banana-2"; // Track which model was actually used
 
         switch (action) {
             case "remove-bg": {
                 // Always use rembg via Replicate, regardless of selected model
+                usedModel = "rembg";
                 const provider = getProvider("rembg");
                 result = await provider.generate({
                     prompt: "",
@@ -37,6 +41,7 @@ export async function POST(req: NextRequest) {
             case "inpaint": {
                 // Use flux-fill or nano-banana models for inpainting
                 const inpaintModel = model || "flux-fill";
+                usedModel = inpaintModel;
                 const provider = getProvider(inpaintModel);
                 result = await provider.generate({
                     prompt: prompt || "Fill in the masked area naturally",
@@ -51,6 +56,7 @@ export async function POST(req: NextRequest) {
             case "text-edit": {
                 // Use models that support "edit" cap (nano-banana, flux-2-pro, gpt-image, seedream, qwen-image-edit)
                 const editModel = model || "nano-banana-2";
+                usedModel = editModel;
                 const entry = getModelById(editModel);
                 const supportsEdit = entry?.caps.includes("edit");
 
@@ -80,6 +86,7 @@ export async function POST(req: NextRequest) {
 
             case "outpaint": {
                 const outpaintModel = model || "bria-expand";
+                usedModel = outpaintModel;
                 const provider = getProvider(outpaintModel);
                 result = await provider.generate({
                     prompt: prompt || "",
@@ -96,6 +103,7 @@ export async function POST(req: NextRequest) {
 
             case "generate": {
                 const genModel = model || "nano-banana-2";
+                usedModel = genModel;
                 const provider = getProvider(genModel);
                 result = await provider.generate({
                     prompt: prompt || "Generate an image",
@@ -108,6 +116,41 @@ export async function POST(req: NextRequest) {
 
             default:
                 return NextResponse.json({ error: `Unknown action: ${action}` }, { status: 400 });
+        }
+
+        // ── Track AI cost ──────────────────────────────────────────
+        try {
+            const modelEntry = getModelEntryById(usedModel);
+            const costPerRun = modelEntry?.costPerRun ?? 0;
+            const userId = session.user.id;
+
+            if (projectId) {
+                // Find or create an AI session for this project/user
+                let aiSession = await prisma.aISession.findFirst({
+                    where: { projectId, userId },
+                    orderBy: { updatedAt: "desc" },
+                    select: { id: true },
+                });
+                if (!aiSession) {
+                    aiSession = await prisma.aISession.create({
+                        data: { projectId, userId },
+                    });
+                }
+
+                await prisma.aIMessage.create({
+                    data: {
+                        sessionId: aiSession.id,
+                        role: "assistant",
+                        content: `[${action}] ${prompt || action}`.slice(0, 200),
+                        type: "image",
+                        model: modelEntry?.id || usedModel,
+                        costUnits: costPerRun,
+                    },
+                });
+            }
+        } catch (costErr) {
+            console.error("[/api/ai/image-edit] Cost tracking failed:", costErr);
+            // Non-blocking — don't fail the generation if tracking fails
         }
 
         return NextResponse.json({
