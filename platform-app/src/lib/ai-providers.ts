@@ -478,18 +478,19 @@ class FalProvider implements AIProviderImplementation {
         // Output format
         input.output_format = "png";
 
-        // Reference images — only valid on /edit endpoint
+        // Reference images — /edit endpoint uses `image_urls` (NOT `image_input`)
+        // Accepts both public URLs and base64 data URIs
         if (params.referenceImages && params.referenceImages.length > 0) {
-            input.image_input = params.referenceImages;
+            input.image_urls = params.referenceImages;
         }
 
-        // Image edit — prepend the source image to image_input
+        // Image edit — prepend the source image to image_urls
         if (params.type === "edit" && params.imageBase64) {
-            const existingRefs = (input.image_input as string[] | undefined) || [];
-            input.image_input = [params.imageBase64, ...existingRefs];
+            const existingRefs = (input.image_urls as string[] | undefined) || [];
+            input.image_urls = [params.imageBase64, ...existingRefs];
         }
 
-        console.log(`[fal.ai] Submitting to ${falEndpoint} (edit=${!!needsEditEndpoint}, refs=${(input.image_input as string[] | undefined)?.length || 0})...`);
+        console.log(`[fal.ai] Submitting to ${falEndpoint} (edit=${!!needsEditEndpoint}, refs=${(input.image_urls as string[] | undefined)?.length || 0}, prompt="${String(params.prompt).slice(0, 60)}")...`);
 
         // ── Submit to queue ─────────────────────────────────────────
         const submitRes = await fetch(`https://queue.fal.run/${falEndpoint}`, {
