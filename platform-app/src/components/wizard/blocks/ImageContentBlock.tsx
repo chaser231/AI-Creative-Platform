@@ -47,9 +47,10 @@ interface ImageContentBlockProps {
     onChange: (value: string) => void;
     businessUnit?: BusinessUnit;
     productDescription?: string;
+    projectId?: string;
 }
 
-export function ImageContentBlock({ id, name, props, value, onChange, businessUnit, productDescription }: ImageContentBlockProps) {
+export function ImageContentBlock({ id, name, props, value, onChange, businessUnit, productDescription, projectId }: ImageContentBlockProps) {
     const fileInputRef = useRef<HTMLInputElement>(null);
     const [isGenerating, setIsGenerating] = useState(false);
     const [genError, setGenError] = useState<string | null>(null);
@@ -113,6 +114,7 @@ export function ImageContentBlock({ id, name, props, value, onChange, businessUn
                     seed: seed ? Number(seed) : undefined,
                     scale: scale || undefined,
                     referenceImages: additionalPhotos.length > 0 ? additionalPhotos : undefined,
+                    projectId,
                 }),
             });
             const data = await response.json();
