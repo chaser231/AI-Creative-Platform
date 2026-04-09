@@ -512,20 +512,28 @@ class FalProvider implements AIProviderImplementation {
         const requestId = submitData.request_id;
 
         if (!requestId) {
-            // Synchronous result
+            // Synchronous result — no polling needed
             return this.parseResult(submitData, entry);
         }
 
+        // Use URLs from fal.ai response (handles /edit sub-endpoints correctly)
+        const statusUrl = submitData.status_url
+            || `https://queue.fal.run/${falEndpoint}/requests/${requestId}/status`;
+        const responseUrl = submitData.response_url
+            || `https://queue.fal.run/${falEndpoint}/requests/${requestId}`;
+
+        console.log(`[fal.ai] Queued request ${requestId}`);
+        console.log(`[fal.ai] Status URL: ${statusUrl}`);
+        console.log(`[fal.ai] Response URL: ${responseUrl}`);
+
         // ── Poll for result (up to 300s) ───────────────────────────
-        console.log(`[fal.ai] Polling request ${requestId}...`);
         for (let i = 0; i < 150; i++) {
             await new Promise(r => setTimeout(r, 2000));
 
             try {
-                const statusRes = await fetch(
-                    `https://queue.fal.run/${falEndpoint}/requests/${requestId}/status`,
-                    { headers: { "Authorization": `Key ${apiKey}` } }
-                );
+                const statusRes = await fetch(statusUrl, {
+                    headers: { "Authorization": `Key ${apiKey}` },
+                });
 
                 if (!statusRes.ok) {
                     console.warn(`[fal.ai] Status poll HTTP ${statusRes.status}`);
@@ -535,10 +543,9 @@ class FalProvider implements AIProviderImplementation {
 
                 if (status.status === "COMPLETED") {
                     // Fetch the actual result
-                    const resultRes = await fetch(
-                        `https://queue.fal.run/${falEndpoint}/requests/${requestId}`,
-                        { headers: { "Authorization": `Key ${apiKey}` } }
-                    );
+                    const resultRes = await fetch(responseUrl, {
+                        headers: { "Authorization": `Key ${apiKey}` },
+                    });
 
                     if (!resultRes.ok) {
                         const errText = await resultRes.text();
@@ -547,7 +554,6 @@ class FalProvider implements AIProviderImplementation {
 
                     const result = await resultRes.json();
                     console.log(`[fal.ai] Request ${requestId} completed after ${(i + 1) * 2}s`);
-                    // Debug: log response structure to diagnose parsing issues
                     console.log(`[fal.ai] Response keys: ${Object.keys(result).join(", ")}`);
                     if (result.images) {
                         console.log(`[fal.ai] images[0]: url=${!!result.images[0]?.url}, w=${result.images[0]?.width}, h=${result.images[0]?.height}`);
@@ -562,14 +568,10 @@ class FalProvider implements AIProviderImplementation {
                 // IN_QUEUE or IN_PROGRESS — keep polling
             } catch (err: unknown) {
                 const msg = err instanceof Error ? err.message : String(err);
-                // Rethrow application-level errors (parse failures, prediction failures, etc.)
-                // Only swallow actual network fetch errors (TypeError, AbortError)
                 if (err instanceof TypeError && msg.includes("fetch")) {
-                    // Actual network error — retry polling
                     console.warn(`[fal.ai] Poll network error: ${msg}`);
                     continue;
                 }
-                // Everything else should be rethrown (parse errors, result fetch errors, etc.)
                 throw err;
             }
         }
