@@ -43,25 +43,34 @@ export interface AIPipeline {
 // ─── Remote Provider ─────────────────────────────────────
 
 async function callAIApi(prompt: string, type: string, model: string, params: Record<string, unknown> = {}): Promise<AIResult> {
-    const response = await fetch("/api/ai/generate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt, type, model, ...params }),
-    });
+    // 5-minute timeout to match server-side provider polling timeouts
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5 * 60 * 1000);
 
-    if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || "AI Generation Failed");
+    try {
+        const response = await fetch("/api/ai/generate", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ prompt, type, model, ...params }),
+            signal: controller.signal,
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.error || "AI Generation Failed");
+        }
+
+        const data = await response.json();
+        return {
+            type: data.type || type, // fallback
+            content: data.content,
+            prompt: prompt,
+            model: data.model,
+            timestamp: new Date(),
+        };
+    } finally {
+        clearTimeout(timeoutId);
     }
-
-    const data = await response.json();
-    return {
-        type: data.type || type, // fallback
-        content: data.content,
-        prompt: prompt,
-        model: data.model,
-        timestamp: new Date(),
-    };
 }
 
 export const RemoteTextProvider: AIProvider = {

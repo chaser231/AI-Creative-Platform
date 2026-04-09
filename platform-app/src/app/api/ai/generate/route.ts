@@ -4,6 +4,9 @@ import { auth } from "@/server/auth";
 import { prisma } from "@/server/db";
 import { getModelById } from "@/lib/ai-models";
 
+// Allow up to 5 minutes for AI generation (retry + fallback + model fallback)
+export const maxDuration = 300;
+
 export async function POST(req: NextRequest) {
     try {
         const session = await auth();
