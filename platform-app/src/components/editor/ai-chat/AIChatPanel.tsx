@@ -43,9 +43,10 @@ interface AIChatPanelProps {
 }
 
 export function AIChatPanel({ open, onClose, messages, onAddMessages, projectId }: AIChatPanelProps) {
-    const { addTextLayer, addImageLayer, layers, updateLayer } = useCanvasStore(useShallow((s) => ({
+    const { addTextLayer, addImageLayer, layers, updateLayer, canvasWidth, canvasHeight } = useCanvasStore(useShallow((s) => ({
         addTextLayer: s.addTextLayer, addImageLayer: s.addImageLayer,
         layers: s.layers, updateLayer: s.updateLayer,
+        canvasWidth: s.canvasWidth, canvasHeight: s.canvasHeight,
     })));
     const { currentWorkspace } = useWorkspace();
     const [input, setInput] = useState("");
@@ -100,7 +101,21 @@ export function AIChatPanel({ open, onClose, messages, onAddMessages, projectId 
             if (projectId) {
                 try { src = await persistImageToS3(src, projectId); } catch {}
             }
-            addImageLayer(src, 500, 500);
+            // Measure actual image size and fit to artboard
+            const finalSrc = src;
+            const img = new window.Image();
+            img.onload = () => {
+                let w = img.naturalWidth;
+                let h = img.naturalHeight;
+                if (w > canvasWidth || h > canvasHeight) {
+                    const scaleFactor = Math.min(canvasWidth / w, canvasHeight / h);
+                    w = Math.round(w * scaleFactor);
+                    h = Math.round(h * scaleFactor);
+                }
+                addImageLayer(finalSrc, w, h);
+            };
+            img.onerror = () => addImageLayer(finalSrc, canvasWidth, canvasHeight);
+            img.src = finalSrc;
         }
     };
 

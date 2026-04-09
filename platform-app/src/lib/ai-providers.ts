@@ -43,6 +43,10 @@ export interface AIResponse {
     format: "text" | "url" | "base64";
     model: string;
     provider: string;
+    /** Actual pixel width of the generated image (when available) */
+    width?: number;
+    /** Actual pixel height of the generated image (when available) */
+    height?: number;
 }
 
 export interface AIProviderImplementation {
@@ -413,12 +417,19 @@ class ReplicateProvider implements AIProviderImplementation {
 
 // ─── fal.ai Fallback Provider ───────────────────────────────────────────────
 
-/** Model ID → fal.ai endpoint mapping */
+/** Model ID → fal.ai text-to-image endpoint mapping */
 const FAL_MODEL_MAP: Record<string, string> = {
     "nano-banana":     "fal-ai/nano-banana",
     "nano-banana-2":   "fal-ai/nano-banana-2",
     "nano-banana-pro": "fal-ai/nano-banana-pro",
     "seedream":        "fal-ai/seedream-4.5",
+};
+
+/** Model ID → fal.ai /edit endpoint (required for reference images) */
+const FAL_MODEL_MAP_EDIT: Record<string, string> = {
+    "nano-banana":     "fal-ai/nano-banana/edit",
+    "nano-banana-2":   "fal-ai/nano-banana-2/edit",
+    "nano-banana-pro": "fal-ai/nano-banana-pro/edit",
 };
 
 class FalProvider implements AIProviderImplementation {
@@ -435,14 +446,28 @@ class FalProvider implements AIProviderImplementation {
         const entry = getModelById(modelId);
         if (!entry) throw new Error(`Unknown model: ${modelId}`);
 
-        const falEndpoint = FAL_MODEL_MAP[modelId];
-        if (!falEndpoint) throw new Error(`Model ${modelId} is not available on fal.ai`);
-
         // Text models not supported on fal.ai in this implementation
         if (entry.caps.includes("text")) {
             throw new Error(`Text models not supported on fal.ai fallback`);
         }
 
+        // ── Determine endpoint ─────────────────────────────────────
+        // Use /edit endpoint when: reference images present, or explicit edit type
+        const needsEditEndpoint =
+            (params.referenceImages && params.referenceImages.length > 0) ||
+            params.type === "edit";
+
+        let falEndpoint: string | undefined;
+        if (needsEditEndpoint) {
+            falEndpoint = FAL_MODEL_MAP_EDIT[modelId];
+            // Fall back to base endpoint if no /edit variant exists
+            if (!falEndpoint) falEndpoint = FAL_MODEL_MAP[modelId];
+        } else {
+            falEndpoint = FAL_MODEL_MAP[modelId];
+        }
+        if (!falEndpoint) throw new Error(`Model ${modelId} is not available on fal.ai`);
+
+        // ── Build input ────────────────────────────────────────────
         const input: Record<string, unknown> = {};
         input.prompt = params.prompt;
         if (params.aspectRatio) input.aspect_ratio = params.aspectRatio;
@@ -453,19 +478,20 @@ class FalProvider implements AIProviderImplementation {
         // Output format
         input.output_format = "png";
 
-        // Reference images
+        // Reference images — only valid on /edit endpoint
         if (params.referenceImages && params.referenceImages.length > 0) {
             input.image_input = params.referenceImages;
         }
 
-        // Image edit
+        // Image edit — prepend the source image to image_input
         if (params.type === "edit" && params.imageBase64) {
-            input.image_input = [params.imageBase64, ...(params.referenceImages || [])];
+            const existingRefs = (input.image_input as string[] | undefined) || [];
+            input.image_input = [params.imageBase64, ...existingRefs];
         }
 
-        console.log(`[fal.ai] Submitting to ${falEndpoint}...`);
+        console.log(`[fal.ai] Submitting to ${falEndpoint} (edit=${!!needsEditEndpoint}, refs=${(input.image_input as string[] | undefined)?.length || 0})...`);
 
-        // Submit to queue
+        // ── Submit to queue ─────────────────────────────────────────
         const submitRes = await fetch(`https://queue.fal.run/${falEndpoint}`, {
             method: "POST",
             headers: {
@@ -486,14 +512,10 @@ class FalProvider implements AIProviderImplementation {
 
         if (!requestId) {
             // Synchronous result
-            const imageUrl = submitData.images?.[0]?.url || submitData.output;
-            if (imageUrl) {
-                return { content: imageUrl, format: "url", model: entry.id, provider: "fal" };
-            }
-            throw new Error("fal.ai: no output in synchronous response");
+            return this.parseResult(submitData, entry);
         }
 
-        // Poll for result (up to 180s)
+        // ── Poll for result (up to 180s) ───────────────────────────
         console.log(`[fal.ai] Polling request ${requestId}...`);
         for (let i = 0; i < 90; i++) {
             await new Promise(r => setTimeout(r, 2000));
@@ -514,10 +536,8 @@ class FalProvider implements AIProviderImplementation {
                         { headers: { "Authorization": `Key ${apiKey}` } }
                     );
                     const result = await resultRes.json();
-                    const imageUrl = result.images?.[0]?.url || result.output;
-                    if (!imageUrl) throw new Error("fal.ai: no image URL in completed result");
                     console.log(`[fal.ai] Request ${requestId} completed after ${(i + 1) * 2}s`);
-                    return { content: imageUrl, format: "url", model: entry.id, provider: "fal" };
+                    return this.parseResult(result, entry);
                 }
                 if (status.status === "FAILED") {
                     throw new Error(`fal.ai prediction failed: ${status.error || "unknown"}`);
@@ -532,6 +552,23 @@ class FalProvider implements AIProviderImplementation {
         }
 
         throw new Error("fal.ai prediction timed out after 180 seconds");
+    }
+
+    /** Parse fal.ai response, extracting image URL and dimensions */
+    private parseResult(data: Record<string, unknown>, entry: ModelEntry): AIResponse {
+        const images = data.images as { url?: string; width?: number; height?: number }[] | undefined;
+        const imageObj = images?.[0];
+        const imageUrl = imageObj?.url || (data.output as string);
+        if (!imageUrl) throw new Error("fal.ai: no image URL in response");
+
+        return {
+            content: imageUrl,
+            format: "url",
+            model: entry.id,
+            provider: "fal",
+            width: imageObj?.width,
+            height: imageObj?.height,
+        };
     }
 }
 
