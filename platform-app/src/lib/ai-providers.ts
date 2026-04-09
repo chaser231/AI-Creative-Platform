@@ -578,10 +578,20 @@ const openaiDirect = new OpenAIDirectProvider();
 const replicate = new ReplicateProvider();
 const falProvider = new FalProvider();
 
-/** Check if a model has fal.ai fallback available */
-function hasFalFallback(modelId: string): boolean {
+/** Check if a model has fal.ai support available */
+function hasFalSupport(modelId: string): boolean {
     return !!FAL_MODEL_MAP[modelId] && !!process.env.FAL_KEY;
 }
+
+/**
+ * Models where fal.ai should be the PRIMARY provider (Replicate is unstable).
+ * When FAL_KEY is set, these models go to fal.ai first, Replicate as fallback.
+ */
+const FAL_PRIMARY_MODELS = new Set([
+    "nano-banana-2",
+    "nano-banana",
+    "nano-banana-pro",
+]);
 
 export function getProvider(modelId: string): AIProviderImplementation {
     const entry = getModelById(modelId);
@@ -591,13 +601,43 @@ export function getProvider(modelId: string): AIProviderImplementation {
 }
 
 /**
- * Generate with automatic fallback.
- * Used internally — wraps getProvider().generate() with fal.ai retry for Google models.
+ * Generate with automatic multi-provider fallback.
+ *
+ * Routing strategy:
+ * - nano-banana family → fal.ai primary, Replicate fallback (when FAL_KEY set)
+ * - Other models with fal.ai support → Replicate primary, fal.ai fallback
+ * - Models without fal.ai → Replicate only
  */
 export async function generateWithFallback(params: AIRequestParams): Promise<AIResponse> {
     const modelId = params.model || "nano-banana-2";
-    const primary = getProvider(modelId);
 
+    // Determine provider order
+    const useFalPrimary = FAL_PRIMARY_MODELS.has(modelId) && hasFalSupport(modelId);
+
+    if (useFalPrimary) {
+        // ── fal.ai primary, Replicate fallback ──
+        try {
+            console.log(`[Provider] Using fal.ai as primary for ${modelId}`);
+            return await falProvider.generate(params);
+        } catch (falErr: unknown) {
+            const falMsg = falErr instanceof Error ? falErr.message : String(falErr);
+            console.error(`[Provider] fal.ai primary failed for ${modelId}: ${falMsg}`);
+
+            // Try Replicate as fallback
+            console.log(`[Provider] Falling back to Replicate for ${modelId}...`);
+            try {
+                return await replicate.generate(params);
+            } catch (repErr: unknown) {
+                const repMsg = repErr instanceof Error ? repErr.message : String(repErr);
+                console.error(`[Provider] Replicate fallback also failed: ${repMsg}`);
+                // Show both errors for debugging
+                throw new Error(`Генерация не удалась.\nfal.ai: ${falMsg}\nReplicate: ${repMsg}`);
+            }
+        }
+    }
+
+    // ── Replicate primary, fal.ai fallback ──
+    const primary = getProvider(modelId);
     try {
         return await primary.generate(params);
     } catch (primaryErr: unknown) {
@@ -605,15 +645,15 @@ export async function generateWithFallback(params: AIRequestParams): Promise<AIR
         console.error(`[Provider] Primary (${primary.id}) failed for ${modelId}: ${errMsg}`);
 
         // Attempt fal.ai fallback for supported models
-        if (hasFalFallback(modelId)) {
+        if (hasFalSupport(modelId)) {
             console.log(`[Provider] Falling back to fal.ai for ${modelId}...`);
             try {
                 return await falProvider.generate(params);
             } catch (falErr: unknown) {
                 const falMsg = falErr instanceof Error ? falErr.message : String(falErr);
                 console.error(`[Provider] fal.ai fallback also failed: ${falMsg}`);
-                // Throw original error — more informative
-                throw primaryErr;
+                // Show both errors
+                throw new Error(`Генерация не удалась.\nReplicate: ${errMsg}\nfal.ai: ${falMsg}`);
             }
         }
 
