@@ -18,37 +18,36 @@ export const adminRouter = createTRPCRouter({
       totalWorkspaces,
       totalProjects,
       totalTemplates,
-      totalAIGenerations,
-      totalAICostResult,
+      // Fetch all tracked messages (with model) to compute accurate counts & costs
+      trackedMessages,
     ] = await Promise.all([
       ctx.prisma.user.count(),
       ctx.prisma.workspace.count(),
       ctx.prisma.project.count(),
       ctx.prisma.template.count(),
-      // Count actual AI generations (all assistant messages with a model)
-      ctx.prisma.aIMessage.count({
+      ctx.prisma.aIMessage.findMany({
         where: {
           role: "assistant",
           model: { not: null },
         },
-      }),
-      // Sum cost across all messages
-      ctx.prisma.aIMessage.aggregate({
-        where: {
-          role: "assistant",
-          costUnits: { not: null },
-        },
-        _sum: { costUnits: true },
+        select: { model: true, costUnits: true },
       }),
     ]);
+
+    // Compute total cost using registry prices (same logic as aiCostAnalytics)
+    let totalAICost = 0;
+    for (const msg of trackedMessages) {
+      const modelEntry = getModelById(msg.model ?? "");
+      totalAICost += modelEntry?.costPerRun ?? (msg.costUnits ?? 0);
+    }
 
     return {
       totalUsers,
       totalWorkspaces,
       totalProjects,
       totalTemplates,
-      totalAIGenerations,
-      totalAICost: totalAICostResult._sum.costUnits ?? 0,
+      totalAIGenerations: trackedMessages.length,
+      totalAICost,
     };
   }),
 
@@ -124,6 +123,7 @@ export const adminRouter = createTRPCRouter({
             },
             select: {
               sessionId: true,
+              model: true,
               costUnits: true,
             },
           })
@@ -135,8 +135,9 @@ export const adminRouter = createTRPCRouter({
         const userId = sessionUserMap.get(msg.sessionId);
         if (!userId) continue;
         const existing = userGenMap.get(userId) ?? { count: 0, cost: 0 };
+        const modelEntry = getModelById(msg.model ?? "");
         existing.count += 1;
-        existing.cost += msg.costUnits ?? 0;
+        existing.cost += modelEntry?.costPerRun ?? (msg.costUnits ?? 0);
         userGenMap.set(userId, existing);
       }
 
@@ -233,8 +234,8 @@ export const adminRouter = createTRPCRouter({
       // Normalize model name: resolve slug → id (e.g. "google/nano-banana-pro" → "nano-banana-pro")
       const modelEntry = getModelById(rawModel);
       const model = modelEntry?.id ?? rawModel;
-      // Recalculate cost from registry if stored cost is 0 (legacy data)
-      const cost = (msg.costUnits && msg.costUnits > 0) ? msg.costUnits : (modelEntry?.costPerRun ?? 0);
+      // ALWAYS use registry cost as the source of truth — stored costUnits may have stale pricing
+      const cost = modelEntry?.costPerRun ?? (msg.costUnits ?? 0);
 
       // Model
       const mEntry = modelAgg.get(model) ?? { count: 0, cost: 0 };

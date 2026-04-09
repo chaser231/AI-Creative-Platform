@@ -519,7 +519,7 @@
 <body>
   <div class="page">
     <header class="hero">
-      <div class="eyebrow">AI Creative Platform • Canvas Report • 2026-04-08</div>
+      <div class="eyebrow">AI Creative Platform • Отчёт по канвасу • 2026-04-08</div>
       <h1>Функциональность канваса, как она устроена сейчас</h1>
       <p>
         Презентационный HTML-отчёт по канвасу AI Creative Platform. Основан на коде редактора,
@@ -533,7 +533,7 @@
         </div>
         <div class="hero-stat">
           <strong>3</strong>
-          <span>AI-слоя: prompt bar, image edit, chat agent</span>
+          <span>AI-поверхности: промпт-бар, редактор изображения, чат-ассистент</span>
         </div>
         <div class="hero-stat">
           <strong>2</strong>
@@ -541,7 +541,7 @@
         </div>
         <div class="hero-stat">
           <strong>1</strong>
-          <span>master/instance модель для multi-format</span>
+          <span>мастер-инстанс модель для мультиформата</span>
         </div>
       </div>
     </header>
@@ -563,8 +563,8 @@
         <section class="section" id="overview">
           <div class="badge-row">
             <span class="badge ok">Реализовано в коде</span>
-            <span class="badge plan">Описано в docs / planned</span>
-            <span class="badge gap">Gap / требует задачи</span>
+            <span class="badge plan">Описано в docs / запланировано</span>
+            <span class="badge gap">Расхождение / нужна задача</span>
           </div>
           <h2>Общая карта канваса</h2>
           <p class="lead">
@@ -576,29 +576,29 @@
           <div class="grid-3">
             <article class="card">
               <h3>Wizard</h3>
-              <p>Выбор шаблона, заполнение dynamic fields, AI-помощь по контенту, preview и переход в Studio.</p>
+              <p>Выбор шаблона, заполнение динамических полей, AI-помощь по контенту, предпросмотр и переход в Studio.</p>
               <div class="chip-row">
-                <span class="chip">Template-first</span>
-                <span class="chip">PreviewCanvas</span>
-                <span class="chip">Structured fields</span>
+                <span class="chip">Работа через шаблон</span>
+                <span class="chip">Предпросмотр</span>
+                <span class="chip">Структурированные поля</span>
               </div>
             </article>
             <article class="card">
               <h3>Studio</h3>
-              <p>Konva-канвас, панель слоёв, панель свойств, форматные инстансы, AI prompt bar, AI chat и экспорт.</p>
+              <p>Konva-канвас, панель слоёв, панель свойств, форматные инстансы, AI промпт-бар, AI чат и экспорт.</p>
               <div class="chip-row">
-                <span class="chip">Canvas editing</span>
-                <span class="chip">Multi-format</span>
-                <span class="chip">Autosave</span>
+                <span class="chip">Редактирование канваса</span>
+                <span class="chip">Мультиформат</span>
+                <span class="chip">Автосохранение</span>
               </div>
             </article>
             <article class="card">
               <h3>Редактор вокруг канваса</h3>
-              <p>TopBar с rename и status, resize panel, templates, versions, assets, help, share и project settings.</p>
+              <p>Верхняя панель с rename и status, панель форматов, шаблоны, версии, ассеты, help, share и настройки проекта.</p>
               <div class="chip-row">
-                <span class="chip">Project shell</span>
-                <span class="chip">Versioning</span>
-                <span class="chip">Asset library</span>
+                <span class="chip">Оболочка проекта</span>
+                <span class="chip">Версии</span>
+                <span class="chip">Библиотека ассетов</span>
               </div>
             </article>
           </div>
@@ -614,10 +614,10 @@
           <div class="grid-2">
             <article class="card">
               <h3>Слойная модель</h3>
-              <p>На канвасе есть `text`, `rectangle`, `image`, `badge`, `frame`. Все слои получают общую геометрию, visibility, lock, opacity, constraints и template slot role.</p>
+              <p>На канвасе есть `text`, `rectangle`, `image`, `badge`, `frame`. Все слои получают общую геометрию, видимость, блокировку, opacity, constraints и template slot role.</p>
             </article>
             <article class="card">
-              <h3>Master / Instance</h3>
+              <h3>Мастер / инстанс</h3>
               <p>Контент живёт в master component, локальный layout живёт в instance конкретного resize. При переключении resize канвас пересобирается из instance props.</p>
             </article>
             <article class="card">
@@ -629,12 +629,12 @@
               <p>Артборд без selection, полный инспектор для single selection и type-specific controls для текста, shape, image, badge и frame.</p>
             </article>
             <article class="card">
-              <h3>Resize Panel</h3>
+              <h3>Панель форматов</h3>
               <p>Master resize, custom sizes, rename/remove, linked/unlinked content cascade, smart resize и синхронизация layers на активный формат.</p>
             </article>
             <article class="card">
-              <h3>Canvas interactions</h3>
-              <p>Selection, marquee, deep-select внутри frame, drag, resize, snap guides, clipping rules, pan/zoom, Alt distance measurement и file drag-and-drop.</p>
+              <h3>Взаимодействия на канвасе</h3>
+              <p>Selection, marquee, deep-select внутри frame, drag, resize, snap guides, clipping rules, pan/zoom, измерение расстояний через Alt и file drag-and-drop.</p>
             </article>
           </div>
         </section>
@@ -724,16 +724,16 @@
           <details open>
             <summary>
               <span>Общие поля любого слоя</span>
-              <span class="summary-meta">base layer model</span>
+              <span class="summary-meta">базовая модель слоя</span>
             </summary>
             <div class="details-body">
               <ul class="clean">
                 <li><strong>Геометрия:</strong> `x`, `y`, `width`, `height`, `rotation`</li>
                 <li><strong>Состояние:</strong> `visible`, `locked`, `opacity`</li>
-                <li><strong>Template linkage:</strong> `slotId`, `masterId`</li>
-                <li><strong>Resize behavior:</strong> `constraints.horizontal`, `constraints.vertical`</li>
-                <li><strong>Auto-layout context:</strong> `layoutSizingWidth`, `layoutSizingHeight`, `isAbsolutePositioned`</li>
-                <li><strong>Instance-only nuance:</strong> `detachedSizeSync` для image size sync</li>
+                <li><strong>Связь с шаблоном:</strong> `slotId`, `masterId`</li>
+                <li><strong>Поведение в resize:</strong> `constraints.horizontal`, `constraints.vertical`</li>
+                <li><strong>Контекст auto-layout:</strong> `layoutSizingWidth`, `layoutSizingHeight`, `isAbsolutePositioned`</li>
+                <li><strong>Нюанс инстанса:</strong> `detachedSizeSync` для отключения синхронизации размера image</li>
               </ul>
             </div>
           </details>
@@ -741,7 +741,7 @@
           <details>
             <summary>
               <span>Text</span>
-              <span class="summary-meta">typography + container</span>
+              <span class="summary-meta">типографика и контейнер</span>
             </summary>
             <div class="details-body">
               Контент `text`, typography (`fontSize`, `fontFamily`, `fontWeight`, `letterSpacing`, `lineHeight`),
@@ -753,7 +753,7 @@
           <details>
             <summary>
               <span>Rectangle</span>
-              <span class="summary-meta">fill + stroke</span>
+              <span class="summary-meta">заливка и обводка</span>
             </summary>
             <div class="details-body">
               `fill`, `fillEnabled`, `stroke`, `strokeEnabled`, `strokeWidth`, `cornerRadius`, `opacity`.
@@ -763,7 +763,7 @@
           <details>
             <summary>
               <span>Image</span>
-              <span class="summary-meta">source + fit modes</span>
+              <span class="summary-meta">источник и fit-режимы</span>
             </summary>
             <div class="details-body">
               `src`, `objectFit = cover / contain / fill / crop`, width/height, opacity. В properties есть
@@ -774,7 +774,7 @@
           <details>
             <summary>
               <span>Badge</span>
-              <span class="summary-meta">label + shape</span>
+              <span class="summary-meta">лейбл и форма</span>
             </summary>
             <div class="details-body">
               `label`, `shape = pill / rectangle / circle`, `fill`, `fillEnabled`, `textColor`, `fontSize`, `opacity`.
@@ -784,7 +784,7 @@
           <details>
             <summary>
               <span>Frame</span>
-              <span class="summary-meta">nesting + auto-layout</span>
+              <span class="summary-meta">вложенность и auto-layout</span>
             </summary>
             <div class="details-body">
               `childIds`, `clipContent`, `layoutMode`, paddings, spacing, primary/counter axis alignment,
@@ -796,14 +796,14 @@
         <section class="section" id="ai">
           <h2>AI в редакторе</h2>
           <p class="lead">
-            AI-подсистема уже разбита на три полноценных режима: быстрый prompt bar,
-            отдельный image editor и agent-like chat panel с планом шагов и canvas actions.
+            AI-подсистема уже разбита на три полноценных режима: быстрый промпт-бар,
+            отдельный редактор изображения и чат-ассистент с планом шагов и canvas actions.
           </p>
 
           <div class="grid-3">
             <article class="card">
               <h3>AIPromptBar</h3>
-              <p>Text generation, image generation, style presets, model picker, aspect ratio, resolution, refs и apply-to-selection.</p>
+              <p>Генерация текста, генерация изображения, style presets, выбор модели, aspect ratio, resolution, refs и apply-to-selection.</p>
               <div class="chip-row">
                 <span class="chip">DeepSeek</span>
                 <span class="chip">Gemini Flash</span>
@@ -821,7 +821,7 @@
             </article>
             <article class="card">
               <h3>AIChatPanel</h3>
-              <p>Natural language запросы, tool plan, template search/apply, canvas actions, preset choices и reference-image aware orchestration.</p>
+              <p>Запросы на естественном языке, план инструментов, поиск и применение шаблонов, canvas actions, выбор пресетов и orchestration с учётом reference images.</p>
               <div class="chip-row">
                 <span class="chip">Plan steps</span>
                 <span class="chip">Canvas actions</span>
@@ -834,7 +834,7 @@
             <table>
               <thead>
                 <tr>
-                  <th>AI surface</th>
+                  <th>AI-поверхность</th>
                   <th>Поддерживаемые режимы</th>
                   <th>Ключевые параметры</th>
                   <th>Как результат попадает в канвас</th>
@@ -843,7 +843,7 @@
               <tbody>
                 <tr>
                   <td><strong>AIPromptBar</strong></td>
-                  <td>Text, image, image edit entrypoint</td>
+                  <td>Генерация текста, изображения и вход в image edit</td>
                   <td>model, refs, aspect ratio, resolution, style preset, apply-to-selection</td>
                   <td>Создаёт новый text/image layer либо обновляет первый selected layer</td>
                 </tr>
@@ -855,7 +855,7 @@
                 </tr>
                 <tr>
                   <td><strong>AIChatPanel</strong></td>
-                  <td>Agent plan, template search/apply, generated text/image, fallback/preset choices</td>
+                  <td>План действий, поиск и применение шаблонов, generated text/image, fallback/preset choices</td>
                   <td>history, selected text/image model, reference images, workspace/project context</td>
                   <td>Через `add_text`, `add_image`, `load_template`, `update_layer` canvas actions</td>
                 </tr>
@@ -896,14 +896,14 @@
             <div class="timeline-item">
               <div class="timeline-step">4</div>
               <div>
-                <h3>AI-гeneration и AI-edit</h3>
-                <p>Через prompt bar создаются тексты и изображения, а через image editor выбранный image layer можно доработать маской, prompt-ом или расширением холста.</p>
+                <h3>AI-генерация и AI-редактирование</h3>
+                <p>Через prompt bar создаются тексты и изображения, а через image editor выбранный image layer можно доработать маской, промптом или расширением холста.</p>
               </div>
             </div>
             <div class="timeline-item">
               <div class="timeline-step">5</div>
               <div>
-                <h3>Agent-like canvas assistant</h3>
+                <h3>Чат-ассистент для канваса</h3>
                 <p>AI chat строит план, предлагает style presets и templates, а затем исполняет ограниченный набор canvas actions для добавления контента и загрузки шаблонов.</p>
               </div>
             </div>

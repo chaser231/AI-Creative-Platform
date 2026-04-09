@@ -110,14 +110,20 @@ export function useAISessionSync(projectId: string) {
       if (sessionId) {
         for (const msg of newMessages) {
           if (msg.type === "plan" || msg.type === "template_choices" || msg.type === "fallback_actions" || msg.type === "text_variants") continue; // ephemeral UI messages
+
+          // Assistant image messages are already cost-tracked by the API route
+          // (generate/route.ts, image-edit/route.ts). Don't pass model/costUnits here
+          // to avoid double-counting in analytics (analytics filters by model != null).
+          const isTrackedByRoute = msg.role === "assistant" && (msg.type === "image" || msg.type === "outpaint");
+
           addMessageMutation
             .mutateAsync({
               sessionId,
               role: msg.role as "user" | "assistant" | "system",
               content: msg.content,
               type: msg.type as "text" | "image" | "error",
-              model: msg.model,
-              costUnits: msg.costUnits,
+              model: isTrackedByRoute ? undefined : msg.model,
+              costUnits: isTrackedByRoute ? undefined : msg.costUnits,
             })
             .catch((err: Error) => {
               console.error("Failed to save AI message:", err);

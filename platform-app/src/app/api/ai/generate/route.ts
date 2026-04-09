@@ -63,6 +63,14 @@ export async function POST(req: NextRequest) {
                     });
                     aiSessionId = newSession.id;
                 }
+            } else {
+                // No projectId — try to find any recent session for this user
+                const fallback = await prisma.aISession.findFirst({
+                    where: { userId },
+                    orderBy: { updatedAt: "desc" },
+                    select: { id: true },
+                });
+                aiSessionId = fallback?.id;
             }
 
             if (aiSessionId) {
@@ -76,6 +84,8 @@ export async function POST(req: NextRequest) {
                         costUnits: costPerRun,
                     },
                 });
+            } else {
+                console.warn("[/api/ai/generate] No session found for cost tracking — generation not tracked");
             }
         } catch (costErr) {
             console.error("[/api/ai/generate] Cost tracking failed:", costErr);
