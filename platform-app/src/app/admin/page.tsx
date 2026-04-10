@@ -54,14 +54,59 @@ function RoleBadge({ role }: { role: string }) {
 /* ─── Cost Analytics Tabs ──────────────────────────────── */
 
 type CostTab = "users" | "models" | "projects" | "workspaces";
+type PeriodKey = "today" | "week" | "month" | "year" | "all" | "custom";
 
-function CostAnalyticsSection({ data }: {
+function getDateRange(key: PeriodKey): { from?: string; to?: string } {
+    const now = new Date();
+    const toISO = (d: Date) => d.toISOString().slice(0, 10);
+    switch (key) {
+        case "today": {
+            return { from: toISO(now), to: toISO(now) };
+        }
+        case "week": {
+            const d = new Date(now);
+            d.setDate(d.getDate() - 7);
+            return { from: toISO(d), to: toISO(now) };
+        }
+        case "month": {
+            const d = new Date(now);
+            d.setMonth(d.getMonth() - 1);
+            return { from: toISO(d), to: toISO(now) };
+        }
+        case "year": {
+            const d = new Date(now);
+            d.setFullYear(d.getFullYear() - 1);
+            return { from: toISO(d), to: toISO(now) };
+        }
+        case "all":
+            return {};
+        case "custom":
+            return {}; // handled externally
+    }
+}
+
+const PERIOD_LABELS: { id: PeriodKey; label: string }[] = [
+    { id: "today", label: "Сегодня" },
+    { id: "week", label: "Неделя" },
+    { id: "month", label: "Месяц" },
+    { id: "year", label: "Год" },
+    { id: "all", label: "Всё время" },
+    { id: "custom", label: "Произвольный" },
+];
+
+function CostAnalyticsSection({ data, period, onPeriodChange, customFrom, customTo, onCustomFromChange, onCustomToChange }: {
     data: {
         byModel: { model: string; count: number; cost: number }[];
         byUser: { id: string; name: string; email: string; count: number; cost: number }[];
         byProject: { id: string; name: string; workspaceName: string; count: number; cost: number }[];
         byWorkspace: { id: string; name: string; count: number; cost: number }[];
     };
+    period: PeriodKey;
+    onPeriodChange: (p: PeriodKey) => void;
+    customFrom: string;
+    customTo: string;
+    onCustomFromChange: (v: string) => void;
+    onCustomToChange: (v: string) => void;
 }) {
     const [tab, setTab] = useState<CostTab>("users");
 
@@ -72,9 +117,55 @@ function CostAnalyticsSection({ data }: {
         { id: "workspaces", label: "По воркспейсам" },
     ];
 
+    // Summary totals
+    const totalCost = data.byModel.reduce((sum, m) => sum + m.cost, 0);
+    const totalGens = data.byModel.reduce((sum, m) => sum + m.count, 0);
+
     return (
         <section>
-            <h2 className="text-lg font-semibold text-text-primary mb-4">Аналитика AI-затрат</h2>
+            <div className="flex items-center justify-between mb-4">
+                <h2 className="text-lg font-semibold text-text-primary">Аналитика AI-затрат</h2>
+                <div className="flex items-center gap-2 text-xs">
+                    <span className="text-text-tertiary">Генераций:</span>
+                    <span className="font-semibold text-text-primary">{totalGens}</span>
+                    <span className="text-text-tertiary ml-2">Затраты:</span>
+                    <span className="font-semibold text-green-400">${totalCost.toFixed(2)}</span>
+                </div>
+            </div>
+
+            {/* Period selector */}
+            <div className="flex flex-wrap items-center gap-1.5 mb-3">
+                {PERIOD_LABELS.map(p => (
+                    <button
+                        key={p.id}
+                        onClick={() => onPeriodChange(p.id)}
+                        className={`px-2.5 py-1 rounded-lg text-[11px] font-medium transition-colors cursor-pointer ${
+                            period === p.id
+                                ? "bg-accent-primary/15 text-accent-primary border border-accent-primary/30"
+                                : "bg-bg-secondary text-text-tertiary hover:text-text-primary border border-transparent"
+                        }`}
+                    >
+                        {p.label}
+                    </button>
+                ))}
+                {period === "custom" && (
+                    <div className="flex items-center gap-1.5 ml-2">
+                        <input
+                            type="date"
+                            value={customFrom}
+                            onChange={e => onCustomFromChange(e.target.value)}
+                            className="h-7 px-2 text-[11px] rounded-lg border border-border-primary bg-bg-surface text-text-primary"
+                        />
+                        <span className="text-text-tertiary text-[11px]">—</span>
+                        <input
+                            type="date"
+                            value={customTo}
+                            onChange={e => onCustomToChange(e.target.value)}
+                            className="h-7 px-2 text-[11px] rounded-lg border border-border-primary bg-bg-surface text-text-primary"
+                        />
+                    </div>
+                )}
+            </div>
 
             {/* Tabs */}
             <div className="flex gap-1 mb-4">
@@ -167,7 +258,7 @@ function CostAnalyticsSection({ data }: {
                           (tab === "workspaces" && data.byWorkspace.length === 0)) && (
                             <tr>
                                 <td colSpan={4} className="px-4 py-8 text-center text-text-tertiary">
-                                    Пока нет данных. Расходы начнут отображаться после новых генераций.
+                                    Нет данных за выбранный период.
                                 </td>
                             </tr>
                         )}
@@ -183,6 +274,18 @@ function CostAnalyticsSection({ data }: {
 export default function AdminDashboardPage() {
     const router = useRouter();
     const [userSearch, setUserSearch] = useState("");
+    const [costPeriod, setCostPeriod] = useState<PeriodKey>("all");
+    const [customFrom, setCustomFrom] = useState(() => {
+        const d = new Date(); d.setMonth(d.getMonth() - 1);
+        return d.toISOString().slice(0, 10);
+    });
+    const [customTo, setCustomTo] = useState(() => new Date().toISOString().slice(0, 10));
+
+    // Compute date range for cost analytics
+    const rawRange = costPeriod === "custom"
+        ? { from: customFrom, to: customTo }
+        : getDateRange(costPeriod);
+    const costDateRange = { dateFrom: rawRange.from, dateTo: rawRange.to };
 
     // Access guard — must be before any early return
     const { data: me, isLoading: meLoading } = trpc.auth.me.useQuery(undefined, { refetchOnWindowFocus: false });
@@ -196,7 +299,10 @@ export default function AdminDashboardPage() {
         offset: 0,
     }, { enabled: isSuperAdmin });
     const { data: workspaces, isLoading: wsLoading } = trpc.admin.workspaces.useQuery(undefined, { enabled: isSuperAdmin });
-    const { data: costAnalytics, isLoading: costLoading } = trpc.admin.aiCostAnalytics.useQuery(undefined, { enabled: isSuperAdmin });
+    const { data: costAnalytics, isLoading: costLoading } = trpc.admin.aiCostAnalytics.useQuery(
+        { dateFrom: costDateRange.dateFrom, dateTo: costDateRange.dateTo },
+        { enabled: isSuperAdmin }
+    );
 
     const updateRoleMutation = trpc.admin.updateUserRole.useMutation();
 
@@ -367,7 +473,15 @@ export default function AdminDashboardPage() {
 
                     {/* Cost Analytics Section */}
                     {!costLoading && costAnalytics && (
-                        <CostAnalyticsSection data={costAnalytics} />
+                        <CostAnalyticsSection
+                            data={costAnalytics}
+                            period={costPeriod}
+                            onPeriodChange={setCostPeriod}
+                            customFrom={customFrom}
+                            customTo={customTo}
+                            onCustomFromChange={setCustomFrom}
+                            onCustomToChange={setCustomTo}
+                        />
                     )}
 
                     {/* Workspaces Table */}

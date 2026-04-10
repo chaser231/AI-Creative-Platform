@@ -39,7 +39,7 @@ export default function AllProjectsPage() {
     deleteMutation.mutate({ id });
   }, [deleteMutation]);
 
-  type BackendProject = { id: string; name: string; status: string; goal: string | null; createdAt: Date; updatedAt: Date; thumbnail: string | null };
+  type BackendProject = { id: string; name: string; status: string; goal: string | null; createdAt: Date; updatedAt: Date; thumbnail: string | null; createdBy?: { id: string; name: string; avatarUrl: string | null } };
   const projects = useMemo(() => {
     return ((backendProjects || []) as BackendProject[]).map((bp) => ({
       id: bp.id,
@@ -52,6 +52,7 @@ export default function AllProjectsPage() {
       thumbnail: bp.thumbnail ?? undefined,
       resizes: [],
       activeResizeId: "master",
+      createdBy: bp.createdBy ?? undefined,
     }));
   }, [backendProjects]);
 

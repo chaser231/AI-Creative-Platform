@@ -43,6 +43,10 @@ export interface AIResponse {
     format: "text" | "url" | "base64";
     model: string;
     provider: string;
+    /** Actual pixel width of the generated image (when available) */
+    width?: number;
+    /** Actual pixel height of the generated image (when available) */
+    height?: number;
 }
 
 export interface AIProviderImplementation {
@@ -152,7 +156,7 @@ class ReplicateProvider implements AIProviderImplementation {
         const result = await this.callReplicate(entry, input, token);
         // LLMs return an array of strings or a single string
         const text = Array.isArray(result) ? result.join("") : String(result);
-        return { content: text, format: "text", model: entry.slug, provider: "replicate" };
+        return { content: text, format: "text", model: entry.id, provider: "replicate" };
     }
 
     // ── Image Generation / Editing ──────────────────────────────────────
@@ -167,7 +171,7 @@ class ReplicateProvider implements AIProviderImplementation {
             const rembgEntry = getModelById("rembg")!;
             const result = await this.callReplicate(rembgEntry, { image: params.imageBase64 }, token);
             const output = Array.isArray(result) ? result[0] : result;
-            return { content: output as string, format: "url", model: rembgEntry.slug, provider: "replicate" };
+            return { content: output as string, format: "url", model: rembgEntry.id, provider: "replicate" };
         }
 
         // ── Outpaint ────────────────────────────────────────────────
@@ -188,7 +192,7 @@ class ReplicateProvider implements AIProviderImplementation {
             
             const result = await this.callReplicate(expandEntry, expandInput, token);
             const output = Array.isArray(result) ? result[0] : result;
-            return { content: output as string, format: "url", model: expandEntry.slug, provider: "replicate" };
+            return { content: output as string, format: "url", model: expandEntry.id, provider: "replicate" };
         }
 
         // ── Inpaint ─────────────────────────────────────────────────
@@ -212,7 +216,7 @@ class ReplicateProvider implements AIProviderImplementation {
             
             const result = await this.callReplicate(entry, input, token);
             const output = Array.isArray(result) ? result[0] : result;
-            return { content: output as string, format: "url", model: entry.slug, provider: "replicate" };
+            return { content: output as string, format: "url", model: entry.id, provider: "replicate" };
         }
 
         // ── Edit (image + prompt → edited image) ────────────────────
@@ -241,7 +245,7 @@ class ReplicateProvider implements AIProviderImplementation {
 
             const result = await this.callReplicate(entry, input, token);
             const output = Array.isArray(result) ? result[0] : result;
-            return { content: output as string, format: "url", model: entry.slug, provider: "replicate" };
+            return { content: output as string, format: "url", model: entry.id, provider: "replicate" };
         }
 
         // ── Standard text-to-image generation ───────────────────────
@@ -266,8 +270,8 @@ class ReplicateProvider implements AIProviderImplementation {
         } else if (isGoogle) {
             // Nano Banana models: only jpg or png
             input.output_format = "png";
-            // Google resolution: output_resolution
-            if (params.scale) input.output_resolution = params.scale; // "512px", "1024px", "2048px", "4096px"
+            // Google resolution: "1K" | "2K" | "4K"
+            if (params.scale) input.resolution = params.scale;
         } else if (slug.startsWith("openai/")) {
             // GPT Image: quality
             if (params.scale) input.quality = params.scale; // "low", "medium", "high"
@@ -298,7 +302,7 @@ class ReplicateProvider implements AIProviderImplementation {
 
         const result = await this.callReplicate(entry, input, token);
         const output = Array.isArray(result) ? result[0] : result;
-        return { content: output as string, format: "url", model: entry.slug, provider: "replicate" };
+        return { content: output as string, format: "url", model: entry.id, provider: "replicate" };
     }
 
     // ── Replicate API Call ───────────────────────────────────────────────
@@ -358,10 +362,10 @@ class ReplicateProvider implements AIProviderImplementation {
             return prediction.output;
         }
 
-        // Poll for result (up to 180 seconds with retry on network errors)
+        // Poll for result (up to 300 seconds with retry on network errors)
         const predictionId = prediction.id;
         console.log(`[Replicate] Polling prediction ${predictionId} for ${entry.slug}...`);
-        const maxPolls = 90; // 90 * 2s = 180s
+        const maxPolls = 150; // 150 * 2s = 300s
         let consecutiveNetworkErrors = 0;
 
         for (let i = 0; i < maxPolls; i++) {
@@ -407,7 +411,189 @@ class ReplicateProvider implements AIProviderImplementation {
             }
         }
 
-        throw new Error("Replicate prediction timed out after 180 seconds");
+        throw new Error("Replicate prediction timed out after 300 seconds");
+    }
+}
+
+// ─── fal.ai Fallback Provider ───────────────────────────────────────────────
+
+/** Model ID → fal.ai text-to-image endpoint mapping */
+const FAL_MODEL_MAP: Record<string, string> = {
+    "nano-banana":     "fal-ai/nano-banana",
+    "nano-banana-2":   "fal-ai/nano-banana-2",
+    "nano-banana-pro": "fal-ai/nano-banana-pro",
+    "seedream":        "fal-ai/seedream-4.5",
+};
+
+/** Model ID → fal.ai /edit endpoint (required for reference images) */
+const FAL_MODEL_MAP_EDIT: Record<string, string> = {
+    "nano-banana":     "fal-ai/nano-banana/edit",
+    "nano-banana-2":   "fal-ai/nano-banana-2/edit",
+    "nano-banana-pro": "fal-ai/nano-banana-pro/edit",
+};
+
+class FalProvider implements AIProviderImplementation {
+    id = "fal";
+    name = "fal.ai";
+
+    async generate(params: AIRequestParams): Promise<AIResponse> {
+        const apiKey = process.env.FAL_KEY;
+        if (!apiKey) {
+            throw new Error("fal.ai API key not configured. Set FAL_KEY in .env.local");
+        }
+
+        const modelId = params.model || "nano-banana-2";
+        const entry = getModelById(modelId);
+        if (!entry) throw new Error(`Unknown model: ${modelId}`);
+
+        // Text models not supported on fal.ai in this implementation
+        if (entry.caps.includes("text")) {
+            throw new Error(`Text models not supported on fal.ai fallback`);
+        }
+
+        // ── Determine endpoint ─────────────────────────────────────
+        // Use /edit endpoint when: reference images present, or explicit edit type
+        const needsEditEndpoint =
+            (params.referenceImages && params.referenceImages.length > 0) ||
+            params.type === "edit";
+
+        let falEndpoint: string | undefined;
+        if (needsEditEndpoint) {
+            falEndpoint = FAL_MODEL_MAP_EDIT[modelId];
+            // Fall back to base endpoint if no /edit variant exists
+            if (!falEndpoint) falEndpoint = FAL_MODEL_MAP[modelId];
+        } else {
+            falEndpoint = FAL_MODEL_MAP[modelId];
+        }
+        if (!falEndpoint) throw new Error(`Model ${modelId} is not available on fal.ai`);
+
+        // ── Build input ────────────────────────────────────────────
+        const input: Record<string, unknown> = {};
+        input.prompt = params.prompt;
+        if (params.aspectRatio) input.aspect_ratio = params.aspectRatio;
+
+        // Resolution mapping: fal.ai uses same "1K"/"2K"/"4K" enum for Google models
+        if (params.scale) input.resolution = params.scale;
+
+        // Output format
+        input.output_format = "png";
+
+        // Reference images — /edit endpoint uses `image_urls` (NOT `image_input`)
+        // Accepts both public URLs and base64 data URIs
+        if (params.referenceImages && params.referenceImages.length > 0) {
+            input.image_urls = params.referenceImages;
+        }
+
+        // Image edit — prepend the source image to image_urls
+        if (params.type === "edit" && params.imageBase64) {
+            const existingRefs = (input.image_urls as string[] | undefined) || [];
+            input.image_urls = [params.imageBase64, ...existingRefs];
+        }
+
+        console.log(`[fal.ai] Submitting to ${falEndpoint} (edit=${!!needsEditEndpoint}, refs=${(input.image_urls as string[] | undefined)?.length || 0}, prompt="${String(params.prompt).slice(0, 60)}")...`);
+
+        // ── Submit to queue ─────────────────────────────────────────
+        const submitRes = await fetch(`https://queue.fal.run/${falEndpoint}`, {
+            method: "POST",
+            headers: {
+                "Authorization": `Key ${apiKey}`,
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify(input),
+        });
+
+        if (!submitRes.ok) {
+            const errBody = await submitRes.text();
+            console.error(`[fal.ai] Submit error:`, errBody);
+            throw new Error(`fal.ai error (${submitRes.status}): ${errBody.slice(0, 300)}`);
+        }
+
+        const submitData = await submitRes.json();
+        const requestId = submitData.request_id;
+
+        if (!requestId) {
+            // Synchronous result — no polling needed
+            return this.parseResult(submitData, entry);
+        }
+
+        // Use URLs from fal.ai response (handles /edit sub-endpoints correctly)
+        const statusUrl = submitData.status_url
+            || `https://queue.fal.run/${falEndpoint}/requests/${requestId}/status`;
+        const responseUrl = submitData.response_url
+            || `https://queue.fal.run/${falEndpoint}/requests/${requestId}`;
+
+        console.log(`[fal.ai] Queued request ${requestId}`);
+        console.log(`[fal.ai] Status URL: ${statusUrl}`);
+        console.log(`[fal.ai] Response URL: ${responseUrl}`);
+
+        // ── Poll for result (up to 300s) ───────────────────────────
+        for (let i = 0; i < 150; i++) {
+            await new Promise(r => setTimeout(r, 2000));
+
+            try {
+                const statusRes = await fetch(statusUrl, {
+                    headers: { "Authorization": `Key ${apiKey}` },
+                });
+
+                if (!statusRes.ok) {
+                    console.warn(`[fal.ai] Status poll HTTP ${statusRes.status}`);
+                    continue;
+                }
+                const status = await statusRes.json();
+
+                if (status.status === "COMPLETED") {
+                    // Fetch the actual result
+                    const resultRes = await fetch(responseUrl, {
+                        headers: { "Authorization": `Key ${apiKey}` },
+                    });
+
+                    if (!resultRes.ok) {
+                        const errText = await resultRes.text();
+                        throw new Error(`fal.ai result fetch failed (${resultRes.status}): ${errText.slice(0, 300)}`);
+                    }
+
+                    const result = await resultRes.json();
+                    console.log(`[fal.ai] Request ${requestId} completed after ${(i + 1) * 2}s`);
+                    console.log(`[fal.ai] Response keys: ${Object.keys(result).join(", ")}`);
+                    if (result.images) {
+                        console.log(`[fal.ai] images[0]: url=${!!result.images[0]?.url}, w=${result.images[0]?.width}, h=${result.images[0]?.height}`);
+                    } else {
+                        console.log(`[fal.ai] No 'images' field. Full response: ${JSON.stringify(result).slice(0, 500)}`);
+                    }
+                    return this.parseResult(result, entry);
+                }
+                if (status.status === "FAILED") {
+                    throw new Error(`fal.ai prediction failed: ${status.error || "unknown"}`);
+                }
+                // IN_QUEUE or IN_PROGRESS — keep polling
+            } catch (err: unknown) {
+                const msg = err instanceof Error ? err.message : String(err);
+                if (err instanceof TypeError && msg.includes("fetch")) {
+                    console.warn(`[fal.ai] Poll network error: ${msg}`);
+                    continue;
+                }
+                throw err;
+            }
+        }
+
+        throw new Error("fal.ai prediction timed out after 300 seconds");
+    }
+
+    /** Parse fal.ai response, extracting image URL and dimensions */
+    private parseResult(data: Record<string, unknown>, entry: ModelEntry): AIResponse {
+        const images = data.images as { url?: string; width?: number; height?: number }[] | undefined;
+        const imageObj = images?.[0];
+        const imageUrl = imageObj?.url || (data.output as string);
+        if (!imageUrl) throw new Error("fal.ai: no image URL in response");
+
+        return {
+            content: imageUrl,
+            format: "url",
+            model: entry.id,
+            provider: "fal",
+            width: imageObj?.width,
+            height: imageObj?.height,
+        };
     }
 }
 
@@ -415,10 +601,150 @@ class ReplicateProvider implements AIProviderImplementation {
 
 const openaiDirect = new OpenAIDirectProvider();
 const replicate = new ReplicateProvider();
+const falProvider = new FalProvider();
+
+/** Check if a model has fal.ai support available */
+function hasFalSupport(modelId: string): boolean {
+    return !!FAL_MODEL_MAP[modelId] && !!process.env.FAL_KEY;
+}
+
+/**
+ * Models where fal.ai should be the PRIMARY provider (Replicate is unstable).
+ * When FAL_KEY is set, these models go to fal.ai first, Replicate as fallback.
+ */
+const FAL_PRIMARY_MODELS = new Set([
+    "nano-banana-2",
+    "nano-banana",
+    "nano-banana-pro",
+]);
+
+
+
+/**
+ * Model fallback chains — if original model is unavailable on all providers,
+ * try sibling models from the same family.
+ */
+const MODEL_FALLBACK_CHAIN: Record<string, string[]> = {
+    "nano-banana-2":   ["nano-banana", "nano-banana-pro"],
+    "nano-banana":     ["nano-banana-2", "nano-banana-pro"],
+    "nano-banana-pro": ["nano-banana-2", "nano-banana"],
+};
+
+/**
+ * Try a single generation attempt on a specific provider.
+ * Returns result or throws.
+ */
+async function tryProvider(
+    provider: AIProviderImplementation,
+    params: AIRequestParams,
+    label: string,
+): Promise<AIResponse> {
+    console.log(`[Provider] Trying ${label} for ${params.model}...`);
+    return await provider.generate(params);
+}
+
+/**
+ * Try generation with retry (up to `maxAttempts`) on a single provider.
+ * Adds a short delay between retries.
+ */
+async function tryWithRetry(
+    provider: AIProviderImplementation,
+    params: AIRequestParams,
+    label: string,
+    maxAttempts = 2,
+): Promise<AIResponse> {
+    let lastErr: unknown;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+            return await tryProvider(provider, params, `${label} (attempt ${attempt}/${maxAttempts})`);
+        } catch (err: unknown) {
+            lastErr = err;
+            const msg = err instanceof Error ? err.message : String(err);
+            console.warn(`[Provider] ${label} attempt ${attempt} failed: ${msg}`);
+            // Don't retry on "Service unavailable" — it won't help
+            if (msg.includes("Service is currently unavailable") || msg.includes("high demand")) {
+                break;
+            }
+            // Wait before retry (5s)
+            if (attempt < maxAttempts) {
+                await new Promise(r => setTimeout(r, 5000));
+            }
+        }
+    }
+    throw lastErr;
+}
 
 export function getProvider(modelId: string): AIProviderImplementation {
     const entry = getModelById(modelId);
     if (entry?.provider === "openai") return openaiDirect;
-    // Everything else goes through Replicate (including BYOK models like gpt-image)
     return replicate;
+}
+
+/**
+ * Generate with maximum resilience:
+ *
+ * 1. Try primary provider (fal.ai for nano-banana, Replicate for others)
+ *    with up to 2 retries
+ * 2. Try secondary provider with up to 2 retries
+ * 3. If both fail, try sibling models from same family
+ *    (e.g. nano-banana-2 → nano-banana → nano-banana-pro)
+ */
+export async function generateWithFallback(params: AIRequestParams): Promise<AIResponse> {
+    const modelId = params.model || "nano-banana-2";
+    const errors: string[] = [];
+
+    // Determine provider order
+    const useFalPrimary = FAL_PRIMARY_MODELS.has(modelId) && hasFalSupport(modelId);
+    const providers: { impl: AIProviderImplementation; label: string }[] = useFalPrimary
+        ? [
+            { impl: falProvider, label: "fal.ai" },
+            { impl: replicate, label: "Replicate" },
+          ]
+        : hasFalSupport(modelId)
+            ? [
+                { impl: replicate, label: "Replicate" },
+                { impl: falProvider, label: "fal.ai" },
+              ]
+            : [
+                { impl: getProvider(modelId), label: "Replicate" },
+              ];
+
+    // ── Step 1: Try each provider with retries for the original model ──
+    for (const { impl, label } of providers) {
+        try {
+            return await tryWithRetry(impl, params, `${label}/${modelId}`);
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            errors.push(`${label}: ${msg}`);
+        }
+    }
+
+    // ── Step 2: Try sibling models from the same family ──
+    const siblings = MODEL_FALLBACK_CHAIN[modelId];
+    if (siblings && siblings.length > 0) {
+        for (const siblingId of siblings) {
+            console.log(`[Provider] Trying sibling model ${siblingId} instead of ${modelId}...`);
+            const siblingParams = { ...params, model: siblingId };
+
+            // Determine providers for sibling
+            const sibFalPrimary = FAL_PRIMARY_MODELS.has(siblingId) && hasFalSupport(siblingId);
+            const sibProviders = sibFalPrimary
+                ? [{ impl: falProvider, label: "fal.ai" }, { impl: replicate, label: "Replicate" }]
+                : [{ impl: replicate, label: "Replicate" }, ...(hasFalSupport(siblingId) ? [{ impl: falProvider, label: "fal.ai" }] : [])];
+
+            for (const { impl, label } of sibProviders) {
+                try {
+                    const result = await tryWithRetry(impl, siblingParams, `${label}/${siblingId}`, 1);
+                    console.log(`[Provider] ✓ Sibling model ${siblingId} succeeded on ${label}`);
+                    return result;
+                } catch (err: unknown) {
+                    const msg = err instanceof Error ? err.message : String(err);
+                    errors.push(`${label}/${siblingId}: ${msg}`);
+                }
+            }
+        }
+    }
+
+    // All providers and models exhausted
+    throw new Error(`Генерация не удалась. Все провайдеры и модели недоступны:\n${errors.join("\n")}`);
 }

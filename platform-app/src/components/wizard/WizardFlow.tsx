@@ -663,6 +663,7 @@ export function WizardFlow({ projectId, onSwitchToStudio, initialTemplateId }: W
                                                             onChange={(val) => setImageValues(prev => ({ ...prev, [mc.id]: val }))}
                                                             businessUnit={projectBU}
                                                             productDescription={productDescription}
+                                                            projectId={projectId}
                                                         />
                                                     );
                                                 }

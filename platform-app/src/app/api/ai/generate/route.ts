@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getProvider } from "@/lib/ai-providers";
+import { generateWithFallback } from "@/lib/ai-providers";
 import { auth } from "@/server/auth";
 import { prisma } from "@/server/db";
 import { getModelById } from "@/lib/ai-models";
+
+// Allow up to 5 minutes for AI generation (retry + fallback + model fallback)
+export const maxDuration = 300;
 
 export async function POST(req: NextRequest) {
     try {
@@ -28,9 +31,7 @@ export async function POST(req: NextRequest) {
             console.log(`[/api/ai/generate] referenceImages: ${referenceImages.length} image(s), first ~80 chars: ${String(referenceImages[0]).slice(0, 80)}`);
         }
 
-        const provider = getProvider(model || "nano-banana-2");
-
-        const result = await provider.generate({
+        const result = await generateWithFallback({
             prompt,
             type: type || "image",
             model,
@@ -42,6 +43,7 @@ export async function POST(req: NextRequest) {
             systemPrompt,
             imageBase64,
         });
+
 
         // ── Track AI cost ──────────────────────────────────────────
         try {
@@ -64,6 +66,14 @@ export async function POST(req: NextRequest) {
                     });
                     aiSessionId = newSession.id;
                 }
+            } else {
+                // No projectId — try to find any recent session for this user
+                const fallback = await prisma.aISession.findFirst({
+                    where: { userId },
+                    orderBy: { updatedAt: "desc" },
+                    select: { id: true },
+                });
+                aiSessionId = fallback?.id;
             }
 
             if (aiSessionId) {
@@ -77,6 +87,8 @@ export async function POST(req: NextRequest) {
                         costUnits: costPerRun,
                     },
                 });
+            } else {
+                console.warn("[/api/ai/generate] No session found for cost tracking — generation not tracked");
             }
         } catch (costErr) {
             console.error("[/api/ai/generate] Cost tracking failed:", costErr);

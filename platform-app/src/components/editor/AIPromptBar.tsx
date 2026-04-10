@@ -81,9 +81,10 @@ function OutlinedSelector({
 }
 
 export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult, projectId }: AIPromptBarProps) {
-    const { addTextLayer, addImageLayer, selectedLayerIds, updateLayer, layers } = useCanvasStore(useShallow((s) => ({
+    const { addTextLayer, addImageLayer, selectedLayerIds, updateLayer, layers, canvasWidth, canvasHeight } = useCanvasStore(useShallow((s) => ({
         addTextLayer: s.addTextLayer, addImageLayer: s.addImageLayer,
         selectedLayerIds: s.selectedLayerIds, updateLayer: s.updateLayer, layers: s.layers,
+        canvasWidth: s.canvasWidth, canvasHeight: s.canvasHeight,
     })));
     const [activeTab, setActiveTab] = useState<"text" | "image" | "outpaint">("text");
     const [prompt, setPrompt] = useState("");
@@ -197,15 +198,16 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                     });
                 } else {
                     // Dynamically measure the new image to preserve aspect ratio
+                    // Fit to artboard: scale down if larger than canvas
                     const img = new Image();
                     img.onload = () => {
                         let w = img.naturalWidth;
                         let h = img.naturalHeight;
-                        const MAX_DIM = 600;
-                        if (w > MAX_DIM || h > MAX_DIM) {
-                            const scale = MAX_DIM / Math.max(w, h);
-                            w *= scale;
-                            h *= scale;
+                        // Fit to artboard — scale down proportionally if image exceeds canvas
+                        if (w > canvasWidth || h > canvasHeight) {
+                            const scaleFactor = Math.min(canvasWidth / w, canvasHeight / h);
+                            w = Math.round(w * scaleFactor);
+                            h = Math.round(h * scaleFactor);
                         }
                         addImageLayer(persistedContent, w, h);
                     };

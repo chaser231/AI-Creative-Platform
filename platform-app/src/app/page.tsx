@@ -185,7 +185,7 @@ export default function DashboardPage() {
   const projects = useMemo(() => {
     const localIds = new Set(localProjects.map(p => p.id));
     // Backend projects that aren't in local store
-    type BackendProject = { id: string; name: string; status: string; goal: string | null; createdAt: Date; updatedAt: Date; thumbnail: string | null };
+    type BackendProject = { id: string; name: string; status: string; goal: string | null; createdAt: Date; updatedAt: Date; thumbnail: string | null; createdBy?: { id: string; name: string; avatarUrl: string | null } };
     const backendOnly = ((backendProjects || []) as BackendProject[]).map((bp: BackendProject) => ({
       id: bp.id,
       name: bp.name,
@@ -197,6 +197,7 @@ export default function DashboardPage() {
       thumbnail: bp.thumbnail ?? undefined,
       resizes: [],
       activeResizeId: "master",
+      createdBy: bp.createdBy ?? undefined,
     })).filter((bp: { id: string }) => !localIds.has(bp.id));
     return [...localProjects, ...backendOnly];
   }, [localProjects, backendProjects]);

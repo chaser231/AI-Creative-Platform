@@ -1,0 +1,1174 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Creative Platform — Canvas Greenfield Plan</title>
+  <style>
+    :root {
+      --bg: #f3ede3;
+      --bg-soft: #faf6ef;
+      --panel: rgba(255, 251, 245, 0.92);
+      --panel-strong: #fffaf2;
+      --ink: #171412;
+      --muted: #5c5852;
+      --line: rgba(28, 24, 20, 0.12);
+      --line-strong: rgba(28, 24, 20, 0.2);
+      --brand: #0f766e;
+      --brand-soft: rgba(15, 118, 110, 0.12);
+      --amber: #b45309;
+      --amber-soft: rgba(180, 83, 9, 0.12);
+      --rose: #be123c;
+      --rose-soft: rgba(190, 18, 60, 0.1);
+      --blue: #1d4ed8;
+      --blue-soft: rgba(29, 78, 216, 0.1);
+      --success: #166534;
+      --success-soft: rgba(22, 101, 52, 0.1);
+      --shadow-lg: 0 24px 60px rgba(26, 22, 18, 0.12);
+      --shadow-md: 0 14px 30px rgba(26, 22, 18, 0.08);
+      --radius-xl: 30px;
+      --radius-lg: 22px;
+      --radius-md: 16px;
+      --radius-sm: 12px;
+      --content: 1280px;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+
+    body {
+      margin: 0;
+      font-family: "Inter", "Segoe UI", Arial, sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at top left, rgba(15, 118, 110, 0.08), transparent 28%),
+        radial-gradient(circle at top right, rgba(180, 83, 9, 0.08), transparent 22%),
+        linear-gradient(180deg, #f8f3ea 0%, #f3ede3 100%);
+      line-height: 1.58;
+    }
+
+    a {
+      color: inherit;
+      text-decoration: none;
+    }
+
+    .page {
+      max-width: var(--content);
+      margin: 0 auto;
+      padding: 32px 24px 72px;
+    }
+
+    .hero {
+      position: relative;
+      overflow: hidden;
+      border-radius: 36px;
+      padding: 38px 38px 32px;
+      background:
+        radial-gradient(circle at 85% 18%, rgba(255, 255, 255, 0.16), transparent 22%),
+        linear-gradient(135deg, rgba(15, 118, 110, 0.98), rgba(22, 101, 52, 0.92));
+      color: #f8fbf9;
+      box-shadow: var(--shadow-lg);
+      border: 1px solid rgba(255, 255, 255, 0.14);
+    }
+
+    .hero::after {
+      content: "";
+      position: absolute;
+      right: -120px;
+      bottom: -120px;
+      width: 360px;
+      height: 360px;
+      border-radius: 999px;
+      background: radial-gradient(circle, rgba(255, 255, 255, 0.14), transparent 64%);
+      pointer-events: none;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 14px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.12);
+      color: rgba(255, 255, 255, 0.86);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .hero h1 {
+      margin: 18px 0 10px;
+      font-size: clamp(34px, 5vw, 60px);
+      line-height: 1.02;
+      letter-spacing: -0.04em;
+      max-width: 980px;
+    }
+
+    .hero p {
+      margin: 0;
+      max-width: 920px;
+      color: rgba(248, 251, 249, 0.84);
+      font-size: 17px;
+    }
+
+    .hero-meta {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 30px;
+    }
+
+    .hero-stat {
+      padding: 16px 18px;
+      border-radius: var(--radius-lg);
+      background: rgba(255, 255, 255, 0.1);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      backdrop-filter: blur(10px);
+    }
+
+    .hero-stat strong {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 30px;
+      line-height: 1;
+    }
+
+    .hero-stat span {
+      display: block;
+      color: rgba(248, 251, 249, 0.8);
+      font-size: 13px;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 290px minmax(0, 1fr);
+      gap: 24px;
+      margin-top: 24px;
+      align-items: start;
+    }
+
+    .toc {
+      position: sticky;
+      top: 22px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      padding: 20px;
+      box-shadow: var(--shadow-md);
+      backdrop-filter: blur(16px);
+    }
+
+    .toc h2 {
+      margin: 0 0 12px;
+      font-size: 14px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+    }
+
+    .toc a {
+      display: block;
+      padding: 10px 12px;
+      border-radius: 12px;
+      font-size: 14px;
+      transition: background 0.18s ease, transform 0.18s ease;
+    }
+
+    .toc a:hover {
+      background: rgba(15, 118, 110, 0.08);
+      transform: translateX(2px);
+    }
+
+    .content {
+      display: grid;
+      gap: 24px;
+    }
+
+    .section {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 28px;
+      padding: 28px;
+      box-shadow: var(--shadow-md);
+      backdrop-filter: blur(18px);
+    }
+
+    .section h2 {
+      margin: 0 0 12px;
+      font-size: 30px;
+      line-height: 1.05;
+      letter-spacing: -0.035em;
+    }
+
+    .lead {
+      margin: 0 0 22px;
+      color: var(--muted);
+      font-size: 16px;
+      max-width: 900px;
+    }
+
+    .grid-2,
+    .grid-3,
+    .grid-4 {
+      display: grid;
+      gap: 16px;
+    }
+
+    .grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .grid-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+
+    .card {
+      background: var(--panel-strong);
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      padding: 18px;
+    }
+
+    .card h3,
+    .card h4 {
+      margin: 0 0 8px;
+      font-size: 18px;
+      line-height: 1.2;
+    }
+
+    .card p {
+      margin: 0;
+      font-size: 14px;
+      color: var(--muted);
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      margin-bottom: 10px;
+    }
+
+    .badge.brand { background: var(--brand-soft); color: var(--brand); }
+    .badge.amber { background: var(--amber-soft); color: var(--amber); }
+    .badge.rose { background: var(--rose-soft); color: var(--rose); }
+    .badge.blue { background: var(--blue-soft); color: var(--blue); }
+    .badge.success { background: var(--success-soft); color: var(--success); }
+
+    .phase-list {
+      display: grid;
+      gap: 14px;
+    }
+
+    .phase {
+      border: 1px solid var(--line);
+      background: linear-gradient(180deg, rgba(255,255,255,0.62), rgba(255,251,245,0.96));
+      border-radius: 22px;
+      padding: 18px;
+    }
+
+    .phase-top {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 10px;
+    }
+
+    .phase h3 {
+      margin: 0;
+      font-size: 22px;
+      line-height: 1.1;
+      letter-spacing: -0.03em;
+    }
+
+    .phase small {
+      color: var(--muted);
+      font-size: 13px;
+      white-space: nowrap;
+    }
+
+    .columns {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 14px;
+    }
+
+    .mini {
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 14px;
+      background: rgba(255, 255, 255, 0.6);
+    }
+
+    .mini h4 {
+      margin: 0 0 8px;
+      font-size: 14px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+    }
+
+    ul.clean {
+      margin: 0;
+      padding-left: 18px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    ul.clean li + li {
+      margin-top: 6px;
+    }
+
+    .matrix {
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: var(--panel-strong);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 820px;
+    }
+
+    th,
+    td {
+      padding: 14px 16px;
+      text-align: left;
+      vertical-align: top;
+      border-bottom: 1px solid var(--line);
+      font-size: 14px;
+    }
+
+    th {
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+      background: rgba(255, 255, 255, 0.65);
+    }
+
+    tr:last-child td {
+      border-bottom: none;
+    }
+
+    .pill-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 16px;
+    }
+
+    .pill {
+      padding: 9px 12px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.72);
+      border: 1px solid var(--line);
+      font-size: 13px;
+      color: var(--ink);
+    }
+
+    .timeline {
+      display: grid;
+      gap: 14px;
+    }
+
+    .timeline-item {
+      display: grid;
+      grid-template-columns: 120px minmax(0, 1fr);
+      gap: 16px;
+      align-items: start;
+    }
+
+    .timeline-tag {
+      position: sticky;
+      top: 104px;
+      display: inline-flex;
+      justify-content: center;
+      padding: 10px 12px;
+      border-radius: 14px;
+      background: var(--brand-soft);
+      color: var(--brand);
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .note {
+      padding: 18px;
+      border-radius: 20px;
+      border: 1px solid var(--line);
+      background:
+        linear-gradient(135deg, rgba(15, 118, 110, 0.08), rgba(180, 83, 9, 0.08)),
+        var(--panel-strong);
+    }
+
+    .note strong {
+      display: block;
+      margin-bottom: 8px;
+      font-size: 15px;
+    }
+
+    .footer {
+      margin-top: 22px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    @media (max-width: 1080px) {
+      .layout {
+        grid-template-columns: 1fr;
+      }
+
+      .toc {
+        position: static;
+      }
+
+      .hero-meta,
+      .grid-4,
+      .grid-3,
+      .grid-2,
+      .columns {
+        grid-template-columns: 1fr;
+      }
+
+      .timeline-item {
+        grid-template-columns: 1fr;
+      }
+
+      .timeline-tag {
+        position: static;
+        justify-content: flex-start;
+      }
+    }
+
+    @media (max-width: 760px) {
+      .page {
+        padding: 18px 14px 48px;
+      }
+
+      .hero,
+      .section {
+        padding: 22px;
+      }
+
+      .hero h1 {
+        font-size: 34px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <section class="hero">
+      <span class="eyebrow">AI Creative Platform • План развития канваса</span>
+      <h1>Роудмап и бэклог для запуска canvas-редактора</h1>
+    </section>
+
+    <div class="layout">
+      <aside class="toc">
+        <h2>Навигация</h2>
+        <a href="#operating-model">Модель работы</a>
+        <a href="#phases">Этапы разработки</a>
+        <a href="#sync">Синхронизация FE / BE</a>
+        <a href="#accelerated">Ускоренный сценарий</a>
+        <a href="#milestones">Контрольные вехи</a>
+        <a href="#sprints">Разбиение по спринтам</a>
+        <a href="#advanced">Продвинутый scope</a>
+        <a href="#files">Связанные файлы</a>
+      </aside>
+
+      <main class="content">
+        <section class="section" id="operating-model">
+          <h2>Модель работы</h2>
+          <p class="lead">
+            Главная идея этого плана: не строить редактор как один монолитный поток задач, а разделить его
+            на параллельные потоки работ, которые сходятся на общих контрактах и контрольных интеграционных вехах.
+          </p>
+
+          <div class="grid-4">
+            <article class="card">
+              <h3>Фронтенд редактора</h3>
+              <p>Canvas-движок, модель взаимодействия, layout редактора, панели, тулбар, UX форматов и AI-входы.</p>
+            </article>
+            <article class="card">
+              <h3>Бэкенд-платформа</h3>
+              <p>Хранение документов, ассеты, шаблоны, экспорт, очереди, AI-gateway, аналитика.</p>
+            </article>
+            <article class="card">
+              <h3>Общие контракты</h3>
+              <p>Схема канваса, контракты слоёв, таксономия слотов, модель мультиформата и словарь действий.</p>
+            </article>
+            <article class="card">
+              <span class="badge rose">Поток D</span>
+              <h3>R&amp;D и исследования</h3>
+              <p>Интеллектуальный resize, scene graph, объяснимость, метрики качества и планирование агентных шагов.</p>
+            </article>
+          </div>
+
+          <div class="note" style="margin-top: 18px;">
+            <strong>Ключевой принцип синхронизации</strong>
+            Фронтенд не ждёт “готовый backend”, а backend не ждёт “готовый UI”. Обе стороны работают
+            против общих схем: <code>CanvasDocument</code>, <code>Layer</code>, <code>Template</code>,
+            <code>FormatInstance</code>, <code>ResizeMapping</code>, <code>AIAction</code>.
+          </div>
+
+          <div class="pill-row">
+            <span class="pill">Редактор сначала на моках</span>
+            <span class="pill">API от общих контрактов</span>
+            <span class="pill">Feature flags для рискованного scope</span>
+            <span class="pill">Интеграция по вехам</span>
+            <span class="pill">Эксперименты в изоляции</span>
+          </div>
+        </section>
+
+        <section class="section" id="phases">
+          <h2>Этапы разработки</h2>
+          <p class="lead">
+            Последовательность этапов построена так, чтобы сначала дойти до полезного MVP редактора, затем
+            нарастить структурную композицию и мультиформат, и только после этого поднимать по-настоящему
+            умные функции вроде smart resize и агентного режима.
+          </p>
+
+          <div class="phase-list">
+            <article class="phase">
+              <div class="phase-top">
+                <h3>Этап 0. Фундамент и контракты</h3>
+                <small>2–3 недели</small>
+              </div>
+              <p class="lead" style="margin-bottom: 0;">Фиксация доменной модели, оболочки редактора, стратегии хранения, contract fixtures и матрицы feature flags.</p>
+              <div class="columns">
+                <div class="mini">
+                  <h4>Фронтенд</h4>
+                  <ul class="clean">
+                    <li>Оболочка редактора</li>
+                    <li>Моковое состояние и fixtures канваса</li>
+                    <li>Модель interaction-state</li>
+                  </ul>
+                </div>
+                <div class="mini">
+                  <h4>Бэкенд</h4>
+                  <ul class="clean">
+                    <li>Доменная модель и API-контракты</li>
+                    <li>Архитектура хранения</li>
+                    <li>Фундамент очередей</li>
+                  </ul>
+                </div>
+                <div class="mini">
+                  <h4>Результат</h4>
+                  <ul class="clean">
+                    <li><code>CanvasDocument</code> v1</li>
+                    <li><code>Template</code> v1</li>
+                    <li><code>AIAction</code> draft</li>
+                  </ul>
+                </div>
+              </div>
+            </article>
+
+            <article class="phase">
+              <div class="phase-top">
+                <h3>Этап 1. MVP редактора</h3>
+                <small>4–6 недель</small>
+              </div>
+              <p class="lead" style="margin-bottom: 0;">Редактор одного формата: viewport, выделение, перемещение и resize, текст, shape, image, панель слоёв, свойства, save/load.</p>
+              <div class="columns">
+                <div class="mini">
+                  <h4>Фронтенд</h4>
+                  <ul class="clean">
+                    <li>Viewport, marquee, transform</li>
+                    <li>Базовые инструменты</li>
+                    <li>Панель слоёв и панель свойств</li>
+                  </ul>
+                </div>
+                <div class="mini">
+                  <h4>Бэкенд</h4>
+                  <ul class="clean">
+                    <li>Document CRUD</li>
+                    <li>Эндпоинт автосохранения</li>
+                    <li>Загрузка ассетов и метаданные</li>
+                  </ul>
+                </div>
+                <div class="mini">
+                  <h4>Выход этапа</h4>
+                  <ul class="clean">
+                    <li>Документ сохраняется и открывается</li>
+                    <li>Сценарий ассетов замкнут</li>
+                    <li>MVP годится для простых креативов</li>
+                  </ul>
+                </div>
+              </div>
+            </article>
+
+            <article class="phase">
+              <div class="phase-top">
+                <h3>Этап 2. Структурная композиция и шаблоны</h3>
+                <small>3–4 недели</small>
+              </div>
+              <p class="lead" style="margin-bottom: 0;">Frame-контейнеры, вложенная структура, clipping, база под auto-layout, slot roles, применение и сохранение шаблонов, каталог.</p>
+              <div class="columns">
+                <div class="mini">
+                  <h4>Фронтенд</h4>
+                  <ul class="clean">
+                    <li>Вложенные frame</li>
+                    <li>UI редактирования slot roles</li>
+                    <li>Применение и сохранение шаблонов</li>
+                  </ul>
+                </div>
+                <div class="mini">
+                  <h4>Бэкенд</h4>
+                  <ul class="clean">
+                    <li>Хранение шаблонов</li>
+                    <li>Метаданные каталога</li>
+                    <li>Превью, импорт и экспорт</li>
+                  </ul>
+                </div>
+                <div class="mini">
+                  <h4>Выход этапа</h4>
+                  <ul class="clean">
+                    <li>Редактор умеет работать через шаблоны</li>
+                    <li>Действует таксономия слотов</li>
+                    <li>Основа под resize готова</li>
+                  </ul>
+                </div>
+              </div>
+            </article>
+
+            <article class="phase">
+              <div class="phase-top">
+                <h3>Этап 3. Основа мультиформата</h3>
+                <small>3–4 недели</small>
+              </div>
+              <p class="lead" style="margin-bottom: 0;">Мастер-инстанс модель, панель форматов, наследование, override-поля, пакетный экспорт и сериализация мультиформатного документа.</p>
+              <div class="columns">
+                <div class="mini">
+                  <h4>Фронтенд</h4>
+                  <ul class="clean">
+                    <li>Панель форматов</li>
+                    <li>UI для override</li>
+                    <li>Точка входа в пакетный экспорт</li>
+                  </ul>
+                </div>
+                <div class="mini">
+                  <h4>Бэкенд</h4>
+                  <ul class="clean">
+                    <li>Хранение мультиформатных документов</li>
+                    <li>Фоновые задачи экспорта</li>
+                    <li>Пайплайн рендеринга</li>
+                  </ul>
+                </div>
+                <div class="mini">
+                  <h4>Выход этапа</h4>
+                  <ul class="clean">
+                    <li>Несколько форматов в одном документе</li>
+                    <li>Изменения мастера корректно наследуются</li>
+                    <li>Batch export работает</li>
+                  </ul>
+                </div>
+              </div>
+            </article>
+
+            <article class="phase">
+              <div class="phase-top">
+                <h3>Этап 4. Smart Resize v1</h3>
+                <small>4–5 недель</small>
+              </div>
+              <p class="lead" style="margin-bottom: 0;">Resize с учётом slot roles, review mapping, разбор конфликтов, индикаторы уверенности и воспроизводимая операция resize.</p>
+              <div class="columns">
+                <div class="mini">
+                  <h4>Фронтенд</h4>
+                  <ul class="clean">
+                    <li>Предпросмотр resize</li>
+                    <li>UI проверки mapping</li>
+                    <li>Сравнение master и результата</li>
+                  </ul>
+                </div>
+                <div class="mini">
+                  <h4>Бэкенд</h4>
+                  <ul class="clean">
+                    <li>Движок mapping</li>
+                    <li>Правила и семантическое сопоставление</li>
+                    <li>Уверенность и журналирование</li>
+                  </ul>
+                </div>
+                <div class="mini">
+                  <h4>Выход этапа</h4>
+                  <ul class="clean">
+                    <li>Resize лучше простого масштабирования</li>
+                    <li>Неуверенность системы видна</li>
+                    <li>Есть журнал изменений</li>
+                  </ul>
+                </div>
+              </div>
+            </article>
+
+            <article class="phase">
+              <div class="phase-top">
+                <h3>Этап 5. AI-слой генерации</h3>
+                <small>3–4 недели</small>
+              </div>
+              <p class="lead" style="margin-bottom: 0;">Промпт-бар, генерация изображений и текста, редактирование изображения, референсы, AI-gateway, модерация и учёт затрат.</p>
+              <div class="columns">
+                <div class="mini">
+                  <h4>Фронтенд</h4>
+                  <ul class="clean">
+                    <li>Промпт-бар и панель результатов</li>
+                    <li>Apply-to-selection UX</li>
+                    <li>История и повтор операций</li>
+                  </ul>
+                </div>
+                <div class="mini">
+                  <h4>Бэкенд</h4>
+                  <ul class="clean">
+                    <li>Слой абстракции над провайдерами</li>
+                    <li>API генерации и редактирования</li>
+                    <li>Безопасность и учёт</li>
+                  </ul>
+                </div>
+                <div class="mini">
+                  <h4>Выход этапа</h4>
+                  <ul class="clean">
+                    <li>AI встроен в UX редактора</li>
+                    <li>Результаты применяются к канвасу</li>
+                    <li>История и экономика прозрачны</li>
+                  </ul>
+                </div>
+              </div>
+            </article>
+
+            <article class="phase">
+              <div class="phase-top">
+                <h3>Этап 6. AI-ассистент и управляемое редактирование</h3>
+                <small>4–6 недель</small>
+              </div>
+              <p class="lead" style="margin-bottom: 0;">Модель plan → preview → approve, action registry, оркестрация, rollback, объяснимость и память в рамках документа.</p>
+              <div class="columns">
+                <div class="mini">
+                  <h4>Фронтенд</h4>
+                  <ul class="clean">
+                    <li>Панель ассистента</li>
+                    <li>Утверждение, отклонение и undo</li>
+                    <li>Diff и UI объяснимости</li>
+                  </ul>
+                </div>
+                <div class="mini">
+                  <h4>Бэкенд</h4>
+                  <ul class="clean">
+                    <li>Реестр действий</li>
+                    <li>Движок оркестрации</li>
+                    <li>Policy layer и аудит</li>
+                  </ul>
+                </div>
+                <div class="mini">
+                  <h4>Выход этапа</h4>
+                  <ul class="clean">
+                    <li>Надёжный ограниченный набор действий</li>
+                    <li>Все действия прозрачны и откатываемы</li>
+                    <li>Есть трассировка решений</li>
+                  </ul>
+                </div>
+              </div>
+            </article>
+
+            <article class="phase">
+              <div class="phase-top">
+                <h3>Этап 7. Стабилизация и масштабирование</h3>
+                <small>постоянно</small>
+              </div>
+              <p class="lead" style="margin-bottom: 0;">Производительность, наблюдаемость, квоты, полнота keyboard-flow и надёжность под нагрузкой export / AI / resize.</p>
+              <div class="columns">
+                <div class="mini">
+                  <h4>Фронтенд</h4>
+                  <ul class="clean">
+                    <li>Perf budget и профилирование</li>
+                    <li>Массовое редактирование и полировка</li>
+                    <li>Восстановление после ошибок и accessibility</li>
+                  </ul>
+                </div>
+                <div class="mini">
+                  <h4>Бэкенд</h4>
+                  <ul class="clean">
+                    <li>Политики повторов</li>
+                    <li>Дашборды и квоты</li>
+                    <li>Модель прав доступа</li>
+                  </ul>
+                </div>
+                <div class="mini">
+                  <h4>Выход этапа</h4>
+                  <ul class="clean">
+                    <li>Система операционно устойчива</li>
+                    <li>Фоновые задачи наблюдаемы</li>
+                    <li>UX не деградирует под нагрузкой</li>
+                  </ul>
+                </div>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <section class="section" id="sync">
+          <h2>Синхронизация фронтенда и бэкенда</h2>
+          <p class="lead">
+            Если фронтенд уходит глубоко в редактор, бэкенд всё равно может параллельно строить второй этаж
+            продукта. Это не “подготовка на потом”, а независимая работа над будущими точками силы платформы.
+          </p>
+
+          <div class="grid-2">
+            <article class="card">
+              <span class="badge brand">Пока фронтенд строит редактор</span>
+              <h3>Чем занимается бэкенд</h3>
+              <ul class="clean">
+                <li>Модель хранения, save/load и автосохранение</li>
+                <li>Загрузка ассетов и media processing</li>
+                <li>Версии документа и diff payloads</li>
+                <li>Каталог шаблонов и генерация превью</li>
+                <li>Фоновые задачи экспорта и хранение результатов</li>
+                <li>AI-gateway, модерация и учёт затрат</li>
+                <li>Реестр действий, аудит и наблюдаемость</li>
+              </ul>
+            </article>
+
+            <article class="card">
+              <span class="badge amber">Пока бэкенд строит платформу</span>
+              <h3>Чем занимается фронтенд</h3>
+              <ul class="clean">
+                <li>Canvas-движок и interaction model</li>
+                <li>Система инструментов и UI свойств</li>
+                <li>Frame, шаблоны и UX мультиформата</li>
+                <li>AI entrypoints на моках и generation UX</li>
+                <li>Поверхности review для resize и approval для ассистента</li>
+                <li>Keyboard-flow и полировка производительности</li>
+              </ul>
+            </article>
+          </div>
+
+          <div class="note" style="margin-top: 18px;">
+            <strong>Практический механизм</strong>
+            Каждая контрольная веха заканчивается заменой mock adapter на реальную backend-возможность без
+            переделки UI-модели. Это работает только если contracts frozen достаточно рано.
+          </div>
+        </section>
+
+        <section class="section" id="accelerated">
+          <h2>Ускоренный сценарий с учётом текущей базы</h2>
+          <p class="lead">
+            Этот проект уже не находится в точке “строим редактор с нуля”. В кодовой базе уже есть resize-модель,
+            template/catalog слой, экспорт, AI-роуты и даже агентный контур. Поэтому реалистичный путь сейчас —
+            не полный greenfield, а ускоренная поставка поверх уже существующего фундамента.
+          </p>
+
+          <div class="grid-2">
+            <article class="card">
+              <span class="badge success">Что уже можно переиспользовать</span>
+              <ul class="clean">
+                <li>Базовый канвас, навигацию, объектную модель и свойства</li>
+                <li>Модель форматов и master / instance resize</li>
+                <li>Template service, каталог и админский контур шаблонов</li>
+                <li>Project / asset / export инфраструктуру</li>
+                <li>AI endpoints, сессии, пресеты и историю</li>
+                <li>Action registry, workflow router и orchestrator для ассистента</li>
+              </ul>
+            </article>
+
+            <article class="card">
+              <span class="badge amber">Что можно вычеркнуть из greenfield-scope</span>
+              <ul class="clean">
+                <li>Auth и командный контур как новую задачу</li>
+                <li>Project storage и asset storage с нуля</li>
+                <li>Экспорт как новую платформенную функцию</li>
+                <li>Базовый editor shell и базовые canvas interactions</li>
+                <li>Мультиформат как архитектурную концепцию с нуля</li>
+                <li>AI orchestration “с чистого листа”</li>
+              </ul>
+            </article>
+          </div>
+
+          <div class="grid-2" style="margin-top: 16px;">
+            <article class="card">
+              <span class="badge brand">Что становится главной работой</span>
+              <ul class="clean">
+                <li>Продуктизация editor UX и сложных сценариев</li>
+                <li>Гибкий template config вместо жёсткой схемы</li>
+                <li>Понятный flow для smart resize</li>
+                <li>Единый AI UX слой внутри редактора</li>
+                <li>Расширение canvas actions и безопасный agent flow</li>
+              </ul>
+            </article>
+
+            <article class="card">
+              <span class="badge rose">Что реально брать из AI-агента</span>
+              <ul class="clean">
+                <li><code>actionRegistry</code> как основу словаря действий</li>
+                <li><code>workflow</code> router как вход в agent-сценарии</li>
+                <li><code>orchestrator</code> как базу plan → execute</li>
+                <li>Reference-image pipeline и template-fill flow</li>
+                <li>AI sessions, history и cost tracking как стартовый telemetry layer</li>
+              </ul>
+            </article>
+          </div>
+
+          <div class="matrix" style="margin-top: 18px;">
+            <table>
+              <thead>
+                <tr>
+                  <th>Ускоренный этап</th>
+                  <th>Спринты</th>
+                  <th>Фокус фронтенда</th>
+                  <th>Фокус бэкенда</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Этап A. Продуктизация текущего редактора</td>
+                  <td>1–3</td>
+                  <td>Полировка редактора, слои, свойства, asset UX, стабильность сценариев</td>
+                  <td>Версии, надёжность persistence, метаданные ассетов, контроль стабильности export/AI</td>
+                </tr>
+                <tr>
+                  <td>Этап B. Гибкие шаблоны и сильный мультиформат</td>
+                  <td>4–6</td>
+                  <td>Новый UX форматов, slot/role UI, сценарии шаблонов</td>
+                  <td>Template schema v2, миграция шаблонов, каталог и расширяемые slot roles</td>
+                </tr>
+                <tr>
+                  <td>Этап C. Цельный AI-слой</td>
+                  <td>7–8</td>
+                  <td>Промпт-бар, история, retry/apply flows, единый UX AI-инструментов</td>
+                  <td>Унификация AI-контуров, учёт сессий и затрат, safety/guardrails</td>
+                </tr>
+                <tr>
+                  <td>Этап D. Smart Resize и AI-ассистент</td>
+                  <td>9–12</td>
+                  <td>Preview, review, approve/reject, diff и explainability UI</td>
+                  <td>Richer canvas actions, confidence scoring, audit trail и доработка orchestration</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="note" style="margin-top: 18px;">
+            <strong>Практический вывод</strong>
+            При текущем уровне базы реальный ориентир уже не 16 спринтов greenfield-плана, а примерно 8–12 спринтов
+            ускоренной поставки, если не переписывать фундамент, а доращивать то, что уже подтверждено кодом.
+          </div>
+        </section>
+
+        <section class="section" id="milestones">
+          <h2>Контрольные вехи</h2>
+          <p class="lead">
+            Ниже вехи, в которых команды должны синхронизироваться явно. Это хорошие точки для demos,
+            re-planning и quality gates.
+          </p>
+
+          <div class="matrix">
+            <table>
+              <thead>
+                <tr>
+                  <th>Веха</th>
+                  <th>Результат</th>
+                  <th>Фокус фронтенда</th>
+                  <th>Фокус бэкенда</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>M1</td>
+                  <td>Контракты зафиксированы, editor работает на моках</td>
+                  <td>Shell, store, fixtures, каркас взаимодействия</td>
+                  <td>Дизайн API, схемы, архитектура хранения</td>
+                </tr>
+                <tr>
+                  <td>M2</td>
+                  <td>Save/load и ассеты стабилизированы</td>
+                  <td>Интеграция жизненного цикла редактора</td>
+                  <td>CRUD, автосохранение, загрузка и метаданные</td>
+                </tr>
+                <tr>
+                  <td>M3</td>
+                  <td>Стабилизированы template и slot model</td>
+                  <td>Frame, slot UI, template flows</td>
+                  <td>Хранение шаблонов и каталог</td>
+                </tr>
+                <tr>
+                  <td>M4</td>
+                  <td>Стабилен мультиформат</td>
+                  <td>UX форматов, overrides, UX экспорта</td>
+                  <td>Наследование, фоновые задачи экспорта, рендеринг</td>
+                </tr>
+                <tr>
+                  <td>M5</td>
+                  <td>Smart resize beta</td>
+                  <td>Preview, compare, review UI</td>
+                  <td>Mapping, правила, confidence</td>
+                </tr>
+                <tr>
+                  <td>M6</td>
+                  <td>Стабильная AI-генерация</td>
+                  <td>UX промпта, применения и истории</td>
+                  <td>Провайдеры, safety, учёт</td>
+                </tr>
+                <tr>
+                  <td>M7</td>
+                  <td>Agent alpha</td>
+                  <td>Предпросмотр плана, approval, diff</td>
+                  <td>Оркестрация, аудит, policy engine</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="section" id="sprints">
+          <h2>Разбиение по спринтам</h2>
+          <p class="lead">
+            Примерная операционная сетка на 16 двухнедельных спринтов. Её можно упростить или ужать, но она
+            хорошо показывает, как большие эпики превращаются в последовательные куски поставки.
+          </p>
+
+          <div class="timeline">
+            <div class="timeline-item">
+              <div class="timeline-tag">S1–S2</div>
+              <div class="card">
+                <span class="badge brand">Фундамент</span>
+                <h3>Контракты, оболочка редактора, модель хранения</h3>
+                <p>FE поднимает shell и state skeleton, BE фиксирует document schema, API contracts, storage и queues.</p>
+              </div>
+            </div>
+
+            <div class="timeline-item">
+              <div class="timeline-tag">S3–S5</div>
+              <div class="card">
+                <span class="badge amber">MVP редактора</span>
+                <h3>Базовый canvas, инструменты, save/load, ассеты</h3>
+                <p>Viewport, selection, text/image/rect/frame, layer panel, properties, document CRUD, autosave, upload.</p>
+              </div>
+            </div>
+
+            <div class="timeline-item">
+              <div class="timeline-tag">S6–S8</div>
+              <div class="card">
+                <span class="badge blue">Структурное редактирование</span>
+                <h3>Frame, слоты, шаблоны</h3>
+                <p>Nested frames, clipping, slot taxonomy, template apply/save, catalog APIs и thumbnails.</p>
+              </div>
+            </div>
+
+            <div class="timeline-item">
+              <div class="timeline-tag">S9–S10</div>
+              <div class="card">
+                <span class="badge success">Мультиформат</span>
+                <h3>Master/instance, overrides, фоновые задачи экспорта</h3>
+                <p>Formats panel, inheritance logic, multi-format persistence, batch export UX и rendering pipeline.</p>
+              </div>
+            </div>
+
+            <div class="timeline-item">
+              <div class="timeline-tag">S11–S12</div>
+              <div class="card">
+                <span class="badge rose">AI-слой</span>
+                <h3>Промпт-бар, generation API и история</h3>
+                <p>Text/image generation, image edit, safety, provider abstraction, cost tracking, apply-to-canvas flows.</p>
+              </div>
+            </div>
+
+            <div class="timeline-item">
+              <div class="timeline-tag">S13–S14</div>
+              <div class="card">
+                <span class="badge amber">Smart Resize</span>
+                <h3>Preview, review mapping, confidence</h3>
+                <p>Resize engine v1, rule layer, slot-aware mapping, human review surface и QA loop.</p>
+              </div>
+            </div>
+
+            <div class="timeline-item">
+              <div class="timeline-tag">S15–S16</div>
+              <div class="card">
+                <span class="badge brand">Ассистент Alpha</span>
+                <h3>Plan → approve → apply</h3>
+                <p>Action registry, orchestration, plan preview, rollback, diff view, audit trace и explainability.</p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="section" id="advanced">
+          <h2>Продвинутый scope</h2>
+          <p class="lead">
+            Эти направления не стоит отталкивать “на потом”. Лучше рано заложить data model и контракты,
+            даже если часть работы пойдёт в R&amp;D и delivery под feature flags.
+          </p>
+
+          <div class="grid-2">
+            <article class="card">
+              <span class="badge amber">Трек A</span>
+              <h3>Интеллектуальный Smart Resize</h3>
+              <ul class="clean">
+                <li>Semantic slot taxonomy вместо purely geometric resize</li>
+                <li>Rule engine и человекочитаемые constraints</li>
+                <li>Confidence scoring на уровне слоя и документа</li>
+                <li>Alternative layout proposals</li>
+                <li>Learning loop по принятым и отклонённым mappings</li>
+              </ul>
+            </article>
+
+            <article class="card">
+              <span class="badge rose">Трек B</span>
+              <h3>Агентные операции над канвасом</h3>
+              <ul class="clean">
+                <li>Scene graph / canvas AST</li>
+                <li>Action vocabulary и tool preconditions</li>
+                <li>Архитектура plan → preview → approve</li>
+                <li>Brand constraints и policy engine</li>
+                <li>Explainable trace и diff до применения</li>
+              </ul>
+            </article>
+          </div>
+
+          <div class="note" style="margin-top: 18px;">
+            <strong>Почему это важно</strong>
+            Если не заложить семантику и action model рано, smart resize станет набором хрупких эвристик,
+            а AI-ассистент будет привязан к UI-хаку вместо устойчивого языка действий.
+          </div>
+        </section>
+
+        <section class="section" id="files">
+          <h2>Связанные файлы</h2>
+          <p class="lead">
+            Полные markdown-версии и операционный sprint-план лежат рядом, чтобы презентацию можно было
+            быстро связать с рабочей документацией.
+          </p>
+
+          <div class="grid-4">
+            <article class="card">
+              <span class="badge brand">Markdown</span>
+              <h3><a href="./canvas_greenfield_roadmap.md">canvas_greenfield_roadmap.md</a></h3>
+              <p>Полное описание этапов, модели работы и продвинутого scope.</p>
+            </article>
+            <article class="card">
+              <span class="badge amber">Markdown</span>
+              <h3><a href="./canvas_greenfield_backlog.md">canvas_greenfield_backlog.md</a></h3>
+              <p>Эпики, задачи, acceptance criteria и контрольные вехи.</p>
+            </article>
+            <article class="card">
+              <span class="badge blue">Markdown</span>
+              <h3><a href="./canvas_greenfield_sprint_slices.md">canvas_greenfield_sprint_slices.md</a></h3>
+              <p>Разбиение по вехам и 16 примерных спринтов с FE/BE ownership.</p>
+            </article>
+            <article class="card">
+              <span class="badge rose">Markdown</span>
+              <h3><a href="./canvas_accelerated_delivery_plan.md">canvas_accelerated_delivery_plan.md</a></h3>
+              <p>Ускоренный план с учётом текущей базы и переиспользования AI-агентного контура.</p>
+            </article>
+          </div>
+
+          <div class="footer">
+            Версия страницы подготовлена как презентационный слой над рабочими markdown-документами.
+          </div>
+        </section>
+      </main>
+    </div>
+  </div>
+</body>
+</html>

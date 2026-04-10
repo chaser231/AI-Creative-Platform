@@ -41,12 +41,11 @@ export interface ModelEntry {
 /** Aspect ratios shared by Google and Flux models */
 const WIDE_ASPECT_RATIOS = ["1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9"];
 
-/** Google Nano Banana resolution options (output_resolution param) */
+/** Google Nano Banana resolution options ("resolution" param, enum: 1K | 2K | 4K) */
 const GOOGLE_RESOLUTIONS: ResolutionOption[] = [
-    { id: "1024px", label: "1K" },
-    { id: "2048px", label: "2K" },
-    { id: "4096px", label: "4K" },
-    { id: "512px",  label: "512px" },
+    { id: "1K", label: "1K" },
+    { id: "2K", label: "2K" },
+    { id: "4K", label: "4K" },
 ];
 
 /** Flux megapixel resolution options */
@@ -78,7 +77,7 @@ export const MODEL_REGISTRY: ModelEntry[] = [
         slug: "google/nano-banana",
         provider: "replicate",
         caps: ["generate", "edit", "remove-bg", "vision"],
-        costPerRun: 0.045,
+        costPerRun: 0.039,
         maxRefs: 14,
         aspectRatios: WIDE_ASPECT_RATIOS,
         resolutions: GOOGLE_RESOLUTIONS,
@@ -89,7 +88,7 @@ export const MODEL_REGISTRY: ModelEntry[] = [
         slug: "google/nano-banana-2",
         provider: "replicate",
         caps: ["generate", "edit", "remove-bg", "vision"],
-        costPerRun: 0.045,
+        costPerRun: 0.067,
         maxRefs: 14,
         aspectRatios: WIDE_ASPECT_RATIOS,
         resolutions: GOOGLE_RESOLUTIONS,
@@ -100,7 +99,7 @@ export const MODEL_REGISTRY: ModelEntry[] = [
         slug: "google/nano-banana-pro",
         provider: "replicate",
         caps: ["generate", "edit", "remove-bg", "vision"],
-        costPerRun: 0.067,
+        costPerRun: 0.15,
         maxRefs: 14,
         aspectRatios: WIDE_ASPECT_RATIOS,
         resolutions: GOOGLE_RESOLUTIONS,
@@ -111,7 +110,7 @@ export const MODEL_REGISTRY: ModelEntry[] = [
         slug: "black-forest-labs/flux-2-pro",
         provider: "replicate",
         caps: ["generate", "edit", "vision"],
-        costPerRun: 0.05,
+        costPerRun: 0.045,
         maxRefs: 4,
         aspectRatios: WIDE_ASPECT_RATIOS,
         resolutions: FLUX_RESOLUTIONS_FULL,
@@ -122,7 +121,7 @@ export const MODEL_REGISTRY: ModelEntry[] = [
         slug: "openai/gpt-image-1.5",
         provider: "replicate",
         caps: ["generate", "edit", "vision"],
-        costPerRun: 0.04,
+        costPerRun: 0.136,
         maxRefs: 4,
         aspectRatios: ["1:1", "3:4", "4:3", "9:16", "16:9"],
         resolutions: GPT_RESOLUTIONS,
@@ -134,7 +133,7 @@ export const MODEL_REGISTRY: ModelEntry[] = [
         slug: "qwen/qwen-image",
         provider: "replicate",
         caps: ["generate"],
-        costPerRun: 0.03,
+        costPerRun: 0.025,
         aspectRatios: ["1:1", "3:2", "2:3", "16:9", "9:16"],
     },
     {
@@ -204,7 +203,7 @@ export const MODEL_REGISTRY: ModelEntry[] = [
         slug: "black-forest-labs/flux-fill-dev",
         provider: "replicate",
         caps: ["inpaint", "outpaint"],
-        costPerRun: 0.025,
+        costPerRun: 0.04,
     },
     {
         id: "bria-expand",
@@ -212,7 +211,7 @@ export const MODEL_REGISTRY: ModelEntry[] = [
         slug: "bria/expand-image",
         provider: "replicate",
         caps: ["outpaint"],
-        costPerRun: 0.025,
+        costPerRun: 0.04,
     },
     {
         id: "rembg",
@@ -231,7 +230,7 @@ export const MODEL_REGISTRY: ModelEntry[] = [
         slug: "deepseek-ai/deepseek-v3",
         provider: "replicate",
         caps: ["text"],
-        costPerRun: 0.005,
+        costPerRun: 0.001,
     },
     {
         id: "gemini-flash",
@@ -239,7 +238,7 @@ export const MODEL_REGISTRY: ModelEntry[] = [
         slug: "google/gemini-2.5-flash",
         provider: "replicate",
         caps: ["text"],
-        costPerRun: 0.003,
+        costPerRun: 0.001,
     },
 ];
 
@@ -254,9 +253,9 @@ export function getModelsForCaps(...caps: ModelCap[]): ModelEntry[] {
     return MODEL_REGISTRY.filter(m => caps.every(c => m.caps.includes(c)));
 }
 
-/** Lookup a single model by its ID. */
+/** Lookup a single model by its ID or slug. */
 export function getModelById(id: string): ModelEntry | undefined {
-    return MODEL_REGISTRY.find(m => m.id === id);
+    return MODEL_REGISTRY.find(m => m.id === id || m.slug === id);
 }
 
 /** Get maximum reference images allowed for a model (0 = no refs). */

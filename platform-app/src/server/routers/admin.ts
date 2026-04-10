@@ -8,6 +8,7 @@
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import { createTRPCRouter, superAdminProcedure } from "../trpc";
+import { getModelById } from "@/lib/ai-models";
 
 export const adminRouter = createTRPCRouter({
   /** Aggregate platform statistics */
@@ -17,37 +18,36 @@ export const adminRouter = createTRPCRouter({
       totalWorkspaces,
       totalProjects,
       totalTemplates,
-      totalAIGenerations,
-      totalAICostResult,
+      // Fetch all tracked messages (with model) to compute accurate counts & costs
+      trackedMessages,
     ] = await Promise.all([
       ctx.prisma.user.count(),
       ctx.prisma.workspace.count(),
       ctx.prisma.project.count(),
       ctx.prisma.template.count(),
-      // Count actual AI generations (assistant messages), not sessions
-      ctx.prisma.aIMessage.count({
+      ctx.prisma.aIMessage.findMany({
         where: {
           role: "assistant",
-          type: { in: ["image", "text"] },
+          model: { not: null },
         },
-      }),
-      // Sum cost across all messages
-      ctx.prisma.aIMessage.aggregate({
-        where: {
-          role: "assistant",
-          costUnits: { not: null },
-        },
-        _sum: { costUnits: true },
+        select: { model: true, costUnits: true },
       }),
     ]);
+
+    // Compute total cost using registry prices (same logic as aiCostAnalytics)
+    let totalAICost = 0;
+    for (const msg of trackedMessages) {
+      const modelEntry = getModelById(msg.model ?? "");
+      totalAICost += modelEntry?.costPerRun ?? (msg.costUnits ?? 0);
+    }
 
     return {
       totalUsers,
       totalWorkspaces,
       totalProjects,
       totalTemplates,
-      totalAIGenerations,
-      totalAICost: totalAICostResult._sum.costUnits ?? 0,
+      totalAIGenerations: trackedMessages.length,
+      totalAICost,
     };
   }),
 
@@ -119,10 +119,11 @@ export const adminRouter = createTRPCRouter({
             where: {
               sessionId: { in: sessionIds },
               role: "assistant",
-              type: { in: ["image", "text"] },
+              model: { not: null },
             },
             select: {
               sessionId: true,
+              model: true,
               costUnits: true,
             },
           })
@@ -134,8 +135,9 @@ export const adminRouter = createTRPCRouter({
         const userId = sessionUserMap.get(msg.sessionId);
         if (!userId) continue;
         const existing = userGenMap.get(userId) ?? { count: 0, cost: 0 };
+        const modelEntry = getModelById(msg.model ?? "");
         existing.count += 1;
-        existing.cost += msg.costUnits ?? 0;
+        existing.cost += modelEntry?.costPerRun ?? (msg.costUnits ?? 0);
         userGenMap.set(userId, existing);
       }
 
@@ -172,12 +174,30 @@ export const adminRouter = createTRPCRouter({
   }),
 
   /** AI cost analytics — breakdown by model, user, workspace */
-  aiCostAnalytics: superAdminProcedure.query(async ({ ctx }) => {
-    // Fetch all assistant image/text messages with their session + project + workspace info
+  aiCostAnalytics: superAdminProcedure
+    .input(
+      z.object({
+        dateFrom: z.string().optional(), // ISO date string
+        dateTo: z.string().optional(),   // ISO date string
+      }).optional()
+    )
+    .query(async ({ ctx, input }) => {
+    // Build date filter
+    const dateFilter: Record<string, Date> = {};
+    if (input?.dateFrom) dateFilter.gte = new Date(input.dateFrom);
+    if (input?.dateTo) {
+      const to = new Date(input.dateTo);
+      to.setHours(23, 59, 59, 999); // include the entire day
+      dateFilter.lte = to;
+    }
+    const createdAtFilter = Object.keys(dateFilter).length > 0 ? { createdAt: dateFilter } : {};
+
+    // Fetch all assistant messages with a model (cost-bearing actions)
     const allMessages = await ctx.prisma.aIMessage.findMany({
       where: {
         role: "assistant",
-        type: { in: ["image", "text"] },
+        model: { not: null },
+        ...createdAtFilter,
       },
       select: {
         model: true,
@@ -209,9 +229,13 @@ export const adminRouter = createTRPCRouter({
     const wsAgg = new Map<string, { name: string; count: number; cost: number }>();
 
     for (const msg of allMessages) {
-      const cost = msg.costUnits ?? 0;
-      const model = msg.model ?? "unknown";
       const session = msg.session;
+      const rawModel = msg.model ?? "unknown";
+      // Normalize model name: resolve slug → id (e.g. "google/nano-banana-pro" → "nano-banana-pro")
+      const modelEntry = getModelById(rawModel);
+      const model = modelEntry?.id ?? rawModel;
+      // ALWAYS use registry cost as the source of truth — stored costUnits may have stale pricing
+      const cost = modelEntry?.costPerRun ?? (msg.costUnits ?? 0);
 
       // Model
       const mEntry = modelAgg.get(model) ?? { count: 0, cost: 0 };
