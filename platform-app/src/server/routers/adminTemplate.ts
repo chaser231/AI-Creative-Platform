@@ -8,6 +8,10 @@
 import { z } from "zod";
 import { createTRPCRouter, superAdminProcedure } from "../trpc";
 import { TRPCError } from "@trpc/server";
+import {
+  collectS3KeysFromTemplate,
+  deleteS3Objects,
+} from "../utils/s3-cleanup";
 
 export const adminTemplateRouter = createTRPCRouter({
   /** List all templates across all workspaces */
@@ -147,10 +151,30 @@ export const adminTemplateRouter = createTRPCRouter({
       return duplicate;
     }),
 
-  /** Delete a template */
+  /** Delete a template (with S3 storage cleanup) */
   delete: superAdminProcedure
     .input(z.object({ id: z.string() }))
     .mutation(async ({ ctx, input }) => {
+      // Fetch template to extract S3 URLs before deletion
+      const template = await ctx.prisma.template.findUnique({
+        where: { id: input.id },
+        select: { data: true, thumbnailUrl: true },
+      });
+
+      if (!template) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Шаблон не найден" });
+      }
+
+      // ── S3 cleanup ──
+      try {
+        const s3Keys = collectS3KeysFromTemplate(template.data, template.thumbnailUrl);
+        if (s3Keys.length > 0) {
+          await deleteS3Objects(s3Keys);
+        }
+      } catch (cleanupErr) {
+        console.error("[adminTemplate.delete] S3 cleanup failed:", cleanupErr);
+      }
+
       await ctx.prisma.template.delete({
         where: { id: input.id },
       });

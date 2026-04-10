@@ -7,6 +7,10 @@
 import { z } from "zod";
 import { createTRPCRouter, protectedProcedure } from "../trpc";
 import { TRPCError } from "@trpc/server";
+import {
+  collectS3KeysFromTemplate,
+  deleteS3Objects,
+} from "../utils/s3-cleanup";
 
 export const templateRouter = createTRPCRouter({
   /** List templates with optional filtering */
@@ -157,10 +161,30 @@ export const templateRouter = createTRPCRouter({
       return template;
     }),
 
-  /** Delete template */
+  /** Delete template (with S3 storage cleanup) */
   delete: protectedProcedure
     .input(z.object({ id: z.string() }))
     .mutation(async ({ ctx, input }) => {
+      // Fetch template to extract S3 URLs from data/thumbnail
+      const template = await ctx.prisma.template.findUnique({
+        where: { id: input.id },
+        select: { data: true, thumbnailUrl: true },
+      });
+
+      if (!template) {
+        throw new TRPCError({ code: "NOT_FOUND" });
+      }
+
+      // ── S3 cleanup ──
+      try {
+        const s3Keys = collectS3KeysFromTemplate(template.data, template.thumbnailUrl);
+        if (s3Keys.length > 0) {
+          await deleteS3Objects(s3Keys);
+        }
+      } catch (cleanupErr) {
+        console.error("[template.delete] S3 cleanup failed:", cleanupErr);
+      }
+
       await ctx.prisma.template.delete({
         where: { id: input.id },
       });
