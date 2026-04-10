@@ -259,9 +259,30 @@ export async function applyTemplatePack(
 ) {
     try {
         const data = ('data' in pack) ? pack.data : pack; // Handle TemplatePackMeta wrapper if present
-        const hydrated = hydrateTemplate(data);
         const { useCanvasStore } = await import("@/store/canvasStore");
-        useCanvasStore.getState().loadTemplatePack(hydrated);
+
+        // If data is raw canvas state (saved from template editor), load directly.
+        // This preserves layer hierarchy (parentId), slots, and all structure.
+        // Raw canvas state has a `layers` array at the top level — TemplatePack format does not.
+        const dataAny = data as any;
+        if (dataAny.layers && Array.isArray(dataAny.layers) && dataAny.layers.length > 0) {
+            useCanvasStore.setState({
+                layers: dataAny.layers,
+                masterComponents: dataAny.masterComponents ?? [],
+                componentInstances: dataAny.componentInstances ?? [],
+                resizes: dataAny.resizes ?? [{ id: "master", name: "Мастер макет", width: dataAny.canvasWidth || 1080, height: dataAny.canvasHeight || 1080, label: `${dataAny.canvasWidth || 1080} × ${dataAny.canvasHeight || 1080}`, instancesEnabled: false }],
+                activeResizeId: "master",
+                selectedLayerIds: [],
+                history: [],
+                canvasWidth: dataAny.canvasWidth || dataAny.baseWidth || 1080,
+                canvasHeight: dataAny.canvasHeight || dataAny.baseHeight || 1080,
+                artboardProps: dataAny.artboardProps ?? useCanvasStore.getState().artboardProps,
+            });
+        } else {
+            // Legacy TemplatePack format — hydrate with ID regeneration
+            const hydrated = hydrateTemplate(data);
+            useCanvasStore.getState().loadTemplatePack(hydrated);
+        }
 
         options?.onSuccess?.();
     } catch (err) {

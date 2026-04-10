@@ -55,7 +55,7 @@ export default function EditorPage({ params }: EditorPageProps) {
     const [templatesOpen, setTemplatesOpen] = useState(false);
     const [aiPanelOpen, setAiPanelOpen] = useState(false);
     const [aiChatOpen, setAiChatOpen] = useState(false);
-    const { messages: aiMessages, addMessages: addAiMessages } = useAISessionSync(id);
+    const { messages: aiMessages, addMessages: addAiMessages } = useAISessionSync(id, !isTemplateMode);
     const [shareOpen, setShareOpen] = useState(false);
     const [helpOpen, setHelpOpen] = useState(false);
     const [settingsOpen, setSettingsOpen] = useState(false);

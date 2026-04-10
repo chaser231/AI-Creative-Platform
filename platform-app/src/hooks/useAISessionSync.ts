@@ -18,7 +18,7 @@ import type { AIChatMessage } from "@/components/editor/ai-chat";
  * Hook to sync AI chat messages with the backend.
  * Returns messages array and functions to add messages.
  */
-export function useAISessionSync(projectId: string) {
+export function useAISessionSync(projectId: string, enabled: boolean = true) {
   const [messages, setMessages] = useState<AIChatMessage[]>([]);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const sessionInitRef = useRef(false);
@@ -31,6 +31,7 @@ export function useAISessionSync(projectId: string) {
   const sessionsQuery = trpc.ai.listSessions.useQuery(
     { projectId },
     {
+      enabled, // Skip in template mode
       retry: false, // Don't retry if project doesn't exist in DB
       refetchOnWindowFocus: false,
     }
@@ -38,6 +39,10 @@ export function useAISessionSync(projectId: string) {
 
   // Initialize session — only if project exists in DB
   useEffect(() => {
+    if (!enabled) {
+      sessionInitRef.current = true;
+      return;
+    }
     if (sessionInitRef.current) return;
     if (sessionsQuery.isLoading) return;
 
