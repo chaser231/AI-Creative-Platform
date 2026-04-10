@@ -16,6 +16,7 @@ import {
     Palette,
     Lock,
     Globe,
+    Users,
 } from "lucide-react";
 import { Popover, PopoverButton } from "@/components/ui/Popover";
 import { AppShell } from "@/components/layout/AppShell";
@@ -96,6 +97,12 @@ function PackCard({ pack, onLoad }: { pack: TemplatePackV2; onLoad: (pack: Templ
                     <div className="absolute top-2.5 right-2.5 flex items-center gap-1 px-2 py-0.5 rounded-full bg-bg-surface/90 border border-border-primary">
                         <Lock size={10} className="text-text-tertiary" />
                         <span className="text-[9px] font-medium text-text-tertiary">Приватный</span>
+                    </div>
+                )}
+                {!pack.isOfficial && (!(pack as any).visibility || (pack as any).visibility === "WORKSPACE") && (
+                    <div className="absolute top-2.5 right-2.5 flex items-center gap-1 px-2 py-0.5 rounded-full bg-violet-500/10 border border-violet-500/20">
+                        <Users size={10} className="text-violet-500" />
+                        <span className="text-[9px] font-medium text-violet-600">Команда</span>
                     </div>
                 )}
                 {!pack.isOfficial && (pack as any).visibility === "PUBLIC" && (

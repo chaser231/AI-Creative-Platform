@@ -2,9 +2,10 @@
 
 import { useState, useMemo } from "react";
 import { v4 as uuid } from "uuid";
-import { LayoutTemplate, Plus, ArrowRight, Check, Search, X, Star, Download, Upload, Shuffle, Lock, Globe, Users } from "lucide-react";
+import { LayoutTemplate, Plus, ArrowRight, Check, Search, X, Star, Download, Upload, Shuffle, Lock, Globe, Users, Eye } from "lucide-react";
 import { useTemplateStore } from "@/store/templateStore";
 import { useTemplateListSync } from "@/hooks/useTemplateSync";
+import { trpc } from "@/lib/trpc";
 import { useCanvasStore } from "@/store/canvasStore";
 import { useShallow } from "zustand/react/shallow";
 import { useProjectStore } from "@/store/projectStore";
@@ -69,7 +70,10 @@ function Chip({
 
 export function TemplatePanel({ open, onClose }: TemplatePanelProps) {
     const { savedPacks, addPack, deletePack } = useTemplateStore();
-    const { backendTemplates } = useTemplateListSync();
+    const { backendTemplates, refetch } = useTemplateListSync();
+    const updateMutation = trpc.template.update.useMutation({
+        onSuccess: () => refetch(),
+    });
 
     // Merge backend + local templates, backend takes priority
     const allPacks = useMemo(() => {
@@ -351,6 +355,12 @@ export function TemplatePanel({ open, onClose }: TemplatePanelProps) {
                                 <span className="text-[7px] font-medium text-text-tertiary">Приватный</span>
                             </div>
                         )}
+                        {!v2.isOfficial && (!v2.visibility || v2.visibility === "WORKSPACE") && (
+                            <div className="absolute top-1 right-1 flex items-center gap-0.5 px-1 py-0.5 rounded-full bg-violet-500/10 border border-violet-500/20">
+                                <Users size={7} className="text-violet-500" />
+                                <span className="text-[7px] font-medium text-violet-600">Команда</span>
+                            </div>
+                        )}
                         {!v2.isOfficial && v2.visibility === "PUBLIC" && (
                             <div className="absolute top-1 right-1 flex items-center gap-0.5 px-1 py-0.5 rounded-full bg-blue-500/10 border border-blue-500/20">
                                 <Globe size={7} className="text-blue-500" />
@@ -415,6 +425,23 @@ export function TemplatePanel({ open, onClose }: TemplatePanelProps) {
                             title="Удалить"
                         >
                             <Plus size={10} className="rotate-45" />
+                        </button>
+                    )}
+                    {/* Visibility cycle: PRIVATE → WORKSPACE → PUBLIC → PRIVATE */}
+                    {!isMeta && !v2.isOfficial && (
+                        <button
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                const order: TemplateVisibility[] = ["PRIVATE", "WORKSPACE", "PUBLIC"];
+                                const current = v2.visibility || "WORKSPACE";
+                                const idx = order.indexOf(current as TemplateVisibility);
+                                const next = order[(idx + 1) % order.length];
+                                updateMutation.mutate({ id: v2.id, visibility: next });
+                            }}
+                            className="p-1 bg-bg-surface/90 border border-border-primary rounded hover:bg-bg-secondary transition-colors cursor-pointer"
+                            title={`Видимость: ${v2.visibility || "WORKSPACE"} → нажмите для смены`}
+                        >
+                            <Eye size={10} className="text-text-secondary" />
                         </button>
                     )}
                 </div>
