@@ -33,28 +33,11 @@ export const createResizeSlice: StateCreator<CanvasStore, [], [], ResizeSlice> =
 
         // ── Snapshot mode: caller provided layerSnapshot explicitly ──
         // This takes priority regardless of masterComponents presence.
-        // "clone" = layers cloned from current format, "empty" = []
+        // "clone" = layers from current format, "empty" = []
+        // Snapshot formats are independent — no instances needed.
         if (format.layerSnapshot !== undefined) {
-            const formatWithSnapshot: ResizeFormat = {
-                ...format,
-                layerSnapshot: format.layerSnapshot,
-            };
-
-            // Also create instances for legacy compatibility (so syncLayersToResize
-            // doesn't crash if the project has masterComponents)
-            let newInstances: ComponentInstance[] = [];
-            if (state.masterComponents.length > 0) {
-                newInstances = state.masterComponents.map((m) => ({
-                    id: uuid(),
-                    masterId: m.id,
-                    resizeId: format.id,
-                    localProps: { ...m.props },
-                }));
-            }
-
             set((s) => ({
-                resizes: [...s.resizes, formatWithSnapshot],
-                componentInstances: [...s.componentInstances, ...newInstances],
+                resizes: [...s.resizes, { ...format }],
             }));
             return;
         }
@@ -152,7 +135,6 @@ export const createResizeSlice: StateCreator<CanvasStore, [], [], ResizeSlice> =
         if (!targetResize) return;
         if (resizeId === state.activeResizeId) return;
 
-        // ── Snapshot mode: save current → load target ──
         // Always save current layers as the active format's snapshot.
         // This ensures we don't lose edits when switching formats.
         const updatedResizes = state.resizes.map(r =>
@@ -161,18 +143,17 @@ export const createResizeSlice: StateCreator<CanvasStore, [], [], ResizeSlice> =
                 : r
         );
 
-        // Check if we have masterComponents (legacy mode)
-        const hasLegacyMasters = state.masterComponents.length > 0;
+        // Determine if TARGET format is snapshot-based:
+        // snapshot-based = has layerSnapshot defined (even if empty [])
+        // legacy = no layerSnapshot → use master/instance sync
+        const isTargetSnapshotBased = targetResize.layerSnapshot !== undefined;
 
-        // Determine target layers:
-        // 1. If target has a snapshot → use it
-        // 2. If legacy mode → will be resolved by syncLayersToResize
-        // 3. Otherwise → empty (new format)
         let targetLayers: Layer[];
-        if (targetResize.layerSnapshot && targetResize.layerSnapshot.length > 0) {
-            targetLayers = targetResize.layerSnapshot;
-        } else if (hasLegacyMasters) {
-            // Let syncLayersToResize handle it (legacy path)
+        if (isTargetSnapshotBased) {
+            // Snapshot mode: load the snapshot directly
+            targetLayers = targetResize.layerSnapshot!;
+        } else if (state.masterComponents.length > 0) {
+            // Legacy format: syncLayersToResize will rebuild from instances
             targetLayers = state.layers;
         } else {
             // No snapshot and no masters — empty page
@@ -188,8 +169,8 @@ export const createResizeSlice: StateCreator<CanvasStore, [], [], ResizeSlice> =
             selectedLayerIds: [],
         });
 
-        // In legacy mode, still run syncLayersToResize for master/instance mapping
-        if (hasLegacyMasters) {
+        // Only run syncLayersToResize for legacy (non-snapshot) formats
+        if (!isTargetSnapshotBased && state.masterComponents.length > 0) {
             get().syncLayersToResize();
         }
     },

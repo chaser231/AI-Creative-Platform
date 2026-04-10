@@ -98,26 +98,26 @@ export function ResizePanel() {
                         />
                     </div>
 
-                    {/* Offer clone/empty choice when there are layers to copy */}
+                    {/* Choice: duplicate current content or start fresh */}
                     {layers.length > 0 ? (
                         <div className="flex gap-1.5">
                             <button
                                 onClick={() => handleAddCustom("clone")}
                                 disabled={!customName.trim()}
                                 className="flex-1 flex items-center justify-center gap-1 h-7 rounded-[var(--radius-md)] bg-accent-primary text-text-inverse text-[11px] font-medium hover:bg-accent-primary-hover transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-                                title="Копировать слои из текущего формата"
+                                title="Дублировать содержимое текущего формата в новый"
                             >
                                 <Copy size={11} />
-                                Копировать
+                                С содержимым
                             </button>
                             <button
                                 onClick={() => handleAddCustom("empty")}
                                 disabled={!customName.trim()}
                                 className="flex-1 flex items-center justify-center gap-1 h-7 rounded-[var(--radius-md)] border border-border-primary text-text-secondary text-[11px] font-medium hover:bg-bg-tertiary hover:text-text-primary transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-                                title="Создать пустую страницу"
+                                title="Создать пустой формат без содержимого"
                             >
                                 <FileText size={11} />
-                                Пустой
+                                Чистый лист
                             </button>
                         </div>
                     ) : (
@@ -202,7 +202,8 @@ export function ResizePanel() {
                         {activeResizeId === resize.id && (
                             <Check size={12} className="text-accent-primary shrink-0" />
                         )}
-                        {resize.id !== "master" && masterComponents.length > 0 && (
+                        {/* Link/Unlink only for legacy (non-snapshot) formats */}
+                        {resize.id !== "master" && resize.layerSnapshot === undefined && masterComponents.length > 0 && (
                             <button
                                 onClick={(e) => {
                                     e.stopPropagation();
