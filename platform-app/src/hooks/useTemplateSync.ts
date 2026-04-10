@@ -48,6 +48,7 @@ export function useTemplateListSync() {
     tags: unknown;
     isOfficial: boolean;
     visibility: string;
+    editPermission: string;
     thumbnailUrl: string | null;
     popularity: number;
     createdAt: Date;
@@ -79,6 +80,7 @@ export function useTemplateListSync() {
     author: t.author,
     isOfficial: t.isOfficial,
     visibility: (t.visibility || "WORKSPACE") as TemplatePackV2["visibility"],
+    editPermission: (t.editPermission || "AUTHOR_ONLY") as TemplatePackV2["editPermission"],
     thumbnailUrl: t.thumbnailUrl ?? undefined,
     popularity: t.popularity,
     createdAt: new Date(t.createdAt).toISOString(),
@@ -128,6 +130,7 @@ export function useSaveTemplateSync() {
           data: pack, // Store the entire pack as JSON
           isOfficial: pack.isOfficial,
           visibility: (pack.visibility || "WORKSPACE") as "PRIVATE" | "WORKSPACE" | "PUBLIC" | "SHARED",
+          editPermission: (pack.editPermission || "AUTHOR_ONLY") as "AUTHOR_ONLY" | "WORKSPACE" | "SPECIFIC",
           thumbnailUrl: pack.thumbnailUrl,
         });
         return template;

@@ -13,6 +13,7 @@ import type {
     TemplateOccasion,
     TemplateTag,
     TemplateVisibility,
+    TemplateEditPermission,
 } from "@/types";
 
 /* ─── Template Pack (v1 — backward compat) ──────────────── */
@@ -43,6 +44,7 @@ export interface TemplatePackV2 extends TemplatePack {
     author: string;
     isOfficial: boolean;
     visibility?: TemplateVisibility;
+    editPermission?: TemplateEditPermission;
     thumbnailUrl?: string;
     popularity: number;
     createdAt: string;

@@ -2,7 +2,8 @@
 
 import { useState, useMemo } from "react";
 import { v4 as uuid } from "uuid";
-import { LayoutTemplate, Plus, ArrowRight, Check, Search, X, Star, Download, Upload, Shuffle, Lock, Globe, Users, Eye } from "lucide-react";
+import { LayoutTemplate, Plus, ArrowRight, Check, Search, X, Star, Download, Upload, Shuffle, Lock, Globe, Users, Eye, Pencil } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useTemplateStore } from "@/store/templateStore";
 import { useTemplateListSync } from "@/hooks/useTemplateSync";
 import { trpc } from "@/lib/trpc";
@@ -15,7 +16,7 @@ import { DEFAULT_PACKS, type TemplatePackMeta } from "@/constants/defaultPacks";
 import { serializeTemplate } from "@/services/templateService";
 import { searchPacks } from "@/services/templateCatalogService";
 import type { TemplatePackV2, TemplatePack } from "@/services/templateService";
-import type { BusinessUnit, TemplateCategory, ContentType, TemplateTag, TemplateVisibility } from "@/types";
+import type { BusinessUnit, TemplateCategory, ContentType, TemplateTag, TemplateVisibility, TemplateEditPermission } from "@/types";
 import { SlotMappingModal } from "@/components/editor/SlotMappingModal";
 import { extractSingleFormatFromPack } from "@/services/templateService";
 
@@ -71,6 +72,7 @@ function Chip({
 export function TemplatePanel({ open, onClose }: TemplatePanelProps) {
     const { savedPacks, addPack, deletePack } = useTemplateStore();
     const { backendTemplates, refetch } = useTemplateListSync();
+    const router = useRouter();
     const updateMutation = trpc.template.update.useMutation({
         onSuccess: () => refetch(),
     });
@@ -122,6 +124,7 @@ export function TemplatePanel({ open, onClose }: TemplatePanelProps) {
     const [saveCategories, setSaveCategories] = useState<TemplateCategory[]>([]);
     const [saveContentType, setSaveContentType] = useState<ContentType>("visual");
     const [saveVisibility, setSaveVisibility] = useState<TemplateVisibility>("WORKSPACE");
+    const [saveEditPermission, setSaveEditPermission] = useState<TemplateEditPermission>("AUTHOR_ONLY");
     const [saveTagInput, setSaveTagInput] = useState("");
     const [saveTags, setSaveTags] = useState<string[]>([]);
 
@@ -244,6 +247,7 @@ export function TemplatePanel({ open, onClose }: TemplatePanelProps) {
             author: "user",
             isOfficial: false,
             visibility: saveVisibility,
+            editPermission: saveEditPermission,
         };
 
         addPack(newPack, meta);
@@ -259,6 +263,7 @@ export function TemplatePanel({ open, onClose }: TemplatePanelProps) {
         setSaveCategories([]);
         setSaveContentType("visual");
         setSaveVisibility("WORKSPACE");
+        setSaveEditPermission("AUTHOR_ONLY");
         setSaveTags([]);
         setSaveTagInput("");
     };
@@ -425,6 +430,19 @@ export function TemplatePanel({ open, onClose }: TemplatePanelProps) {
                             title="Удалить"
                         >
                             <Plus size={10} className="rotate-45" />
+                        </button>
+                    )}
+                    {/* Edit template in canvas */}
+                    {!isMeta && !v2.isOfficial && (
+                        <button
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                router.push(`/editor/${v2.id}?source=template`);
+                            }}
+                            className="p-1 bg-accent-primary/10 border border-accent-primary/20 rounded hover:bg-accent-primary/20 transition-colors cursor-pointer"
+                            title="Редактировать шаблон"
+                        >
+                            <Pencil size={10} className="text-accent-primary" />
                         </button>
                     )}
                     {/* Visibility cycle: PRIVATE → WORKSPACE → PUBLIC → PRIVATE */}
@@ -656,6 +674,34 @@ export function TemplatePanel({ open, onClose }: TemplatePanelProps) {
                                                                 <div className="text-[8px] text-text-tertiary">{opt.desc}</div>
                                                             </div>
                                                             {saveVisibility === opt.value && <Check size={12} />}
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                            </div>
+
+                                            {/* Edit Permission */}
+                                            <div>
+                                                <label className="block text-[10px] font-medium text-text-secondary mb-1">Кто может редактировать</label>
+                                                <div className="flex flex-col gap-1">
+                                                    {([
+                                                        { value: "AUTHOR_ONLY" as const, label: "Только я", icon: <Lock size={12} />, desc: "Редактировать может только автор" },
+                                                        { value: "WORKSPACE" as const, label: "Вся команда", icon: <Users size={12} />, desc: "Любой участник воркспейса" },
+                                                    ]).map(opt => (
+                                                        <button
+                                                            key={opt.value}
+                                                            onClick={() => setSaveEditPermission(opt.value)}
+                                                            className={`flex items-center gap-2 px-2.5 py-2 rounded-lg text-left transition-all cursor-pointer border ${
+                                                                saveEditPermission === opt.value
+                                                                    ? "bg-accent-primary/10 border-accent-primary/30 text-accent-primary"
+                                                                    : "bg-bg-surface border-border-primary text-text-secondary hover:border-border-secondary"
+                                                            }`}
+                                                        >
+                                                            <span className={saveEditPermission === opt.value ? "text-accent-primary" : "text-text-tertiary"}>{opt.icon}</span>
+                                                            <div className="flex-1 min-w-0">
+                                                                <div className="text-[10px] font-medium">{opt.label}</div>
+                                                                <div className="text-[8px] text-text-tertiary">{opt.desc}</div>
+                                                            </div>
+                                                            {saveEditPermission === opt.value && <Check size={12} />}
                                                         </button>
                                                     ))}
                                                 </div>

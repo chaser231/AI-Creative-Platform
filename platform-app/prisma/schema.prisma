@@ -230,6 +230,12 @@ enum TemplateVisibility {
   SHARED       // Specific users only (via TemplateShare)
 }
 
+enum TemplateEditPermission {
+  AUTHOR_ONLY  // Only the template author can edit (default)
+  WORKSPACE    // Any workspace member can edit
+  SPECIFIC     // Specific users only (Phase 2, via TemplateShare)
+}
+
 model Template {
   id          String @id @default(cuid())
   name        String
@@ -248,6 +254,7 @@ model Template {
   // Metadata
   isOfficial   Boolean            @default(false)
   visibility   TemplateVisibility @default(WORKSPACE)
+  editPermission TemplateEditPermission @default(AUTHOR_ONLY)
   thumbnailUrl String?
   popularity   Int                @default(0)
 

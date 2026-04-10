@@ -80,6 +80,7 @@ export const templateRouter = createTRPCRouter({
           tags: true,
           isOfficial: true,
           visibility: true,
+          editPermission: true,
           thumbnailUrl: true,
           popularity: true,
           createdAt: true,
@@ -137,6 +138,7 @@ export const templateRouter = createTRPCRouter({
         data: z.any(), // TemplatePack JSON
         isOfficial: z.boolean().default(false),
         visibility: z.enum(["PRIVATE", "WORKSPACE", "PUBLIC", "SHARED"]).default("WORKSPACE"),
+        editPermission: z.enum(["AUTHOR_ONLY", "WORKSPACE", "SPECIFIC"]).default("AUTHOR_ONLY"),
         thumbnailUrl: z.string().optional(),
       })
     )
@@ -151,7 +153,7 @@ export const templateRouter = createTRPCRouter({
       return template;
     }),
 
-  /** Update template */
+  /** Update template (with permission enforcement) */
   update: protectedProcedure
     .input(
       z.object({
@@ -165,17 +167,123 @@ export const templateRouter = createTRPCRouter({
         data: z.any().optional(),
         isOfficial: z.boolean().optional(),
         visibility: z.enum(["PRIVATE", "WORKSPACE", "PUBLIC", "SHARED"]).optional(),
+        editPermission: z.enum(["AUTHOR_ONLY", "WORKSPACE", "SPECIFIC"]).optional(),
         thumbnailUrl: z.string().nullable().optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
       const { id, ...data } = input;
+
+      // Fetch existing template to check permissions
+      const existing = await ctx.prisma.template.findUnique({ where: { id } });
+      if (!existing) throw new TRPCError({ code: "NOT_FOUND" });
+
+      const isAuthor = existing.author === ctx.user.id;
+
+      // Check edit permission
+      const canEdit = isAuthor
+        || existing.editPermission === "WORKSPACE";
+        // Phase 2: || (existing.editPermission === "SPECIFIC" && check TemplateShare)
+
+      if (!canEdit) {
+        throw new TRPCError({ code: "FORBIDDEN", message: "У вас нет прав на редактирование этого шаблона" });
+      }
+
+      // Non-authors cannot change sensitive settings
+      if (!isAuthor) {
+        if (data.visibility === "PRIVATE") {
+          throw new TRPCError({ code: "FORBIDDEN", message: "Только автор может сделать шаблон приватным" });
+        }
+        if (data.editPermission !== undefined) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "Только автор может менять права редактирования" });
+        }
+        if (data.visibility !== undefined && data.visibility !== existing.visibility) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "Только автор может менять видимость шаблона" });
+        }
+      }
+
       const template = await ctx.prisma.template.update({
         where: { id },
         data,
       });
 
       return template;
+    }),
+
+  /** Load template state for canvas editing */
+  loadState: protectedProcedure
+    .input(z.object({ id: z.string() }))
+    .query(async ({ ctx, input }) => {
+      const template = await ctx.prisma.template.findUnique({
+        where: { id: input.id },
+        select: {
+          id: true,
+          name: true,
+          description: true,
+          data: true,
+          author: true,
+          visibility: true,
+          editPermission: true,
+          isOfficial: true,
+          workspaceId: true,
+        },
+      });
+
+      if (!template) throw new TRPCError({ code: "NOT_FOUND" });
+
+      // Check visibility access
+      const isAuthor = template.author === ctx.user.id;
+      // TODO: check workspace membership for WORKSPACE visibility
+      const canView = isAuthor
+        || template.visibility === "PUBLIC"
+        || template.visibility === "WORKSPACE"
+        || template.isOfficial;
+
+      if (!canView) throw new TRPCError({ code: "FORBIDDEN" });
+
+      // Determine if current user can edit
+      const canEdit = isAuthor
+        || template.editPermission === "WORKSPACE";
+
+      return {
+        ...template,
+        canEdit,
+        isAuthor,
+      };
+    }),
+
+  /** Save template state from canvas (manual save, no auto-save) */
+  saveState: protectedProcedure
+    .input(
+      z.object({
+        id: z.string(),
+        data: z.any(),
+        thumbnailUrl: z.string().nullable().optional(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      // Check edit permission
+      const existing = await ctx.prisma.template.findUnique({ where: { id: input.id } });
+      if (!existing) throw new TRPCError({ code: "NOT_FOUND" });
+
+      const isAuthor = existing.author === ctx.user.id;
+      const canEdit = isAuthor || existing.editPermission === "WORKSPACE";
+
+      if (!canEdit) {
+        throw new TRPCError({ code: "FORBIDDEN", message: "У вас нет прав на редактирование этого шаблона" });
+      }
+
+      const updateData: Record<string, unknown> = { data: input.data };
+      if (input.thumbnailUrl !== undefined) {
+        updateData.thumbnailUrl = input.thumbnailUrl;
+      }
+
+      const template = await ctx.prisma.template.update({
+        where: { id: input.id },
+        data: updateData,
+      });
+
+      return { success: true, updatedAt: template.updatedAt };
     }),
 
   /** Delete template (with S3 storage cleanup) */

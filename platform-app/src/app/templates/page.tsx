@@ -17,6 +17,7 @@ import {
     Lock,
     Globe,
     Users,
+    Pencil,
 } from "lucide-react";
 import { Popover, PopoverButton } from "@/components/ui/Popover";
 import { AppShell } from "@/components/layout/AppShell";
@@ -68,6 +69,7 @@ const SORT_OPTIONS = [
 /* ─── Pack Card ──────────────────────────────────────── */
 
 function PackCard({ pack, onLoad }: { pack: TemplatePackV2; onLoad: (pack: TemplatePackV2) => void }) {
+    const router = useRouter();
     const categoryLabels = (pack.categories || [])
         .map(c => CATEGORY_OPTIONS.find(o => o.value === c)?.label)
         .filter(Boolean);
@@ -110,6 +112,20 @@ function PackCard({ pack, onLoad }: { pack: TemplatePackV2; onLoad: (pack: Templ
                         <Globe size={10} className="text-blue-500" />
                         <span className="text-[9px] font-medium text-blue-600">Публичный</span>
                     </div>
+                )}
+                {/* Edit button overlay */}
+                {!pack.isOfficial && (
+                    <button
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            router.push(`/editor/${pack.id}?source=template`);
+                        }}
+                        className="absolute bottom-2 right-2 flex items-center gap-1 px-2 py-1 rounded-lg bg-bg-surface/90 border border-border-primary text-[9px] font-medium text-text-secondary opacity-0 group-hover:opacity-100 hover:bg-bg-surface hover:text-text-primary hover:border-accent-primary/30 transition-all cursor-pointer z-10"
+                        title="Редактировать шаблон"
+                    >
+                        <Pencil size={10} />
+                        Редактировать
+                    </button>
                 )}
             </div>
 

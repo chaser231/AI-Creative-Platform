@@ -476,9 +476,7 @@
         <a href="#sync">Синхронизация FE / BE</a>
         <a href="#accelerated">Ускоренный сценарий</a>
         <a href="#milestones">Контрольные вехи</a>
-        <a href="#sprints">Разбиение по спринтам</a>
         <a href="#advanced">Продвинутый scope</a>
-        <a href="#files">Связанные файлы</a>
       </aside>
 
       <main class="content">
@@ -500,29 +498,14 @@
             </article>
             <article class="card">
               <h3>Общие контракты</h3>
-              <p>Схема канваса, контракты слоёв, таксономия слотов, модель мультиформата и словарь действий.</p>
+              <p>Схема канваса, контракты слоёв, таксономия слотов, модель мультиформата и реестр действий.</p>
             </article>
             <article class="card">
-              <span class="badge rose">Поток D</span>
               <h3>R&amp;D и исследования</h3>
-              <p>Интеллектуальный resize, scene graph, объяснимость, метрики качества и планирование агентных шагов.</p>
+              <p>Интеллектуальный resize, scene graph, планирование агентных шагов.</p>
             </article>
           </div>
 
-          <div class="note" style="margin-top: 18px;">
-            <strong>Ключевой принцип синхронизации</strong>
-            Фронтенд не ждёт “готовый backend”, а backend не ждёт “готовый UI”. Обе стороны работают
-            против общих схем: <code>CanvasDocument</code>, <code>Layer</code>, <code>Template</code>,
-            <code>FormatInstance</code>, <code>ResizeMapping</code>, <code>AIAction</code>.
-          </div>
-
-          <div class="pill-row">
-            <span class="pill">Редактор сначала на моках</span>
-            <span class="pill">API от общих контрактов</span>
-            <span class="pill">Feature flags для рискованного scope</span>
-            <span class="pill">Интеграция по вехам</span>
-            <span class="pill">Эксперименты в изоляции</span>
-          </div>
         </section>
 
         <section class="section" id="phases">
@@ -537,7 +520,6 @@
             <article class="phase">
               <div class="phase-top">
                 <h3>Этап 0. Фундамент и контракты</h3>
-                <small>2–3 недели</small>
               </div>
               <p class="lead" style="margin-bottom: 0;">Фиксация доменной модели, оболочки редактора, стратегии хранения, contract fixtures и матрицы feature flags.</p>
               <div class="columns">
@@ -570,8 +552,7 @@
 
             <article class="phase">
               <div class="phase-top">
-                <h3>Этап 1. MVP редактора</h3>
-                <small>4–6 недель</small>
+                <h3>Этап 1. База редактора</h3>
               </div>
               <p class="lead" style="margin-bottom: 0;">Редактор одного формата: viewport, выделение, перемещение и resize, текст, shape, image, панель слоёв, свойства, save/load.</p>
               <div class="columns">
@@ -596,7 +577,7 @@
                   <ul class="clean">
                     <li>Документ сохраняется и открывается</li>
                     <li>Сценарий ассетов замкнут</li>
-                    <li>MVP годится для простых креативов</li>
+                    <li>Канвас годится для простых креативов</li>
                   </ul>
                 </div>
               </div>
@@ -605,16 +586,16 @@
             <article class="phase">
               <div class="phase-top">
                 <h3>Этап 2. Структурная композиция и шаблоны</h3>
-                <small>3–4 недели</small>
               </div>
               <p class="lead" style="margin-bottom: 0;">Frame-контейнеры, вложенная структура, clipping, база под auto-layout, slot roles, применение и сохранение шаблонов, каталог.</p>
               <div class="columns">
                 <div class="mini">
                   <h4>Фронтенд</h4>
                   <ul class="clean">
-                    <li>Вложенные frame</li>
+                    <li>Вложенные frame-структуры</li>
                     <li>UI редактирования slot roles</li>
                     <li>Применение и сохранение шаблонов</li>
+                    <li>Базовый авто-лейаут и clipping></li>
                   </ul>
                 </div>
                 <div class="mini">
@@ -639,7 +620,6 @@
             <article class="phase">
               <div class="phase-top">
                 <h3>Этап 3. Основа мультиформата</h3>
-                <small>3–4 недели</small>
               </div>
               <p class="lead" style="margin-bottom: 0;">Мастер-инстанс модель, панель форматов, наследование, override-поля, пакетный экспорт и сериализация мультиформатного документа.</p>
               <div class="columns">
@@ -673,9 +653,8 @@
             <article class="phase">
               <div class="phase-top">
                 <h3>Этап 4. Smart Resize v1</h3>
-                <small>4–5 недель</small>
               </div>
-              <p class="lead" style="margin-bottom: 0;">Resize с учётом slot roles, review mapping, разбор конфликтов, индикаторы уверенности и воспроизводимая операция resize.</p>
+              <p class="lead" style="margin-bottom: 0;">Resize с учётом slot roles, review mapping, разбор конфликтов, воспроизводимая операция resize.</p>
               <div class="columns">
                 <div class="mini">
                   <h4>Фронтенд</h4>
@@ -690,15 +669,13 @@
                   <ul class="clean">
                     <li>Движок mapping</li>
                     <li>Правила и семантическое сопоставление</li>
-                    <li>Уверенность и журналирование</li>
+                    <li>Логирование</li>
                   </ul>
                 </div>
                 <div class="mini">
                   <h4>Выход этапа</h4>
                   <ul class="clean">
                     <li>Resize лучше простого масштабирования</li>
-                    <li>Неуверенность системы видна</li>
-                    <li>Есть журнал изменений</li>
                   </ul>
                 </div>
               </div>
@@ -707,7 +684,6 @@
             <article class="phase">
               <div class="phase-top">
                 <h3>Этап 5. AI-слой генерации</h3>
-                <small>3–4 недели</small>
               </div>
               <p class="lead" style="margin-bottom: 0;">Промпт-бар, генерация изображений и текста, редактирование изображения, референсы, AI-gateway, модерация и учёт затрат.</p>
               <div class="columns">
@@ -741,7 +717,6 @@
             <article class="phase">
               <div class="phase-top">
                 <h3>Этап 6. AI-ассистент и управляемое редактирование</h3>
-                <small>4–6 недель</small>
               </div>
               <p class="lead" style="margin-bottom: 0;">Модель plan → preview → approve, action registry, оркестрация, rollback, объяснимость и память в рамках документа.</p>
               <div class="columns">
@@ -812,7 +787,7 @@
           <h2>Синхронизация фронтенда и бэкенда</h2>
           <p class="lead">
             Если фронтенд уходит глубоко в редактор, бэкенд всё равно может параллельно строить второй этаж
-            продукта. Это не “подготовка на потом”, а независимая работа над будущими точками силы платформы.
+            продукта.
           </p>
 
           <div class="grid-2">
@@ -847,7 +822,7 @@
           <div class="note" style="margin-top: 18px;">
             <strong>Практический механизм</strong>
             Каждая контрольная веха заканчивается заменой mock adapter на реальную backend-возможность без
-            переделки UI-модели. Это работает только если contracts frozen достаточно рано.
+            переделки UI-модели. 
           </div>
         </section>
 
@@ -855,8 +830,7 @@
           <h2>Ускоренный сценарий с учётом текущей базы</h2>
           <p class="lead">
             Этот проект уже не находится в точке “строим редактор с нуля”. В кодовой базе уже есть resize-модель,
-            template/catalog слой, экспорт, AI-роуты и даже агентный контур. Поэтому реалистичный путь сейчас —
-            не полный greenfield, а ускоренная поставка поверх уже существующего фундамента.
+            template/catalog слой, экспорт, AI-роуты.
           </p>
 
           <div class="grid-2">
@@ -864,28 +838,17 @@
               <span class="badge success">Что уже можно переиспользовать</span>
               <ul class="clean">
                 <li>Базовый канвас, навигацию, объектную модель и свойства</li>
-                <li>Модель форматов и master / instance resize</li>
+                <li>Модель форматов</li>
                 <li>Template service, каталог и админский контур шаблонов</li>
                 <li>Project / asset / export инфраструктуру</li>
                 <li>AI endpoints, сессии, пресеты и историю</li>
-                <li>Action registry, workflow router и orchestrator для ассистента</li>
-              </ul>
-            </article>
-
-            <article class="card">
-              <span class="badge amber">Что можно вычеркнуть из greenfield-scope</span>
-              <ul class="clean">
                 <li>Auth и командный контур как новую задачу</li>
                 <li>Project storage и asset storage с нуля</li>
                 <li>Экспорт как новую платформенную функцию</li>
                 <li>Базовый editor shell и базовые canvas interactions</li>
-                <li>Мультиформат как архитектурную концепцию с нуля</li>
-                <li>AI orchestration “с чистого листа”</li>
               </ul>
             </article>
-          </div>
 
-          <div class="grid-2" style="margin-top: 16px;">
             <article class="card">
               <span class="badge brand">Что становится главной работой</span>
               <ul class="clean">
@@ -897,14 +860,17 @@
               </ul>
             </article>
 
+          </div>
+
+          <div class="grid-1" style="margin-top: 16px;">
             <article class="card">
-              <span class="badge rose">Что реально брать из AI-агента</span>
+              <span class="badge rose">Что можно взять из AI-агента v2</span>
               <ul class="clean">
                 <li><code>actionRegistry</code> как основу словаря действий</li>
                 <li><code>workflow</code> router как вход в agent-сценарии</li>
                 <li><code>orchestrator</code> как базу plan → execute</li>
                 <li>Reference-image pipeline и template-fill flow</li>
-                <li>AI sessions, history и cost tracking как стартовый telemetry layer</li>
+                <li>AI sessions, history и cost tracking как стартовый слой аналитики</li>
               </ul>
             </article>
           </div>
@@ -921,38 +887,33 @@
               </thead>
               <tbody>
                 <tr>
-                  <td>Этап A. Продуктизация текущего редактора</td>
-                  <td>1–3</td>
+                  <td>Этап 1. Продуктизация текущего редактора</td>
+                  <td>1-2</td>
                   <td>Полировка редактора, слои, свойства, asset UX, стабильность сценариев</td>
                   <td>Версии, надёжность persistence, метаданные ассетов, контроль стабильности export/AI</td>
                 </tr>
                 <tr>
-                  <td>Этап B. Гибкие шаблоны и сильный мультиформат</td>
-                  <td>4–6</td>
+                  <td>Этап 2. Гибкие шаблоны и сильный мультиформат</td>
+                  <td>3–4</td>
                   <td>Новый UX форматов, slot/role UI, сценарии шаблонов</td>
                   <td>Template schema v2, миграция шаблонов, каталог и расширяемые slot roles</td>
                 </tr>
                 <tr>
-                  <td>Этап C. Цельный AI-слой</td>
-                  <td>7–8</td>
+                  <td>Этап 3. Цельный AI-слой</td>
+                  <td>5–6</td>
                   <td>Промпт-бар, история, retry/apply flows, единый UX AI-инструментов</td>
                   <td>Унификация AI-контуров, учёт сессий и затрат, safety/guardrails</td>
                 </tr>
                 <tr>
-                  <td>Этап D. Smart Resize и AI-ассистент</td>
-                  <td>9–12</td>
+                  <td>Этап 4. Smart Resize и AI-ассистент</td>
+                  <td>7–8</td>
                   <td>Preview, review, approve/reject, diff и explainability UI</td>
-                  <td>Richer canvas actions, confidence scoring, audit trail и доработка orchestration</td>
+                  <td>Обогащенные canvas actions, audit trail и доработка оркестрации</td>
                 </tr>
               </tbody>
             </table>
           </div>
 
-          <div class="note" style="margin-top: 18px;">
-            <strong>Практический вывод</strong>
-            При текущем уровне базы реальный ориентир уже не 16 спринтов greenfield-плана, а примерно 8–12 спринтов
-            ускоренной поставки, если не переписывать фундамент, а доращивать то, что уже подтверждено кодом.
-          </div>
         </section>
 
         <section class="section" id="milestones">
@@ -1020,79 +981,6 @@
           </div>
         </section>
 
-        <section class="section" id="sprints">
-          <h2>Разбиение по спринтам</h2>
-          <p class="lead">
-            Примерная операционная сетка на 16 двухнедельных спринтов. Её можно упростить или ужать, но она
-            хорошо показывает, как большие эпики превращаются в последовательные куски поставки.
-          </p>
-
-          <div class="timeline">
-            <div class="timeline-item">
-              <div class="timeline-tag">S1–S2</div>
-              <div class="card">
-                <span class="badge brand">Фундамент</span>
-                <h3>Контракты, оболочка редактора, модель хранения</h3>
-                <p>FE поднимает shell и state skeleton, BE фиксирует document schema, API contracts, storage и queues.</p>
-              </div>
-            </div>
-
-            <div class="timeline-item">
-              <div class="timeline-tag">S3–S5</div>
-              <div class="card">
-                <span class="badge amber">MVP редактора</span>
-                <h3>Базовый canvas, инструменты, save/load, ассеты</h3>
-                <p>Viewport, selection, text/image/rect/frame, layer panel, properties, document CRUD, autosave, upload.</p>
-              </div>
-            </div>
-
-            <div class="timeline-item">
-              <div class="timeline-tag">S6–S8</div>
-              <div class="card">
-                <span class="badge blue">Структурное редактирование</span>
-                <h3>Frame, слоты, шаблоны</h3>
-                <p>Nested frames, clipping, slot taxonomy, template apply/save, catalog APIs и thumbnails.</p>
-              </div>
-            </div>
-
-            <div class="timeline-item">
-              <div class="timeline-tag">S9–S10</div>
-              <div class="card">
-                <span class="badge success">Мультиформат</span>
-                <h3>Master/instance, overrides, фоновые задачи экспорта</h3>
-                <p>Formats panel, inheritance logic, multi-format persistence, batch export UX и rendering pipeline.</p>
-              </div>
-            </div>
-
-            <div class="timeline-item">
-              <div class="timeline-tag">S11–S12</div>
-              <div class="card">
-                <span class="badge rose">AI-слой</span>
-                <h3>Промпт-бар, generation API и история</h3>
-                <p>Text/image generation, image edit, safety, provider abstraction, cost tracking, apply-to-canvas flows.</p>
-              </div>
-            </div>
-
-            <div class="timeline-item">
-              <div class="timeline-tag">S13–S14</div>
-              <div class="card">
-                <span class="badge amber">Smart Resize</span>
-                <h3>Preview, review mapping, confidence</h3>
-                <p>Resize engine v1, rule layer, slot-aware mapping, human review surface и QA loop.</p>
-              </div>
-            </div>
-
-            <div class="timeline-item">
-              <div class="timeline-tag">S15–S16</div>
-              <div class="card">
-                <span class="badge brand">Ассистент Alpha</span>
-                <h3>Plan → approve → apply</h3>
-                <p>Action registry, orchestration, plan preview, rollback, diff view, audit trace и explainability.</p>
-              </div>
-            </div>
-          </div>
-        </section>
-
         <section class="section" id="advanced">
           <h2>Продвинутый scope</h2>
           <p class="lead">
@@ -1105,11 +993,11 @@
               <span class="badge amber">Трек A</span>
               <h3>Интеллектуальный Smart Resize</h3>
               <ul class="clean">
-                <li>Semantic slot taxonomy вместо purely geometric resize</li>
+                <li>Семантика слотов вместо purely geometric resize</li>
                 <li>Rule engine и человекочитаемые constraints</li>
                 <li>Confidence scoring на уровне слоя и документа</li>
                 <li>Alternative layout proposals</li>
-                <li>Learning loop по принятым и отклонённым mappings</li>
+                <li>Learning loop по принятым и отклонённым маппингам</li>
               </ul>
             </article>
 
@@ -1126,47 +1014,9 @@
             </article>
           </div>
 
-          <div class="note" style="margin-top: 18px;">
-            <strong>Почему это важно</strong>
-            Если не заложить семантику и action model рано, smart resize станет набором хрупких эвристик,
-            а AI-ассистент будет привязан к UI-хаку вместо устойчивого языка действий.
-          </div>
         </section>
 
-        <section class="section" id="files">
-          <h2>Связанные файлы</h2>
-          <p class="lead">
-            Полные markdown-версии и операционный sprint-план лежат рядом, чтобы презентацию можно было
-            быстро связать с рабочей документацией.
-          </p>
-
-          <div class="grid-4">
-            <article class="card">
-              <span class="badge brand">Markdown</span>
-              <h3><a href="./canvas_greenfield_roadmap.md">canvas_greenfield_roadmap.md</a></h3>
-              <p>Полное описание этапов, модели работы и продвинутого scope.</p>
-            </article>
-            <article class="card">
-              <span class="badge amber">Markdown</span>
-              <h3><a href="./canvas_greenfield_backlog.md">canvas_greenfield_backlog.md</a></h3>
-              <p>Эпики, задачи, acceptance criteria и контрольные вехи.</p>
-            </article>
-            <article class="card">
-              <span class="badge blue">Markdown</span>
-              <h3><a href="./canvas_greenfield_sprint_slices.md">canvas_greenfield_sprint_slices.md</a></h3>
-              <p>Разбиение по вехам и 16 примерных спринтов с FE/BE ownership.</p>
-            </article>
-            <article class="card">
-              <span class="badge rose">Markdown</span>
-              <h3><a href="./canvas_accelerated_delivery_plan.md">canvas_accelerated_delivery_plan.md</a></h3>
-              <p>Ускоренный план с учётом текущей базы и переиспользования AI-агентного контура.</p>
-            </article>
-          </div>
-
-          <div class="footer">
-            Версия страницы подготовлена как презентационный слой над рабочими markdown-документами.
-          </div>
-        </section>
+       
       </main>
     </div>
   </div>
