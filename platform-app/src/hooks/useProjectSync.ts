@@ -29,6 +29,30 @@ import type Konva from "konva";
 let cachedWorkspaceId: string | null = null;
 
 /**
+ * Build the canvas state object for persistence.
+ * Ensures the active format's layerSnapshot is updated with the current layers
+ * before serialization, so per-format snapshots are always fresh.
+ */
+function getCanvasStateForSave(store: ReturnType<typeof useCanvasStore.getState>) {
+    // Update the active format's snapshot with current layers
+    const resizesWithSnapshot = store.resizes.map(r =>
+        r.id === store.activeResizeId
+            ? { ...r, layerSnapshot: store.layers }
+            : r
+    );
+
+    return {
+        layers: store.layers,
+        masterComponents: store.masterComponents,
+        componentInstances: store.componentInstances,
+        resizes: resizesWithSnapshot,
+        artboardProps: store.artboardProps,
+        canvasWidth: store.canvasWidth,
+        canvasHeight: store.canvasHeight,
+    };
+}
+
+/**
  * Synchronize the project list from backend.
  * Use on the dashboard page.
  * @param onlyMine - if true, filters by createdById (for "Мои проекты")
@@ -192,16 +216,8 @@ export function useCanvasAutoSave(
       }
     }
 
-    // Serialize current canvas state
-    const canvasState = {
-      layers,
-      masterComponents: store.masterComponents,
-      componentInstances: store.componentInstances,
-      resizes: store.resizes,
-      artboardProps: store.artboardProps,
-      canvasWidth: store.canvasWidth,
-      canvasHeight: store.canvasHeight,
-    };
+    // Serialize current canvas state (with per-format snapshots)
+    const canvasState = getCanvasStateForSave(store);
 
     const serialized = JSON.stringify(canvasState);
 
@@ -235,15 +251,7 @@ export function useCanvasAutoSave(
     const store = useCanvasStore.getState();
     if (store.layers.length === 0 && lastSavedRef.current !== "") return;
 
-    const canvasState = {
-      layers: store.layers,
-      masterComponents: store.masterComponents,
-      componentInstances: store.componentInstances,
-      resizes: store.resizes,
-      artboardProps: store.artboardProps,
-      canvasWidth: store.canvasWidth,
-      canvasHeight: store.canvasHeight,
-    };
+    const canvasState = getCanvasStateForSave(store);
 
     const serialized = JSON.stringify(canvasState);
     if (serialized === lastSavedRef.current) return;
@@ -327,15 +335,7 @@ export function useCanvasAutoSave(
       // Don't save empty state on unload
       if (store.layers.length === 0 && lastSavedRef.current !== "") return;
 
-      const canvasState = {
-        layers: store.layers,
-        masterComponents: store.masterComponents,
-        componentInstances: store.componentInstances,
-        resizes: store.resizes,
-        artboardProps: store.artboardProps,
-        canvasWidth: store.canvasWidth,
-        canvasHeight: store.canvasHeight,
-      };
+      const canvasState = getCanvasStateForSave(store);
 
       const serialized = JSON.stringify(canvasState);
       if (serialized === lastSavedRef.current) return;

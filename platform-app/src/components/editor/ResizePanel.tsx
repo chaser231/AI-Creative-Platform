@@ -1,9 +1,10 @@
 "use client";
 
-import { Plus, Trash2, Check, Link, Unlink, X } from "lucide-react";
+import { Plus, Trash2, Check, Link, Unlink, X, Copy, FileText } from "lucide-react";
 import { useCanvasStore } from "@/store/canvasStore";
 import { useShallow } from "zustand/react/shallow";
 import { useState, useRef } from "react";
+import { cloneLayerTree } from "@/utils/cloneLayerTree";
 
 export function ResizePanel() {
     const {
@@ -14,11 +15,15 @@ export function ResizePanel() {
         removeResize,
         toggleInstanceMode,
         renameResize,
+        layers,
+        masterComponents,
     } = useCanvasStore(useShallow((s) => ({
         resizes: s.resizes, activeResizeId: s.activeResizeId,
         setActiveResize: s.setActiveResize, addResize: s.addResize,
         removeResize: s.removeResize, toggleInstanceMode: s.toggleInstanceMode,
         renameResize: s.renameResize,
+        layers: s.layers,
+        masterComponents: s.masterComponents,
     })));
     const [showAddForm, setShowAddForm] = useState(false);
     const [customName, setCustomName] = useState("");
@@ -28,18 +33,25 @@ export function ResizePanel() {
     const [editingName, setEditingName] = useState("");
     const renameRef = useRef<HTMLInputElement>(null);
 
-    const handleAddCustom = () => {
+    // Whether we're in snapshot mode (no masterComponents = pages mode)
+    const isSnapshotMode = masterComponents.length === 0;
+
+    const handleAddCustom = (mode: "clone" | "empty") => {
         if (!customName.trim()) return;
         const width = Number(customWidth) || 1200;
         const height = Number(customHeight) || 628;
-        addResize({
+
+        const format = {
             id: `custom-${Date.now()}`,
             name: customName.trim(),
             width,
             height,
             label: `${width} × ${height}`,
             instancesEnabled: true,
-        });
+            layerSnapshot: mode === "clone" ? cloneLayerTree(layers) : [],
+        };
+
+        addResize(format);
         setCustomName("");
         setCustomWidth("1200");
         setCustomHeight("628");
@@ -88,12 +100,38 @@ export function ResizePanel() {
                             className="min-w-0 flex-1 h-7 px-2 rounded-[var(--radius-sm)] border border-border-primary bg-bg-primary text-[11px] text-text-primary text-center focus:outline-none focus:ring-1 focus:ring-border-focus"
                         />
                     </div>
-                    <button
-                        onClick={handleAddCustom}
-                        className="w-full h-7 rounded-[var(--radius-md)] bg-accent-primary text-text-inverse text-[11px] font-medium hover:bg-accent-primary-hover transition-colors cursor-pointer"
-                    >
-                        Добавить
-                    </button>
+
+                    {/* In snapshot mode, offer clone/empty choice */}
+                    {isSnapshotMode && layers.length > 0 ? (
+                        <div className="flex gap-1.5">
+                            <button
+                                onClick={() => handleAddCustom("clone")}
+                                disabled={!customName.trim()}
+                                className="flex-1 flex items-center justify-center gap-1 h-7 rounded-[var(--radius-md)] bg-accent-primary text-text-inverse text-[11px] font-medium hover:bg-accent-primary-hover transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                                title="Копировать слои из текущего формата"
+                            >
+                                <Copy size={11} />
+                                Копировать
+                            </button>
+                            <button
+                                onClick={() => handleAddCustom("empty")}
+                                disabled={!customName.trim()}
+                                className="flex-1 flex items-center justify-center gap-1 h-7 rounded-[var(--radius-md)] border border-border-primary text-text-secondary text-[11px] font-medium hover:bg-bg-tertiary hover:text-text-primary transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                                title="Создать пустую страницу"
+                            >
+                                <FileText size={11} />
+                                Пустой
+                            </button>
+                        </div>
+                    ) : (
+                        <button
+                            onClick={() => handleAddCustom(isSnapshotMode ? "empty" : "clone")}
+                            disabled={!customName.trim()}
+                            className="w-full h-7 rounded-[var(--radius-md)] bg-accent-primary text-text-inverse text-[11px] font-medium hover:bg-accent-primary-hover transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                        >
+                            Добавить
+                        </button>
+                    )}
                 </div>
             )}
 
@@ -161,18 +199,13 @@ export function ResizePanel() {
                                         {resize.name}
                                     </span>
                                 )}
-                                {resize.id === "master" && (
-                                    <span className="text-[8px] font-semibold bg-accent-primary text-white px-1.5 py-0.5 rounded-full">
-                                        MASTER
-                                    </span>
-                                )}
                             </div>
                             <div className="text-[10px] text-text-tertiary font-light">{resize.label}</div>
                         </div>
                         {activeResizeId === resize.id && (
                             <Check size={12} className="text-accent-primary shrink-0" />
                         )}
-                        {resize.id !== "master" && (
+                        {resize.id !== "master" && masterComponents.length > 0 && (
                             <button
                                 onClick={(e) => {
                                     e.stopPropagation();

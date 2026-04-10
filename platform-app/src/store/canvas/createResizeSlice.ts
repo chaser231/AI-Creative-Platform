@@ -1,5 +1,9 @@
 /**
  * Resize Slice — Format management, syncLayersToResize, toggleInstanceMode
+ *
+ * Supports two modes:
+ * 1. Legacy master/instance mode — when masterComponents exist
+ * 2. Snapshot/page mode — each format stores its own independent layers
  */
 
 import type { StateCreator } from "zustand";
@@ -9,6 +13,7 @@ import { v4 as uuid } from "uuid";
 import { applyLayout, applyAllAutoLayouts } from "@/utils/layoutEngine";
 import { applyConstraints } from "@/utils/resizeUtil";
 import { getContentSourceUpdates } from "./helpers";
+import { cloneLayerTree } from "@/utils/cloneLayerTree";
 
 export type ResizeSlice = Pick<CanvasStore,
     | "resizes" | "activeResizeId" | "canvasWidth" | "canvasHeight"
@@ -25,66 +30,93 @@ export const createResizeSlice: StateCreator<CanvasStore, [], [], ResizeSlice> =
 
     addResize: (format: ResizeFormat) => {
         const state = get();
-        const masterFormat = state.resizes.find((r) => r.id === "master");
-        const mw = masterFormat?.width || 1080;
-        const mh = masterFormat?.height || 1080;
 
-        const newInstances = state.masterComponents.map((m) => {
-            const initialProps = { ...m.props };
-            let finalProps = initialProps;
+        // ── Legacy master/instance mode ──
+        if (state.masterComponents.length > 0) {
+            const masterFormat = state.resizes.find((r) => r.id === "master");
+            const mw = masterFormat?.width || 1080;
+            const mh = masterFormat?.height || 1080;
 
-            if (m.slotId) {
-                const mockLayer = {
-                    ...initialProps,
-                    id: uuid(),
-                    name: m.name,
-                    type: m.type,
-                    masterId: m.id,
-                    slotId: m.slotId
-                } as Layer;
+            const newInstances = state.masterComponents.map((m) => {
+                const initialProps = { ...m.props };
+                let finalProps = initialProps;
 
-                const [layouted] = applyLayout([mockLayer], format);
-                if (layouted) {
-                    finalProps = {
+                if (m.slotId) {
+                    const mockLayer = {
                         ...initialProps,
-                        x: layouted.x,
-                        y: layouted.y,
-                        width: layouted.width,
-                        height: layouted.height
+                        id: uuid(),
+                        name: m.name,
+                        type: m.type,
+                        masterId: m.id,
+                        slotId: m.slotId
+                    } as Layer;
+
+                    const [layouted] = applyLayout([mockLayer], format);
+                    if (layouted) {
+                        finalProps = {
+                            ...initialProps,
+                            x: layouted.x,
+                            y: layouted.y,
+                            width: layouted.width,
+                            height: layouted.height
+                        } as ComponentProps;
+                    }
+                } else {
+                    const constrained = applyConstraints(
+                        m.props,
+                        { width: mw, height: mh },
+                        { width: format.width, height: format.height }
+                    );
+                    finalProps = {
+                        ...finalProps,
+                        ...constrained
                     } as ComponentProps;
                 }
-            } else {
-                const constrained = applyConstraints(
-                    m.props,
-                    { width: mw, height: mh },
-                    { width: format.width, height: format.height }
-                );
-                finalProps = {
-                    ...finalProps,
-                    ...constrained
-                } as ComponentProps;
-            }
 
-            return {
-                id: uuid(),
-                masterId: m.id,
-                resizeId: format.id,
-                localProps: finalProps,
-            };
-        });
+                return {
+                    id: uuid(),
+                    masterId: m.id,
+                    resizeId: format.id,
+                    localProps: finalProps,
+                };
+            });
+            set((s) => ({
+                resizes: [...s.resizes, format],
+                componentInstances: [...s.componentInstances, ...newInstances],
+            }));
+            return;
+        }
+
+        // ── Snapshot/page mode ──
+        // format.layerSnapshot is set by the caller:
+        //   - cloned layers (from ResizePanel dialog "clone")
+        //   - empty array (from ResizePanel dialog "empty")
+        //   - or pre-existing snapshot from loaded data
+        const formatWithSnapshot: ResizeFormat = {
+            ...format,
+            layerSnapshot: format.layerSnapshot ?? [],
+        };
+
         set((s) => ({
-            resizes: [...s.resizes, format],
-            componentInstances: [...s.componentInstances, ...newInstances],
+            resizes: [...s.resizes, formatWithSnapshot],
         }));
     },
 
     removeResize: (resizeId) => {
         if (resizeId === "master") return;
-        set((state) => ({
-            resizes: state.resizes.filter((r) => r.id !== resizeId),
-            componentInstances: state.componentInstances.filter((i) => i.resizeId !== resizeId),
-            activeResizeId: state.activeResizeId === resizeId ? "master" : state.activeResizeId,
+        const state = get();
+        const wasActive = state.activeResizeId === resizeId;
+
+        set((s) => ({
+            resizes: s.resizes.filter((r) => r.id !== resizeId),
+            componentInstances: s.componentInstances.filter((i) => i.resizeId !== resizeId),
+            activeResizeId: wasActive ? (s.resizes[0]?.id || "master") : s.activeResizeId,
         }));
+
+        // If the deleted format was active, switch to the first available
+        if (wasActive) {
+            get().setActiveResize(get().resizes[0]?.id || "master");
+        }
     },
 
     renameResize: (resizeId, name) => {
@@ -97,14 +129,50 @@ export const createResizeSlice: StateCreator<CanvasStore, [], [], ResizeSlice> =
 
     setActiveResize: (resizeId) => {
         const state = get();
-        const resize = state.resizes.find((r) => r.id === resizeId);
-        if (!resize) return;
+        const targetResize = state.resizes.find((r) => r.id === resizeId);
+        if (!targetResize) return;
+        if (resizeId === state.activeResizeId) return;
+
+        // ── Snapshot mode: save current → load target ──
+        // Always save current layers as the active format's snapshot.
+        // This ensures we don't lose edits when switching formats.
+        const updatedResizes = state.resizes.map(r =>
+            r.id === state.activeResizeId
+                ? { ...r, layerSnapshot: [...state.layers] }
+                : r
+        );
+
+        // Check if we have masterComponents (legacy mode)
+        const hasLegacyMasters = state.masterComponents.length > 0;
+
+        // Determine target layers:
+        // 1. If target has a snapshot → use it
+        // 2. If legacy mode → will be resolved by syncLayersToResize
+        // 3. Otherwise → empty (new format)
+        let targetLayers: Layer[];
+        if (targetResize.layerSnapshot && targetResize.layerSnapshot.length > 0) {
+            targetLayers = targetResize.layerSnapshot;
+        } else if (hasLegacyMasters) {
+            // Let syncLayersToResize handle it (legacy path)
+            targetLayers = state.layers;
+        } else {
+            // No snapshot and no masters — empty page
+            targetLayers = [];
+        }
+
         set({
+            resizes: updatedResizes,
             activeResizeId: resizeId,
-            canvasWidth: resize.width,
-            canvasHeight: resize.height,
+            canvasWidth: targetResize.width,
+            canvasHeight: targetResize.height,
+            layers: targetLayers,
+            selectedLayerIds: [],
         });
-        get().syncLayersToResize();
+
+        // In legacy mode, still run syncLayersToResize for master/instance mapping
+        if (hasLegacyMasters) {
+            get().syncLayersToResize();
+        }
     },
 
     syncLayersToResize: () => {

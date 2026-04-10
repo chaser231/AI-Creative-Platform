@@ -266,16 +266,20 @@ export async function applyTemplatePack(
         // Raw canvas state has a `layers` array at the top level — TemplatePack format does not.
         const dataAny = data as any;
         if (dataAny.layers && Array.isArray(dataAny.layers) && dataAny.layers.length > 0) {
+            const resizes = dataAny.resizes ?? [{ id: "master", name: "Мастер макет", width: dataAny.canvasWidth || 1080, height: dataAny.canvasHeight || 1080, label: `${dataAny.canvasWidth || 1080} × ${dataAny.canvasHeight || 1080}`, instancesEnabled: false }];
+            const activeResizeId = resizes[0]?.id || "master";
+            const activeResize = resizes.find((r: any) => r.id === activeResizeId);
+
             useCanvasStore.setState({
                 layers: dataAny.layers,
                 masterComponents: dataAny.masterComponents ?? [],
                 componentInstances: dataAny.componentInstances ?? [],
-                resizes: dataAny.resizes ?? [{ id: "master", name: "Мастер макет", width: dataAny.canvasWidth || 1080, height: dataAny.canvasHeight || 1080, label: `${dataAny.canvasWidth || 1080} × ${dataAny.canvasHeight || 1080}`, instancesEnabled: false }],
-                activeResizeId: "master",
+                resizes,
+                activeResizeId,
                 selectedLayerIds: [],
                 history: [],
-                canvasWidth: dataAny.canvasWidth || dataAny.baseWidth || 1080,
-                canvasHeight: dataAny.canvasHeight || dataAny.baseHeight || 1080,
+                canvasWidth: activeResize?.width ?? dataAny.canvasWidth ?? 1080,
+                canvasHeight: activeResize?.height ?? dataAny.canvasHeight ?? 1080,
                 artboardProps: dataAny.artboardProps ?? useCanvasStore.getState().artboardProps,
             });
         } else {

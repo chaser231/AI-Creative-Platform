@@ -30,6 +30,7 @@ export interface ResizeFormat {
     height: number;
     label: string; // e.g. "Instagram Post", "Facebook Cover"
     instancesEnabled: boolean; // true = receives content-source cascade from master
+    layerSnapshot?: Layer[]; // per-format independent layer state (snapshot/page mode)
 }
 
 export const PRESET_FORMATS: ResizeFormat[] = [
