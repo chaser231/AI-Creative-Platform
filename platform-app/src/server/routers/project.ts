@@ -8,6 +8,11 @@ import { z } from "zod";
 import { createTRPCRouter, protectedProcedure } from "../trpc";
 import { TRPCError } from "@trpc/server";
 import type { PrismaClient } from "@prisma/client";
+import {
+  collectS3KeysFromAssets,
+  collectS3KeysFromCanvasState,
+  deleteS3Objects,
+} from "../utils/s3-cleanup";
 
 /** Role hierarchy for comparisons */
 const ROLE_RANK: Record<string, number> = { VIEWER: 0, USER: 1, CREATOR: 2, ADMIN: 3 };
@@ -140,16 +145,39 @@ export const projectRouter = createTRPCRouter({
       return updated;
     }),
 
-  /** Delete a project */
+  /** Delete a project (with S3 storage cleanup) */
   delete: protectedProcedure
     .input(z.object({ id: z.string() }))
     .mutation(async ({ ctx, input }) => {
       // Check: must be CREATOR in workspace, OR the project owner
-      const project = await ctx.prisma.project.findUnique({ where: { id: input.id } });
+      const project = await ctx.prisma.project.findUnique({
+        where: { id: input.id },
+        select: { id: true, createdById: true, workspaceId: true, canvasState: true },
+      });
       if (!project) throw new TRPCError({ code: "NOT_FOUND" });
 
       if (project.createdById !== ctx.user.id) {
         await checkRole(ctx.prisma, ctx.user.id, project.workspaceId, "CREATOR");
+      }
+
+      // ── S3 cleanup: collect all S3 keys before cascade-deleting DB records ──
+      try {
+        const assets = await ctx.prisma.asset.findMany({
+          where: { projectId: input.id },
+          select: { url: true },
+        });
+
+        const s3Keys = [
+          ...collectS3KeysFromAssets(assets),
+          ...collectS3KeysFromCanvasState(project.canvasState),
+        ];
+
+        if (s3Keys.length > 0) {
+          await deleteS3Objects(s3Keys);
+        }
+      } catch (cleanupErr) {
+        // Non-blocking: log but proceed with DB deletion
+        console.error("[project.delete] S3 cleanup failed:", cleanupErr);
       }
 
       await ctx.prisma.project.delete({
