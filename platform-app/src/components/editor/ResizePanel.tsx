@@ -33,9 +33,6 @@ export function ResizePanel() {
     const [editingName, setEditingName] = useState("");
     const renameRef = useRef<HTMLInputElement>(null);
 
-    // Whether we're in snapshot mode (no masterComponents = pages mode)
-    const isSnapshotMode = masterComponents.length === 0;
-
     const handleAddCustom = (mode: "clone" | "empty") => {
         if (!customName.trim()) return;
         const width = Number(customWidth) || 1200;
@@ -101,8 +98,8 @@ export function ResizePanel() {
                         />
                     </div>
 
-                    {/* In snapshot mode, offer clone/empty choice */}
-                    {isSnapshotMode && layers.length > 0 ? (
+                    {/* Offer clone/empty choice when there are layers to copy */}
+                    {layers.length > 0 ? (
                         <div className="flex gap-1.5">
                             <button
                                 onClick={() => handleAddCustom("clone")}
@@ -125,7 +122,7 @@ export function ResizePanel() {
                         </div>
                     ) : (
                         <button
-                            onClick={() => handleAddCustom(isSnapshotMode ? "empty" : "clone")}
+                            onClick={() => handleAddCustom("empty")}
                             disabled={!customName.trim()}
                             className="w-full h-7 rounded-[var(--radius-md)] bg-accent-primary text-text-inverse text-[11px] font-medium hover:bg-accent-primary-hover transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
                         >

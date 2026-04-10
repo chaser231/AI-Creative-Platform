@@ -7,7 +7,7 @@
  */
 
 import type { StateCreator } from "zustand";
-import type { CanvasStore, Layer, ComponentProps, ResizeFormat } from "./types";
+import type { CanvasStore, Layer, ComponentProps, ComponentInstance, ResizeFormat } from "./types";
 import { DEFAULT_RESIZE } from "./types";
 import { v4 as uuid } from "uuid";
 import { applyLayout, applyAllAutoLayouts } from "@/utils/layoutEngine";
@@ -31,7 +31,35 @@ export const createResizeSlice: StateCreator<CanvasStore, [], [], ResizeSlice> =
     addResize: (format: ResizeFormat) => {
         const state = get();
 
-        // ── Legacy master/instance mode ──
+        // ── Snapshot mode: caller provided layerSnapshot explicitly ──
+        // This takes priority regardless of masterComponents presence.
+        // "clone" = layers cloned from current format, "empty" = []
+        if (format.layerSnapshot !== undefined) {
+            const formatWithSnapshot: ResizeFormat = {
+                ...format,
+                layerSnapshot: format.layerSnapshot,
+            };
+
+            // Also create instances for legacy compatibility (so syncLayersToResize
+            // doesn't crash if the project has masterComponents)
+            let newInstances: ComponentInstance[] = [];
+            if (state.masterComponents.length > 0) {
+                newInstances = state.masterComponents.map((m) => ({
+                    id: uuid(),
+                    masterId: m.id,
+                    resizeId: format.id,
+                    localProps: { ...m.props },
+                }));
+            }
+
+            set((s) => ({
+                resizes: [...s.resizes, formatWithSnapshot],
+                componentInstances: [...s.componentInstances, ...newInstances],
+            }));
+            return;
+        }
+
+        // ── Legacy master/instance mode (no snapshot provided) ──
         if (state.masterComponents.length > 0) {
             const masterFormat = state.resizes.find((r) => r.id === "master");
             const mw = masterFormat?.width || 1080;
@@ -87,18 +115,9 @@ export const createResizeSlice: StateCreator<CanvasStore, [], [], ResizeSlice> =
             return;
         }
 
-        // ── Snapshot/page mode ──
-        // format.layerSnapshot is set by the caller:
-        //   - cloned layers (from ResizePanel dialog "clone")
-        //   - empty array (from ResizePanel dialog "empty")
-        //   - or pre-existing snapshot from loaded data
-        const formatWithSnapshot: ResizeFormat = {
-            ...format,
-            layerSnapshot: format.layerSnapshot ?? [],
-        };
-
+        // ── Fallback: no masters, no snapshot — just add the format ──
         set((s) => ({
-            resizes: [...s.resizes, formatWithSnapshot],
+            resizes: [...s.resizes, { ...format, layerSnapshot: [] }],
         }));
     },
 
