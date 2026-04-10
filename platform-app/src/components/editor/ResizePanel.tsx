@@ -70,21 +70,24 @@ export function ResizePanel() {
     };
 
     return (
-        <div className="flex flex-col h-full">
-            {/* Top Add Format form (collapsible) */}
+        <div className="w-[240px] min-w-[240px] h-full border border-border-primary rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)] flex flex-col overflow-hidden backdrop-blur-xl bg-bg-surface/85">
+            {/* Header */}
+            <div className="p-4 border-b border-border-primary flex items-center justify-between">
+                <h3 className="text-[11px] font-medium text-text-tertiary uppercase tracking-widest">
+                    Форматы
+                </h3>
+                <button
+                    onClick={() => setShowAddForm(!showAddForm)}
+                    className="p-1.5 rounded-[var(--radius-md)] hover:bg-bg-secondary transition-colors cursor-pointer"
+                    title="Добавить формат"
+                >
+                    {showAddForm ? <X size={14} className="text-text-secondary" /> : <Plus size={14} className="text-text-secondary" />}
+                </button>
+            </div>
+
+            {/* Add Format form (collapsible) */}
             {showAddForm && (
-                <div className="p-3 border-b border-border-primary space-y-2">
-                    <div className="flex items-center justify-between">
-                        <span className="text-[11px] font-semibold text-text-secondary uppercase tracking-wide">
-                            Новый формат
-                        </span>
-                        <button
-                            onClick={() => setShowAddForm(false)}
-                            className="p-0.5 rounded-[var(--radius-sm)] hover:bg-bg-tertiary cursor-pointer"
-                        >
-                            <X size={12} className="text-text-tertiary" />
-                        </button>
-                    </div>
+                <div className="p-3 border-b border-border-primary bg-bg-secondary space-y-2">
                     <input
                         value={customName}
                         onChange={(e) => setCustomName(e.target.value)}
@@ -139,6 +142,7 @@ export function ResizePanel() {
                 </div>
             )}
 
+            {/* Format list */}
             <div className="flex-1 overflow-y-auto p-2">
                 {resizes.map((resize) => {
                     const isActive = activeResizeId === resize.id;
@@ -160,7 +164,7 @@ export function ResizePanel() {
                             }}
                             onClick={() => setActiveResize(resize.id)}
                             className={`
-                                w-full flex items-center gap-3 px-3 py-2.5 rounded-[var(--radius-lg)] mb-1
+                                w-full flex items-center gap-2 px-2.5 py-2 rounded-[var(--radius-lg)] mb-0.5
                                 transition-all cursor-pointer text-left group
                                 ${isActive
                                     ? "bg-bg-tertiary border border-border-primary shadow-[var(--shadow-sm)]"
@@ -168,6 +172,7 @@ export function ResizePanel() {
                                 }
                             `}
                         >
+                            {/* Format thumbnail */}
                             <div
                                 className="shrink-0 border border-border-secondary rounded-[3px] bg-bg-secondary"
                                 style={{
@@ -175,11 +180,12 @@ export function ResizePanel() {
                                     height: Math.max(16, Math.min(28, resize.height / 40)),
                                 }}
                             />
-                            <div className="flex-1 min-w-0">
-                                <div className="text-[11px] font-medium text-text-primary truncate flex items-center gap-1.5">
-                                    {/* Master crown icon */}
+
+                            {/* Name & label — truncate on overflow */}
+                            <div className="flex-1 min-w-0 overflow-hidden">
+                                <div className="text-[11px] font-medium text-text-primary truncate flex items-center gap-1">
                                     {isMaster && (
-                                        <Crown size={11} className="text-amber-400 shrink-0" />
+                                        <Crown size={10} className="text-amber-400 shrink-0" />
                                     )}
                                     {editingId === resize.id ? (
                                         <input
@@ -204,119 +210,110 @@ export function ResizePanel() {
                                         />
                                     ) : (
                                         <span
+                                            className="truncate"
                                             onDoubleClick={(e) => {
                                                 e.stopPropagation();
                                                 setEditingId(resize.id);
                                                 setEditingName(resize.name);
                                             }}
-                                            title="Двойной клик для переименования"
+                                            title={resize.name}
                                         >
                                             {resize.name}
                                         </span>
                                     )}
                                 </div>
-                                <div className="text-[10px] text-text-tertiary font-light flex items-center gap-1">
+                                <div className="text-[10px] text-text-tertiary font-light truncate">
                                     {resize.label}
                                     {isBound && (
-                                        <span className="text-accent-primary">
-                                            · {resize.layerBindings!.length} связей
-                                        </span>
+                                        <span className="text-accent-primary ml-1">· {resize.layerBindings!.length} связей</span>
                                     )}
                                 </div>
                             </div>
 
-                            {/* Active check */}
-                            {isActive && (
-                                <Check size={12} className="text-accent-primary shrink-0" />
-                            )}
+                            {/* Action buttons — fixed width area to prevent jumping */}
+                            <div className="flex items-center gap-0.5 shrink-0 w-[52px] justify-end">
+                                {/* Active check — always occupies space via min-w */}
+                                {isActive && (
+                                    <Check size={11} className="text-accent-primary shrink-0" />
+                                )}
 
-                            {/* Phase 2: Master/Bind controls for snapshot formats */}
-                            {isSnapshot && resize.id !== "master" && (
-                                <div className="flex items-center gap-0.5">
-                                    {/* Promote/Demote master */}
-                                    <button
-                                        onClick={(e) => {
-                                            e.stopPropagation();
-                                            if (isMaster) {
-                                                demoteFormatFromMaster(resize.id);
-                                            } else {
-                                                promoteFormatToMaster(resize.id);
-                                            }
-                                        }}
-                                        className={`p-1 rounded-[var(--radius-sm)] transition-all cursor-pointer ${
-                                            isMaster
-                                                ? "text-amber-400 hover:bg-bg-tertiary"
-                                                : "text-text-tertiary opacity-0 group-hover:opacity-60 hover:bg-bg-tertiary hover:!opacity-100"
-                                        }`}
-                                        title={isMaster ? "Снять статус мастера" : "Назначить мастером"}
-                                    >
-                                        <Crown size={11} />
-                                    </button>
-
-                                    {/* Bind to master (only if not master itself and a master exists) */}
-                                    {!isMaster && hasMasterFormat && (
+                                {/* Phase 2: Master/Bind controls for snapshot formats */}
+                                {isSnapshot && resize.id !== "master" && (
+                                    <>
+                                        {/* Promote/Demote master */}
                                         <button
                                             onClick={(e) => {
                                                 e.stopPropagation();
-                                                setBindModalFormatId(resize.id);
+                                                if (isMaster) {
+                                                    demoteFormatFromMaster(resize.id);
+                                                } else {
+                                                    promoteFormatToMaster(resize.id);
+                                                }
                                             }}
-                                            className={`p-1 rounded-[var(--radius-sm)] transition-all cursor-pointer ${
-                                                isBound
-                                                    ? "text-accent-primary hover:bg-bg-tertiary"
+                                            className={`p-0.5 rounded-[var(--radius-sm)] transition-all cursor-pointer ${
+                                                isMaster
+                                                    ? "text-amber-400 hover:bg-bg-tertiary"
                                                     : "text-text-tertiary opacity-0 group-hover:opacity-60 hover:bg-bg-tertiary hover:!opacity-100"
                                             }`}
-                                            title={isBound ? `Настроить привязку (${resize.layerBindings!.length} связей)` : "Привязать к мастеру"}
+                                            title={isMaster ? "Снять статус мастера" : "Назначить мастером"}
                                         >
-                                            <Settings2 size={11} />
+                                            <Crown size={10} />
                                         </button>
-                                    )}
-                                </div>
-                            )}
 
-                            {/* Legacy Link/Unlink for non-snapshot formats */}
-                            {isLegacy && resize.id !== "master" && (
-                                <button
-                                    onClick={(e) => {
-                                        e.stopPropagation();
-                                        toggleInstanceMode(resize.id);
-                                    }}
-                                    className={`p-1 rounded-[var(--radius-sm)] transition-all cursor-pointer ${resize.instancesEnabled
-                                        ? "text-accent-primary hover:bg-bg-tertiary"
-                                        : "text-text-tertiary opacity-60 hover:bg-bg-tertiary hover:opacity-100"
-                                    }`}
-                                    title={resize.instancesEnabled ? "Связан с мастером (контент)" : "Отвязан от мастера"}
-                                >
-                                    {resize.instancesEnabled ? <Link size={11} /> : <Unlink size={11} />}
-                                </button>
-                            )}
+                                        {/* Bind to master */}
+                                        {!isMaster && hasMasterFormat && (
+                                            <button
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    setBindModalFormatId(resize.id);
+                                                }}
+                                                className={`p-0.5 rounded-[var(--radius-sm)] transition-all cursor-pointer ${
+                                                    isBound
+                                                        ? "text-accent-primary hover:bg-bg-tertiary"
+                                                        : "text-text-tertiary opacity-0 group-hover:opacity-60 hover:bg-bg-tertiary hover:!opacity-100"
+                                                }`}
+                                                title={isBound ? `Настроить привязку (${resize.layerBindings!.length})` : "Привязать к мастеру"}
+                                            >
+                                                <Settings2 size={10} />
+                                            </button>
+                                        )}
+                                    </>
+                                )}
 
-                            {/* Delete */}
-                            {resize.id !== "master" && (
-                                <button
-                                    onClick={(e) => {
-                                        e.stopPropagation();
-                                        removeResize(resize.id);
-                                    }}
-                                    className="opacity-0 group-hover:opacity-100 p-1 rounded-[var(--radius-sm)] hover:bg-bg-tertiary transition-opacity cursor-pointer"
-                                    title="Удалить формат"
-                                >
-                                    <Trash2 size={11} className="text-text-tertiary" />
-                                </button>
-                            )}
+                                {/* Legacy Link/Unlink */}
+                                {isLegacy && resize.id !== "master" && (
+                                    <button
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            toggleInstanceMode(resize.id);
+                                        }}
+                                        className={`p-0.5 rounded-[var(--radius-sm)] transition-all cursor-pointer ${resize.instancesEnabled
+                                            ? "text-accent-primary hover:bg-bg-tertiary"
+                                            : "text-text-tertiary opacity-60 hover:bg-bg-tertiary hover:opacity-100"
+                                        }`}
+                                        title={resize.instancesEnabled ? "Связан с мастером (контент)" : "Отвязан от мастера"}
+                                    >
+                                        {resize.instancesEnabled ? <Link size={10} /> : <Unlink size={10} />}
+                                    </button>
+                                )}
+
+                                {/* Delete */}
+                                {resize.id !== "master" && (
+                                    <button
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            removeResize(resize.id);
+                                        }}
+                                        className="opacity-0 group-hover:opacity-100 p-0.5 rounded-[var(--radius-sm)] hover:bg-bg-tertiary transition-opacity cursor-pointer"
+                                        title="Удалить формат"
+                                    >
+                                        <Trash2 size={10} className="text-text-tertiary" />
+                                    </button>
+                                )}
+                            </div>
                         </div>
                     );
                 })}
-            </div>
-
-            {/* Bottom "Add Format" persistent button */}
-            <div className="p-3 border-t border-border-primary">
-                <button
-                    onClick={() => setShowAddForm(true)}
-                    className="w-full flex items-center justify-center gap-1.5 py-2.5 rounded-[var(--radius-lg)] border border-dashed border-border-secondary text-[11px] font-medium text-text-secondary hover:text-text-primary hover:border-border-primary hover:bg-bg-secondary transition-all cursor-pointer"
-                >
-                    <Plus size={13} />
-                    Добавить формат
-                </button>
             </div>
 
             {/* Phase 2: Bind to Master Modal */}
