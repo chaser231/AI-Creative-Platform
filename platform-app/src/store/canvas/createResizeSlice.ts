@@ -7,7 +7,8 @@
  */
 
 import type { StateCreator } from "zustand";
-import type { CanvasStore, Layer, ComponentProps, ComponentInstance, ResizeFormat } from "./types";
+import type { CanvasStore, Layer, ComponentProps, ComponentInstance, ResizeFormat, LayerBinding } from "./types";
+import type { SyncMode } from "@/types";
 import { DEFAULT_RESIZE } from "./types";
 import { v4 as uuid } from "uuid";
 import { applyLayout, applyAllAutoLayouts } from "@/utils/layoutEngine";
@@ -20,6 +21,8 @@ export type ResizeSlice = Pick<CanvasStore,
     | "addResize" | "removeResize" | "renameResize"
     | "setActiveResize" | "syncLayersToResize" | "toggleInstanceMode"
     | "setCanvasSize"
+    | "promoteFormatToMaster" | "demoteFormatFromMaster"
+    | "setFormatBindings" | "unbindFormat"
 >;
 
 export const createResizeSlice: StateCreator<CanvasStore, [], [], ResizeSlice> = (set, get) => ({
@@ -173,6 +176,35 @@ export const createResizeSlice: StateCreator<CanvasStore, [], [], ResizeSlice> =
         if (!isTargetSnapshotBased && state.masterComponents.length > 0) {
             get().syncLayersToResize();
         }
+
+        // ── Phase 2: Cascade master changes to bound snapshot formats ──
+        if (isTargetSnapshotBased && targetResize.layerBindings && targetResize.layerBindings.length > 0) {
+            const currentState = get();
+            // Find the master format
+            const masterFormat = currentState.resizes.find(r => r.isMaster);
+            if (masterFormat) {
+                // Get the master's layers (could be the saved snapshot or current layers)
+                const masterLayers = masterFormat.id === currentState.activeResizeId
+                    ? currentState.layers
+                    : (masterFormat.layerSnapshot ?? []);
+
+                // But we just switched TO this format, so activeResizeId is now this format.
+                // Master layers come from masterFormat.layerSnapshot (saved last time master was active)
+                // OR from updatedResizes if master was the format we just left.
+                const resolvedMasterLayers = updatedResizes.find(r => r.id === masterFormat.id)?.layerSnapshot ?? masterLayers;
+
+                // Apply cascade
+                const cascadedLayers = applyCascade(
+                    currentState.layers,  // target format's loaded snapshot
+                    resolvedMasterLayers, // master's layers
+                    targetResize.layerBindings
+                );
+
+                if (cascadedLayers !== currentState.layers) {
+                    set({ layers: cascadedLayers });
+                }
+            }
+        }
     },
 
     syncLayersToResize: () => {
@@ -264,4 +296,109 @@ export const createResizeSlice: StateCreator<CanvasStore, [], [], ResizeSlice> =
             ),
         });
     },
+
+    // ── Phase 2: Master binding actions ──────────────────
+
+    promoteFormatToMaster: (formatId) => {
+        set((state) => ({
+            resizes: state.resizes.map((r) => ({
+                ...r,
+                isMaster: r.id === formatId ? true : undefined,
+            })),
+        }));
+    },
+
+    demoteFormatFromMaster: (formatId) => {
+        set((state) => ({
+            resizes: state.resizes.map((r) =>
+                r.id === formatId ? { ...r, isMaster: undefined } : r
+            ),
+        }));
+    },
+
+    setFormatBindings: (formatId, bindings) => {
+        set((state) => ({
+            resizes: state.resizes.map((r) =>
+                r.id === formatId ? { ...r, layerBindings: bindings } : r
+            ),
+        }));
+    },
+
+    unbindFormat: (formatId) => {
+        set((state) => ({
+            resizes: state.resizes.map((r) =>
+                r.id === formatId ? { ...r, layerBindings: undefined } : r
+            ),
+        }));
+    },
 });
+
+// ── Cascade helper ──────────────────────────────────────
+
+/** Property sets for each sync mode */
+const CONTENT_PROPS = ['text', 'src', 'label'] as const;
+const STYLE_PROPS = [
+    'fill', 'stroke', 'strokeWidth', 'fontSize', 'fontFamily', 'fontWeight',
+    'align', 'letterSpacing', 'lineHeight', 'cornerRadius', 'objectFit',
+    'textColor', 'textAdjust', 'truncateText', 'verticalTrim',
+] as const;
+const GEOMETRY_PROPS = ['x', 'y', 'width', 'height', 'rotation'] as const;
+
+function getPropsForSyncMode(mode: SyncMode): readonly string[] {
+    switch (mode) {
+        case 'content_only':
+            return CONTENT_PROPS;
+        case 'content_and_style':
+            return [...CONTENT_PROPS, ...STYLE_PROPS];
+        case 'all':
+            return [...CONTENT_PROPS, ...STYLE_PROPS, ...GEOMETRY_PROPS];
+        case 'none':
+        default:
+            return [];
+    }
+}
+
+/**
+ * Apply master cascade to target layers based on bindings.
+ * Returns updated layers array (or same reference if no changes).
+ */
+function applyCascade(
+    targetLayers: Layer[],
+    masterLayers: Layer[],
+    bindings: LayerBinding[],
+): Layer[] {
+    if (bindings.length === 0 || masterLayers.length === 0) return targetLayers;
+
+    const masterMap = new Map<string, Layer>();
+    masterLayers.forEach(l => masterMap.set(l.id, l));
+
+    let changed = false;
+    const result = targetLayers.map(layer => {
+        const binding = bindings.find(b => b.targetLayerId === layer.id);
+        if (!binding || binding.syncMode === 'none') return layer;
+
+        const masterLayer = masterMap.get(binding.masterLayerId);
+        if (!masterLayer) return layer;
+
+        const propsToSync = getPropsForSyncMode(binding.syncMode);
+        const updates: Record<string, unknown> = {};
+        let hasUpdate = false;
+
+        for (const prop of propsToSync) {
+            const masterVal = (masterLayer as unknown as Record<string, unknown>)[prop];
+            const targetVal = (layer as unknown as Record<string, unknown>)[prop];
+            if (masterVal !== undefined && masterVal !== targetVal) {
+                updates[prop] = masterVal;
+                hasUpdate = true;
+            }
+        }
+
+        if (hasUpdate) {
+            changed = true;
+            return { ...layer, ...updates } as Layer;
+        }
+        return layer;
+    });
+
+    return changed ? result : targetLayers;
+}
