@@ -94,14 +94,22 @@ export default function EditorPage({ params }: EditorPageProps) {
 
         // If data has canvas state format (layers, masterComponents, etc.), load directly
         if (data.layers && Array.isArray(data.layers)) {
+            // Determine the correct active resize — default to first available or "master"
+            const resizes = data.resizes ?? [{ id: "master", name: "Мастер макет", width: data.canvasWidth || 1080, height: data.canvasHeight || 1080, label: `${data.canvasWidth || 1080} × ${data.canvasHeight || 1080}`, instancesEnabled: false }];
+            const activeResizeId = resizes[0]?.id || "master";
+            const activeResize = resizes.find((r: any) => r.id === activeResizeId);
+
             useCanvasStore.setState({
                 layers: data.layers,
                 masterComponents: data.masterComponents ?? [],
                 componentInstances: data.componentInstances ?? [],
-                resizes: data.resizes ?? useCanvasStore.getState().resizes,
+                resizes,
+                activeResizeId,
+                selectedLayerIds: [],
+                history: [],
                 artboardProps: data.artboardProps ?? useCanvasStore.getState().artboardProps,
-                canvasWidth: data.canvasWidth ?? data.baseWidth ?? useCanvasStore.getState().canvasWidth,
-                canvasHeight: data.canvasHeight ?? data.baseHeight ?? useCanvasStore.getState().canvasHeight,
+                canvasWidth: activeResize?.width ?? data.canvasWidth ?? 1080,
+                canvasHeight: activeResize?.height ?? data.canvasHeight ?? 1080,
             });
         } else {
             // It's a TemplatePack format — hydrate it

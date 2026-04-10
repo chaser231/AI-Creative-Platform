@@ -20,6 +20,7 @@
 import { useEffect, useRef, useCallback, type RefObject } from "react";
 import { trpc } from "@/lib/trpc";
 import { useCanvasStore } from "@/store/canvasStore";
+import { DEFAULT_RESIZE } from "@/store/canvas/types";
 import { useWorkspace } from "@/providers/WorkspaceProvider";
 import type Konva from "konva";
 
@@ -391,6 +392,10 @@ export function useLoadCanvasState(projectId: string) {
       componentInstances: [],
       history: [],
       future: [],
+      resizes: [DEFAULT_RESIZE],
+      activeResizeId: "master",
+      canvasWidth: DEFAULT_RESIZE.width,
+      canvasHeight: DEFAULT_RESIZE.height,
     });
   }, [projectId]);
 

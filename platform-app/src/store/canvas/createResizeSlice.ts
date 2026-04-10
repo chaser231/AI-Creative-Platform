@@ -111,6 +111,14 @@ export const createResizeSlice: StateCreator<CanvasStore, [], [], ResizeSlice> =
         const state = get();
         const { masterComponents, componentInstances, activeResizeId, resizes, layers } = state;
 
+        // If no masterComponents (raw canvas state, e.g. from template editor),
+        // just re-run auto-layouts without trying to sync master/instance architecture.
+        // Without masters, the format system can't remap properties between resizes.
+        if (masterComponents.length === 0) {
+            set({ layers: applyAllAutoLayouts([...layers]) });
+            return;
+        }
+
         if (activeResizeId === "master") {
             const newLayers: Layer[] = layers.map((existingLayer) => {
                 const m = masterComponents.find((mc) => mc.id === existingLayer.masterId);
