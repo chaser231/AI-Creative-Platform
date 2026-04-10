@@ -473,7 +473,10 @@ class FalProvider implements AIProviderImplementation {
         if (params.aspectRatio) input.aspect_ratio = params.aspectRatio;
 
         // Resolution mapping: fal.ai uses same "1K"/"2K"/"4K" enum for Google models
-        if (params.scale) input.resolution = params.scale;
+        // fal.ai REQUIRES this field (unlike Replicate which defaults to 1K)
+        const isGoogleModel = !!FAL_MODEL_MAP[modelId]?.includes("nano-banana");
+        input.resolution = params.scale || (isGoogleModel ? "1K" : undefined);
+        if (!input.resolution) delete input.resolution;
 
         // Output format
         input.output_format = "png";
