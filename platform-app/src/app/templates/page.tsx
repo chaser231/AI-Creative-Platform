@@ -115,17 +115,22 @@ function PackCard({ pack, onLoad }: { pack: TemplatePackV2; onLoad: (pack: Templ
                 )}
                 {/* Edit button overlay */}
                 {!pack.isOfficial && (
-                    <button
+                    <div
+                        role="button"
+                        tabIndex={0}
                         onClick={(e) => {
                             e.stopPropagation();
                             router.push(`/editor/${pack.id}?source=template`);
+                        }}
+                        onKeyDown={(e) => {
+                            if (e.key === "Enter") { e.stopPropagation(); router.push(`/editor/${pack.id}?source=template`); }
                         }}
                         className="absolute bottom-2 right-2 flex items-center gap-1 px-2 py-1 rounded-lg bg-bg-surface/90 border border-border-primary text-[9px] font-medium text-text-secondary opacity-0 group-hover:opacity-100 hover:bg-bg-surface hover:text-text-primary hover:border-accent-primary/30 transition-all cursor-pointer z-10"
                         title="Редактировать шаблон"
                     >
                         <Pencil size={10} />
                         Редактировать
-                    </button>
+                    </div>
                 )}
             </div>
 
