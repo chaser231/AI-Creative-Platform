@@ -110,9 +110,38 @@ export function ProjectCard({ project, onUpdate, onDelete, onFavorite, isFavorit
                                 {project.name}
                             </p>
                         )}
-                        <p className="text-xs text-text-tertiary mt-1">
-                            обновлён {timeAgo(project.updatedAt)}
-                        </p>
+                        <div className="flex items-center gap-2 mt-1">
+                            {project.createdBy && (
+                                <div className="relative group/avatar" title={project.createdBy.name}>
+                                    {project.createdBy.avatarUrl ? (
+                                        <img
+                                            src={project.createdBy.avatarUrl}
+                                            alt={project.createdBy.name}
+                                            className="w-4.5 h-4.5 rounded-full object-cover ring-1 ring-border-primary"
+                                            draggable={false}
+                                        />
+                                    ) : (
+                                        <div className="w-4.5 h-4.5 rounded-full bg-accent-primary/15 flex items-center justify-center ring-1 ring-border-primary">
+                                            <span className="text-[8px] font-semibold text-accent-primary leading-none">
+                                                {project.createdBy.name
+                                                    .split(" ")
+                                                    .map((w) => w[0])
+                                                    .join("")
+                                                    .slice(0, 2)
+                                                    .toUpperCase()}
+                                            </span>
+                                        </div>
+                                    )}
+                                    {/* Tooltip */}
+                                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 px-2 py-1 bg-bg-tertiary border border-border-primary rounded-[var(--radius-md)] shadow-[var(--shadow-md)] opacity-0 group-hover/avatar:opacity-100 pointer-events-none transition-opacity duration-150 whitespace-nowrap z-10">
+                                        <span className="text-[10px] font-medium text-text-primary">{project.createdBy.name}</span>
+                                    </div>
+                                </div>
+                            )}
+                            <p className="text-xs text-text-tertiary">
+                                обновлён {timeAgo(project.updatedAt)}
+                            </p>
+                        </div>
                     </div>
                     <div className="relative">
                         <button

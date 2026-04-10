@@ -15,6 +15,11 @@ export interface Project {
     templateId?: string;
     resizes: ResizeFormat[];
     activeResizeId: string;
+    createdBy?: {
+        id: string;
+        name: string;
+        avatarUrl: string | null;
+    };
 }
 
 // ─── Resize Formats ─────────────────────────────────────
