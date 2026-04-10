@@ -257,13 +257,11 @@ export const createResizeSlice: StateCreator<CanvasStore, [], [], ResizeSlice> =
         set({
             canvasWidth: width,
             canvasHeight: height,
-            resizes: state.activeResizeId === "master"
-                ? state.resizes.map((r) =>
-                    r.id === "master"
-                        ? { ...r, width, height, label: `${width} × ${height}` }
-                        : r
-                )
-                : state.resizes,
+            resizes: state.resizes.map((r) =>
+                r.id === state.activeResizeId
+                    ? { ...r, width, height, label: `${width} × ${height}` }
+                    : r
+            ),
         });
     },
 });
