@@ -12,6 +12,7 @@ import type {
     ContentType,
     TemplateOccasion,
     TemplateTag,
+    TemplateVisibility,
 } from "@/types";
 
 /* ─── Template Pack (v1 — backward compat) ──────────────── */
@@ -41,6 +42,7 @@ export interface TemplatePackV2 extends TemplatePack {
     // Metadata
     author: string;
     isOfficial: boolean;
+    visibility?: TemplateVisibility;
     thumbnailUrl?: string;
     popularity: number;
     createdAt: string;

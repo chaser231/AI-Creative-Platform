@@ -364,6 +364,8 @@ export type TemplateCategory =
 
 export type ContentType = "visual" | "video" | "audio" | "generative" | "mixed";
 
+export type TemplateVisibility = "PRIVATE" | "WORKSPACE" | "PUBLIC" | "SHARED";
+
 export type TemplateOccasion =
     | "default" | "black-friday" | "new-year" | "spring-sale"
     | "back-to-school" | "summer" | "custom";

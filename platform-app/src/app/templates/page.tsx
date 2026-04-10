@@ -14,6 +14,8 @@ import {
     Clock,
     Check,
     Palette,
+    Lock,
+    Globe,
 } from "lucide-react";
 import { Popover, PopoverButton } from "@/components/ui/Popover";
 import { AppShell } from "@/components/layout/AppShell";
@@ -88,6 +90,18 @@ function PackCard({ pack, onLoad }: { pack: TemplatePackV2; onLoad: (pack: Templ
                     <div className="absolute top-2.5 right-2.5 flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/15 border border-amber-500/20">
                         <Star size={10} className="text-amber-500 fill-amber-500" />
                         <span className="text-[9px] font-semibold text-amber-600">Official</span>
+                    </div>
+                )}
+                {!pack.isOfficial && (pack as any).visibility === "PRIVATE" && (
+                    <div className="absolute top-2.5 right-2.5 flex items-center gap-1 px-2 py-0.5 rounded-full bg-bg-surface/90 border border-border-primary">
+                        <Lock size={10} className="text-text-tertiary" />
+                        <span className="text-[9px] font-medium text-text-tertiary">Приватный</span>
+                    </div>
+                )}
+                {!pack.isOfficial && (pack as any).visibility === "PUBLIC" && (
+                    <div className="absolute top-2.5 right-2.5 flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-500/10 border border-blue-500/20">
+                        <Globe size={10} className="text-blue-500" />
+                        <span className="text-[9px] font-medium text-blue-600">Публичный</span>
                     </div>
                 )}
             </div>

@@ -31,11 +31,25 @@ export const templateRouter = createTRPCRouter({
       // Build AND conditions to safely combine multiple OR filters
       const andConditions: Record<string, unknown>[] = [];
 
-      // Visibility: workspace-specific + official templates (cross-workspace)
+      // Visibility-aware filtering:
+      // - WORKSPACE: all workspace members see it
+      // - PRIVATE: only the author sees it
+      // - PUBLIC: everyone across all workspaces sees it
+      // - SHARED: author + explicitly shared users (Phase 2)
+      // - isOfficial: always visible (backward compat)
       if (filters.isOfficial !== undefined) {
         andConditions.push({ workspaceId, isOfficial: filters.isOfficial });
       } else {
-        andConditions.push({ OR: [{ workspaceId }, { isOfficial: true }] });
+        andConditions.push({
+          OR: [
+            { workspaceId, visibility: "WORKSPACE" },
+            { author: ctx.user.id, visibility: "PRIVATE" },
+            { visibility: "PUBLIC" },
+            { visibility: "SHARED", sharedWith: { some: { userId: ctx.user.id } } },
+            { author: ctx.user.id, visibility: "SHARED" },
+            { isOfficial: true },
+          ],
+        });
       }
 
       // Category/content/occasion filters
@@ -65,6 +79,7 @@ export const templateRouter = createTRPCRouter({
           occasion: true,
           tags: true,
           isOfficial: true,
+          visibility: true,
           thumbnailUrl: true,
           popularity: true,
           createdAt: true,
@@ -121,6 +136,7 @@ export const templateRouter = createTRPCRouter({
         tags: z.any().default([]),
         data: z.any(), // TemplatePack JSON
         isOfficial: z.boolean().default(false),
+        visibility: z.enum(["PRIVATE", "WORKSPACE", "PUBLIC", "SHARED"]).default("WORKSPACE"),
         thumbnailUrl: z.string().optional(),
       })
     )
@@ -148,6 +164,7 @@ export const templateRouter = createTRPCRouter({
         tags: z.any().optional(),
         data: z.any().optional(),
         isOfficial: z.boolean().optional(),
+        visibility: z.enum(["PRIVATE", "WORKSPACE", "PUBLIC", "SHARED"]).optional(),
         thumbnailUrl: z.string().nullable().optional(),
       })
     )

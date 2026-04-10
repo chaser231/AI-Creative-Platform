@@ -2,7 +2,7 @@
 
 import { useState, useMemo } from "react";
 import { v4 as uuid } from "uuid";
-import { LayoutTemplate, Plus, ArrowRight, Check, Search, X, Star, Download, Upload, Shuffle } from "lucide-react";
+import { LayoutTemplate, Plus, ArrowRight, Check, Search, X, Star, Download, Upload, Shuffle, Lock, Globe, Users } from "lucide-react";
 import { useTemplateStore } from "@/store/templateStore";
 import { useTemplateListSync } from "@/hooks/useTemplateSync";
 import { useCanvasStore } from "@/store/canvasStore";
@@ -14,7 +14,7 @@ import { DEFAULT_PACKS, type TemplatePackMeta } from "@/constants/defaultPacks";
 import { serializeTemplate } from "@/services/templateService";
 import { searchPacks } from "@/services/templateCatalogService";
 import type { TemplatePackV2, TemplatePack } from "@/services/templateService";
-import type { BusinessUnit, TemplateCategory, ContentType, TemplateTag } from "@/types";
+import type { BusinessUnit, TemplateCategory, ContentType, TemplateTag, TemplateVisibility } from "@/types";
 import { SlotMappingModal } from "@/components/editor/SlotMappingModal";
 import { extractSingleFormatFromPack } from "@/services/templateService";
 
@@ -117,6 +117,7 @@ export function TemplatePanel({ open, onClose }: TemplatePanelProps) {
     const [saveBUs, setSaveBUs] = useState<BusinessUnit[]>([]);
     const [saveCategories, setSaveCategories] = useState<TemplateCategory[]>([]);
     const [saveContentType, setSaveContentType] = useState<ContentType>("visual");
+    const [saveVisibility, setSaveVisibility] = useState<TemplateVisibility>("WORKSPACE");
     const [saveTagInput, setSaveTagInput] = useState("");
     const [saveTags, setSaveTags] = useState<string[]>([]);
 
@@ -210,6 +211,7 @@ export function TemplatePanel({ open, onClose }: TemplatePanelProps) {
             contentType: "visual",
             author: "user",
             isOfficial: false,
+            visibility: "WORKSPACE",
         };
 
         addPack(newPack, meta);
@@ -237,6 +239,7 @@ export function TemplatePanel({ open, onClose }: TemplatePanelProps) {
             tags: saveTags.map(t => ({ id: `tag-${t.toLowerCase().replace(/\s+/g, "-")}`, label: t })),
             author: "user",
             isOfficial: false,
+            visibility: saveVisibility,
         };
 
         addPack(newPack, meta);
@@ -251,6 +254,7 @@ export function TemplatePanel({ open, onClose }: TemplatePanelProps) {
         setSaveBUs([]);
         setSaveCategories([]);
         setSaveContentType("visual");
+        setSaveVisibility("WORKSPACE");
         setSaveTags([]);
         setSaveTagInput("");
     };
@@ -339,6 +343,18 @@ export function TemplatePanel({ open, onClose }: TemplatePanelProps) {
                             <div className="absolute top-1 right-1 flex items-center gap-0.5 px-1 py-0.5 rounded-full bg-amber-500/15 border border-amber-500/20">
                                 <Star size={7} className="text-amber-500 fill-amber-500" />
                                 <span className="text-[7px] font-semibold text-amber-600">Official</span>
+                            </div>
+                        )}
+                        {!v2.isOfficial && v2.visibility === "PRIVATE" && (
+                            <div className="absolute top-1 right-1 flex items-center gap-0.5 px-1 py-0.5 rounded-full bg-bg-surface/90 border border-border-primary">
+                                <Lock size={7} className="text-text-tertiary" />
+                                <span className="text-[7px] font-medium text-text-tertiary">Приватный</span>
+                            </div>
+                        )}
+                        {!v2.isOfficial && v2.visibility === "PUBLIC" && (
+                            <div className="absolute top-1 right-1 flex items-center gap-0.5 px-1 py-0.5 rounded-full bg-blue-500/10 border border-blue-500/20">
+                                <Globe size={7} className="text-blue-500" />
+                                <span className="text-[7px] font-medium text-blue-600">Публичный</span>
                             </div>
                         )}
                     </div>
@@ -585,6 +601,35 @@ export function TemplatePanel({ open, onClose }: TemplatePanelProps) {
                                                             active={saveContentType === ct.value}
                                                             onClick={() => setSaveContentType(ct.value)}
                                                         />
+                                                    ))}
+                                                </div>
+                                            </div>
+
+                                            {/* Visibility */}
+                                            <div>
+                                                <label className="block text-[10px] font-medium text-text-secondary mb-1">Видимость</label>
+                                                <div className="flex flex-col gap-1">
+                                                    {([
+                                                        { value: "PRIVATE" as const, label: "Только я", icon: <Lock size={12} />, desc: "Виден только вам" },
+                                                        { value: "WORKSPACE" as const, label: "Моя команда", icon: <Users size={12} />, desc: "Все участники воркспейса" },
+                                                        { value: "PUBLIC" as const, label: "Все пользователи", icon: <Globe size={12} />, desc: "Все воркспейсы на платформе" },
+                                                    ]).map(opt => (
+                                                        <button
+                                                            key={opt.value}
+                                                            onClick={() => setSaveVisibility(opt.value)}
+                                                            className={`flex items-center gap-2 px-2.5 py-2 rounded-lg text-left transition-all cursor-pointer border ${
+                                                                saveVisibility === opt.value
+                                                                    ? "bg-accent-primary/10 border-accent-primary/30 text-accent-primary"
+                                                                    : "bg-bg-surface border-border-primary text-text-secondary hover:border-border-secondary"
+                                                            }`}
+                                                        >
+                                                            <span className={saveVisibility === opt.value ? "text-accent-primary" : "text-text-tertiary"}>{opt.icon}</span>
+                                                            <div className="flex-1 min-w-0">
+                                                                <div className="text-[10px] font-medium">{opt.label}</div>
+                                                                <div className="text-[8px] text-text-tertiary">{opt.desc}</div>
+                                                            </div>
+                                                            {saveVisibility === opt.value && <Check size={12} />}
+                                                        </button>
                                                     ))}
                                                 </div>
                                             </div>
