@@ -25,6 +25,7 @@ import { TopBar } from "@/components/layout/TopBar";
 import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
 import { Select } from "@/components/ui/Select";
+import { Input } from "@/components/ui/Input";
 import { cn } from "@/lib/cn";
 import { useTemplateListSync } from "@/hooks/useTemplateSync";
 import { useCreateProjectSync } from "@/hooks/useProjectSync";
@@ -366,13 +367,12 @@ export default function TemplateCatalogPage() {
                     {/* Search bar */}
                     <div className="flex items-center gap-3 mb-4">
                         <div className="flex-1 relative">
-                            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-tertiary" />
-                            <input
-                                type="text"
+                            <Input
                                 value={search}
                                 onChange={(e) => setSearch(e.target.value)}
                                 placeholder="Поиск по названию, описанию или тегам..."
-                                className="w-full h-10 pl-10 pr-4 rounded-xl border border-border-primary bg-bg-surface text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-accent-primary/20 focus:border-accent-primary/40 transition-all"
+                                icon={<Search size={16} />}
+                                className="pr-10"
                             />
                             {search && (
                                 <button

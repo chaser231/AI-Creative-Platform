@@ -9,6 +9,7 @@ import {
 import { AppShell } from "@/components/layout/AppShell";
 import { TopBar } from "@/components/layout/TopBar";
 import { Button } from "@/components/ui/Button";
+import { Input } from "@/components/ui/Input";
 import { trpc } from "@/lib/trpc";
 
 /* ─── KPI Card ──────────────────────────────────────── */
@@ -402,14 +403,13 @@ export default function AdminDashboardPage() {
                     <section>
                         <div className="flex items-center justify-between mb-4">
                             <h2 className="text-lg font-semibold text-text-primary">Пользователи</h2>
-                            <div className="relative w-64">
-                                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-tertiary" />
-                                <input
-                                    type="text"
+                            <div className="w-64">
+                                <Input
                                     value={userSearch}
                                     onChange={(e) => setUserSearch(e.target.value)}
                                     placeholder="Поиск по имени или email..."
-                                    className="w-full h-9 pl-9 pr-3 text-xs rounded-xl border border-border-primary bg-bg-surface text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-accent-primary/20 transition-all"
+                                    icon={<Search size={14} />}
+                                    className="h-9 text-xs"
                                 />
                             </div>
                         </div>

@@ -6,6 +6,7 @@ import {
     SortAsc, SortDesc, Image as ImageIcon, Loader2, FolderOpen,
 } from "lucide-react";
 import { trpc } from "@/lib/trpc";
+import { Input } from "@/components/ui/Input";
 import { useCanvasStore } from "@/store/canvasStore";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -145,13 +146,12 @@ export function AssetLibraryModal({ projectId, open, onClose }: AssetLibraryModa
                 <div className="flex items-center gap-3 px-6 py-3 border-b border-border-primary">
                     {/* Search */}
                     <div className="relative flex-1">
-                        <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-tertiary" />
-                        <input
-                            type="text"
-                            placeholder="Поиск ассетов..."
+                        <Input
                             value={search}
                             onChange={(e) => setSearch(e.target.value)}
-                            className="w-full h-9 pl-9 pr-3 text-sm bg-bg-secondary border border-border-primary rounded-lg text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-1 focus:ring-border-focus"
+                            placeholder="Поиск ассетов..."
+                            icon={<Search size={14} />}
+                            className="h-9"
                         />
                     </div>
 

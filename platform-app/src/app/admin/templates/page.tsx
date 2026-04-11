@@ -12,6 +12,7 @@ import { Modal } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
 import { Select } from "@/components/ui/Select";
 import { Textarea } from "@/components/ui/Textarea";
+import { Input } from "@/components/ui/Input";
 import { trpc } from "@/lib/trpc";
 
 /* ─── Main Page ──────────────────────────────────────── */
@@ -179,14 +180,13 @@ export default function AdminTemplatesPage() {
 
                     {/* Filters */}
                     <div className="flex items-center gap-3">
-                        <div className="flex-1 relative">
-                            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-tertiary" />
-                            <input
-                                type="text"
+                        <div className="flex-1">
+                            <Input
                                 value={search}
                                 onChange={(e) => setSearch(e.target.value)}
                                 placeholder="Поиск по названию..."
-                                className="w-full h-9 pl-9 pr-3 text-xs rounded-xl border border-border-primary bg-bg-surface text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-accent-primary/20 transition-all"
+                                icon={<Search size={14} />}
+                                className="h-9 text-xs"
                             />
                         </div>
 
