@@ -76,27 +76,35 @@ function RecommendedTemplates() {
 const generationTypes = [
   {
     id: "banner" as const,
-    icon: <ImageIcon size={28} strokeWidth={1.5} />,
+    icon: <ImageIcon size={20} strokeWidth={1.5} />,
     label: "Генерация\nбаннеров",
-    gradient: "gradient-card-yellow",
+    gradient: "gradient-card-purple",
+    iconBg: "bg-violet-100 text-violet-600 dark:bg-violet-500/20 dark:text-violet-400",
+    image: "/cards/banner.png",
   },
   {
     id: "text" as const,
-    icon: <Type size={28} strokeWidth={1.5} />,
+    icon: <Type size={20} strokeWidth={1.5} />,
     label: "Генерация\nтекстов",
     gradient: "gradient-card-blue",
+    iconBg: "bg-sky-100 text-sky-600 dark:bg-sky-500/20 dark:text-sky-400",
+    image: "/cards/text.png",
   },
   {
     id: "photo" as const,
-    icon: <Camera size={28} strokeWidth={1.5} />,
+    icon: <Camera size={20} strokeWidth={1.5} />,
     label: "Генерация\nфото",
-    gradient: "gradient-card-green",
+    gradient: "gradient-card-peach",
+    iconBg: "bg-orange-100 text-orange-600 dark:bg-orange-500/20 dark:text-orange-400",
+    image: "/cards/photo.png",
   },
   {
     id: "video" as const,
-    icon: <Video size={28} strokeWidth={1.5} />,
+    icon: <Video size={20} strokeWidth={1.5} />,
     label: "Генерация\nвидео",
-    gradient: "gradient-card-pink",
+    gradient: "gradient-card-green",
+    iconBg: "bg-emerald-100 text-emerald-600 dark:bg-emerald-500/20 dark:text-emerald-400",
+    image: "/cards/video.png",
   },
 ];
 
@@ -228,14 +236,24 @@ export default function DashboardPage() {
               <button
                 key={type.id}
                 onClick={() => handleTileClick(type.id)}
-                className={`flex flex-col items-center justify-center gap-3 p-6 rounded-[var(--radius-2xl)] border border-border-primary ${type.gradient} hover:shadow-[var(--shadow-lg)] hover:border-border-secondary transition-all duration-[var(--transition-base)] cursor-pointer group`}
+                className={`relative flex flex-col justify-between p-5 h-[140px] rounded-[var(--radius-2xl)] border border-border-primary ${type.gradient} hover:shadow-[var(--shadow-lg)] hover:border-border-secondary transition-all duration-[var(--transition-base)] cursor-pointer group overflow-hidden`}
               >
-                <div className="flex items-center justify-center w-14 h-14 rounded-[var(--radius-xl)] bg-bg-surface/80 text-text-primary group-hover:scale-105 transition-transform shadow-[var(--shadow-sm)]">
-                  {type.icon}
+                {/* Icon + Title — left aligned */}
+                <div className="flex flex-col items-start gap-2 z-10 relative">
+                  <div className={`flex items-center justify-center w-9 h-9 rounded-[var(--radius-md)] ${type.iconBg} group-hover:scale-105 transition-transform`}>
+                    {type.icon}
+                  </div>
+                  <span className="text-[13px] font-semibold text-text-primary text-left whitespace-pre-line leading-tight">
+                    {type.label}
+                  </span>
                 </div>
-                <span className="text-[13px] font-medium text-text-primary text-center whitespace-pre-line leading-tight">
-                  {type.label}
-                </span>
+                {/* Decorative illustration — bottom right */}
+                <img
+                  src={type.image}
+                  alt=""
+                  aria-hidden
+                  className="absolute -bottom-2 -right-2 w-[100px] h-[100px] object-contain opacity-80 group-hover:opacity-100 group-hover:scale-110 transition-all duration-300 select-none pointer-events-none"
+                />
               </button>
             ))}
           </div>
