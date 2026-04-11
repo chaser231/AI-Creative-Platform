@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Paintbrush, Eye, EyeOff } from "lucide-react";
 import { Popover, PopoverButton } from "@/components/ui/Popover";
+import { Select } from "@/components/ui/Select";
 import type { BadgeLayer } from "@/types";
 import { ColorInput } from "./ColorInput";
 
@@ -32,15 +33,16 @@ export function BadgePropsGrouped({
             </div>
 
             {/* Форма */}
-            <select
+            <Select
+                size="xs"
                 value={layer.shape}
-                onChange={(e) => onChange({ shape: e.target.value as BadgeLayer["shape"] })}
-                className="h-7 px-1.5 rounded-[var(--radius-sm)] border border-border-primary bg-bg-secondary text-[11px] text-text-primary cursor-pointer focus:outline-none"
-            >
-                <option value="pill">Pill</option>
-                <option value="rectangle">Rect</option>
-                <option value="circle">Circle</option>
-            </select>
+                onChange={(val) => onChange({ shape: val as BadgeLayer["shape"] })}
+                options={[
+                    { value: "pill", label: "Pill" },
+                    { value: "rectangle", label: "Rect" },
+                    { value: "circle", label: "Circle" },
+                ]}
+            />
 
             {/* Стиль */}
             <div className="relative">

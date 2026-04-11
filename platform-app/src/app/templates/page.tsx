@@ -24,6 +24,7 @@ import { AppShell } from "@/components/layout/AppShell";
 import { TopBar } from "@/components/layout/TopBar";
 import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
+import { Select } from "@/components/ui/Select";
 import { cn } from "@/lib/cn";
 import { useTemplateListSync } from "@/hooks/useTemplateSync";
 import { useCreateProjectSync } from "@/hooks/useProjectSync";
@@ -574,16 +575,17 @@ export default function TemplateCatalogPage() {
                             <label className="block text-xs font-semibold text-text-primary mb-2">
                                 <span className="text-accent-primary mr-1">❖</span> Выберите формат для работы:
                             </label>
-                            <select 
-                                className="w-full h-9 px-3 rounded-md bg-bg-surface border border-border-primary text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-accent-primary/20 cursor-pointer"
+                            <Select
                                 value={selectedResizeId || "all"}
-                                onChange={(e) => setSelectedResizeId(e.target.value)}
-                            >
-                                <option value="all">Весь пакет ({selectedPackForMode.resizes.length} макетов)</option>
-                                {selectedPackForMode.resizes.map(r => (
-                                    <option key={r.id} value={r.id}>{r.name} ({r.width}×{r.height})</option>
-                                ))}
-                            </select>
+                                onChange={(val) => setSelectedResizeId(val)}
+                                options={[
+                                    { value: "all", label: `Весь пакет (${selectedPackForMode.resizes.length} макетов)` },
+                                    ...selectedPackForMode.resizes.map(r => ({
+                                        value: r.id,
+                                        label: `${r.name} (${r.width}×${r.height})`,
+                                    })),
+                                ]}
+                            />
                         </div>
                     )}
                     <div className="grid grid-cols-2 gap-3">

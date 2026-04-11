@@ -10,6 +10,7 @@ import { AppShell } from "@/components/layout/AppShell";
 import { TopBar } from "@/components/layout/TopBar";
 import { Modal } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
+import { Select } from "@/components/ui/Select";
 import { trpc } from "@/lib/trpc";
 
 /* ─── Main Page ──────────────────────────────────────── */
@@ -189,30 +190,29 @@ export default function AdminTemplatesPage() {
                         </div>
 
                         {/* Workspace filter */}
-                        <select
+                        <Select
+                            size="sm"
                             value={wsFilter ?? ""}
-                            onChange={(e) => setWsFilter(e.target.value || null)}
-                            className="h-9 px-3 text-xs rounded-xl border border-border-primary bg-bg-surface text-text-primary focus:outline-none cursor-pointer"
-                        >
-                            <option value="">Все воркспейсы</option>
-                            {workspaces?.map((ws) => (
-                                <option key={ws.id} value={ws.id}>{ws.name}</option>
-                            ))}
-                        </select>
+                            onChange={(val) => setWsFilter(val || null)}
+                            options={[
+                                { value: "", label: "Все воркспейсы" },
+                                ...(workspaces?.map((ws) => ({ value: ws.id, label: ws.name })) ?? []),
+                            ]}
+                        />
 
                         {/* Official filter */}
-                        <select
+                        <Select
+                            size="sm"
                             value={officialFilter === undefined ? "" : officialFilter ? "true" : "false"}
-                            onChange={(e) => {
-                                const v = e.target.value;
-                                setOfficialFilter(v === "" ? undefined : v === "true");
+                            onChange={(val) => {
+                                setOfficialFilter(val === "" ? undefined : val === "true");
                             }}
-                            className="h-9 px-3 text-xs rounded-xl border border-border-primary bg-bg-surface text-text-primary focus:outline-none cursor-pointer"
-                        >
-                            <option value="">Все</option>
-                            <option value="true">⭐ Official</option>
-                            <option value="false">Пользовательские</option>
-                        </select>
+                            options={[
+                                { value: "", label: "Все" },
+                                { value: "true", label: "⭐ Official" },
+                                { value: "false", label: "Пользовательские" },
+                            ]}
+                        />
                     </div>
 
                     {/* Templates Table */}

@@ -10,6 +10,7 @@ import { useState, useEffect } from "react";
 import { trpc } from "@/lib/trpc";
 import { useWorkspace } from "@/providers/WorkspaceProvider";
 import { X, Loader2, Globe, Lock, Users, ShieldCheck } from "lucide-react";
+import { Select } from "@/components/ui/Select";
 
 const BU_OPTIONS = [
     { value: "yandex-market", label: "Яндекс Маркет" },
@@ -149,15 +150,11 @@ export function CreateWorkspaceModal({ isOpen, onClose }: Props) {
                         <label className="text-[11px] text-text-tertiary uppercase tracking-wider font-medium mb-1.5 block">
                             Бизнес-юнит
                         </label>
-                        <select
+                        <Select
                             value={businessUnit}
-                            onChange={(e) => setBusinessUnit(e.target.value)}
-                            className="w-full h-10 px-3 rounded-[var(--radius-lg)] border border-border-primary bg-bg-secondary text-sm text-text-primary cursor-pointer focus:outline-none focus:ring-1 focus:ring-border-focus"
-                        >
-                            {BU_OPTIONS.map((bu) => (
-                                <option key={bu.value} value={bu.value}>{bu.label}</option>
-                            ))}
-                        </select>
+                            onChange={(val) => setBusinessUnit(val)}
+                            options={BU_OPTIONS.map((bu) => ({ value: bu.value, label: bu.label }))}
+                        />
                     </div>
 
                     {/* Visibility + Join Policy row */}
@@ -196,15 +193,16 @@ export function CreateWorkspaceModal({ isOpen, onClose }: Props) {
                             <label className="text-[11px] text-text-tertiary uppercase tracking-wider font-medium mb-1.5 block">
                                 Вступление
                             </label>
-                            <select
+                            <Select
+                                size="sm"
                                 value={joinPolicy}
-                                onChange={(e) => setJoinPolicy(e.target.value as any)}
-                                className="w-full h-[34px] px-2 rounded-[var(--radius-lg)] border border-border-primary bg-bg-secondary text-[10px] text-text-primary cursor-pointer focus:outline-none focus:ring-1 focus:ring-border-focus"
-                            >
-                                <option value="OPEN">Свободное</option>
-                                <option value="REQUEST">По заявке</option>
-                                <option value="INVITE_ONLY">По приглашению</option>
-                            </select>
+                                onChange={(val) => setJoinPolicy(val as any)}
+                                options={[
+                                    { value: "OPEN", label: "Свободное" },
+                                    { value: "REQUEST", label: "По заявке" },
+                                    { value: "INVITE_ONLY", label: "По приглашению" },
+                                ]}
+                            />
                         </div>
                     </div>
 

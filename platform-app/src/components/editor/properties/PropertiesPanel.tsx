@@ -19,6 +19,7 @@ import {
     Blend,
 } from "lucide-react";
 import { Popover, PopoverButton } from "@/components/ui/Popover";
+import { Select } from "@/components/ui/Select";
 import { useState } from "react";
 import { CompactInput } from "./CompactInput";
 import { ColorInput } from "./ColorInput";
@@ -207,10 +208,10 @@ export function PropertiesPanel() {
                                             <div className="grid grid-cols-2 gap-2">
                                                 <div>
                                                     <span className="text-[10px] text-text-tertiary font-light mb-1 block">По горизонтали</span>
-                                                    <select
+                                                    <Select
+                                                        size="sm"
                                                         value={selectedLayer.layoutSizingWidth || "fixed"}
-                                                        onChange={(e) => {
-                                                            const val = e.target.value as Layer["layoutSizingWidth"];
+                                                        onChange={(val) => {
                                                             const updates: any = { layoutSizingWidth: val };
                                                             if (selectedLayer.type === "text" && val === "fill") {
                                                                 const txt = selectedLayer as TextLayer;
@@ -220,24 +221,25 @@ export function PropertiesPanel() {
                                                             }
                                                             updateLayer(selectedLayer.id, updates);
                                                         }}
-                                                        className="w-full h-8 px-2 text-[11px] bg-bg-secondary border border-border-primary rounded-[var(--radius-md)] text-text-primary cursor-pointer focus:outline-none focus:ring-1 focus:ring-border-focus"
-                                                    >
-                                                        <option value="fixed">Fixed</option>
-                                                        <option value="fill">Fill</option>
-                                                        {selectedLayer.type === "frame" && <option value="hug">Hug</option>}
-                                                    </select>
+                                                        options={[
+                                                            { value: "fixed", label: "Fixed" },
+                                                            { value: "fill", label: "Fill" },
+                                                            ...(selectedLayer.type === "frame" ? [{ value: "hug", label: "Hug" }] : []),
+                                                        ]}
+                                                    />
                                                 </div>
                                                 <div>
                                                     <span className="text-[10px] text-text-tertiary font-light mb-1 block">По вертикали</span>
-                                                    <select
+                                                    <Select
+                                                        size="sm"
                                                         value={selectedLayer.layoutSizingHeight || "fixed"}
-                                                        onChange={(e) => updateLayer(selectedLayer.id, { layoutSizingHeight: e.target.value as Layer["layoutSizingHeight"] })}
-                                                        className="w-full h-8 px-2 text-[11px] bg-bg-secondary border border-border-primary rounded-[var(--radius-md)] text-text-primary cursor-pointer focus:outline-none focus:ring-1 focus:ring-border-focus"
-                                                    >
-                                                        <option value="fixed">Fixed</option>
-                                                        <option value="fill">Fill</option>
-                                                        {selectedLayer.type === "frame" && <option value="hug">Hug</option>}
-                                                    </select>
+                                                        onChange={(val) => updateLayer(selectedLayer.id, { layoutSizingHeight: val as Layer["layoutSizingHeight"] })}
+                                                        options={[
+                                                            { value: "fixed", label: "Fixed" },
+                                                            { value: "fill", label: "Fill" },
+                                                            ...(selectedLayer.type === "frame" ? [{ value: "hug", label: "Hug" }] : []),
+                                                        ]}
+                                                    />
                                                 </div>
                                             </div>
                                             <div className="mt-3 flex items-center gap-2">
@@ -282,35 +284,37 @@ export function PropertiesPanel() {
                                     <div className="grid grid-cols-2 gap-2">
                                         <div>
                                             <span className="text-[10px] text-text-tertiary font-light mb-1 block">По горизонтали</span>
-                                            <select
+                                            <Select
+                                                size="sm"
                                                 value={c.horizontal}
-                                                onChange={(e) => updateLayer(selectedLayer.id, {
-                                                    constraints: { ...c, horizontal: e.target.value as ConstraintH }
+                                                onChange={(val) => updateLayer(selectedLayer.id, {
+                                                    constraints: { ...c, horizontal: val as ConstraintH }
                                                 })}
-                                                className="w-full h-8 px-2 text-[11px] bg-bg-secondary border border-border-primary rounded-[var(--radius-md)] text-text-primary cursor-pointer focus:outline-none focus:ring-1 focus:ring-border-focus"
-                                            >
-                                                <option value="left">Слева (Left)</option>
-                                                <option value="right">Справа (Right)</option>
-                                                <option value="center">По центру (Center)</option>
-                                                <option value="stretch">Растянуть (Stretch)</option>
-                                                <option value="scale">Масштаб (Scale)</option>
-                                            </select>
+                                                options={[
+                                                    { value: "left", label: "Слева (Left)" },
+                                                    { value: "right", label: "Справа (Right)" },
+                                                    { value: "center", label: "По центру (Center)" },
+                                                    { value: "stretch", label: "Растянуть (Stretch)" },
+                                                    { value: "scale", label: "Масштаб (Scale)" },
+                                                ]}
+                                            />
                                         </div>
                                         <div>
                                             <span className="text-[10px] text-text-tertiary font-light mb-1 block">По вертикали</span>
-                                            <select
+                                            <Select
+                                                size="sm"
                                                 value={c.vertical}
-                                                onChange={(e) => updateLayer(selectedLayer.id, {
-                                                    constraints: { ...c, vertical: e.target.value as ConstraintV }
+                                                onChange={(val) => updateLayer(selectedLayer.id, {
+                                                    constraints: { ...c, vertical: val as ConstraintV }
                                                 })}
-                                                className="w-full h-8 px-2 text-[11px] bg-bg-secondary border border-border-primary rounded-[var(--radius-md)] text-text-primary cursor-pointer focus:outline-none focus:ring-1 focus:ring-border-focus"
-                                            >
-                                                <option value="top">Сверху (Top)</option>
-                                                <option value="bottom">Снизу (Bottom)</option>
-                                                <option value="center">По центру (Center)</option>
-                                                <option value="stretch">Растянуть (Stretch)</option>
-                                                <option value="scale">Масштаб (Scale)</option>
-                                            </select>
+                                                options={[
+                                                    { value: "top", label: "Сверху (Top)" },
+                                                    { value: "bottom", label: "Снизу (Bottom)" },
+                                                    { value: "center", label: "По центру (Center)" },
+                                                    { value: "stretch", label: "Растянуть (Stretch)" },
+                                                    { value: "scale", label: "Масштаб (Scale)" },
+                                                ]}
+                                            />
                                         </div>
                                     </div>
                                 </div>
@@ -322,19 +326,20 @@ export function PropertiesPanel() {
                         {/* Smart Layout Slot */}
                         <div>
                             <label className="text-[9px] text-text-tertiary uppercase tracking-wider font-medium mb-1.5 block">Роль в шаблоне (Slot)</label>
-                            <select
+                            <Select
+                                size="sm"
                                 value={selectedLayer.slotId || "none"}
-                                onChange={(e) => updateLayer(selectedLayer.id, { slotId: e.target.value as TemplateSlotRole })}
-                                className="w-full h-8 px-2 text-[11px] bg-bg-secondary border border-border-primary rounded-[var(--radius-md)] text-text-primary cursor-pointer focus:outline-none focus:ring-1 focus:ring-border-focus"
-                            >
-                                <option value="none">Без роли (None)</option>
-                                <option value="headline">Заголовок (Headline)</option>
-                                <option value="subhead">Подзаголовок (Subhead)</option>
-                                <option value="cta">Кнопка (CTA)</option>
-                                <option value="background">Фон (Background)</option>
-                                <option value="image-primary">Главное фото</option>
-                                <option value="logo">Логотип (Logo)</option>
-                            </select>
+                                onChange={(val) => updateLayer(selectedLayer.id, { slotId: val as TemplateSlotRole })}
+                                options={[
+                                    { value: "none", label: "Без роли (None)" },
+                                    { value: "headline", label: "Заголовок (Headline)" },
+                                    { value: "subhead", label: "Подзаголовок (Subhead)" },
+                                    { value: "cta", label: "Кнопка (CTA)" },
+                                    { value: "background", label: "Фон (Background)" },
+                                    { value: "image-primary", label: "Главное фото" },
+                                    { value: "logo", label: "Логотип (Logo)" },
+                                ]}
+                            />
                         </div>
 
                         {/* Group Slot ID (for frames — links child texts for coordinated AI generation) */}

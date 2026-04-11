@@ -18,6 +18,7 @@ import { useWorkspace } from "@/providers/WorkspaceProvider";
 import { AppShell } from "@/components/layout/AppShell";
 import { TopBar } from "@/components/layout/TopBar";
 import { SYSTEM_IMAGE_PRESETS, SYSTEM_TEXT_PRESETS, IMAGE_CATEGORY_LABELS, TEXT_CATEGORY_LABELS } from "@/lib/stylePresets";
+import { Select } from "@/components/ui/Select";
 import type { ImageStylePreset, TextStylePreset, DBPresetConfig } from "@/lib/stylePresets";
 
 type PresetTab = "image" | "text";
@@ -336,26 +337,24 @@ export default function StylePresetsPage() {
                   <label className="text-[11px] text-text-tertiary uppercase tracking-wider font-medium mb-1.5 block">
                     Категория
                   </label>
-                  <select
+                  <Select
                     value={editing.category}
-                    onChange={(e) => setEditing({ ...editing, category: e.target.value })}
-                    className="w-full h-10 px-3 rounded-[var(--radius-lg)] border border-border-primary bg-bg-secondary text-sm text-text-primary cursor-pointer focus:outline-none focus:ring-1 focus:ring-border-focus"
-                  >
-                    {editing.type === "image" ? (
-                      <>
-                        <option value="custom">🎨 Свои стили</option>
-                        <option value="photography">📸 Фото</option>
-                        <option value="digital">🎭 Цифровые</option>
-                        <option value="artistic">✨ Художественные</option>
-                      </>
-                    ) : (
-                      <>
-                        <option value="custom">🎨 Свои стили</option>
-                        <option value="tone">🎯 Тон</option>
-                        <option value="length">📏 Длина</option>
-                      </>
-                    )}
-                  </select>
+                    onChange={(val) => setEditing({ ...editing, category: val })}
+                    options={
+                      editing.type === "image"
+                        ? [
+                            { value: "custom", label: "🎨 Свои стили" },
+                            { value: "photography", label: "📸 Фото" },
+                            { value: "digital", label: "🎭 Цифровые" },
+                            { value: "artistic", label: "✨ Художественные" },
+                          ]
+                        : [
+                            { value: "custom", label: "🎨 Свои стили" },
+                            { value: "tone", label: "🎯 Тон" },
+                            { value: "length", label: "📏 Длина" },
+                          ]
+                    }
+                  />
                 </div>
               </div>
 

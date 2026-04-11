@@ -3,6 +3,7 @@
 import { useState, useMemo, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { X, Link2, Unlink2, ChevronDown } from "lucide-react";
+import { Select } from "@/components/ui/Select";
 import { useCanvasStore } from "@/store/canvasStore";
 import { useShallow } from "zustand/react/shallow";
 import type { LayerBinding, SyncMode, Layer } from "@/types";
@@ -209,37 +210,30 @@ export function BindToMasterModal({ formatId, onClose }: BindToMasterModalProps)
 
                                 {/* Target layer selector */}
                                 <div className="flex-1 min-w-0">
-                                    <select
+                                    <Select
+                                        size="xs"
                                         value={row.targetLayerId}
-                                        onChange={(e) => handleTargetChange(row.masterLayerId, e.target.value)}
+                                        onChange={(val) => handleTargetChange(row.masterLayerId, val)}
                                         disabled={!row.enabled}
-                                        className="w-full h-6 px-1.5 rounded-[var(--radius-sm)] border border-border-primary bg-bg-primary text-[11px] text-text-primary focus:outline-none focus:ring-1 focus:ring-border-focus disabled:opacity-40 cursor-pointer appearance-none"
-                                    >
-                                        <option value="">— не привязан —</option>
-                                        {targetLayers
-                                            .filter(tl => tl.type === row.masterLayerType || row.masterLayerType === tl.type)
-                                            .map(tl => (
-                                                <option key={tl.id} value={tl.id}>
-                                                    {tl.name}
-                                                </option>
-                                            ))}
-                                    </select>
+                                        placeholder="— не привязан —"
+                                        options={[
+                                            { value: "", label: "— не привязан —" },
+                                            ...targetLayers
+                                                .filter(tl => tl.type === row.masterLayerType || row.masterLayerType === tl.type)
+                                                .map(tl => ({ value: tl.id, label: tl.name })),
+                                        ]}
+                                    />
                                 </div>
 
                                 {/* Sync mode selector */}
                                 <div className="w-[130px]">
-                                    <select
+                                    <Select
+                                        size="xs"
                                         value={row.syncMode}
-                                        onChange={(e) => handleSyncModeChange(row.masterLayerId, e.target.value as SyncMode)}
+                                        onChange={(val) => handleSyncModeChange(row.masterLayerId, val as SyncMode)}
                                         disabled={!row.enabled || !row.targetLayerId}
-                                        className="w-full h-6 px-1.5 rounded-[var(--radius-sm)] border border-border-primary bg-bg-primary text-[10px] text-text-primary focus:outline-none focus:ring-1 focus:ring-border-focus disabled:opacity-40 cursor-pointer appearance-none"
-                                    >
-                                        {SYNC_MODES.map(sm => (
-                                            <option key={sm.value} value={sm.value}>
-                                                {sm.label}
-                                            </option>
-                                        ))}
-                                    </select>
+                                        options={SYNC_MODES.map(sm => ({ value: sm.value, label: sm.label }))}
+                                    />
                                 </div>
                             </div>
                         ))}

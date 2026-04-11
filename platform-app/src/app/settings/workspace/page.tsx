@@ -21,6 +21,7 @@ import {
     Globe, Lock, Users, Check, X, Loader2, Copy,
     Trash2, ShieldAlert, ArrowRight, Clock,
 } from "lucide-react";
+import { Select } from "@/components/ui/Select";
 
 interface ExtendedWorkspace {
     id: string;
@@ -182,15 +183,11 @@ export default function WorkspaceSettingsPage() {
                             </div>
                             <div>
                                 <label className="text-[11px] text-text-tertiary uppercase tracking-wider font-medium mb-1.5 block">Бизнес-юнит</label>
-                                <select
+                                <Select
                                     value={businessUnit}
-                                    onChange={(e) => setBusinessUnit(e.target.value)}
-                                    className="w-full h-10 px-3 rounded-[var(--radius-lg)] border border-border-primary bg-bg-secondary text-sm text-text-primary cursor-pointer focus:outline-none focus:ring-1 focus:ring-border-focus"
-                                >
-                                    {BU_OPTIONS.map((bu) => (
-                                        <option key={bu.value} value={bu.value}>{bu.label}</option>
-                                    ))}
-                                </select>
+                                    onChange={(val) => setBusinessUnit(val)}
+                                    options={BU_OPTIONS.map((bu) => ({ value: bu.value, label: bu.label }))}
+                                />
                             </div>
                         </div>
                     </section>
@@ -232,15 +229,15 @@ export default function WorkspaceSettingsPage() {
 
                             <div>
                                 <label className="text-[11px] text-text-tertiary uppercase tracking-wider font-medium mb-1.5 block">Политика вступления</label>
-                                <select
+                                <Select
                                     value={joinPolicy}
-                                    onChange={(e) => setJoinPolicy(e.target.value as "OPEN" | "REQUEST" | "INVITE_ONLY")}
-                                    className="w-full h-10 px-3 rounded-[var(--radius-lg)] border border-border-primary bg-bg-secondary text-sm text-text-primary cursor-pointer focus:outline-none focus:ring-1 focus:ring-border-focus"
-                                >
-                                    <option value="OPEN">Свободное — все могут вступить</option>
-                                    <option value="REQUEST">По заявке — требуется одобрение</option>
-                                    <option value="INVITE_ONLY">Только по приглашению</option>
-                                </select>
+                                    onChange={(val) => setJoinPolicy(val as "OPEN" | "REQUEST" | "INVITE_ONLY")}
+                                    options={[
+                                        { value: "OPEN", label: "Свободное — все могут вступить" },
+                                        { value: "REQUEST", label: "По заявке — требуется одобрение" },
+                                        { value: "INVITE_ONLY", label: "Только по приглашению" },
+                                    ]}
+                                />
                             </div>
 
                             {/* Invite link */}

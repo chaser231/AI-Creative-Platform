@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { LayoutDashboard, Paintbrush, Scissors, Eye, EyeOff } from "lucide-react";
 import { Popover, PopoverButton } from "@/components/ui/Popover";
+import { Select } from "@/components/ui/Select";
 import type { FrameLayer } from "@/types";
 import { ColorInput } from "./ColorInput";
 import { CompactInput } from "./CompactInput";
@@ -31,15 +32,16 @@ export function FramePropsGrouped({
                     <div className="space-y-4">
                         <div className="flex items-center justify-between">
                             <label className="text-[10px] text-text-primary font-medium">Авто-лейаут</label>
-                            <select
+                            <Select
+                                size="xs"
                                 value={layer.layoutMode || "none"}
-                                onChange={(e) => onChange({ layoutMode: e.target.value as FrameLayer["layoutMode"] })}
-                                className="h-7 px-2 text-[10px] bg-bg-secondary border border-border-primary rounded-[var(--radius-sm)] text-text-primary cursor-pointer focus:outline-none"
-                            >
-                                <option value="none">Выкл</option>
-                                <option value="horizontal">Горизонтальный</option>
-                                <option value="vertical">Вертикальный</option>
-                            </select>
+                                onChange={(val) => onChange({ layoutMode: val as FrameLayer["layoutMode"] })}
+                                options={[
+                                    { value: "none", label: "Выкл" },
+                                    { value: "horizontal", label: "Горизонтальный" },
+                                    { value: "vertical", label: "Вертикальный" },
+                                ]}
+                            />
                         </div>
 
                         {layer.layoutMode && layer.layoutMode !== "none" && (
@@ -57,26 +59,28 @@ export function FramePropsGrouped({
                                     <div>
                                         <label className="text-[9px] text-text-tertiary uppercase tracking-wider font-medium mb-1.5 block">Выравнивание</label>
                                         <div className="space-y-1.5">
-                                            <select
+                                            <Select
+                                                size="xs"
                                                 value={layer.primaryAxisAlignItems || "flex-start"}
-                                                onChange={(e) => onChange({ primaryAxisAlignItems: e.target.value as FrameLayer["primaryAxisAlignItems"] })}
-                                                className="w-full h-7 px-1.5 text-[10px] bg-bg-secondary border border-border-primary rounded-[var(--radius-sm)] text-text-primary cursor-pointer focus:outline-none"
-                                            >
-                                                <option value="flex-start">Start</option>
-                                                <option value="center">Center</option>
-                                                <option value="flex-end">End</option>
-                                                <option value="space-between">Space Between</option>
-                                            </select>
-                                            <select
+                                                onChange={(val) => onChange({ primaryAxisAlignItems: val as FrameLayer["primaryAxisAlignItems"] })}
+                                                options={[
+                                                    { value: "flex-start", label: "Start" },
+                                                    { value: "center", label: "Center" },
+                                                    { value: "flex-end", label: "End" },
+                                                    { value: "space-between", label: "Space Between" },
+                                                ]}
+                                            />
+                                            <Select
+                                                size="xs"
                                                 value={layer.counterAxisAlignItems || "flex-start"}
-                                                onChange={(e) => onChange({ counterAxisAlignItems: e.target.value as FrameLayer["counterAxisAlignItems"] })}
-                                                className="w-full h-7 px-1.5 text-[10px] bg-bg-secondary border border-border-primary rounded-[var(--radius-sm)] text-text-primary cursor-pointer focus:outline-none"
-                                            >
-                                                <option value="flex-start">Top/Left</option>
-                                                <option value="center">Center</option>
-                                                <option value="flex-end">Bottom/Right</option>
-                                                <option value="stretch">Stretch</option>
-                                            </select>
+                                                onChange={(val) => onChange({ counterAxisAlignItems: val as FrameLayer["counterAxisAlignItems"] })}
+                                                options={[
+                                                    { value: "flex-start", label: "Top/Left" },
+                                                    { value: "center", label: "Center" },
+                                                    { value: "flex-end", label: "Bottom/Right" },
+                                                    { value: "stretch", label: "Stretch" },
+                                                ]}
+                                            />
                                         </div>
                                     </div>
                                 </div>
@@ -86,25 +90,27 @@ export function FramePropsGrouped({
                                     <div className="grid grid-cols-2 gap-2">
                                         <div>
                                             <span className="text-[9px] text-text-tertiary font-light mb-1 block">Осн. Ось (Main)</span>
-                                            <select
+                                            <Select
+                                                size="xs"
                                                 value={layer.primaryAxisSizingMode || "fixed"}
-                                                onChange={(e) => onChange({ primaryAxisSizingMode: e.target.value as FrameLayer["primaryAxisSizingMode"] })}
-                                                className="w-full h-7 px-1.5 text-[10px] bg-bg-secondary border border-border-primary rounded-[var(--radius-sm)] text-text-primary cursor-pointer focus:outline-none"
-                                            >
-                                                <option value="fixed">Fixed</option>
-                                                <option value="auto">Hug Contents</option>
-                                            </select>
+                                                onChange={(val) => onChange({ primaryAxisSizingMode: val as FrameLayer["primaryAxisSizingMode"] })}
+                                                options={[
+                                                    { value: "fixed", label: "Fixed" },
+                                                    { value: "auto", label: "Hug Contents" },
+                                                ]}
+                                            />
                                         </div>
                                         <div>
                                             <span className="text-[9px] text-text-tertiary font-light mb-1 block">Попер. Ось (Cross)</span>
-                                            <select
+                                            <Select
+                                                size="xs"
                                                 value={layer.counterAxisSizingMode || "fixed"}
-                                                onChange={(e) => onChange({ counterAxisSizingMode: e.target.value as FrameLayer["counterAxisSizingMode"] })}
-                                                className="w-full h-7 px-1.5 text-[10px] bg-bg-secondary border border-border-primary rounded-[var(--radius-sm)] text-text-primary cursor-pointer focus:outline-none"
-                                            >
-                                                <option value="fixed">Fixed</option>
-                                                <option value="auto">Hug Contents</option>
-                                            </select>
+                                                onChange={(val) => onChange({ counterAxisSizingMode: val as FrameLayer["counterAxisSizingMode"] })}
+                                                options={[
+                                                    { value: "fixed", label: "Fixed" },
+                                                    { value: "auto", label: "Hug Contents" },
+                                                ]}
+                                            />
                                         </div>
                                     </div>
                                 </div>

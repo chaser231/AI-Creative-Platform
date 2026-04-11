@@ -13,6 +13,7 @@ import {
     Expand,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
+import { Select } from "@/components/ui/Select";
 import { ReferenceImageInput } from "@/components/ui/ReferenceImageInput";
 import { ImageStylePresetPicker } from "@/components/ui/StylePresetPicker";
 import { getMaxRefs, resolveRefTags } from "@/lib/ai-models";
@@ -333,18 +334,15 @@ export function ImageEditorModal({ imageSrc, onApply, onClose }: ImageEditorModa
                             {/* Model selector */}
                             <div>
                                 <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wider mb-2">Модель</p>
-                                <select
+                                <Select
+                                    size="sm"
                                     value={selectedModel}
-                                    onChange={(e) => {
-                                        setSelectedModel(e.target.value);
+                                    onChange={(val) => {
+                                        setSelectedModel(val);
                                         setActiveTool(null);
                                     }}
-                                    className="w-full h-8 px-2 text-[11px] bg-bg-primary border border-border-primary rounded-[var(--radius-sm)] text-text-primary cursor-pointer focus:outline-none focus:ring-1 focus:ring-border-focus"
-                                >
-                                    {IMAGE_EDIT_MODELS.map(m => (
-                                        <option key={m.id} value={m.id}>{m.label}</option>
-                                    ))}
-                                </select>
+                                    options={IMAGE_EDIT_MODELS.map(m => ({ value: m.id, label: m.label }))}
+                                />
                             </div>
 
                             <div className="h-px bg-border-primary" />

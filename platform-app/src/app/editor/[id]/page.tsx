@@ -8,6 +8,7 @@ import { TopBar } from "@/components/layout/TopBar";
 import { Button } from "@/components/ui/Button";
 import { Dialog } from "@/components/ui/Dialog";
 import { Modal } from "@/components/ui/Modal";
+import { Select } from "@/components/ui/Select";
 import { LayersPanel } from "@/components/editor/LayersPanel";
 import { PropertiesPanel } from "@/components/editor/properties";
 import { Toolbar } from "@/components/editor/Toolbar";
@@ -617,16 +618,16 @@ export default function EditorPage({ params }: EditorPageProps) {
                     {/* Status */}
                     <div className="space-y-1.5">
                         <label className="text-[12px] font-medium text-text-secondary">Статус</label>
-                        <select
+                        <Select
                             value={project?.status || "draft"}
-                            onChange={(e) => updateProject(id, { status: e.target.value as "draft" | "in-progress" | "review" | "published" })}
-                            className="w-full h-9 px-2 rounded-[var(--radius-md)] border border-border-primary bg-bg-secondary text-[13px] text-text-primary cursor-pointer focus:outline-none focus:ring-1 focus:ring-accent-primary/50"
-                        >
-                            <option value="draft">Черновик</option>
-                            <option value="in-progress">В работе</option>
-                            <option value="review">На проверке</option>
-                            <option value="published">Опубликован</option>
-                        </select>
+                            onChange={(val) => updateProject(id, { status: val as "draft" | "in-progress" | "review" | "published" })}
+                            options={[
+                                { value: "draft", label: "Черновик" },
+                                { value: "in-progress", label: "В работе" },
+                                { value: "review", label: "На проверке" },
+                                { value: "published", label: "Опубликован" },
+                            ]}
+                        />
                     </div>
 
                     {/* Artboard Background Color */}

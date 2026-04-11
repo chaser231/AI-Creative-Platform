@@ -16,6 +16,7 @@ import { useShallow } from "zustand/react/shallow";
 import type { ToolType } from "@/types";
 import { useRef, useState } from "react";
 import { Popover } from "@/components/ui/Popover";
+import { Select } from "@/components/ui/Select";
 
 const TOOLS: { id: ToolType; icon: React.ReactNode; label: string }[] = [
     { id: "select", icon: <MousePointer2 size={18} />, label: "Выбор" },
@@ -151,17 +152,18 @@ export function Toolbar({ onOpenTemplates, onToggleAI, aiActive }: ToolbarProps)
                             {snapConfig.gridSnap && (
                                 <div className="flex items-center gap-2 pl-5">
                                     <span className="text-[10px] text-text-tertiary">Шаг</span>
-                                    <select
-                                        value={snapConfig.gridSize}
-                                        onChange={(e) => updateSnapConfig({ gridSize: Number(e.target.value) })}
-                                        className="h-6 px-1.5 text-[10px] bg-bg-secondary border border-border-primary rounded-[var(--radius-sm)] text-text-primary cursor-pointer focus:outline-none"
-                                    >
-                                        <option value={1}>1 px</option>
-                                        <option value={4}>4 px</option>
-                                        <option value={8}>8 px</option>
-                                        <option value={16}>16 px</option>
-                                        <option value={32}>32 px</option>
-                                    </select>
+                                    <Select
+                                        size="xs"
+                                        value={String(snapConfig.gridSize)}
+                                        onChange={(val) => updateSnapConfig({ gridSize: Number(val) })}
+                                        options={[
+                                            { value: "1", label: "1 px" },
+                                            { value: "4", label: "4 px" },
+                                            { value: "8", label: "8 px" },
+                                            { value: "16", label: "16 px" },
+                                            { value: "32", label: "32 px" },
+                                        ]}
+                                    />
                                 </div>
                             )}
                             <div className="w-full h-px bg-border-primary" />
