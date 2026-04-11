@@ -8,10 +8,10 @@ import Konva from "konva";
  * InlineTextEditor — Figma-like inline text editing overlay.
  *
  * Key behaviours:
- * - Transparent background so the canvas context (colors, images) shows through
+ * - Transparent background so the canvas context shows through
  * - Real-time text sync: every keystroke updates the store via onUpdate
- * - Automatic container resize based on textAdjust mode
- * - Click outside / Escape → commit; Enter → newline (no submit on enter)
+ * - Auto-resize: textarea height/width grows with content
+ * - Click outside / Escape → commit; Enter → newline
  * - Escape → revert to original text
  * - Contrast-aware caret using inverted text color
  */
@@ -35,12 +35,11 @@ export function InlineTextEditor({
     onUpdate?: (text: string) => void;
 }) {
     const textareaRef = useRef<HTMLTextAreaElement>(null);
-    const containerRef = useRef<HTMLDivElement>(null);
     const [value, setValue] = useState(layer.text);
     const originalText = useRef(layer.text);
     const isCommitted = useRef(false);
 
-    // Calculate the screen position of the text layer
+    // Calculate the screen position — layer.x/y comes from store (absolute)
     const screenX = layer.x * zoom + stageX;
     const screenY = layer.y * zoom + stageY;
     const fontSizeScaled = layer.fontSize * zoom;
@@ -49,14 +48,50 @@ export function InlineTextEditor({
     // Determine caret color — invert the text fill for contrast
     const caretColor = getContrastColor(layer.fill);
 
-    // Auto-focus and select all text on mount
+    // Compute dynamic dimensions based on textAdjust mode
+    const isAutoWidth = layer.textAdjust === "auto_width";
+    const isAutoHeight = layer.textAdjust === "auto_height" || !layer.textAdjust;
+    const isFixed = layer.textAdjust === "fixed";
+
+    // Use the live layer dimensions from the store (updated by auto-layout)
+    const screenW = Math.max(layer.width * zoom, 20);
+    const screenH = Math.max(layer.height * zoom, fontSizeScaled * layer.lineHeight);
+
+    // Auto-resize textarea height to match content
+    const autoResize = useCallback(() => {
+        const ta = textareaRef.current;
+        if (!ta) return;
+
+        if (isAutoWidth) {
+            // For auto_width: measure text width via hidden span
+            ta.style.width = "0";
+            ta.style.width = Math.max(ta.scrollWidth, 20) + "px";
+        }
+
+        if (isAutoHeight || isAutoWidth) {
+            // Auto-grow height to match content
+            ta.style.height = "0";
+            ta.style.height = Math.max(ta.scrollHeight, fontSizeScaled * layer.lineHeight) + "px";
+        }
+    }, [isAutoWidth, isAutoHeight, fontSizeScaled, layer.lineHeight]);
+
+    // Auto-focus, select all text, and initial resize on mount
     useEffect(() => {
         const ta = textareaRef.current;
         if (ta) {
             ta.focus();
             ta.select();
+            // Initial resize after font loads
+            requestAnimationFrame(() => {
+                autoResize();
+            });
         }
-    }, []);
+    }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // Re-resize when zoom changes
+    useEffect(() => {
+        autoResize();
+    }, [zoom, autoResize]);
 
     // Commit handler — only runs once per editing session
     const doCommit = useCallback((text: string) => {
@@ -65,12 +100,14 @@ export function InlineTextEditor({
         onCommit(text);
     }, [onCommit]);
 
-    // Handle text changes — real-time sync
+    // Handle text changes — real-time sync + auto-resize
     const handleChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
         const newText = e.target.value;
         setValue(newText);
         onUpdate?.(newText);
-    }, [onUpdate]);
+        // Auto-resize after React processes the value change
+        requestAnimationFrame(() => autoResize());
+    }, [onUpdate, autoResize]);
 
     const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
         if (e.key === "Escape") {
@@ -90,16 +127,8 @@ export function InlineTextEditor({
         doCommit(value);
     }, [doCommit, value]);
 
-    // Compute dynamic dimensions based on textAdjust mode
-    const isAutoWidth = layer.textAdjust === "auto_width";
-    const isAutoHeight = layer.textAdjust === "auto_height" || !layer.textAdjust;
-
-    // Minimum width to prevent collapse
-    const minScreenW = Math.max(layer.width * zoom, 20);
-
     return (
         <div
-            ref={containerRef}
             style={{
                 position: "absolute",
                 left: screenX,
@@ -118,6 +147,7 @@ export function InlineTextEditor({
                 spellCheck={false}
                 style={{
                     // Match Konva text rendering exactly
+                    display: "block",
                     fontSize: fontSizeScaled,
                     fontFamily: layer.fontFamily,
                     fontWeight: layer.fontWeight || "normal",
@@ -136,19 +166,22 @@ export function InlineTextEditor({
                     resize: "none",
                     overflow: "hidden",
                     caretColor: caretColor,
+                    boxSizing: "border-box",
+                    wordBreak: isAutoWidth ? "keep-all" : "break-word",
+                    whiteSpace: isAutoWidth ? "nowrap" : "pre-wrap",
+                    overflowWrap: isAutoWidth ? undefined : "break-word",
 
                     // Sizing based on textAdjust mode
-                    width: isAutoWidth ? "max-content" : minScreenW,
-                    minWidth: isAutoWidth ? 20 : minScreenW,
-                    maxWidth: isAutoWidth ? "none" : minScreenW,
-                    height: isAutoHeight || isAutoWidth ? "auto" : Math.max(layer.height * zoom, 20),
-                    minHeight: isAutoHeight || isAutoWidth ? fontSizeScaled * layer.lineHeight : Math.max(layer.height * zoom, 20),
+                    width: isAutoWidth ? "auto" : screenW,
+                    minWidth: isAutoWidth ? 20 : undefined,
+                    height: isFixed ? screenH : "auto",
+                    minHeight: fontSizeScaled * layer.lineHeight,
 
                     // Prevent text selection styling from obscuring content
                     WebkitTextFillColor: layer.fillEnabled === false ? "transparent" : layer.fill,
                 }}
             />
-            {/* Subtle editing indicator border */}
+            {/* Subtle editing indicator border — follows textarea dimensions */}
             <div
                 style={{
                     position: "absolute",

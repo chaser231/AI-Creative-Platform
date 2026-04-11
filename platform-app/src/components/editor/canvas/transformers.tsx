@@ -3,6 +3,7 @@
 import { useRef, useEffect } from "react";
 import { Transformer } from "react-konva";
 import Konva from "konva";
+import { useCanvasStore } from "@/store/canvasStore";
 
 /* ─── Selection Transformer ───────────────────────── */
 interface SelectionTransformerProps {
@@ -14,21 +15,24 @@ interface SelectionTransformerProps {
 
 export function SelectionTransformer({ selectedLayerIds, stageRef, excludeIds }: SelectionTransformerProps) {
     const trRef = useRef<Konva.Transformer>(null);
+    const editingLayerId = useCanvasStore((s) => s.editingLayerId);
 
     useEffect(() => {
         if (!trRef.current || !stageRef.current) return;
 
-        // Find all selected nodes, excluding frame children
-        const filteredIds = excludeIds
-            ? selectedLayerIds.filter((id) => !excludeIds.has(id))
-            : selectedLayerIds;
+        // Find all selected nodes, excluding frame children AND the currently editing text layer
+        const filteredIds = selectedLayerIds.filter((id) => {
+            if (excludeIds?.has(id)) return false;
+            if (editingLayerId && id === editingLayerId) return false;
+            return true;
+        });
         const nodes = filteredIds
             .map((id) => stageRef.current?.findOne("#" + id))
             .filter((node): node is Konva.Node => !!node);
 
         trRef.current.nodes(nodes);
         trRef.current.getLayer()?.batchDraw();
-    }, [selectedLayerIds, stageRef, excludeIds]);
+    }, [selectedLayerIds, stageRef, excludeIds, editingLayerId]);
 
     return (
         <Transformer
@@ -54,17 +58,23 @@ interface FrameChildTransformerProps {
 
 export function FrameChildTransformer({ selectedChildIds, containerRef }: FrameChildTransformerProps) {
     const trRef = useRef<Konva.Transformer>(null);
+    const editingLayerId = useCanvasStore((s) => s.editingLayerId);
 
     useEffect(() => {
         if (!trRef.current || !containerRef.current) return;
 
-        const nodes = selectedChildIds
+        // Exclude the currently editing text layer from the transformer
+        const filteredIds = editingLayerId
+            ? selectedChildIds.filter((id) => id !== editingLayerId)
+            : selectedChildIds;
+
+        const nodes = filteredIds
             .map((id) => containerRef.current?.findOne("#" + id))
             .filter((node): node is Konva.Node => !!node);
 
         trRef.current.nodes(nodes);
         trRef.current.getLayer()?.batchDraw();
-    }, [selectedChildIds, containerRef]);
+    }, [selectedChildIds, containerRef, editingLayerId]);
 
     return (
         <Transformer
