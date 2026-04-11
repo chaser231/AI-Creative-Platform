@@ -46,9 +46,15 @@ export function Popover({
     useEffect(() => {
         if (!isOpen) return;
         const handler = (e: MouseEvent) => {
-            if (ref.current && !ref.current.contains(e.target as Node)) {
-                onClose();
-            }
+            const target = e.target as Node;
+            // 1. Click inside popover — ignore
+            if (ref.current?.contains(target)) return;
+            // 2. Click inside a Radix portal (Select, Dropdown, etc.) — ignore
+            //    Radix UI renders portal content with data-radix-popper-content-wrapper
+            const el = target instanceof Element ? target : target.parentElement;
+            if (el?.closest('[data-radix-popper-content-wrapper]')) return;
+            // 3. Everything else — close
+            onClose();
         };
         document.addEventListener("mousedown", handler);
         return () => document.removeEventListener("mousedown", handler);
