@@ -705,12 +705,15 @@ export function Canvas({ stageRef }: CanvasProps) {
         let id = e.target.id();
 
         // Block drag if the grab point is outside a clipped parent's bounds
-        const stage = e.target.getStage();
-        const pointer = stage?.getPointerPosition() ?? null;
-        if (isClickOutsideClipBounds(id, pointer)) {
-            e.target.stopDrag();
-            selectLayer(null);
-            return;
+        // EXCEPTION: allow if the layer is already selected (Figma-like behavior)
+        if (!selectedLayerIds.includes(id)) {
+            const stage = e.target.getStage();
+            const pointer = stage?.getPointerPosition() ?? null;
+            if (isClickOutsideClipBounds(id, pointer)) {
+                e.target.stopDrag();
+                selectLayer(null);
+                return;
+            }
         }
 
         const isDeepSelect = e.evt?.metaKey || e.evt?.ctrlKey;
@@ -1162,6 +1165,10 @@ export function Canvas({ stageRef }: CanvasProps) {
         // the pointer falls outside the clip bounds of any clipped parent.
         // This MUST happen here because Konva fires shape-level onClick/onDragStart
         // AFTER mousedown, and we can't reliably block them.
+        //
+        // EXCEPTION (Figma-like): If the target is already selected, allow interaction
+        // even outside clip bounds — this lets users drag/transform objects whose
+        // handles or body extend beyond the parent's clip area.
         const target = e.target;
         const stage = target.getStage();
         if (stage && target !== stage) {
@@ -1171,40 +1178,45 @@ export function Canvas({ stageRef }: CanvasProps) {
                 const canvasY = (pointer.y - stage.y()) / stage.scaleY();
                 const targetId = target.id();
 
-                let shouldBlock = false;
+                // Skip clip-bounds check if the target is already selected
+                const isAlreadySelected = targetId && selectedLayerIds.includes(targetId);
 
-                // Check ARTBOARD clip
-                if (artboardProps.clipContent) {
-                    if (canvasX < 0 || canvasX > canvasWidth || canvasY < 0 || canvasY > canvasHeight) {
-                        shouldBlock = true;
-                    }
-                }
+                if (!isAlreadySelected) {
+                    let shouldBlock = false;
 
-                // Check FRAME clip (if target is a frame child)
-                if (!shouldBlock && targetId) {
-                    const parentFrame = layers.find(
-                        l => l.type === 'frame' && (l as FrameLayer).childIds.includes(targetId)
-                    ) as FrameLayer | undefined;
-                    if (parentFrame && parentFrame.clipContent) {
-                        if (
-                            canvasX < parentFrame.x ||
-                            canvasX > parentFrame.x + parentFrame.width ||
-                            canvasY < parentFrame.y ||
-                            canvasY > parentFrame.y + parentFrame.height
-                        ) {
+                    // Check ARTBOARD clip
+                    if (artboardProps.clipContent) {
+                        if (canvasX < 0 || canvasX > canvasWidth || canvasY < 0 || canvasY > canvasHeight) {
                             shouldBlock = true;
                         }
                     }
-                }
 
-                if (shouldBlock) {
-                    // Prevent the shape from receiving any further events
-                    // by stopping the event and deselecting
-                    target.stopDrag();
-                    e.cancelBubble = true;
-                    clipBlocked.current = true;  // flag so onClick handler skips
-                    selectLayer(null);
-                    return;
+                    // Check FRAME clip (if target is a frame child)
+                    if (!shouldBlock && targetId) {
+                        const parentFrame = layers.find(
+                            l => l.type === 'frame' && (l as FrameLayer).childIds.includes(targetId)
+                        ) as FrameLayer | undefined;
+                        if (parentFrame && parentFrame.clipContent) {
+                            if (
+                                canvasX < parentFrame.x ||
+                                canvasX > parentFrame.x + parentFrame.width ||
+                                canvasY < parentFrame.y ||
+                                canvasY > parentFrame.y + parentFrame.height
+                            ) {
+                                shouldBlock = true;
+                            }
+                        }
+                    }
+
+                    if (shouldBlock) {
+                        // Prevent the shape from receiving any further events
+                        // by stopping the event and deselecting
+                        target.stopDrag();
+                        e.cancelBubble = true;
+                        clipBlocked.current = true;  // flag so onClick handler skips
+                        selectLayer(null);
+                        return;
+                    }
                 }
             }
         }
@@ -1245,7 +1257,7 @@ export function Canvas({ stageRef }: CanvasProps) {
                 stopTextEditing();
             }
         }
-    }, [selectLayer, isEditingText, stopTextEditing, isPanning, artboardProps.clipContent, canvasWidth, canvasHeight, layers]);
+    }, [selectLayer, isEditingText, stopTextEditing, isPanning, artboardProps.clipContent, canvasWidth, canvasHeight, layers, selectedLayerIds]);
 
     const handleStageMouseMove = useCallback((e: Konva.KonvaEventObject<MouseEvent>) => {
         const stage = e.target.getStage();
