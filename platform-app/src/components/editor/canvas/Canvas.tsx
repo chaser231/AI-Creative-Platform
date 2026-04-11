@@ -510,7 +510,6 @@ export function Canvas({ stageRef }: CanvasProps) {
     const [stageDraggable, setStageDraggable] = useState(true);
     const [isDraggingFile, setIsDraggingFile] = useState(false);
     const [contextMenu, setContextMenu] = useState<{ x: number; y: number; layerIds: string[] } | null>(null);
-    const [hoveredLayerId, setHoveredLayerId] = useState<string | null>(null);
 
     // Marquee State
     const [selectionBox, setSelectionBox] = useState<{ x: number; y: number; width: number; height: number; startX: number; startY: number } | null>(null);
@@ -556,6 +555,8 @@ export function Canvas({ stageRef }: CanvasProps) {
         stopTextEditing,
         artboardProps,
         setHighlightedFrameId,
+        hoveredLayerId,
+        setHoveredLayerId,
         getFrameAtPoint,
         moveLayerToFrame,
         removeLayerFromFrame,
@@ -587,6 +588,8 @@ export function Canvas({ stageRef }: CanvasProps) {
         stopTextEditing: s.stopTextEditing,
         artboardProps: s.artboardProps,
         setHighlightedFrameId: s.setHighlightedFrameId,
+        hoveredLayerId: s.hoveredLayerId,
+        setHoveredLayerId: s.setHoveredLayerId,
         getFrameAtPoint: s.getFrameAtPoint,
         moveLayerToFrame: s.moveLayerToFrame,
         removeLayerFromFrame: s.removeLayerFromFrame,

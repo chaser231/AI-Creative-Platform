@@ -9,11 +9,11 @@ import { DEFAULT_SNAP_CONFIG } from "@/services/snapService";
 export type ViewportSlice = Pick<CanvasStore,
     | "zoom" | "stageX" | "stageY"
     | "artboardProps" | "snapConfig"
-    | "highlightedFrameId" | "editorMode"
+    | "highlightedFrameId" | "hoveredLayerId" | "editorMode"
     | "isEditingText" | "editingLayerId"
     | "setZoom" | "setStagePosition"
     | "updateArtboardProps" | "updateSnapConfig"
-    | "setHighlightedFrameId" | "getFrameAtPoint"
+    | "setHighlightedFrameId" | "setHoveredLayerId" | "getFrameAtPoint"
     | "setEditorMode" | "setActiveTool"
     | "startTextEditing" | "stopTextEditing"
     | "activeTool"
@@ -35,6 +35,7 @@ export const createViewportSlice: StateCreator<CanvasStore, [], [], ViewportSlic
     snapConfig: { ...DEFAULT_SNAP_CONFIG },
 
     highlightedFrameId: null,
+    hoveredLayerId: null,
     editorMode: "studio",
     isEditingText: false,
     editingLayerId: null,
@@ -65,6 +66,10 @@ export const createViewportSlice: StateCreator<CanvasStore, [], [], ViewportSlic
 
     setHighlightedFrameId: (id) => {
         set({ highlightedFrameId: id });
+    },
+
+    setHoveredLayerId: (id) => {
+        set({ hoveredLayerId: id });
     },
 
     getFrameAtPoint: (x, y, excludeId) => {
