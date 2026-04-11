@@ -11,6 +11,7 @@ import {
     Settings2,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
+import { Select } from "@/components/ui/Select";
 import { ReferenceImageInput } from "@/components/ui/ReferenceImageInput";
 import { RefAutocompleteTextarea, type RefAutocompleteTextareaHandle } from "@/components/ui/RefAutocompleteTextarea";
 import { getModelById, getMaxRefs, getAspectRatios, getResolutions, resolveRefTags } from "@/lib/ai-models";
@@ -172,7 +173,7 @@ export function ImageContentBlock({ id, name, props, value, onChange, businessUn
 
                         <button
                             onClick={() => setShowGenPanel(!showGenPanel)}
-                            className={`w-full flex items-center gap-2 justify-start text-sm h-9 px-3 rounded-[var(--radius-md)] border transition-all cursor-pointer ${showGenPanel ? "bg-accent-lime text-accent-primary border-accent-lime-hover font-medium" : "bg-bg-secondary text-text-primary border-border-primary hover:bg-bg-tertiary"}`}
+                            className={`w-full flex items-center gap-2 justify-start text-sm h-9 px-3 rounded-[var(--radius-md)] border transition-all cursor-pointer ${showGenPanel ? "bg-accent-lime text-text-inverse border-accent-lime-hover font-medium" : "bg-bg-secondary text-text-primary border-border-primary hover:bg-bg-tertiary"}`}
                         >
                             <Wand2 size={16} /> Сгенерировать с нуля
                         </button>
@@ -264,16 +265,12 @@ export function ImageContentBlock({ id, name, props, value, onChange, businessUn
                             <div className="grid grid-cols-2 gap-3 pt-1">
                                 <div>
                                     <p className="text-[10px] font-medium text-text-secondary mb-1">Количество</p>
-                                    <select value={genCount} onChange={(e) => setGenCount(Number(e.target.value))} className="w-full h-8 px-2 text-[11px] bg-bg-primary border border-border-primary rounded-[var(--radius-sm)] text-text-primary cursor-pointer">
-                                        {[1, 2, 3, 4].map(n => <option key={n} value={n}>{n}</option>)}
-                                    </select>
+                                    <Select size="sm" value={String(genCount)} onChange={(val) => setGenCount(Number(val))} options={[1, 2, 3, 4].map(n => ({ value: String(n), label: String(n) }))} />
                                 </div>
                                 {modelResolutions.length > 0 && (
                                     <div>
                                         <p className="text-[10px] font-medium text-text-secondary mb-1">Разрешение</p>
-                                        <select value={scale} onChange={(e) => setScale(e.target.value)} className="w-full h-8 px-2 text-[11px] bg-bg-primary border border-border-primary rounded-[var(--radius-sm)] text-text-primary cursor-pointer">
-                                            {modelResolutions.map(r => <option key={r.id} value={r.id}>{r.label}</option>)}
-                                        </select>
+                                        <Select size="sm" value={scale} onChange={(val) => setScale(val)} options={modelResolutions.map(r => ({ value: r.id, label: r.label }))} />
                                     </div>
                                 )}
                                 <div>
@@ -292,7 +289,7 @@ export function ImageContentBlock({ id, name, props, value, onChange, businessUn
                         <button
                             onClick={handleGenerate}
                             disabled={isGenerating}
-                            className="w-full h-10 flex items-center justify-center gap-2 rounded-[var(--radius-md)] bg-accent-lime text-accent-primary font-semibold text-sm hover:bg-accent-lime-hover disabled:opacity-50 transition-all cursor-pointer disabled:cursor-default"
+                            className="w-full h-10 flex items-center justify-center gap-2 rounded-[var(--radius-md)] bg-accent-lime text-text-inverse font-semibold text-sm hover:bg-accent-lime-hover disabled:opacity-50 transition-all cursor-pointer disabled:cursor-default"
                         >
                             {isGenerating ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
                             {isGenerating ? "Создаю..." : "Сгенерировать"}

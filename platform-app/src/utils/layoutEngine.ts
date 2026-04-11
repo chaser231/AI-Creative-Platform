@@ -224,13 +224,18 @@ export function computeAutoLayout(
         }
 
         // Determine fill flags
-        const fillPrimary = isHorizontal
+        //
+        // CRITICAL: Fill on a hug axis is meaningless — the parent sizes to fit
+        // its children, so there's no "remaining space" for fill to expand into.
+        // Figma treats fill-on-hug as fixed (child keeps its intrinsic size).
+        // Without this, fill children get size 1px because availableSpace = 0.
+        const fillPrimary = !primaryHug && (isHorizontal
             ? child.layoutSizingWidth === "fill"
-            : child.layoutSizingHeight === "fill";
+            : child.layoutSizingHeight === "fill");
 
-        const fillCounter = isHorizontal
+        const fillCounter = !counterHug && (isHorizontal
             ? child.layoutSizingHeight === "fill"
-            : child.layoutSizingWidth === "fill";
+            : child.layoutSizingWidth === "fill");
 
         // Clamp to minimum
         w = Math.max(1, w);

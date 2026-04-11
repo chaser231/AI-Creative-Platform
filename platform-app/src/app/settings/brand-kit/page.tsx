@@ -4,6 +4,8 @@ import { useState } from "react";
 import { Plus, Trash2, Save, Palette, Type as TypeIcon, Volume2 } from "lucide-react";
 import { useBrandKitStore } from "@/store/brandKitStore";
 import { Button } from "@/components/ui/Button";
+import { Textarea } from "@/components/ui/Textarea";
+import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import { AppShell } from "@/components/layout/AppShell";
 
 type BrandTab = "colors" | "typography" | "voice";
@@ -40,25 +42,12 @@ export default function BrandKitPage() {
                     </p>
 
                     {/* Tabs */}
-                    <div className="flex items-center gap-1 bg-bg-secondary rounded-[var(--radius-md)] p-1 mb-6 w-fit">
-                        {tabs.map((tab) => (
-                            <button
-                                key={tab.id}
-                                onClick={() => setActiveTab(tab.id)}
-                                className={`
-                                    flex items-center gap-2 px-4 py-2 rounded-[var(--radius-sm)] text-xs font-medium
-                                    transition-all cursor-pointer
-                                    ${activeTab === tab.id
-                                        ? "bg-bg-primary text-text-primary shadow-[var(--shadow-sm)]"
-                                        : "text-text-secondary hover:text-text-primary"
-                                    }
-                                `}
-                            >
-                                {tab.icon}
-                                {tab.label}
-                            </button>
-                        ))}
-                    </div>
+                    <SegmentedControl
+                        value={activeTab}
+                        onChange={setActiveTab}
+                        options={tabs.map((t) => ({ value: t.id, label: t.label, icon: t.icon }))}
+                        className="mb-6"
+                    />
 
                     {/* Colors */}
                     {activeTab === "colors" && (
@@ -193,11 +182,10 @@ export default function BrandKitPage() {
                                 <p className="text-xs text-text-tertiary mb-3">
                                     Этот промпт автоматически добавляется во все ИИ-генерации текста. Опишите голос и тон вашего бренда.
                                 </p>
-                                <textarea
+                                <Textarea
                                     value={brandKit.toneOfVoice}
                                     onChange={(e) => setToneOfVoice(e.target.value)}
                                     rows={6}
-                                    className="w-full px-3 py-2 rounded-[var(--radius-md)] border border-border-primary bg-bg-secondary text-sm text-text-primary resize-none focus:outline-none focus:ring-2 focus:ring-border-focus"
                                 />
                             </div>
                             <div className="flex items-center gap-3 p-3 bg-purple-50 rounded-[var(--radius-md)] border border-purple-200">

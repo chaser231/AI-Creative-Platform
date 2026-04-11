@@ -10,6 +10,8 @@ import { useState, useEffect } from "react";
 import { trpc } from "@/lib/trpc";
 import { useWorkspace } from "@/providers/WorkspaceProvider";
 import { X, Loader2, Globe, Lock, Users, ShieldCheck } from "lucide-react";
+import { Select } from "@/components/ui/Select";
+import { SegmentedControl } from "@/components/ui/SegmentedControl";
 
 const BU_OPTIONS = [
     { value: "yandex-market", label: "Яндекс Маркет" },
@@ -149,15 +151,11 @@ export function CreateWorkspaceModal({ isOpen, onClose }: Props) {
                         <label className="text-[11px] text-text-tertiary uppercase tracking-wider font-medium mb-1.5 block">
                             Бизнес-юнит
                         </label>
-                        <select
+                        <Select
                             value={businessUnit}
-                            onChange={(e) => setBusinessUnit(e.target.value)}
-                            className="w-full h-10 px-3 rounded-[var(--radius-lg)] border border-border-primary bg-bg-secondary text-sm text-text-primary cursor-pointer focus:outline-none focus:ring-1 focus:ring-border-focus"
-                        >
-                            {BU_OPTIONS.map((bu) => (
-                                <option key={bu.value} value={bu.value}>{bu.label}</option>
-                            ))}
-                        </select>
+                            onChange={(val) => setBusinessUnit(val)}
+                            options={BU_OPTIONS.map((bu) => ({ value: bu.value, label: bu.label }))}
+                        />
                     </div>
 
                     {/* Visibility + Join Policy row */}
@@ -166,45 +164,33 @@ export function CreateWorkspaceModal({ isOpen, onClose }: Props) {
                             <label className="text-[11px] text-text-tertiary uppercase tracking-wider font-medium mb-1.5 block">
                                 Видимость
                             </label>
-                            <div className="flex rounded-[var(--radius-lg)] border border-border-primary overflow-hidden">
-                                <button
-                                    type="button"
-                                    onClick={() => setVisibility("VISIBLE")}
-                                    className={`flex-1 flex items-center justify-center gap-1 py-2 text-[10px] font-medium transition-colors cursor-pointer ${
-                                        visibility === "VISIBLE"
-                                            ? "bg-accent-primary/10 text-accent-primary"
-                                            : "text-text-tertiary hover:text-text-primary hover:bg-bg-tertiary"
-                                    }`}
-                                >
-                                    <Globe size={10} /> Видима
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => setVisibility("HIDDEN")}
-                                    className={`flex-1 flex items-center justify-center gap-1 py-2 text-[10px] font-medium transition-colors cursor-pointer border-l border-border-primary ${
-                                        visibility === "HIDDEN"
-                                            ? "bg-accent-primary/10 text-accent-primary"
-                                            : "text-text-tertiary hover:text-text-primary hover:bg-bg-tertiary"
-                                    }`}
-                                >
-                                    <Lock size={10} /> Скрыта
-                                </button>
-                            </div>
+                            <SegmentedControl
+                                variant="bordered"
+                                size="sm"
+                                value={visibility}
+                                onChange={setVisibility}
+                                fullWidth
+                                options={[
+                                    { value: "VISIBLE", label: "Видима", icon: <Globe size={10} /> },
+                                    { value: "HIDDEN", label: "Скрыта", icon: <Lock size={10} /> },
+                                ]}
+                            />
                         </div>
 
                         <div>
                             <label className="text-[11px] text-text-tertiary uppercase tracking-wider font-medium mb-1.5 block">
                                 Вступление
                             </label>
-                            <select
+                            <Select
+                                size="sm"
                                 value={joinPolicy}
-                                onChange={(e) => setJoinPolicy(e.target.value as any)}
-                                className="w-full h-[34px] px-2 rounded-[var(--radius-lg)] border border-border-primary bg-bg-secondary text-[10px] text-text-primary cursor-pointer focus:outline-none focus:ring-1 focus:ring-border-focus"
-                            >
-                                <option value="OPEN">Свободное</option>
-                                <option value="REQUEST">По заявке</option>
-                                <option value="INVITE_ONLY">По приглашению</option>
-                            </select>
+                                onChange={(val) => setJoinPolicy(val as any)}
+                                options={[
+                                    { value: "OPEN", label: "Свободное" },
+                                    { value: "REQUEST", label: "По заявке" },
+                                    { value: "INVITE_ONLY", label: "По приглашению" },
+                                ]}
+                            />
                         </div>
                     </div>
 
@@ -219,7 +205,7 @@ export function CreateWorkspaceModal({ isOpen, onClose }: Props) {
                     <button
                         type="submit"
                         disabled={createMutation.isPending || !name.trim() || !slug.trim()}
-                        className="w-full h-10 flex items-center justify-center gap-2 bg-accent-primary text-white rounded-[var(--radius-lg)] text-sm font-medium hover:bg-accent-primary/90 transition-colors disabled:opacity-50 cursor-pointer"
+                        className="w-full h-10 flex items-center justify-center gap-2 bg-accent-primary text-text-inverse rounded-[var(--radius-lg)] text-sm font-medium hover:bg-accent-primary/90 transition-colors disabled:opacity-50 cursor-pointer"
                     >
                         {createMutation.isPending ? (
                             <Loader2 size={14} className="animate-spin" />

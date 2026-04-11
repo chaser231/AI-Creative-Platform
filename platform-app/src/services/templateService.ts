@@ -12,6 +12,8 @@ import type {
     ContentType,
     TemplateOccasion,
     TemplateTag,
+    TemplateVisibility,
+    TemplateEditPermission,
 } from "@/types";
 
 /* ─── Template Pack (v1 — backward compat) ──────────────── */
@@ -41,6 +43,8 @@ export interface TemplatePackV2 extends TemplatePack {
     // Metadata
     author: string;
     isOfficial: boolean;
+    visibility?: TemplateVisibility;
+    editPermission?: TemplateEditPermission;
     thumbnailUrl?: string;
     popularity: number;
     createdAt: string;
@@ -255,9 +259,34 @@ export async function applyTemplatePack(
 ) {
     try {
         const data = ('data' in pack) ? pack.data : pack; // Handle TemplatePackMeta wrapper if present
-        const hydrated = hydrateTemplate(data);
         const { useCanvasStore } = await import("@/store/canvasStore");
-        useCanvasStore.getState().loadTemplatePack(hydrated);
+
+        // If data is raw canvas state (saved from template editor), load directly.
+        // This preserves layer hierarchy (parentId), slots, and all structure.
+        // Raw canvas state has a `layers` array at the top level — TemplatePack format does not.
+        const dataAny = data as any;
+        if (dataAny.layers && Array.isArray(dataAny.layers) && dataAny.layers.length > 0) {
+            const resizes = dataAny.resizes ?? [{ id: "master", name: "Мастер макет", width: dataAny.canvasWidth || 1080, height: dataAny.canvasHeight || 1080, label: `${dataAny.canvasWidth || 1080} × ${dataAny.canvasHeight || 1080}`, instancesEnabled: false }];
+            const activeResizeId = resizes[0]?.id || "master";
+            const activeResize = resizes.find((r: any) => r.id === activeResizeId);
+
+            useCanvasStore.setState({
+                layers: dataAny.layers,
+                masterComponents: dataAny.masterComponents ?? [],
+                componentInstances: dataAny.componentInstances ?? [],
+                resizes,
+                activeResizeId,
+                selectedLayerIds: [],
+                history: [],
+                canvasWidth: activeResize?.width ?? dataAny.canvasWidth ?? 1080,
+                canvasHeight: activeResize?.height ?? dataAny.canvasHeight ?? 1080,
+                artboardProps: dataAny.artboardProps ?? useCanvasStore.getState().artboardProps,
+            });
+        } else {
+            // Legacy TemplatePack format — hydrate with ID regeneration
+            const hydrated = hydrateTemplate(data);
+            useCanvasStore.getState().loadTemplatePack(hydrated);
+        }
 
         options?.onSuccess?.();
     } catch (err) {

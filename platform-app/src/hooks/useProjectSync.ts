@@ -20,12 +20,37 @@
 import { useEffect, useRef, useCallback, type RefObject } from "react";
 import { trpc } from "@/lib/trpc";
 import { useCanvasStore } from "@/store/canvasStore";
+import { DEFAULT_RESIZE } from "@/store/canvas/types";
 import { useWorkspace } from "@/providers/WorkspaceProvider";
 import type Konva from "konva";
 
 // Default workspace ID — will be replaced by WorkspaceProvider later
 // For now, we use a hardcoded fallback that gets resolved on first load
 let cachedWorkspaceId: string | null = null;
+
+/**
+ * Build the canvas state object for persistence.
+ * Ensures the active format's layerSnapshot is updated with the current layers
+ * before serialization, so per-format snapshots are always fresh.
+ */
+function getCanvasStateForSave(store: ReturnType<typeof useCanvasStore.getState>) {
+    // Update the active format's snapshot with current layers
+    const resizesWithSnapshot = store.resizes.map(r =>
+        r.id === store.activeResizeId
+            ? { ...r, layerSnapshot: store.layers }
+            : r
+    );
+
+    return {
+        layers: store.layers,
+        masterComponents: store.masterComponents,
+        componentInstances: store.componentInstances,
+        resizes: resizesWithSnapshot,
+        artboardProps: store.artboardProps,
+        canvasWidth: store.canvasWidth,
+        canvasHeight: store.canvasHeight,
+    };
+}
 
 /**
  * Synchronize the project list from backend.
@@ -191,16 +216,8 @@ export function useCanvasAutoSave(
       }
     }
 
-    // Serialize current canvas state
-    const canvasState = {
-      layers,
-      masterComponents: store.masterComponents,
-      componentInstances: store.componentInstances,
-      resizes: store.resizes,
-      artboardProps: store.artboardProps,
-      canvasWidth: store.canvasWidth,
-      canvasHeight: store.canvasHeight,
-    };
+    // Serialize current canvas state (with per-format snapshots)
+    const canvasState = getCanvasStateForSave(store);
 
     const serialized = JSON.stringify(canvasState);
 
@@ -234,15 +251,7 @@ export function useCanvasAutoSave(
     const store = useCanvasStore.getState();
     if (store.layers.length === 0 && lastSavedRef.current !== "") return;
 
-    const canvasState = {
-      layers: store.layers,
-      masterComponents: store.masterComponents,
-      componentInstances: store.componentInstances,
-      resizes: store.resizes,
-      artboardProps: store.artboardProps,
-      canvasWidth: store.canvasWidth,
-      canvasHeight: store.canvasHeight,
-    };
+    const canvasState = getCanvasStateForSave(store);
 
     const serialized = JSON.stringify(canvasState);
     if (serialized === lastSavedRef.current) return;
@@ -326,15 +335,7 @@ export function useCanvasAutoSave(
       // Don't save empty state on unload
       if (store.layers.length === 0 && lastSavedRef.current !== "") return;
 
-      const canvasState = {
-        layers: store.layers,
-        masterComponents: store.masterComponents,
-        componentInstances: store.componentInstances,
-        resizes: store.resizes,
-        artboardProps: store.artboardProps,
-        canvasWidth: store.canvasWidth,
-        canvasHeight: store.canvasHeight,
-      };
+      const canvasState = getCanvasStateForSave(store);
 
       const serialized = JSON.stringify(canvasState);
       if (serialized === lastSavedRef.current) return;
@@ -391,6 +392,10 @@ export function useLoadCanvasState(projectId: string) {
       componentInstances: [],
       history: [],
       future: [],
+      resizes: [DEFAULT_RESIZE],
+      activeResizeId: "master",
+      canvasWidth: DEFAULT_RESIZE.width,
+      canvasHeight: DEFAULT_RESIZE.height,
     });
   }, [projectId]);
 

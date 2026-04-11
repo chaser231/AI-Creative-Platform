@@ -3,6 +3,7 @@
 import { useState, useCallback } from "react";
 import { Modal } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
+import { Select } from "@/components/ui/Select";
 import { Download, Layers, Package } from "lucide-react";
 import Konva from "konva";
 import { useCanvasStore } from "@/store/canvasStore";
@@ -281,18 +282,17 @@ export function ExportModal({ open, onClose, stageRef }: ExportModalProps) {
                         {frames.length > 0 && (
                             <div className="space-y-1.5">
                                 <label className="text-sm font-medium text-text-primary">Объект экспорта</label>
-                                <select
+                                <Select
                                     value={exportTarget}
-                                    onChange={(e) => setExportTarget(e.target.value)}
-                                    className="w-full h-9 px-3 rounded-[var(--radius-md)] border border-border-primary bg-bg-secondary text-sm text-text-primary cursor-pointer focus:outline-none focus:ring-1 focus:ring-border-focus"
-                                >
-                                    <option value="artboard">Артборд ({canvasWidth} × {canvasHeight})</option>
-                                    {frames.map((frame) => (
-                                        <option key={frame.id} value={frame.id}>
-                                            {frame.name} ({Math.round(frame.width)} × {Math.round(frame.height)})
-                                        </option>
-                                    ))}
-                                </select>
+                                    onChange={(val) => setExportTarget(val)}
+                                    options={[
+                                        { value: "artboard", label: `Артборд (${canvasWidth} × ${canvasHeight})` },
+                                        ...frames.map((frame) => ({
+                                            value: frame.id,
+                                            label: `${frame.name} (${Math.round(frame.width)} × ${Math.round(frame.height)})`,
+                                        })),
+                                    ]}
+                                />
                             </div>
                         )}
 

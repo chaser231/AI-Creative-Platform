@@ -10,6 +10,9 @@ import { AppShell } from "@/components/layout/AppShell";
 import { TopBar } from "@/components/layout/TopBar";
 import { Modal } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
+import { Select } from "@/components/ui/Select";
+import { Textarea } from "@/components/ui/Textarea";
+import { Input } from "@/components/ui/Input";
 import { trpc } from "@/lib/trpc";
 
 /* ─── Main Page ──────────────────────────────────────── */
@@ -177,42 +180,40 @@ export default function AdminTemplatesPage() {
 
                     {/* Filters */}
                     <div className="flex items-center gap-3">
-                        <div className="flex-1 relative">
-                            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-tertiary" />
-                            <input
-                                type="text"
+                        <div className="flex-1">
+                            <Input
                                 value={search}
                                 onChange={(e) => setSearch(e.target.value)}
                                 placeholder="Поиск по названию..."
-                                className="w-full h-9 pl-9 pr-3 text-xs rounded-xl border border-border-primary bg-bg-surface text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-accent-primary/20 transition-all"
+                                icon={<Search size={14} />}
+                                className="h-9 text-xs"
                             />
                         </div>
 
                         {/* Workspace filter */}
-                        <select
-                            value={wsFilter ?? ""}
-                            onChange={(e) => setWsFilter(e.target.value || null)}
-                            className="h-9 px-3 text-xs rounded-xl border border-border-primary bg-bg-surface text-text-primary focus:outline-none cursor-pointer"
-                        >
-                            <option value="">Все воркспейсы</option>
-                            {workspaces?.map((ws) => (
-                                <option key={ws.id} value={ws.id}>{ws.name}</option>
-                            ))}
-                        </select>
+                        <Select
+                            size="sm"
+                            value={wsFilter ?? "__all__"}
+                            onChange={(val) => setWsFilter(val === "__all__" ? null : val)}
+                            options={[
+                                { value: "__all__", label: "Все воркспейсы" },
+                                ...(workspaces?.map((ws) => ({ value: ws.id, label: ws.name })) ?? []),
+                            ]}
+                        />
 
                         {/* Official filter */}
-                        <select
-                            value={officialFilter === undefined ? "" : officialFilter ? "true" : "false"}
-                            onChange={(e) => {
-                                const v = e.target.value;
-                                setOfficialFilter(v === "" ? undefined : v === "true");
+                        <Select
+                            size="sm"
+                            value={officialFilter === undefined ? "__all__" : officialFilter ? "true" : "false"}
+                            onChange={(val) => {
+                                setOfficialFilter(val === "__all__" ? undefined : val === "true");
                             }}
-                            className="h-9 px-3 text-xs rounded-xl border border-border-primary bg-bg-surface text-text-primary focus:outline-none cursor-pointer"
-                        >
-                            <option value="">Все</option>
-                            <option value="true">⭐ Official</option>
-                            <option value="false">Пользовательские</option>
-                        </select>
+                            options={[
+                                { value: "__all__", label: "Все" },
+                                { value: "true", label: "⭐ Official" },
+                                { value: "false", label: "Пользовательские" },
+                            ]}
+                        />
                     </div>
 
                     {/* Templates Table */}
@@ -393,11 +394,10 @@ export default function AdminTemplatesPage() {
                     </div>
                     <div>
                         <label className="text-xs font-medium text-text-secondary mb-1 block">Описание</label>
-                        <textarea
+                        <Textarea
                             value={editDesc}
                             onChange={(e) => setEditDesc(e.target.value)}
                             rows={3}
-                            className="w-full px-3 py-2 text-sm rounded-xl border border-border-primary bg-bg-secondary text-text-primary focus:outline-none focus:ring-2 focus:ring-accent-primary/20 transition-all resize-none"
                         />
                     </div>
 
@@ -414,7 +414,7 @@ export default function AdminTemplatesPage() {
                                             active ? prev.filter(c => c !== opt.value) : [...prev, opt.value]
                                         )}
                                         className={`px-2.5 py-1 rounded-full text-[11px] font-medium transition-all cursor-pointer border ${active
-                                            ? "bg-accent-primary text-white border-accent-primary"
+                                            ? "bg-accent-primary text-text-inverse border-accent-primary"
                                             : "bg-bg-secondary text-text-secondary border-border-primary hover:border-accent-primary/30"
                                         }`}
                                     >

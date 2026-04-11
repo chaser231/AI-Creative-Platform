@@ -15,6 +15,7 @@ import {
     ShieldCheck,
     Compass,
     Plus,
+    Sparkles,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { UserMenu } from "@/components/auth/UserMenu";
@@ -34,6 +35,7 @@ const navItems: NavItem[] = [
     { label: "Все проекты", href: "/projects", icon: <FolderKanban size={18} /> },
     { label: "Шаблоны", href: "/templates", icon: <LayoutTemplate size={18} /> },
     { label: "Команда", href: "/team", icon: <Users size={18} /> },
+    { label: "Настройки AI", href: "/settings/ai", icon: <Sparkles size={18} /> },
 ];
 
 /** Workspace role label map */
@@ -279,7 +281,7 @@ export function Sidebar() {
                 <div className="px-3 py-3 border-t border-border-primary space-y-1">
                     <UserMenu />
                     <Link
-                        href="/settings"
+                        href="/settings/profile"
                         className="flex items-center gap-2.5 px-3 py-2 rounded-[var(--radius-xl)] text-[13px] text-text-secondary hover:text-text-primary hover:bg-bg-surface/60 transition-all"
                     >
                         <Settings size={18} className="text-text-tertiary" />

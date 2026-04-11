@@ -128,7 +128,7 @@ export function WorkspaceOnboarding() {
           <button
             onClick={handleJoin}
             disabled={!selectedId || joining}
-            className="px-8 py-3 rounded-[var(--radius-xl)] bg-accent-primary text-white text-sm font-semibold hover:bg-accent-primary/90 disabled:opacity-40 disabled:cursor-not-allowed transition-all cursor-pointer flex items-center gap-2"
+            className="px-8 py-3 rounded-[var(--radius-xl)] bg-accent-primary text-text-inverse text-sm font-semibold hover:bg-accent-primary/90 disabled:opacity-40 disabled:cursor-not-allowed transition-all cursor-pointer flex items-center gap-2"
           >
             {joining ? (
               <>

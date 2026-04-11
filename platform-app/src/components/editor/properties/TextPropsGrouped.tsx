@@ -13,6 +13,7 @@ import {
     EyeOff,
 } from "lucide-react";
 import { Popover, PopoverButton } from "@/components/ui/Popover";
+import { Select } from "@/components/ui/Select";
 import { PREINSTALLED_FONTS, saveUserFont, getUserFonts } from "@/lib/customFonts";
 import type { TextLayer } from "@/types";
 import { ColorInput } from "./ColorInput";
@@ -98,15 +99,13 @@ export function TextPropsGrouped({
                     <div className="space-y-3">
                         <div>
                             <label className="text-[9px] text-text-tertiary uppercase tracking-wider font-medium mb-1.5 block">Семейство</label>
-                            <select
+                            <Select
+                                size="sm"
                                 value={layer.fontFamily}
-                                onChange={(e) => onChange({ fontFamily: e.target.value })}
-                                className="w-full h-8 px-2 rounded-[var(--radius-md)] border border-border-primary bg-bg-secondary text-[11px] text-text-primary cursor-pointer focus:outline-none focus:ring-1 focus:ring-border-focus mb-2"
-                            >
-                                {availableFonts.map(f => (
-                                    <option key={f} value={f}>{f}</option>
-                                ))}
-                            </select>
+                                onChange={(val) => onChange({ fontFamily: val })}
+                                options={availableFonts.map(f => ({ value: f, label: f }))}
+                                className="mb-2"
+                            />
 
                             <label className="flex items-center justify-center gap-1.5 w-full h-8 px-2 rounded-[var(--radius-md)] bg-bg-primary border border-dashed border-border-focus text-text-secondary text-[10px] cursor-pointer hover:bg-bg-tertiary transition-colors">
                                 {isUploadingFont ? "Загрузка..." : "+ Загрузить свой (.ttf, .otf)"}
@@ -148,21 +147,22 @@ export function TextPropsGrouped({
                         </div>
                         <div>
                             <label className="text-[9px] text-text-tertiary uppercase tracking-wider font-medium mb-1.5 block">Начертание</label>
-                            <select
+                            <Select
+                                size="sm"
                                 value={layer.fontWeight}
-                                onChange={(e) => onChange({ fontWeight: e.target.value })}
-                                className="w-full h-8 px-2 rounded-[var(--radius-md)] border border-border-primary bg-bg-secondary text-[11px] text-text-primary cursor-pointer focus:outline-none focus:ring-1 focus:ring-border-focus"
-                            >
-                                {availableWeights.includes("100") && <option value="100">Thin</option>}
-                                {availableWeights.includes("200") && <option value="200">ExtraLight</option>}
-                                {availableWeights.includes("300") && <option value="300">Light</option>}
-                                {(availableWeights.includes("400") || availableWeights.length === 0) && <option value="400">Regular</option>}
-                                {availableWeights.includes("500") && <option value="500">Medium</option>}
-                                {availableWeights.includes("600") && <option value="600">SemiBold</option>}
-                                {(availableWeights.includes("700") || availableWeights.length === 0) && <option value="700">Bold</option>}
-                                {availableWeights.includes("800") && <option value="800">ExtraBold / Heavy</option>}
-                                {availableWeights.includes("900") && <option value="900">Black</option>}
-                            </select>
+                                onChange={(val) => onChange({ fontWeight: val })}
+                                options={[
+                                    ...(availableWeights.includes("100") ? [{ value: "100", label: "Thin" }] : []),
+                                    ...(availableWeights.includes("200") ? [{ value: "200", label: "ExtraLight" }] : []),
+                                    ...(availableWeights.includes("300") ? [{ value: "300", label: "Light" }] : []),
+                                    ...(availableWeights.includes("400") || availableWeights.length === 0 ? [{ value: "400", label: "Regular" }] : []),
+                                    ...(availableWeights.includes("500") ? [{ value: "500", label: "Medium" }] : []),
+                                    ...(availableWeights.includes("600") ? [{ value: "600", label: "SemiBold" }] : []),
+                                    ...(availableWeights.includes("700") || availableWeights.length === 0 ? [{ value: "700", label: "Bold" }] : []),
+                                    ...(availableWeights.includes("800") ? [{ value: "800", label: "ExtraBold / Heavy" }] : []),
+                                    ...(availableWeights.includes("900") ? [{ value: "900", label: "Black" }] : []),
+                                ]}
+                            />
                         </div>
                     </div>
                 </Popover>
@@ -223,22 +223,22 @@ export function TextPropsGrouped({
                     <div className="space-y-4">
                         <div>
                             <label className="text-[9px] text-text-tertiary uppercase tracking-wider font-medium mb-1.5 block">Размер Контейнера</label>
-                            <select
+                            <Select
+                                size="sm"
                                 value={layer.textAdjust || "auto_width"}
-                                onChange={(e) => {
-                                    const val = e.target.value as TextLayer["textAdjust"];
+                                onChange={(val) => {
                                     const updates: any = { textAdjust: val };
                                     if (val === "auto_width" && layer.layoutSizingWidth === "fill") {
                                         updates.layoutSizingWidth = "fixed";
                                     }
                                     onChange(updates);
                                 }}
-                                className="w-full h-8 px-2 rounded-[var(--radius-md)] border border-border-primary bg-bg-secondary text-[11px] text-text-primary cursor-pointer focus:outline-none focus:ring-1 focus:ring-border-focus"
-                            >
-                                <option value="auto_width">Auto Width</option>
-                                <option value="auto_height">Auto Height</option>
-                                <option value="fixed">Fixed Size</option>
-                            </select>
+                                options={[
+                                    { value: "auto_width", label: "Auto Width" },
+                                    { value: "auto_height", label: "Auto Height" },
+                                    { value: "fixed", label: "Fixed Size" },
+                                ]}
+                            />
                         </div>
                         <div className="space-y-2">
                             <label className="flex items-center gap-2 cursor-pointer group">

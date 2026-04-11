@@ -10,6 +10,7 @@
 import { useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { useWorkspace } from "@/providers/WorkspaceProvider";
+import { Input } from "@/components/ui/Input";
 import {
     X, Search, Users, FolderKanban, Check, Clock, Lock,
     ArrowRight, Globe, Loader2
@@ -91,13 +92,12 @@ export function WorkspaceBrowseModal({ isOpen, onClose }: Props) {
                 {/* Search */}
                 <div className="px-6 py-3 border-b border-border-primary">
                     <div className="relative">
-                        <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-tertiary" />
-                        <input
-                            type="text"
-                            placeholder="Поиск по названию или BU..."
+                        <Input
                             value={search}
                             onChange={(e) => setSearch(e.target.value)}
-                            className="w-full h-9 pl-9 pr-3 rounded-[var(--radius-lg)] border border-border-primary bg-bg-secondary text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-1 focus:ring-border-focus"
+                            placeholder="Поиск по названию или BU..."
+                            icon={<Search size={14} />}
+                            className="h-9"
                             autoFocus
                         />
                     </div>

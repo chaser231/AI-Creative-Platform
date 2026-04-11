@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Modal } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
+import { Select } from "@/components/ui/Select";
 import { useProjectStore } from "@/store/projectStore";
 import { useCreateProjectSync } from "@/hooks/useProjectSync";
 import { cn } from "@/lib/cn";
@@ -139,17 +140,11 @@ export function NewProjectModal({ open, onClose, workspaceId }: NewProjectModalP
                     <label className="text-sm font-medium text-text-primary">
                         Бизнес-юнит
                     </label>
-                    <select
+                    <Select
                         value={businessUnit}
-                        onChange={(e) => setBusinessUnit(e.target.value as BusinessUnit)}
-                        className="w-full h-9 rounded-[var(--radius-md)] border border-border-primary bg-bg-primary px-3 text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-border-focus cursor-pointer"
-                    >
-                        {businessUnits.map((u) => (
-                            <option key={u.value} value={u.value}>
-                                {u.label}
-                            </option>
-                        ))}
-                    </select>
+                        onChange={(val) => setBusinessUnit(val as BusinessUnit)}
+                        options={businessUnits.map(u => ({ value: u.value, label: u.label }))}
+                    />
                 </div>
 
                 {/* Goal Selection */}

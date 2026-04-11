@@ -17,6 +17,7 @@ import type {
     ComponentInstance,
     ComponentProps,
     ResizeFormat,
+    LayerBinding,
     EditorMode,
     LayerConstraints,
 } from "@/types";
@@ -37,6 +38,7 @@ export type {
     ComponentInstance,
     ComponentProps,
     ResizeFormat,
+    LayerBinding,
     EditorMode,
     LayerConstraints,
     SnapConfig,
@@ -90,7 +92,7 @@ export interface HistorySnapshot {
 
 export const DEFAULT_RESIZE: ResizeFormat = {
     id: "master",
-    name: "Master",
+    name: "Основной",
     width: 1080,
     height: 1080,
     label: "1080 × 1080",
@@ -188,6 +190,12 @@ export interface CanvasStore {
     setActiveResize: (resizeId: string) => void;
     syncLayersToResize: () => void;
     toggleInstanceMode: (resizeId: string) => void;
+
+    // Phase 2: Master binding actions
+    promoteFormatToMaster: (formatId: string) => void;
+    demoteFormatFromMaster: (formatId: string) => void;
+    setFormatBindings: (formatId: string, bindings: LayerBinding[]) => void;
+    unbindFormat: (formatId: string) => void;
 
     // Mode
     setEditorMode: (mode: EditorMode) => void;

@@ -2,19 +2,22 @@
 
 import { useState, useMemo } from "react";
 import { v4 as uuid } from "uuid";
-import { LayoutTemplate, Plus, ArrowRight, Check, Search, X, Star, Download, Upload, Shuffle } from "lucide-react";
+import { LayoutTemplate, Plus, ArrowRight, Check, Search, X, Star, Download, Upload, Shuffle, Lock, Globe, Users, Eye, Pencil } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useTemplateStore } from "@/store/templateStore";
 import { useTemplateListSync } from "@/hooks/useTemplateSync";
+import { trpc } from "@/lib/trpc";
 import { useCanvasStore } from "@/store/canvasStore";
 import { useShallow } from "zustand/react/shallow";
 import { useProjectStore } from "@/store/projectStore";
 import { Modal } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
+import { Input } from "@/components/ui/Input";
 import { DEFAULT_PACKS, type TemplatePackMeta } from "@/constants/defaultPacks";
 import { serializeTemplate } from "@/services/templateService";
 import { searchPacks } from "@/services/templateCatalogService";
 import type { TemplatePackV2, TemplatePack } from "@/services/templateService";
-import type { BusinessUnit, TemplateCategory, ContentType, TemplateTag } from "@/types";
+import type { BusinessUnit, TemplateCategory, ContentType, TemplateTag, TemplateVisibility, TemplateEditPermission } from "@/types";
 import { SlotMappingModal } from "@/components/editor/SlotMappingModal";
 import { extractSingleFormatFromPack } from "@/services/templateService";
 
@@ -58,7 +61,7 @@ function Chip({
         <button
             onClick={onClick}
             className={`px-2 py-1 rounded-full text-[10px] font-medium transition-all cursor-pointer border ${active
-                ? "bg-accent-primary text-white border-accent-primary"
+                ? "bg-accent-primary text-text-inverse border-accent-primary"
                 : "bg-bg-surface text-text-secondary border-border-primary hover:border-accent-primary/30"
                 }`}
         >
@@ -69,7 +72,11 @@ function Chip({
 
 export function TemplatePanel({ open, onClose }: TemplatePanelProps) {
     const { savedPacks, addPack, deletePack } = useTemplateStore();
-    const { backendTemplates } = useTemplateListSync();
+    const { backendTemplates, refetch } = useTemplateListSync();
+    const router = useRouter();
+    const updateMutation = trpc.template.update.useMutation({
+        onSuccess: () => refetch(),
+    });
 
     // Merge backend + local templates, backend takes priority
     const allPacks = useMemo(() => {
@@ -117,6 +124,8 @@ export function TemplatePanel({ open, onClose }: TemplatePanelProps) {
     const [saveBUs, setSaveBUs] = useState<BusinessUnit[]>([]);
     const [saveCategories, setSaveCategories] = useState<TemplateCategory[]>([]);
     const [saveContentType, setSaveContentType] = useState<ContentType>("visual");
+    const [saveVisibility, setSaveVisibility] = useState<TemplateVisibility>("WORKSPACE");
+    const [saveEditPermission, setSaveEditPermission] = useState<TemplateEditPermission>("AUTHOR_ONLY");
     const [saveTagInput, setSaveTagInput] = useState("");
     const [saveTags, setSaveTags] = useState<string[]>([]);
 
@@ -210,6 +219,7 @@ export function TemplatePanel({ open, onClose }: TemplatePanelProps) {
             contentType: "visual",
             author: "user",
             isOfficial: false,
+            visibility: "WORKSPACE",
         };
 
         addPack(newPack, meta);
@@ -237,6 +247,8 @@ export function TemplatePanel({ open, onClose }: TemplatePanelProps) {
             tags: saveTags.map(t => ({ id: `tag-${t.toLowerCase().replace(/\s+/g, "-")}`, label: t })),
             author: "user",
             isOfficial: false,
+            visibility: saveVisibility,
+            editPermission: saveEditPermission,
         };
 
         addPack(newPack, meta);
@@ -251,6 +263,8 @@ export function TemplatePanel({ open, onClose }: TemplatePanelProps) {
         setSaveBUs([]);
         setSaveCategories([]);
         setSaveContentType("visual");
+        setSaveVisibility("WORKSPACE");
+        setSaveEditPermission("AUTHOR_ONLY");
         setSaveTags([]);
         setSaveTagInput("");
     };
@@ -341,6 +355,24 @@ export function TemplatePanel({ open, onClose }: TemplatePanelProps) {
                                 <span className="text-[7px] font-semibold text-amber-600">Official</span>
                             </div>
                         )}
+                        {!v2.isOfficial && v2.visibility === "PRIVATE" && (
+                            <div className="absolute top-1 right-1 flex items-center gap-0.5 px-1 py-0.5 rounded-full bg-bg-surface/90 border border-border-primary">
+                                <Lock size={7} className="text-text-tertiary" />
+                                <span className="text-[7px] font-medium text-text-tertiary">Приватный</span>
+                            </div>
+                        )}
+                        {!v2.isOfficial && (!v2.visibility || v2.visibility === "WORKSPACE") && (
+                            <div className="absolute top-1 right-1 flex items-center gap-0.5 px-1 py-0.5 rounded-full bg-violet-500/10 border border-violet-500/20">
+                                <Users size={7} className="text-violet-500" />
+                                <span className="text-[7px] font-medium text-violet-600">Команда</span>
+                            </div>
+                        )}
+                        {!v2.isOfficial && v2.visibility === "PUBLIC" && (
+                            <div className="absolute top-1 right-1 flex items-center gap-0.5 px-1 py-0.5 rounded-full bg-blue-500/10 border border-blue-500/20">
+                                <Globe size={7} className="text-blue-500" />
+                                <span className="text-[7px] font-medium text-blue-600">Публичный</span>
+                            </div>
+                        )}
                     </div>
                     <div className="text-[11px] font-semibold text-text-primary truncate">{v2.name || "Без названия"}</div>
                     <div className="text-[9px] text-text-tertiary mt-0.5 line-clamp-1">{v2.description || ""}</div>
@@ -399,6 +431,36 @@ export function TemplatePanel({ open, onClose }: TemplatePanelProps) {
                             title="Удалить"
                         >
                             <Plus size={10} className="rotate-45" />
+                        </button>
+                    )}
+                    {/* Edit template in canvas */}
+                    {!isMeta && !v2.isOfficial && (
+                        <button
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                router.push(`/editor/${v2.id}?source=template`);
+                            }}
+                            className="p-1 bg-accent-primary/10 border border-accent-primary/20 rounded hover:bg-accent-primary/20 transition-colors cursor-pointer"
+                            title="Редактировать шаблон"
+                        >
+                            <Pencil size={10} className="text-accent-primary" />
+                        </button>
+                    )}
+                    {/* Visibility cycle: PRIVATE → WORKSPACE → PUBLIC → PRIVATE */}
+                    {!isMeta && !v2.isOfficial && (
+                        <button
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                const order: TemplateVisibility[] = ["PRIVATE", "WORKSPACE", "PUBLIC"];
+                                const current = v2.visibility || "WORKSPACE";
+                                const idx = order.indexOf(current as TemplateVisibility);
+                                const next = order[(idx + 1) % order.length];
+                                updateMutation.mutate({ id: v2.id, visibility: next });
+                            }}
+                            className="p-1 bg-bg-surface/90 border border-border-primary rounded hover:bg-bg-secondary transition-colors cursor-pointer"
+                            title={`Видимость: ${v2.visibility || "WORKSPACE"} → нажмите для смены`}
+                        >
+                            <Eye size={10} className="text-text-secondary" />
                         </button>
                     )}
                 </div>
@@ -474,13 +536,12 @@ export function TemplatePanel({ open, onClose }: TemplatePanelProps) {
                         <div className="space-y-4">
                             {/* Search */}
                             <div className="relative">
-                                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-tertiary" />
-                                <input
-                                    type="text"
+                                <Input
                                     value={packSearch}
                                     onChange={(e) => setPackSearch(e.target.value)}
                                     placeholder="Найти пакет..."
-                                    className="w-full h-9 pl-9 pr-8 rounded-lg border border-border-primary bg-bg-secondary text-xs text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-accent-primary/20 focus:border-accent-primary/40 transition-all"
+                                    icon={<Search size={14} />}
+                                    className="h-9 text-xs pr-8"
                                 />
                                 {packSearch && (
                                     <button
@@ -585,6 +646,63 @@ export function TemplatePanel({ open, onClose }: TemplatePanelProps) {
                                                             active={saveContentType === ct.value}
                                                             onClick={() => setSaveContentType(ct.value)}
                                                         />
+                                                    ))}
+                                                </div>
+                                            </div>
+
+                                            {/* Visibility */}
+                                            <div>
+                                                <label className="block text-[10px] font-medium text-text-secondary mb-1">Видимость</label>
+                                                <div className="flex flex-col gap-1">
+                                                    {([
+                                                        { value: "PRIVATE" as const, label: "Только я", icon: <Lock size={12} />, desc: "Виден только вам" },
+                                                        { value: "WORKSPACE" as const, label: "Моя команда", icon: <Users size={12} />, desc: "Все участники воркспейса" },
+                                                        { value: "PUBLIC" as const, label: "Все пользователи", icon: <Globe size={12} />, desc: "Все воркспейсы на платформе" },
+                                                    ]).map(opt => (
+                                                        <button
+                                                            key={opt.value}
+                                                            onClick={() => setSaveVisibility(opt.value)}
+                                                            className={`flex items-center gap-2 px-2.5 py-2 rounded-lg text-left transition-all cursor-pointer border ${
+                                                                saveVisibility === opt.value
+                                                                    ? "bg-accent-primary/10 border-accent-primary/30 text-accent-primary"
+                                                                    : "bg-bg-surface border-border-primary text-text-secondary hover:border-border-secondary"
+                                                            }`}
+                                                        >
+                                                            <span className={saveVisibility === opt.value ? "text-accent-primary" : "text-text-tertiary"}>{opt.icon}</span>
+                                                            <div className="flex-1 min-w-0">
+                                                                <div className="text-[10px] font-medium">{opt.label}</div>
+                                                                <div className="text-[8px] text-text-tertiary">{opt.desc}</div>
+                                                            </div>
+                                                            {saveVisibility === opt.value && <Check size={12} />}
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                            </div>
+
+                                            {/* Edit Permission */}
+                                            <div>
+                                                <label className="block text-[10px] font-medium text-text-secondary mb-1">Кто может редактировать</label>
+                                                <div className="flex flex-col gap-1">
+                                                    {([
+                                                        { value: "AUTHOR_ONLY" as const, label: "Только я", icon: <Lock size={12} />, desc: "Редактировать может только автор" },
+                                                        { value: "WORKSPACE" as const, label: "Вся команда", icon: <Users size={12} />, desc: "Любой участник воркспейса" },
+                                                    ]).map(opt => (
+                                                        <button
+                                                            key={opt.value}
+                                                            onClick={() => setSaveEditPermission(opt.value)}
+                                                            className={`flex items-center gap-2 px-2.5 py-2 rounded-lg text-left transition-all cursor-pointer border ${
+                                                                saveEditPermission === opt.value
+                                                                    ? "bg-accent-primary/10 border-accent-primary/30 text-accent-primary"
+                                                                    : "bg-bg-surface border-border-primary text-text-secondary hover:border-border-secondary"
+                                                            }`}
+                                                        >
+                                                            <span className={saveEditPermission === opt.value ? "text-accent-primary" : "text-text-tertiary"}>{opt.icon}</span>
+                                                            <div className="flex-1 min-w-0">
+                                                                <div className="text-[10px] font-medium">{opt.label}</div>
+                                                                <div className="text-[8px] text-text-tertiary">{opt.desc}</div>
+                                                            </div>
+                                                            {saveEditPermission === opt.value && <Check size={12} />}
+                                                        </button>
                                                     ))}
                                                 </div>
                                             </div>

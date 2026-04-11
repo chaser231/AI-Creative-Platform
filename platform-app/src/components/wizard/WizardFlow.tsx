@@ -9,6 +9,7 @@ import { useCanvasStore } from "@/store/canvasStore";
 import { useShallow } from "zustand/react/shallow";
 import { useProjectStore } from "@/store/projectStore";
 import { Button } from "@/components/ui/Button";
+import { Input } from "@/components/ui/Input";
 import { DEFAULT_PACKS, type TemplatePackMeta } from "@/constants/defaultPacks";
 import { getRecommendedPacks, searchPacks } from "@/services/templateCatalogService";
 import { type TemplatePackV2, extractSingleFormatFromPack } from "@/services/templateService";
@@ -414,13 +415,12 @@ export function WizardFlow({ projectId, onSwitchToStudio, initialTemplateId }: W
                                 <div className="space-y-5">
                                     {/* Pack search */}
                                     <div className="relative">
-                                        <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-tertiary" />
-                                        <input
-                                            type="text"
+                                        <Input
                                             value={packSearch}
                                             onChange={(e) => setPackSearch(e.target.value)}
                                             placeholder="Найти пакет..."
-                                            className="w-full h-9 pl-9 pr-8 rounded-lg border border-border-primary bg-bg-secondary text-xs text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-accent-primary/20 focus:border-accent-primary/40 transition-all"
+                                            icon={<Search size={14} />}
+                                            className="h-9 text-xs pr-8"
                                         />
                                         {packSearch && (
                                             <button

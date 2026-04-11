@@ -211,41 +211,41 @@ h3 {
 }
 
 /* Cool gradient cards (Redesigned for cool palette) */
-.gradient-card-yellow {
-  background: linear-gradient(145deg, #F8FAFC 0%, #ECFCCB 100%);
-  /* Cool white -> Soft Lime */
+.gradient-card-purple {
+  background: linear-gradient(145deg, #F5F3FF 0%, #EDE9FE 100%);
+  /* Violet 50 -> Violet 100 */
 }
 
 .gradient-card-blue {
-  background: linear-gradient(145deg, #F8FAFC 0%, #E0F2FE 100%);
-  /* Cool white -> Soft Sky */
+  background: linear-gradient(145deg, #F0F9FF 0%, #E0F2FE 100%);
+  /* Sky 50 -> Sky 100 */
+}
+
+.gradient-card-peach {
+  background: linear-gradient(145deg, #FFF7ED 0%, #FFEDD5 100%);
+  /* Orange 50 -> Orange 100 */
 }
 
 .gradient-card-green {
-  background: linear-gradient(145deg, #F8FAFC 0%, #DCFCE7 100%);
-  /* Cool white -> Soft Emerald */
+  background: linear-gradient(145deg, #F0FDF4 0%, #DCFCE7 100%);
+  /* Green 50 -> Green 100 */
 }
 
-.gradient-card-pink {
-  background: linear-gradient(145deg, #F8FAFC 0%, #FCE7F3 100%);
-  /* Cool white -> Soft Rose */
-}
-
-/* Dark mode gradient cards (Preserved/Adjusted) */
-.dark .gradient-card-yellow {
-  background: linear-gradient(145deg, #2A2510 0%, #1C2A12 100%);
+/* Dark mode gradient cards */
+.dark .gradient-card-purple {
+  background: linear-gradient(145deg, #1E1530 0%, #2A1C40 100%);
 }
 
 .dark .gradient-card-blue {
-  background: linear-gradient(145deg, #1A1C30 0%, #221C30 100%);
+  background: linear-gradient(145deg, #1A1C30 0%, #1C2535 100%);
+}
+
+.dark .gradient-card-peach {
+  background: linear-gradient(145deg, #2A1E15 0%, #302018 100%);
 }
 
 .dark .gradient-card-green {
-  background: linear-gradient(145deg, #122A1E 0%, #1C2A12 100%);
-}
-
-.dark .gradient-card-pink {
-  background: linear-gradient(145deg, #2A1520 0%, #221C30 100%);
+  background: linear-gradient(145deg, #152A1E 0%, #1C2A12 100%);
 }
 
 /* Dialog animations */

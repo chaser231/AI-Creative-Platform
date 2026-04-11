@@ -18,6 +18,9 @@ import { useWorkspace } from "@/providers/WorkspaceProvider";
 import { AppShell } from "@/components/layout/AppShell";
 import { TopBar } from "@/components/layout/TopBar";
 import { SYSTEM_IMAGE_PRESETS, SYSTEM_TEXT_PRESETS, IMAGE_CATEGORY_LABELS, TEXT_CATEGORY_LABELS } from "@/lib/stylePresets";
+import { Select } from "@/components/ui/Select";
+import { Textarea } from "@/components/ui/Textarea";
+import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import type { ImageStylePreset, TextStylePreset, DBPresetConfig } from "@/lib/stylePresets";
 
 type PresetTab = "image" | "text";
@@ -161,25 +164,11 @@ export default function StylePresetsPage() {
           </div>
 
           {/* Tabs */}
-          <div className="flex items-center gap-1 bg-bg-secondary rounded-[var(--radius-md)] p-1 w-fit">
-            {tabs.map((tab) => (
-              <button
-                key={tab.id}
-                onClick={() => { setActiveTab(tab.id); setEditing(null); }}
-                className={`
-                  flex items-center gap-2 px-4 py-2 rounded-[var(--radius-sm)] text-xs font-medium
-                  transition-all cursor-pointer
-                  ${activeTab === tab.id
-                    ? "bg-bg-primary text-text-primary shadow-[var(--shadow-sm)]"
-                    : "text-text-secondary hover:text-text-primary"
-                  }
-                `}
-              >
-                {tab.icon}
-                {tab.label}
-              </button>
-            ))}
-          </div>
+          <SegmentedControl
+            value={activeTab}
+            onChange={(val) => { setActiveTab(val as PresetTab); setEditing(null); }}
+            options={tabs.map((t) => ({ value: t.id, label: t.label, icon: t.icon }))}
+          />
 
           {/* ── System Presets (read-only) ── */}
           <section>
@@ -336,26 +325,24 @@ export default function StylePresetsPage() {
                   <label className="text-[11px] text-text-tertiary uppercase tracking-wider font-medium mb-1.5 block">
                     Категория
                   </label>
-                  <select
+                  <Select
                     value={editing.category}
-                    onChange={(e) => setEditing({ ...editing, category: e.target.value })}
-                    className="w-full h-10 px-3 rounded-[var(--radius-lg)] border border-border-primary bg-bg-secondary text-sm text-text-primary cursor-pointer focus:outline-none focus:ring-1 focus:ring-border-focus"
-                  >
-                    {editing.type === "image" ? (
-                      <>
-                        <option value="custom">🎨 Свои стили</option>
-                        <option value="photography">📸 Фото</option>
-                        <option value="digital">🎭 Цифровые</option>
-                        <option value="artistic">✨ Художественные</option>
-                      </>
-                    ) : (
-                      <>
-                        <option value="custom">🎨 Свои стили</option>
-                        <option value="tone">🎯 Тон</option>
-                        <option value="length">📏 Длина</option>
-                      </>
-                    )}
-                  </select>
+                    onChange={(val) => setEditing({ ...editing, category: val })}
+                    options={
+                      editing.type === "image"
+                        ? [
+                            { value: "custom", label: "🎨 Свои стили" },
+                            { value: "photography", label: "📸 Фото" },
+                            { value: "digital", label: "🎭 Цифровые" },
+                            { value: "artistic", label: "✨ Художественные" },
+                          ]
+                        : [
+                            { value: "custom", label: "🎨 Свои стили" },
+                            { value: "tone", label: "🎯 Тон" },
+                            { value: "length", label: "📏 Длина" },
+                          ]
+                    }
+                  />
                 </div>
               </div>
 
@@ -380,12 +367,11 @@ export default function StylePresetsPage() {
                       Добавляется к промпту пользователя
                     </span>
                   </label>
-                  <textarea
+                  <Textarea
                     value={editing.promptSuffix}
                     onChange={(e) => setEditing({ ...editing, promptSuffix: e.target.value })}
                     placeholder="Professional studio photography, soft lighting, clean background..."
                     rows={3}
-                    className="w-full px-3 py-2 rounded-[var(--radius-lg)] border border-border-primary bg-bg-secondary text-sm text-text-primary resize-none focus:outline-none focus:ring-1 focus:ring-border-focus"
                   />
                 </div>
               ) : (
@@ -409,12 +395,11 @@ export default function StylePresetsPage() {
                           Системный промпт для генерации текста
                         </span>
                       </label>
-                      <textarea
+                      <Textarea
                         value={editing.instruction}
                         onChange={(e) => setEditing({ ...editing, instruction: e.target.value })}
                         placeholder="Пиши в таком-то стиле..."
                         rows={3}
-                        className="w-full px-3 py-2 rounded-[var(--radius-lg)] border border-border-primary bg-bg-secondary text-sm text-text-primary resize-none focus:outline-none focus:ring-1 focus:ring-border-focus"
                       />
                     </div>
                   </div>
@@ -426,7 +411,7 @@ export default function StylePresetsPage() {
                 <button
                   onClick={handleSave}
                   disabled={isSaving || !editing.name.trim()}
-                  className="h-10 px-6 flex items-center gap-2 bg-accent-primary text-white rounded-[var(--radius-lg)] text-sm font-medium hover:bg-accent-primary/90 transition-colors disabled:opacity-50 cursor-pointer"
+                  className="h-10 px-6 flex items-center gap-2 bg-accent-primary text-text-inverse rounded-[var(--radius-lg)] text-sm font-medium hover:bg-accent-primary/90 transition-colors disabled:opacity-50 cursor-pointer"
                 >
                   {isSaving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
                   {editing.id ? "Сохранить" : "Создать"}

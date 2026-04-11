@@ -14,12 +14,18 @@ import {
     Clock,
     Check,
     Palette,
+    Lock,
+    Globe,
+    Users,
+    Pencil,
 } from "lucide-react";
 import { Popover, PopoverButton } from "@/components/ui/Popover";
 import { AppShell } from "@/components/layout/AppShell";
 import { TopBar } from "@/components/layout/TopBar";
 import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
+import { Select } from "@/components/ui/Select";
+import { Input } from "@/components/ui/Input";
 import { cn } from "@/lib/cn";
 import { useTemplateListSync } from "@/hooks/useTemplateSync";
 import { useCreateProjectSync } from "@/hooks/useProjectSync";
@@ -65,6 +71,7 @@ const SORT_OPTIONS = [
 /* ─── Pack Card ──────────────────────────────────────── */
 
 function PackCard({ pack, onLoad }: { pack: TemplatePackV2; onLoad: (pack: TemplatePackV2) => void }) {
+    const router = useRouter();
     const categoryLabels = (pack.categories || [])
         .map(c => CATEGORY_OPTIONS.find(o => o.value === c)?.label)
         .filter(Boolean);
@@ -88,6 +95,43 @@ function PackCard({ pack, onLoad }: { pack: TemplatePackV2; onLoad: (pack: Templ
                     <div className="absolute top-2.5 right-2.5 flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/15 border border-amber-500/20">
                         <Star size={10} className="text-amber-500 fill-amber-500" />
                         <span className="text-[9px] font-semibold text-amber-600">Official</span>
+                    </div>
+                )}
+                {!pack.isOfficial && (pack as any).visibility === "PRIVATE" && (
+                    <div className="absolute top-2.5 right-2.5 flex items-center gap-1 px-2 py-0.5 rounded-full bg-bg-surface/90 border border-border-primary">
+                        <Lock size={10} className="text-text-tertiary" />
+                        <span className="text-[9px] font-medium text-text-tertiary">Приватный</span>
+                    </div>
+                )}
+                {!pack.isOfficial && (!(pack as any).visibility || (pack as any).visibility === "WORKSPACE") && (
+                    <div className="absolute top-2.5 right-2.5 flex items-center gap-1 px-2 py-0.5 rounded-full bg-violet-500/10 border border-violet-500/20">
+                        <Users size={10} className="text-violet-500" />
+                        <span className="text-[9px] font-medium text-violet-600">Команда</span>
+                    </div>
+                )}
+                {!pack.isOfficial && (pack as any).visibility === "PUBLIC" && (
+                    <div className="absolute top-2.5 right-2.5 flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-500/10 border border-blue-500/20">
+                        <Globe size={10} className="text-blue-500" />
+                        <span className="text-[9px] font-medium text-blue-600">Публичный</span>
+                    </div>
+                )}
+                {/* Edit button overlay */}
+                {!pack.isOfficial && (
+                    <div
+                        role="button"
+                        tabIndex={0}
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            router.push(`/editor/${pack.id}?source=template`);
+                        }}
+                        onKeyDown={(e) => {
+                            if (e.key === "Enter") { e.stopPropagation(); router.push(`/editor/${pack.id}?source=template`); }
+                        }}
+                        className="absolute bottom-2 right-2 flex items-center gap-1 px-2 py-1 rounded-lg bg-bg-surface/90 border border-border-primary text-[9px] font-medium text-text-secondary opacity-0 group-hover:opacity-100 hover:bg-bg-surface hover:text-text-primary hover:border-accent-primary/30 transition-all cursor-pointer z-10"
+                        title="Редактировать шаблон"
+                    >
+                        <Pencil size={10} />
+                        Редактировать
                     </div>
                 )}
             </div>
@@ -250,11 +294,17 @@ export default function TemplateCatalogPage() {
                         try {
                             const { useCanvasStore } = await import("@/store/canvasStore");
                             const store = useCanvasStore.getState();
+                            // Update active format's snapshot with current layers
+                            const resizesWithSnapshot = store.resizes.map(r =>
+                                r.id === store.activeResizeId
+                                    ? { ...r, layerSnapshot: store.layers }
+                                    : r
+                            );
                             const canvasState = {
                                 layers: store.layers,
                                 masterComponents: store.masterComponents,
                                 componentInstances: store.componentInstances,
-                                resizes: store.resizes,
+                                resizes: resizesWithSnapshot,
                                 artboardProps: store.artboardProps,
                                 canvasWidth: store.canvasWidth,
                                 canvasHeight: store.canvasHeight,
@@ -317,13 +367,12 @@ export default function TemplateCatalogPage() {
                     {/* Search bar */}
                     <div className="flex items-center gap-3 mb-4">
                         <div className="flex-1 relative">
-                            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-tertiary" />
-                            <input
-                                type="text"
+                            <Input
                                 value={search}
                                 onChange={(e) => setSearch(e.target.value)}
                                 placeholder="Поиск по названию, описанию или тегам..."
-                                className="w-full h-10 pl-10 pr-4 rounded-xl border border-border-primary bg-bg-surface text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-accent-primary/20 focus:border-accent-primary/40 transition-all"
+                                icon={<Search size={16} />}
+                                className="pr-10"
                             />
                             {search && (
                                 <button
@@ -526,16 +575,17 @@ export default function TemplateCatalogPage() {
                             <label className="block text-xs font-semibold text-text-primary mb-2">
                                 <span className="text-accent-primary mr-1">❖</span> Выберите формат для работы:
                             </label>
-                            <select 
-                                className="w-full h-9 px-3 rounded-md bg-bg-surface border border-border-primary text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-accent-primary/20 cursor-pointer"
+                            <Select
                                 value={selectedResizeId || "all"}
-                                onChange={(e) => setSelectedResizeId(e.target.value)}
-                            >
-                                <option value="all">Весь пакет ({selectedPackForMode.resizes.length} макетов)</option>
-                                {selectedPackForMode.resizes.map(r => (
-                                    <option key={r.id} value={r.id}>{r.name} ({r.width}×{r.height})</option>
-                                ))}
-                            </select>
+                                onChange={(val) => setSelectedResizeId(val)}
+                                options={[
+                                    { value: "all", label: `Весь пакет (${selectedPackForMode.resizes.length} макетов)` },
+                                    ...selectedPackForMode.resizes.map(r => ({
+                                        value: r.id,
+                                        label: `${r.name} (${r.width}×${r.height})`,
+                                    })),
+                                ]}
+                            />
                         </div>
                     )}
                     <div className="grid grid-cols-2 gap-3">

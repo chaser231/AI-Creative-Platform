@@ -111,7 +111,7 @@ export function TextContentBlock({ id, name, props, value, onChange, businessUni
                         <button
                             onClick={handleGenerate}
                             disabled={isGenerating}
-                            className="h-9 px-4 rounded-[var(--radius-md)] bg-accent-lime text-accent-primary font-semibold text-xs hover:bg-accent-lime-hover disabled:opacity-50 transition-all cursor-pointer disabled:cursor-default shrink-0 flex items-center gap-1.5"
+                            className="h-9 px-4 rounded-[var(--radius-md)] bg-accent-lime text-text-inverse font-semibold text-xs hover:bg-accent-lime-hover disabled:opacity-50 transition-all cursor-pointer disabled:cursor-default shrink-0 flex items-center gap-1.5"
                         >
                             {isGenerating ? (
                                 <div className="animate-spin text-xs">⟳</div>

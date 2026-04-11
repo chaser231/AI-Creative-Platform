@@ -107,7 +107,7 @@ export default function InvitePage({ params }: { params: Promise<{ slug: string 
                             </p>
                             <Link
                                 href={`/auth/signin?callbackUrl=/invite/${slug}`}
-                                className="inline-flex items-center gap-2 px-6 py-3 bg-accent-primary text-white rounded-[var(--radius-xl)] font-medium text-sm hover:bg-accent-primary/90 transition-colors"
+                                className="inline-flex items-center gap-2 px-6 py-3 bg-accent-primary text-text-inverse rounded-[var(--radius-xl)] font-medium text-sm hover:bg-accent-primary/90 transition-colors"
                             >
                                 Войти через Яндекс
                                 <ArrowRight size={16} />
@@ -117,7 +117,7 @@ export default function InvitePage({ params }: { params: Promise<{ slug: string 
                         <button
                             onClick={() => joinMutation.mutate({ workspaceId: workspace.id, viaInvite: true })}
                             disabled={joinMutation.isPending}
-                            className="w-full flex items-center justify-center gap-2 px-6 py-3 bg-accent-primary text-white rounded-[var(--radius-xl)] font-medium text-sm hover:bg-accent-primary/90 transition-colors disabled:opacity-50 cursor-pointer"
+                            className="w-full flex items-center justify-center gap-2 px-6 py-3 bg-accent-primary text-text-inverse rounded-[var(--radius-xl)] font-medium text-sm hover:bg-accent-primary/90 transition-colors disabled:opacity-50 cursor-pointer"
                         >
                             {joinMutation.isPending ? (
                                 <Loader2 size={16} className="animate-spin" />

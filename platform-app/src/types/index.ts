@@ -22,6 +22,15 @@ export interface Project {
     };
 }
 
+// ─── Layer Binding (Phase 2: Master System v2) ──────────
+export type SyncMode = 'all' | 'content_and_style' | 'content_only' | 'none';
+
+export interface LayerBinding {
+    masterLayerId: string;     // ID слоя в мастер-формате
+    targetLayerId: string;     // ID слоя в этом формате
+    syncMode: SyncMode;
+}
+
 // ─── Resize Formats ─────────────────────────────────────
 export interface ResizeFormat {
     id: string;
@@ -30,6 +39,11 @@ export interface ResizeFormat {
     height: number;
     label: string; // e.g. "Instagram Post", "Facebook Cover"
     instancesEnabled: boolean; // true = receives content-source cascade from master
+    layerSnapshot?: Layer[]; // per-format independent layer state (snapshot/page mode)
+
+    // Phase 2: Master binding
+    isMaster?: boolean;               // this format is the master source
+    layerBindings?: LayerBinding[];   // per-layer sync config to master
 }
 
 export const PRESET_FORMATS: ResizeFormat[] = [
@@ -363,6 +377,10 @@ export type TemplateCategory =
     | "smm" | "showcase" | "email" | "other";
 
 export type ContentType = "visual" | "video" | "audio" | "generative" | "mixed";
+
+export type TemplateVisibility = "PRIVATE" | "WORKSPACE" | "PUBLIC" | "SHARED";
+
+export type TemplateEditPermission = "AUTHOR_ONLY" | "WORKSPACE" | "SPECIFIC";
 
 export type TemplateOccasion =
     | "default" | "black-friday" | "new-year" | "spring-sale"

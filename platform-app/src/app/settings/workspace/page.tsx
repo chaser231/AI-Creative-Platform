@@ -21,6 +21,8 @@ import {
     Globe, Lock, Users, Check, X, Loader2, Copy,
     Trash2, ShieldAlert, ArrowRight, Clock,
 } from "lucide-react";
+import { Select } from "@/components/ui/Select";
+import { SegmentedControl } from "@/components/ui/SegmentedControl";
 
 interface ExtendedWorkspace {
     id: string;
@@ -182,15 +184,11 @@ export default function WorkspaceSettingsPage() {
                             </div>
                             <div>
                                 <label className="text-[11px] text-text-tertiary uppercase tracking-wider font-medium mb-1.5 block">Бизнес-юнит</label>
-                                <select
+                                <Select
                                     value={businessUnit}
-                                    onChange={(e) => setBusinessUnit(e.target.value)}
-                                    className="w-full h-10 px-3 rounded-[var(--radius-lg)] border border-border-primary bg-bg-secondary text-sm text-text-primary cursor-pointer focus:outline-none focus:ring-1 focus:ring-border-focus"
-                                >
-                                    {BU_OPTIONS.map((bu) => (
-                                        <option key={bu.value} value={bu.value}>{bu.label}</option>
-                                    ))}
-                                </select>
+                                    onChange={(val) => setBusinessUnit(val)}
+                                    options={BU_OPTIONS.map((bu) => ({ value: bu.value, label: bu.label }))}
+                                />
                             </div>
                         </div>
                     </section>
@@ -201,30 +199,16 @@ export default function WorkspaceSettingsPage() {
                         <div className="space-y-4 bg-bg-surface border border-border-primary rounded-[var(--radius-xl)] p-5">
                             <div>
                                 <label className="text-[11px] text-text-tertiary uppercase tracking-wider font-medium mb-1.5 block">Видимость</label>
-                                <div className="flex rounded-[var(--radius-lg)] border border-border-primary overflow-hidden">
-                                    <button
-                                        type="button"
-                                        onClick={() => setVisibility("VISIBLE")}
-                                        className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 text-xs font-medium transition-colors cursor-pointer ${
-                                            visibility === "VISIBLE"
-                                                ? "bg-accent-primary/10 text-accent-primary"
-                                                : "text-text-tertiary hover:text-text-primary hover:bg-bg-tertiary"
-                                        }`}
-                                    >
-                                        <Globe size={12} /> Видима в обзоре
-                                    </button>
-                                    <button
-                                        type="button"
-                                        onClick={() => setVisibility("HIDDEN")}
-                                        className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 text-xs font-medium transition-colors cursor-pointer border-l border-border-primary ${
-                                            visibility === "HIDDEN"
-                                                ? "bg-accent-primary/10 text-accent-primary"
-                                                : "text-text-tertiary hover:text-text-primary hover:bg-bg-tertiary"
-                                        }`}
-                                    >
-                                        <Lock size={12} /> Скрыта
-                                    </button>
-                                </div>
+                                <SegmentedControl
+                                    variant="bordered"
+                                    value={visibility}
+                                    onChange={setVisibility}
+                                    fullWidth
+                                    options={[
+                                        { value: "VISIBLE", label: "Видима в обзоре", icon: <Globe size={12} /> },
+                                        { value: "HIDDEN", label: "Скрыта", icon: <Lock size={12} /> },
+                                    ]}
+                                />
                                 <p className="text-[10px] text-text-tertiary mt-1.5">
                                     {visibility === "VISIBLE" ? "Команда видна в обзоре команд всем пользователям" : "Команда доступна только по приглашению"}
                                 </p>
@@ -232,15 +216,15 @@ export default function WorkspaceSettingsPage() {
 
                             <div>
                                 <label className="text-[11px] text-text-tertiary uppercase tracking-wider font-medium mb-1.5 block">Политика вступления</label>
-                                <select
+                                <Select
                                     value={joinPolicy}
-                                    onChange={(e) => setJoinPolicy(e.target.value as "OPEN" | "REQUEST" | "INVITE_ONLY")}
-                                    className="w-full h-10 px-3 rounded-[var(--radius-lg)] border border-border-primary bg-bg-secondary text-sm text-text-primary cursor-pointer focus:outline-none focus:ring-1 focus:ring-border-focus"
-                                >
-                                    <option value="OPEN">Свободное — все могут вступить</option>
-                                    <option value="REQUEST">По заявке — требуется одобрение</option>
-                                    <option value="INVITE_ONLY">Только по приглашению</option>
-                                </select>
+                                    onChange={(val) => setJoinPolicy(val as "OPEN" | "REQUEST" | "INVITE_ONLY")}
+                                    options={[
+                                        { value: "OPEN", label: "Свободное — все могут вступить" },
+                                        { value: "REQUEST", label: "По заявке — требуется одобрение" },
+                                        { value: "INVITE_ONLY", label: "Только по приглашению" },
+                                    ]}
+                                />
                             </div>
 
                             {/* Invite link */}
@@ -314,7 +298,7 @@ export default function WorkspaceSettingsPage() {
                         <button
                             onClick={handleSave}
                             disabled={updateMutation.isPending}
-                            className="h-10 px-6 flex items-center gap-2 bg-accent-primary text-white rounded-[var(--radius-lg)] text-sm font-medium hover:bg-accent-primary/90 transition-colors disabled:opacity-50 cursor-pointer"
+                            className="h-10 px-6 flex items-center gap-2 bg-accent-primary text-text-inverse rounded-[var(--radius-lg)] text-sm font-medium hover:bg-accent-primary/90 transition-colors disabled:opacity-50 cursor-pointer"
                         >
                             {updateMutation.isPending ? <Loader2 size={14} className="animate-spin" /> : "Сохранить"}
                         </button>

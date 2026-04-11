@@ -3,11 +3,12 @@
 import { useRef, useState, use, useEffect, useCallback } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
-import { Download, Share2, Wand2, PenTool, Copy, Check, HelpCircle, Settings, History, AlertTriangle, FolderOpen } from "lucide-react";
+import { Download, Share2, Wand2, PenTool, Copy, Check, HelpCircle, Settings, History, AlertTriangle, FolderOpen, Save } from "lucide-react";
 import { TopBar } from "@/components/layout/TopBar";
 import { Button } from "@/components/ui/Button";
 import { Dialog } from "@/components/ui/Dialog";
 import { Modal } from "@/components/ui/Modal";
+import { Select } from "@/components/ui/Select";
 import { LayersPanel } from "@/components/editor/LayersPanel";
 import { PropertiesPanel } from "@/components/editor/properties";
 import { Toolbar } from "@/components/editor/Toolbar";
@@ -18,6 +19,7 @@ import { AIPromptBar } from "@/components/editor/AIPromptBar";
 import { AIChatPanel } from "@/components/editor/ai-chat";
 import { VersionHistoryPanel } from "@/components/editor/VersionHistoryPanel";
 import { AssetLibraryModal } from "@/components/editor/AssetLibraryModal";
+import { TemplateSettingsModal } from "@/components/editor/TemplateSettingsModal";
 import { WizardFlow } from "@/components/wizard/WizardFlow";
 import { useProjectStore } from "@/store/projectStore";
 import { useCanvasStore } from "@/store/canvasStore";
@@ -28,6 +30,7 @@ import { useAISessionSync } from "@/hooks/useAISessionSync";
 import { getModelById } from "@/lib/ai-models";
 import { trpc } from "@/lib/trpc";
 import { loadAllCustomFonts } from "@/lib/customFonts";
+import { hydrateTemplate } from "@/services/templateService";
 import Konva from "konva";
 
 // Dynamic import for Canvas (Konva needs client-only, no SSR)
@@ -43,17 +46,25 @@ interface EditorPageProps {
 export default function EditorPage({ params }: EditorPageProps) {
     const { id } = use(params);
     const stageRef = useRef<Konva.Stage | null>(null);
+    const searchParams = useSearchParams();
+    const router = useRouter();
+
+    // ─── Template mode detection ───
+    const isTemplateMode = searchParams.get("source") === "template";
+
     const [exportOpen, setExportOpen] = useState(false);
     const [templatesOpen, setTemplatesOpen] = useState(false);
     const [aiPanelOpen, setAiPanelOpen] = useState(false);
     const [aiChatOpen, setAiChatOpen] = useState(false);
-    const { messages: aiMessages, addMessages: addAiMessages } = useAISessionSync(id);
+    const { messages: aiMessages, addMessages: addAiMessages } = useAISessionSync(id, !isTemplateMode);
     const [shareOpen, setShareOpen] = useState(false);
     const [helpOpen, setHelpOpen] = useState(false);
     const [settingsOpen, setSettingsOpen] = useState(false);
+    const [templateSettingsOpen, setTemplateSettingsOpen] = useState(false);
     const [linkCopied, setLinkCopied] = useState(false);
     const [versionPanelOpen, setVersionPanelOpen] = useState(false);
     const [assetLibraryOpen, setAssetLibraryOpen] = useState(false);
+    const [templateSaveStatus, setTemplateSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
     const projects = useProjectStore((s) => s.projects);
     const updateProject = useProjectStore((s) => s.updateProject);
     const { editorMode, setEditorMode, undo, redo, history, future, artboardProps, updateArtboardProps } = useCanvasStore(useShallow((s) => ({
@@ -62,12 +73,91 @@ export default function EditorPage({ params }: EditorPageProps) {
         artboardProps: s.artboardProps, updateArtboardProps: s.updateArtboardProps,
     })));
     useKeyboardShortcuts();
+
+    // ─── Template mode: load & save ───
+    const templateQuery = trpc.template.loadState.useQuery(
+        { id },
+        { enabled: isTemplateMode, retry: false, refetchOnWindowFocus: false }
+    );
+    const templateSaveMutation = trpc.template.saveState.useMutation({
+        onSuccess: () => {
+            setTemplateSaveStatus("saved");
+            setTimeout(() => setTemplateSaveStatus("idle"), 2000);
+        },
+        onError: () => setTemplateSaveStatus("error"),
+    });
+
+    // Load template data into canvas on first load
+    useEffect(() => {
+        if (!isTemplateMode || !templateQuery.data?.data) return;
+        const data = templateQuery.data.data as any;
+        if (!data.layers && !data.masterComponents && !data.layerTree) return;
+
+        // If data has canvas state format (layers, masterComponents, etc.), load directly
+        if (data.layers && Array.isArray(data.layers)) {
+            // Determine the correct active resize — default to first available or "master"
+            const resizes = data.resizes ?? [{ id: "master", name: "Мастер макет", width: data.canvasWidth || 1080, height: data.canvasHeight || 1080, label: `${data.canvasWidth || 1080} × ${data.canvasHeight || 1080}`, instancesEnabled: false }];
+            const activeResizeId = resizes[0]?.id || "master";
+            const activeResize = resizes.find((r: any) => r.id === activeResizeId);
+
+            useCanvasStore.setState({
+                layers: data.layers,
+                masterComponents: data.masterComponents ?? [],
+                componentInstances: data.componentInstances ?? [],
+                resizes,
+                activeResizeId,
+                selectedLayerIds: [],
+                history: [],
+                artboardProps: data.artboardProps ?? useCanvasStore.getState().artboardProps,
+                canvasWidth: activeResize?.width ?? data.canvasWidth ?? 1080,
+                canvasHeight: activeResize?.height ?? data.canvasHeight ?? 1080,
+            });
+        } else {
+            // It's a TemplatePack format — hydrate it
+            try {
+                const hydrated = hydrateTemplate(data);
+                useCanvasStore.setState({
+                    layers: hydrated.layers ?? [],
+                    masterComponents: hydrated.masterComponents,
+                    componentInstances: hydrated.componentInstances,
+                    resizes: hydrated.resizes.length > 0 ? hydrated.resizes : useCanvasStore.getState().resizes,
+                    canvasWidth: hydrated.baseWidth || useCanvasStore.getState().canvasWidth,
+                    canvasHeight: hydrated.baseHeight || useCanvasStore.getState().canvasHeight,
+                });
+            } catch (err) {
+                console.error("Failed to hydrate template:", err);
+            }
+        }
+    }, [isTemplateMode, templateQuery.data]);
+
+    // Manual save for template mode
+    const handleTemplateSave = useCallback(() => {
+        if (!isTemplateMode) return;
+        setTemplateSaveStatus("saving");
+        const store = useCanvasStore.getState();
+        // Update active format's snapshot with current layers
+        const resizesWithSnapshot = store.resizes.map(r =>
+            r.id === store.activeResizeId
+                ? { ...r, layerSnapshot: store.layers }
+                : r
+        );
+        const canvasState = {
+            layers: store.layers,
+            masterComponents: store.masterComponents,
+            componentInstances: store.componentInstances,
+            resizes: resizesWithSnapshot,
+            artboardProps: store.artboardProps,
+            canvasWidth: store.canvasWidth,
+            canvasHeight: store.canvasHeight,
+        };
+        templateSaveMutation.mutate({ id, data: canvasState });
+    }, [isTemplateMode, id, templateSaveMutation]);
+
+    // ─── Project mode: load & auto-save ───
     // IMPORTANT: Load canvas state FIRST, then enable auto-save AFTER load completes.
     // This prevents the canvas-clear-on-mount from triggering an empty save.
-    const { isLoaded: canvasLoaded } = useLoadCanvasState(id);
-    const { isSaving, getUnsavedState, saveNowSync } = useCanvasAutoSave(id, canvasLoaded, stageRef);
-    const searchParams = useSearchParams();
-    const router = useRouter();
+    const { isLoaded: canvasLoaded } = useLoadCanvasState(isTemplateMode ? "__skip__" : id);
+    const { isSaving, getUnsavedState, saveNowSync } = useCanvasAutoSave(isTemplateMode ? "__skip__" : id, !isTemplateMode && canvasLoaded, stageRef);
 
     const [showExitWarning, setShowExitWarning] = useState(false);
 
@@ -104,7 +194,9 @@ export default function EditorPage({ params }: EditorPageProps) {
         { id },
         { retry: false, refetchOnWindowFocus: false }
     );
-    const projectName = project?.name || projectQuery.data?.name || "Без названия";
+    const projectName = isTemplateMode
+        ? (templateQuery.data?.name || "Шаблон")
+        : (project?.name || projectQuery.data?.name || "Без названия");
     const projectStatus = (projectQuery.data?.status || project?.status || "DRAFT").toUpperCase();
 
     // Inline rename state
@@ -236,7 +328,16 @@ export default function EditorPage({ params }: EditorPageProps) {
                                 )}
                             </div>
 
-                            {isSaving && <span className="text-[10px] text-text-tertiary">💾 Сохранение...</span>}
+                            {isTemplateMode ? (
+                                <>
+                                    {templateSaveStatus === "saving" && <span className="text-[10px] text-text-tertiary">💾 Сохранение...</span>}
+                                    {templateSaveStatus === "saved" && <span className="text-[10px] text-green-500">✓ Сохранено</span>}
+                                    {templateSaveStatus === "error" && <span className="text-[10px] text-red-400">✗ Ошибка</span>}
+                                    {!templateQuery.data?.canEdit && <span className="text-[10px] text-amber-400">🔒 Только просмотр</span>}
+                                </>
+                            ) : (
+                                isSaving && <span className="text-[10px] text-text-tertiary">💾 Сохранение...</span>
+                            )}
                         </div>
                     }
                     onUndo={undo}
@@ -279,30 +380,55 @@ export default function EditorPage({ params }: EditorPageProps) {
                     }
                     actions={
                         <div className="flex items-center gap-2">
-                            <Button
-                                variant="ghost"
-                                size="sm"
-                                icon={<FolderOpen size={14} />}
-                                onClick={() => setAssetLibraryOpen(true)}
-                            >
-                                Ассеты
-                            </Button>
-                            <Button
-                                variant="ghost"
-                                size="sm"
-                                icon={<History size={14} />}
-                                onClick={() => setVersionPanelOpen(true)}
-                            >
-                                Версии
-                            </Button>
-                            <Button
-                                variant="secondary"
-                                size="sm"
-                                icon={<Share2 size={14} />}
-                                onClick={() => setShareOpen(true)}
-                            >
-                                Поделиться
-                            </Button>
+                            {isTemplateMode && templateQuery.data?.canEdit && (
+                                <Button
+                                    variant="primary"
+                                    size="sm"
+                                    icon={<Save size={14} />}
+                                    onClick={handleTemplateSave}
+                                    disabled={templateSaveMutation.isPending}
+                                >
+                                    {templateSaveMutation.isPending ? "Сохранение..." : "Сохранить"}
+                                </Button>
+                            )}
+                            {isTemplateMode && (
+                                <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    icon={<Settings size={14} />}
+                                    onClick={() => setTemplateSettingsOpen(true)}
+                                >
+                                    Настройки
+                                </Button>
+                            )}
+                            {!isTemplateMode && (
+                                <>
+                                    <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        icon={<FolderOpen size={14} />}
+                                        onClick={() => setAssetLibraryOpen(true)}
+                                    >
+                                        Ассеты
+                                    </Button>
+                                    <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        icon={<History size={14} />}
+                                        onClick={() => setVersionPanelOpen(true)}
+                                    >
+                                        Версии
+                                    </Button>
+                                    <Button
+                                        variant="secondary"
+                                        size="sm"
+                                        icon={<Share2 size={14} />}
+                                        onClick={() => setShareOpen(true)}
+                                    >
+                                        Поделиться
+                                    </Button>
+                                </>
+                            )}
                             <Button
                                 size="sm"
                                 icon={<Download size={14} />}
@@ -492,16 +618,16 @@ export default function EditorPage({ params }: EditorPageProps) {
                     {/* Status */}
                     <div className="space-y-1.5">
                         <label className="text-[12px] font-medium text-text-secondary">Статус</label>
-                        <select
+                        <Select
                             value={project?.status || "draft"}
-                            onChange={(e) => updateProject(id, { status: e.target.value as "draft" | "in-progress" | "review" | "published" })}
-                            className="w-full h-9 px-2 rounded-[var(--radius-md)] border border-border-primary bg-bg-secondary text-[13px] text-text-primary cursor-pointer focus:outline-none focus:ring-1 focus:ring-accent-primary/50"
-                        >
-                            <option value="draft">Черновик</option>
-                            <option value="in-progress">В работе</option>
-                            <option value="review">На проверке</option>
-                            <option value="published">Опубликован</option>
-                        </select>
+                            onChange={(val) => updateProject(id, { status: val as "draft" | "in-progress" | "review" | "published" })}
+                            options={[
+                                { value: "draft", label: "Черновик" },
+                                { value: "in-progress", label: "В работе" },
+                                { value: "review", label: "На проверке" },
+                                { value: "published", label: "Опубликован" },
+                            ]}
+                        />
                     </div>
 
                     {/* Artboard Background Color */}
@@ -552,6 +678,16 @@ export default function EditorPage({ params }: EditorPageProps) {
                 open={assetLibraryOpen}
                 onClose={() => setAssetLibraryOpen(false)}
             />
+
+            {/* Template Settings Modal */}
+            {isTemplateMode && (
+                <TemplateSettingsModal
+                    templateId={id}
+                    open={templateSettingsOpen}
+                    onClose={() => setTemplateSettingsOpen(false)}
+                    onSaved={() => templateQuery.refetch()}
+                />
+            )}
 
             {/* Delete confirmation dialog */}
             {showDeleteConfirm && (
