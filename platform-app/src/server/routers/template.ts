@@ -13,6 +13,52 @@ import {
 } from "../utils/s3-cleanup";
 
 export const templateRouter = createTRPCRouter({
+  /** Recently used templates for the current user's workspace */
+  recent: protectedProcedure
+    .input(
+      z.object({
+        workspaceId: z.string(),
+        limit: z.number().min(1).max(10).default(4),
+      })
+    )
+    .query(async ({ ctx, input }) => {
+      const templates = await ctx.prisma.template.findMany({
+        where: {
+          OR: [
+            { workspaceId: input.workspaceId, visibility: "WORKSPACE" },
+            { author: ctx.user.id, visibility: "PRIVATE" },
+            { visibility: "PUBLIC" },
+            { visibility: "SHARED", sharedWith: { some: { userId: ctx.user.id } } },
+            { author: ctx.user.id, visibility: "SHARED" },
+            { isOfficial: true },
+          ],
+        },
+        select: {
+          id: true,
+          name: true,
+          description: true,
+          categories: true,
+          contentType: true,
+          isOfficial: true,
+          thumbnailUrl: true,
+          popularity: true,
+          updatedAt: true,
+          data: true,
+        },
+        orderBy: [{ updatedAt: "desc" }],
+        take: input.limit,
+      });
+
+      return templates.map((t: any) => {
+        const { data, ...rest } = t;
+        const dataObj = data as any;
+        return {
+          ...rest,
+          resizes: dataObj?.resizes || [],
+        };
+      });
+    }),
+
   /** List templates with optional filtering */
   list: protectedProcedure
     .input(

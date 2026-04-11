@@ -1,9 +1,9 @@
 "use client";
 
-import { useState, useMemo, useCallback, useEffect } from "react";
+import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Plus, ImageIcon, Type, Camera, Video, Search, HelpCircle, LayoutTemplate, ArrowRight, Star, Loader2 } from "lucide-react";
+import { Plus, ImageIcon, Type, Camera, Video, Search, HelpCircle, LayoutTemplate, ArrowRight, Star, Loader2, X } from "lucide-react";
 import { AppShell } from "@/components/layout/AppShell";
 import { TopBar } from "@/components/layout/TopBar";
 import { Button } from "@/components/ui/Button";
@@ -12,31 +12,26 @@ import { EmptyState } from "@/components/dashboard/EmptyState";
 import { NewProjectModal } from "@/components/dashboard/NewProjectModal";
 import { useProjectStore } from "@/store/projectStore";
 import { useProjectListSync } from "@/hooks/useProjectSync";
-import { useTemplateStore } from "@/store/templateStore";
 import { trpc } from "@/lib/trpc";
 import { useWorkspace } from "@/providers/WorkspaceProvider";
 import { WorkspaceOnboarding } from "@/components/workspace/WorkspaceOnboarding";
-import { getRecommendedPacks } from "@/services/templateCatalogService";
-import type { TemplatePackV2 } from "@/services/templateService";
 
-function RecommendedTemplates() {
-  const { savedPacks } = useTemplateStore();
-  // TODO: Use actual user BU from profile/auth context
-  const userBU = "yandex-market" as const;
-
-  const recommended = useMemo(
-    () => getRecommendedPacks(userBU, savedPacks, 4),
-    [savedPacks]
+function RecentTemplates({ workspaceId }: { workspaceId: string | null }) {
+  const recentQuery = trpc.template.recent.useQuery(
+    { workspaceId: workspaceId!, limit: 4 },
+    { enabled: !!workspaceId, refetchOnWindowFocus: false }
   );
 
-  if (recommended.length === 0) return null;
+  if (!workspaceId || recentQuery.isLoading) return null;
+  const templates = recentQuery.data ?? [];
+  if (templates.length === 0) return null;
 
   return (
     <div className="px-6 pt-6">
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
           <LayoutTemplate size={16} className="text-accent-primary" />
-          <h2 className="text-sm font-semibold text-text-primary">Готовые наборы</h2>
+          <h2 className="text-sm font-semibold text-text-primary">Последние шаблоны</h2>
         </div>
         <Link
           href="/templates"
@@ -47,9 +42,9 @@ function RecommendedTemplates() {
         </Link>
       </div>
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        {recommended.map(pack => (
+        {templates.map((tmpl: { id: string; name: string; isOfficial: boolean; resizes: unknown[]; categories: string[] }) => (
           <Link
-            key={pack.id}
+            key={tmpl.id}
             href="/templates"
             className="flex items-center gap-3 p-3 rounded-xl border border-border-primary bg-bg-surface hover:border-accent-primary/30 hover:shadow-sm transition-all group"
           >
@@ -58,13 +53,13 @@ function RecommendedTemplates() {
             </div>
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-1">
-                <span className="text-xs font-medium text-text-primary truncate">{pack.name}</span>
-                {pack.isOfficial && (
+                <span className="text-xs font-medium text-text-primary truncate">{tmpl.name}</span>
+                {tmpl.isOfficial && (
                   <Star size={8} className="text-amber-500 fill-amber-500 shrink-0" />
                 )}
               </div>
               <span className="text-[10px] text-text-tertiary">
-                {pack.resizes.length} форматов · {pack.categories[0] || "visual"}
+                {tmpl.resizes.length} форматов · {tmpl.categories[0] || "visual"}
               </span>
             </div>
           </Link>
@@ -112,6 +107,9 @@ export default function DashboardPage() {
   const router = useRouter();
   const [modalOpen, setModalOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const localProjects = useProjectStore((s) => s.projects);
   const { projects: backendProjects, isLoading, workspaceId, refetch } = useProjectListSync(true);
   const { currentWorkspace, needsOnboarding } = useWorkspace();
@@ -210,6 +208,13 @@ export default function DashboardPage() {
     return [...localProjects, ...backendOnly];
   }, [localProjects, backendProjects]);
 
+  // Client-side search filter (instant, no debounce)
+  const filteredProjects = useMemo(() => {
+    if (!searchQuery.trim()) return projects;
+    const q = searchQuery.toLowerCase();
+    return projects.filter(p => p.name.toLowerCase().includes(q));
+  }, [projects, searchQuery]);
+
   return (
     <AppShell>
       <TopBar
@@ -259,8 +264,8 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* Recommended templates — compact, extensible section */}
-        <RecommendedTemplates />
+        {/* Recent templates — dynamic per-user section */}
+        <RecentTemplates workspaceId={workspaceId} />
 
         {/* Projects section */}
         <div className="px-6 pt-8">
@@ -268,9 +273,40 @@ export default function DashboardPage() {
             <h1 className="text-3xl text-text-primary">Мои проекты</h1>
             <div className="flex items-center gap-3">
               {/* Search */}
-              <div className="flex items-center gap-2 px-4 py-2.5 rounded-[var(--radius-full)] bg-bg-surface border border-border-primary text-text-tertiary hover:border-border-secondary transition-colors cursor-pointer">
-                <Search size={14} />
-                <span className="text-[13px] font-light">Найти проект...</span>
+              <div className={`flex items-center gap-2 px-4 py-2.5 rounded-[var(--radius-full)] bg-bg-surface border transition-colors ${
+                searchOpen ? "border-accent-primary/50 shadow-sm" : "border-border-primary hover:border-border-secondary"
+              }`}>
+                <Search size={14} className="text-text-tertiary shrink-0" />
+                {searchOpen ? (
+                  <>
+                    <input
+                      ref={searchInputRef}
+                      type="text"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      onBlur={() => { if (!searchQuery) setSearchOpen(false); }}
+                      onKeyDown={(e) => { if (e.key === "Escape") { setSearchQuery(""); setSearchOpen(false); } }}
+                      placeholder="Найти проект..."
+                      className="bg-transparent text-[13px] text-text-primary placeholder:text-text-tertiary outline-none w-[160px]"
+                      autoFocus
+                    />
+                    {searchQuery && (
+                      <button
+                        onClick={() => { setSearchQuery(""); searchInputRef.current?.focus(); }}
+                        className="text-text-tertiary hover:text-text-primary transition-colors"
+                      >
+                        <X size={12} />
+                      </button>
+                    )}
+                  </>
+                ) : (
+                  <button
+                    onClick={() => { setSearchOpen(true); setTimeout(() => searchInputRef.current?.focus(), 50); }}
+                    className="text-[13px] font-light text-text-tertiary cursor-pointer"
+                  >
+                    Найти проект...
+                  </button>
+                )}
               </div>
               <Button
                 onClick={() => setModalOpen(true)}
@@ -286,11 +322,24 @@ export default function DashboardPage() {
             <div className="flex items-center justify-center py-20">
               <Loader2 size={24} className="animate-spin text-text-tertiary" />
             </div>
-          ) : projects.length === 0 ? (
-            <EmptyState onCreateProject={() => setModalOpen(true)} />
+          ) : filteredProjects.length === 0 ? (
+            searchQuery ? (
+              <div className="flex flex-col items-center justify-center py-20 text-text-tertiary">
+                <Search size={32} className="mb-3 opacity-40" />
+                <p className="text-sm">Ничего не найдено по запросу «{searchQuery}»</p>
+                <button
+                  onClick={() => { setSearchQuery(""); setSearchOpen(false); }}
+                  className="mt-2 text-xs text-accent-primary hover:underline cursor-pointer"
+                >
+                  Сбросить поиск
+                </button>
+              </div>
+            ) : (
+              <EmptyState onCreateProject={() => setModalOpen(true)} />
+            )
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
-              {projects.map((project) => (
+              {filteredProjects.map((project) => (
                 <ProjectCard
                   key={project.id}
                   project={project}

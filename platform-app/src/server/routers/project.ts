@@ -40,6 +40,7 @@ export const projectRouter = createTRPCRouter({
         status: z
           .enum(["DRAFT", "IN_PROGRESS", "REVIEW", "PUBLISHED", "ARCHIVED"])
           .optional(),
+        search: z.string().optional(),
       })
     )
     .query(async ({ ctx, input }) => {
@@ -51,6 +52,9 @@ export const projectRouter = createTRPCRouter({
           workspaceId: input.workspaceId,
           ...(input.onlyMine && { createdById: ctx.user.id }),
           ...(input.status && { status: input.status }),
+          ...(input.search && {
+            name: { contains: input.search, mode: "insensitive" as const },
+          }),
         },
         select: {
           id: true,
