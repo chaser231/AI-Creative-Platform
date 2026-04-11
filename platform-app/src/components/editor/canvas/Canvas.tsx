@@ -1864,13 +1864,33 @@ export function Canvas({ stageRef }: CanvasProps) {
                     {hoveredLayerId && !selectedLayerIds.includes(hoveredLayerId) && (() => {
                         const hLayer = layers.find(l => l.id === hoveredLayerId);
                         if (!hLayer) return null;
+
+                        // Try to get real bounds from Konva node (handles auto-sized text etc.)
+                        let hx = hLayer.x;
+                        let hy = hLayer.y;
+                        let hw = hLayer.width;
+                        let hh = hLayer.height;
+                        let hr = hLayer.rotation || 0;
+
+                        const node = stageRef.current?.findOne("#" + hoveredLayerId);
+                        if (node) {
+                            const rect = node.getClientRect({ skipTransform: false, relativeTo: stageRef.current?.getLayers()[0] });
+                            if (rect && rect.width > 0 && rect.height > 0) {
+                                hx = rect.x;
+                                hy = rect.y;
+                                hw = rect.width;
+                                hh = rect.height;
+                                hr = 0; // getClientRect returns axis-aligned bounds, rotation already applied
+                            }
+                        }
+
                         return (
                             <Rect
-                                x={hLayer.x}
-                                y={hLayer.y}
-                                width={hLayer.width}
-                                height={hLayer.height}
-                                rotation={hLayer.rotation}
+                                x={hx}
+                                y={hy}
+                                width={hw}
+                                height={hh}
+                                rotation={hr}
                                 stroke="#6366F1"
                                 strokeWidth={1.5 / zoom}
                                 cornerRadius={hLayer.type === 'rectangle' ? (hLayer as any).cornerRadius || 0 : hLayer.type === 'frame' ? (hLayer as any).cornerRadius || 0 : 0}
