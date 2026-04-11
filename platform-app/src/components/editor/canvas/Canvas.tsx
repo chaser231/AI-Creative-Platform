@@ -111,7 +111,7 @@ function CanvasLayer({
                     text={layer.textTransform === "uppercase" ? layer.text.toUpperCase() : layer.textTransform === "lowercase" ? layer.text.toLowerCase() : layer.text}
                     fontSize={layer.fontSize}
                     fontFamily={layer.fontFamily}
-                    fontStyle={layer.fontWeight === "700" || layer.fontWeight === "bold" ? "bold" : layer.fontWeight === "600" ? "600" : "normal"}
+                    fontStyle={layer.fontWeight || "normal"}
                     fill={layer.fillEnabled === false ? "transparent" : layer.fill}
                     align={layer.align}
                     letterSpacing={layer.letterSpacing}
@@ -1480,6 +1480,16 @@ export function Canvas({ stageRef }: CanvasProps) {
         [editingLayerId, updateLayer, stopTextEditing]
     );
 
+    // Real-time text update during inline editing (every keystroke)
+    const handleTextEditUpdate = useCallback(
+        (text: string) => {
+            if (editingLayerId) {
+                updateLayer(editingLayerId, { text });
+            }
+        },
+        [editingLayerId, updateLayer]
+    );
+
     /* ─── File Drag & Drop ────────────────────────────── */
     const handleDragOver = useCallback((e: React.DragEvent) => {
         e.preventDefault();
@@ -1783,6 +1793,7 @@ export function Canvas({ stageRef }: CanvasProps) {
                     stageX={stageX}
                     stageY={stageY}
                     onCommit={handleTextEditCommit}
+                    onUpdate={handleTextEditUpdate}
                 />
             )}
 
