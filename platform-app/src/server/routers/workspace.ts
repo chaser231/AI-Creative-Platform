@@ -9,6 +9,7 @@ import { z } from "zod";
 import { createTRPCRouter, protectedProcedure, publicProcedure } from "../trpc";
 import { TRPCError } from "@trpc/server";
 import type { PrismaClient } from "@prisma/client";
+import { getModelById } from "@/lib/ai-models";
 
 // ─── RBAC HELPERS ────────────────────────────────────────
 
@@ -305,18 +306,65 @@ export const workspaceRouter = createTRPCRouter({
       return { success: true };
     }),
 
-  /** Leave a workspace */
+  /** Leave a workspace — with admin reassignment if needed */
   leave: protectedProcedure
-    .input(z.object({ workspaceId: z.string() }))
+    .input(z.object({
+      workspaceId: z.string(),
+      newAdminId: z.string().optional(), // required if user is last admin
+    }))
     .mutation(async ({ ctx, input }) => {
-      await ctx.prisma.workspaceMember.deleteMany({
+      const membership = await ctx.prisma.workspaceMember.findUnique({
         where: {
-          userId: ctx.user.id,
-          workspaceId: input.workspaceId,
+          userId_workspaceId: { userId: ctx.user.id, workspaceId: input.workspaceId },
         },
       });
+      if (!membership) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Вы не являетесь участником" });
+      }
 
-      return { success: true };
+      // If leaving user is an ADMIN, check if there are other admins
+      if (membership.role === "ADMIN") {
+        const otherAdmins = await ctx.prisma.workspaceMember.count({
+          where: {
+            workspaceId: input.workspaceId,
+            role: "ADMIN",
+            userId: { not: ctx.user.id },
+          },
+        });
+
+        if (otherAdmins === 0) {
+          // No other admins — must assign a new one
+          if (!input.newAdminId) {
+            // Check how many members remain
+            const totalMembers = await ctx.prisma.workspaceMember.count({
+              where: { workspaceId: input.workspaceId },
+            });
+            if (totalMembers <= 1) {
+              // Last member — just delete workspace
+              await ctx.prisma.workspace.delete({ where: { id: input.workspaceId } });
+              return { success: true, workspaceDeleted: true };
+            }
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message: "Вы единственный администратор. Назначьте нового админа перед уходом.",
+            });
+          }
+          // Promote the specified user to ADMIN
+          await ctx.prisma.workspaceMember.updateMany({
+            where: {
+              userId: input.newAdminId,
+              workspaceId: input.workspaceId,
+            },
+            data: { role: "ADMIN" },
+          });
+        }
+      }
+
+      await ctx.prisma.workspaceMember.delete({
+        where: { id: membership.id },
+      });
+
+      return { success: true, workspaceDeleted: false };
     }),
 
   /** Get workspace by ID (with membership check) */
@@ -412,6 +460,7 @@ export const workspaceRouter = createTRPCRouter({
         businessUnit: z.string().optional(),
         visibility: z.enum(["VISIBLE", "HIDDEN"]).optional(),
         joinPolicy: z.enum(["OPEN", "REQUEST", "INVITE_ONLY"]).optional(),
+        logoUrl: z.string().nullable().optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -511,7 +560,16 @@ export const workspaceRouter = createTRPCRouter({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      await requireRole(ctx.prisma, ctx.user.id, input.workspaceId, "ADMIN");
+      // SUPER_ADMIN can change roles in any workspace
+      const globalUser = await ctx.prisma.user.findUnique({
+        where: { id: ctx.user.id },
+        select: { role: true },
+      });
+      const isSuperAdmin = globalUser?.role === "SUPER_ADMIN";
+
+      if (!isSuperAdmin) {
+        await requireRole(ctx.prisma, ctx.user.id, input.workspaceId, "ADMIN");
+      }
 
       // Prevent self-demotion (so there's always at least one admin)
       const target = await ctx.prisma.workspaceMember.findUnique({
@@ -569,6 +627,88 @@ export const workspaceRouter = createTRPCRouter({
       });
 
       return { success: true };
+    }),
+
+  /** SUPER_ADMIN: promote self to ADMIN in any workspace (join if needed) */
+  selfPromoteAdmin: protectedProcedure
+    .input(z.object({ workspaceId: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      // Verify SUPER_ADMIN
+      const globalUser = await ctx.prisma.user.findUnique({
+        where: { id: ctx.user.id },
+        select: { role: true },
+      });
+      if (globalUser?.role !== "SUPER_ADMIN") {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Требуются права супер-администратора" });
+      }
+
+      // Upsert membership as ADMIN
+      await ctx.prisma.workspaceMember.upsert({
+        where: {
+          userId_workspaceId: { userId: ctx.user.id, workspaceId: input.workspaceId },
+        },
+        update: { role: "ADMIN" },
+        create: { userId: ctx.user.id, workspaceId: input.workspaceId, role: "ADMIN" },
+      });
+
+      return { success: true };
+    }),
+
+  /** Workspace statistics — any member can view */
+  stats: protectedProcedure
+    .input(z.object({ workspaceId: z.string() }))
+    .query(async ({ ctx, input }) => {
+      await requireRole(ctx.prisma, ctx.user.id, input.workspaceId, "VIEWER");
+
+      const [projectCount, memberCount, templateCount, trackedMessages] = await Promise.all([
+        ctx.prisma.project.count({ where: { workspaceId: input.workspaceId } }),
+        ctx.prisma.workspaceMember.count({ where: { workspaceId: input.workspaceId } }),
+        ctx.prisma.template.count({ where: { workspaceId: input.workspaceId } }),
+        // AI stats: get all messages from sessions tied to projects in this workspace
+        ctx.prisma.aIMessage.findMany({
+          where: {
+            role: "assistant",
+            model: { not: null },
+            session: {
+              project: { workspaceId: input.workspaceId },
+            },
+          },
+          select: { model: true, costUnits: true },
+        }),
+      ]);
+
+      // Count formats by counting resizes in canvasState
+      // Canvas structure: { resizes: [{id, name, width, height}, ...], layers: [...], ... }
+      const projects = await ctx.prisma.project.findMany({
+        where: { workspaceId: input.workspaceId },
+        select: { canvasState: true },
+      });
+      let formatCount = 0;
+      for (const p of projects) {
+        if (p.canvasState && typeof p.canvasState === "object") {
+          const state = p.canvasState as { resizes?: Array<{ id?: string }> };
+          if (Array.isArray(state.resizes)) {
+            // Each entry in resizes is a format (including master)
+            formatCount += state.resizes.length;
+          }
+        }
+      }
+
+      // Compute AI cost
+      let totalAICost = 0;
+      for (const msg of trackedMessages) {
+        const modelEntry = getModelById(msg.model ?? "");
+        totalAICost += modelEntry?.costPerRun ?? (msg.costUnits ?? 0);
+      }
+
+      return {
+        projectCount,
+        memberCount,
+        templateCount,
+        formatCount,
+        aiGenerations: trackedMessages.length,
+        totalAICost,
+      };
     }),
 
   /** Get public workspace info for invite page (no auth required) */

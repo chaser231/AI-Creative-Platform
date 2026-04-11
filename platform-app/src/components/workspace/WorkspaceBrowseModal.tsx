@@ -125,10 +125,14 @@ export function WorkspaceBrowseModal({ isOpen, onClose }: Props) {
                                 >
                                     <div className="flex items-center gap-3 min-w-0">
                                         {/* Avatar */}
-                                        <div className="flex items-center justify-center w-9 h-9 rounded-[var(--radius-lg)] bg-gradient-to-br from-accent-primary/20 to-accent-primary/5 shrink-0">
-                                            <span className="text-sm font-semibold text-accent-primary">
-                                                {ws.name.charAt(0).toUpperCase()}
-                                            </span>
+                                        <div className="flex items-center justify-center w-9 h-9 rounded-[var(--radius-lg)] bg-gradient-to-br from-accent-primary/20 to-accent-primary/5 shrink-0 overflow-hidden">
+                                            {ws.logoUrl ? (
+                                                <img src={ws.logoUrl} alt="" className="w-9 h-9 object-cover" />
+                                            ) : (
+                                                <span className="text-sm font-semibold text-accent-primary">
+                                                    {ws.name.charAt(0).toUpperCase()}
+                                                </span>
+                                            )}
                                         </div>
 
                                         <div className="min-w-0">

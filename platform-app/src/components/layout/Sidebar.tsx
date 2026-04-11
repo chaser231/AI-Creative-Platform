@@ -16,6 +16,7 @@ import {
     Compass,
     Plus,
     Sparkles,
+    Building2,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { UserMenu } from "@/components/auth/UserMenu";
@@ -28,13 +29,15 @@ interface NavItem {
     label: string;
     href: string;
     icon: React.ReactNode;
+    /** If true, only shown to ADMIN/CREATOR */
+    adminOnly?: boolean;
 }
 
 const navItems: NavItem[] = [
     { label: "Мои проекты", href: "/", icon: <LayoutDashboard size={18} /> },
     { label: "Все проекты", href: "/projects", icon: <FolderKanban size={18} /> },
     { label: "Шаблоны", href: "/templates", icon: <LayoutTemplate size={18} /> },
-    { label: "Команда", href: "/team", icon: <Users size={18} /> },
+    { label: "Воркспейс", href: "/settings/workspace", icon: <Building2 size={18} />, adminOnly: true },
     { label: "Настройки AI", href: "/settings/ai", icon: <Sparkles size={18} /> },
 ];
 
@@ -65,7 +68,7 @@ function wsGradient(name: string): string {
 
 export function Sidebar() {
     const pathname = usePathname();
-    const { workspaces, currentWorkspace, setWorkspaceId } = useWorkspace();
+    const { workspaces, currentWorkspace, setWorkspaceId, currentRole } = useWorkspace();
     const [wsDropdownOpen, setWsDropdownOpen] = useState(false);
     const dropdownRef = useRef<HTMLDivElement>(null);
 
@@ -110,12 +113,16 @@ export function Sidebar() {
                     >
                         <div className="flex items-center gap-2.5 min-w-0">
                             <div className={cn(
-                                "flex items-center justify-center w-8 h-8 rounded-[var(--radius-lg)] bg-gradient-to-br shrink-0",
+                                "flex items-center justify-center w-8 h-8 rounded-[var(--radius-lg)] bg-gradient-to-br shrink-0 overflow-hidden",
                                 wsGradient(currentWorkspace?.name || "AI")
                             )}>
-                                <span className="text-white text-sm font-semibold">
-                                    {(currentWorkspace?.name || "A").charAt(0).toUpperCase()}
-                                </span>
+                                {currentWorkspace?.logoUrl ? (
+                                    <img src={currentWorkspace.logoUrl} alt="" className="w-8 h-8 object-cover" />
+                                ) : (
+                                    <span className="text-white text-sm font-semibold">
+                                        {(currentWorkspace?.name || "A").charAt(0).toUpperCase()}
+                                    </span>
+                                )}
                             </div>
                             <div className="min-w-0 text-left">
                                 <p className="text-[13px] font-semibold text-text-primary truncate leading-tight">
@@ -157,10 +164,14 @@ export function Sidebar() {
                                 >
                                     <div className="flex items-center gap-2 min-w-0">
                                         <div className={cn(
-                                            "flex items-center justify-center w-5 h-5 rounded-[var(--radius-sm)] bg-gradient-to-br shrink-0 text-[9px] font-semibold text-white",
+                                            "flex items-center justify-center w-5 h-5 rounded-[var(--radius-sm)] bg-gradient-to-br shrink-0 text-[9px] font-semibold text-white overflow-hidden",
                                             wsGradient(ws.name)
                                         )}>
-                                            {ws.name.charAt(0).toUpperCase()}
+                                            {ws.logoUrl ? (
+                                                <img src={ws.logoUrl} alt="" className="w-5 h-5 object-cover" />
+                                            ) : (
+                                                ws.name.charAt(0).toUpperCase()
+                                            )}
                                         </div>
                                         <span className="truncate">{ws.name}</span>
                                         <span className="text-[9px] text-text-tertiary">
@@ -200,7 +211,9 @@ export function Sidebar() {
 
                 {/* Navigation */}
                 <nav className="flex-1 px-3 py-2 space-y-0.5 overflow-y-auto">
-                    {navItems.map((item) => {
+                    {navItems
+                    .filter((item) => !item.adminOnly || currentRole === "ADMIN" || currentRole === "CREATOR")
+                    .map((item) => {
                         const isActive =
                             item.href === "/"
                                 ? pathname === "/"

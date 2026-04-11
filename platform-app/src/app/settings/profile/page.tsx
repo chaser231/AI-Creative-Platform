@@ -95,23 +95,30 @@ export default function ProfileSettingsPage() {
 
     setAvatarUploading(true);
     try {
-      // Upload to S3 via the existing upload API
-      const formData = new FormData();
-      formData.append("file", file);
-      formData.append("type", "IMAGE");
+      // Read file as base64 data URL
+      const base64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
 
+      // Upload to S3 via the existing upload API (expects JSON with base64)
       const res = await fetch("/api/upload", {
         method: "POST",
-        body: formData,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          base64,
+          mimeType: file.type || "image/png",
+          projectId: "avatars",
+        }),
       });
 
       if (!res.ok) throw new Error("Upload failed");
 
       const data = await res.json();
-      const url = data.url || data.asset?.url;
-
-      if (url) {
-        updateProfileMutation.mutate({ avatarUrl: url });
+      if (data.url) {
+        updateProfileMutation.mutate({ avatarUrl: data.url });
       }
     } catch (err) {
       console.error("Avatar upload failed:", err);
