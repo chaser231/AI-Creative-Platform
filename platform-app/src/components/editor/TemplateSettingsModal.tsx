@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { Lock, Globe, Users, Check, X, Shield } from "lucide-react";
 import { Modal } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
+import { Textarea } from "@/components/ui/Textarea";
 import { trpc } from "@/lib/trpc";
 import type { TemplateVisibility, TemplateEditPermission } from "@/types";
 
@@ -93,12 +94,11 @@ export function TemplateSettingsModal({ open, templateId, onClose, onSaved }: Te
                     {/* Description */}
                     <div className="space-y-1.5">
                         <label className="text-[12px] font-medium text-text-secondary">Описание</label>
-                        <textarea
+                        <Textarea
                             value={description}
                             onChange={(e) => setDescription(e.target.value)}
                             disabled={!canEdit}
                             rows={2}
-                            className="w-full px-3 py-2 rounded-[var(--radius-md)] border border-border-primary bg-bg-secondary text-[13px] text-text-primary focus:outline-none focus:ring-1 focus:ring-accent-primary/50 resize-none disabled:opacity-50"
                         />
                     </div>
 

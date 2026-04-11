@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Select } from "@/components/ui/Select";
+import { Textarea } from "@/components/ui/Textarea";
 import { ReferenceImageInput } from "@/components/ui/ReferenceImageInput";
 import { ImageStylePresetPicker } from "@/components/ui/StylePresetPicker";
 import { getMaxRefs, resolveRefTags } from "@/lib/ai-models";
@@ -399,11 +400,11 @@ export function ImageEditorModal({ imageSrc, onApply, onClose }: ImageEditorModa
                                     {maskDrawn && (
                                         <button onClick={clearMask} className="text-[11px] text-text-secondary hover:text-text-primary cursor-pointer">Очистить маску</button>
                                     )}
-                                    <textarea
+                                    <Textarea
                                         placeholder="Что нарисовать в выделенной области?"
                                         value={editPrompt}
                                         onChange={(e) => setEditPrompt(e.target.value)}
-                                        className="w-full h-20 px-3 py-2 rounded-[var(--radius-md)] border border-border-primary bg-bg-primary text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-border-focus resize-none placeholder:text-text-tertiary"
+                                        className="h-20"
                                     />
                                     {/* Style Preset for inpaint */}
                                     <div>
@@ -434,11 +435,11 @@ export function ImageEditorModal({ imageSrc, onApply, onClose }: ImageEditorModa
 
                             {activeTool === "text-edit" && (
                                 <div className="pt-3 border-t border-border-primary space-y-3">
-                                    <textarea
+                                    <Textarea
                                         placeholder="Опишите изменения: «Сделай фон синим», «Добавь тень»..."
                                         value={editPrompt}
                                         onChange={(e) => setEditPrompt(e.target.value)}
-                                        className="w-full h-20 px-3 py-2 rounded-[var(--radius-md)] border border-border-primary bg-bg-primary text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-border-focus resize-none placeholder:text-text-tertiary"
+                                        className="h-20"
                                     />
                                     <div>
                                         <p className="text-[10px] font-medium text-text-secondary mb-1.5">Референсное фото (опционально)</p>
@@ -530,11 +531,11 @@ export function ImageEditorModal({ imageSrc, onApply, onClose }: ImageEditorModa
                                         </div>
                                     )}
                                     
-                                    <textarea
+                                    <Textarea
                                         placeholder="Описание расширенной области (опционально)..."
                                         value={editPrompt}
                                         onChange={(e) => setEditPrompt(e.target.value)}
-                                        className="w-full h-16 px-3 py-2 rounded-[var(--radius-md)] border border-border-primary bg-bg-primary text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-border-focus resize-none placeholder:text-text-tertiary"
+                                        className="h-16"
                                     />
                                     <button
                                         onClick={handleOutpaint}

@@ -19,6 +19,7 @@ import { AppShell } from "@/components/layout/AppShell";
 import { TopBar } from "@/components/layout/TopBar";
 import { SYSTEM_IMAGE_PRESETS, SYSTEM_TEXT_PRESETS, IMAGE_CATEGORY_LABELS, TEXT_CATEGORY_LABELS } from "@/lib/stylePresets";
 import { Select } from "@/components/ui/Select";
+import { Textarea } from "@/components/ui/Textarea";
 import type { ImageStylePreset, TextStylePreset, DBPresetConfig } from "@/lib/stylePresets";
 
 type PresetTab = "image" | "text";
@@ -379,12 +380,11 @@ export default function StylePresetsPage() {
                       Добавляется к промпту пользователя
                     </span>
                   </label>
-                  <textarea
+                  <Textarea
                     value={editing.promptSuffix}
                     onChange={(e) => setEditing({ ...editing, promptSuffix: e.target.value })}
                     placeholder="Professional studio photography, soft lighting, clean background..."
                     rows={3}
-                    className="w-full px-3 py-2 rounded-[var(--radius-lg)] border border-border-primary bg-bg-secondary text-sm text-text-primary resize-none focus:outline-none focus:ring-1 focus:ring-border-focus"
                   />
                 </div>
               ) : (
@@ -408,12 +408,11 @@ export default function StylePresetsPage() {
                           Системный промпт для генерации текста
                         </span>
                       </label>
-                      <textarea
+                      <Textarea
                         value={editing.instruction}
                         onChange={(e) => setEditing({ ...editing, instruction: e.target.value })}
                         placeholder="Пиши в таком-то стиле..."
                         rows={3}
-                        className="w-full px-3 py-2 rounded-[var(--radius-lg)] border border-border-primary bg-bg-secondary text-sm text-text-primary resize-none focus:outline-none focus:ring-1 focus:ring-border-focus"
                       />
                     </div>
                   </div>

@@ -11,6 +11,7 @@ import { TopBar } from "@/components/layout/TopBar";
 import { Modal } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
 import { Select } from "@/components/ui/Select";
+import { Textarea } from "@/components/ui/Textarea";
 import { trpc } from "@/lib/trpc";
 
 /* ─── Main Page ──────────────────────────────────────── */
@@ -393,11 +394,10 @@ export default function AdminTemplatesPage() {
                     </div>
                     <div>
                         <label className="text-xs font-medium text-text-secondary mb-1 block">Описание</label>
-                        <textarea
+                        <Textarea
                             value={editDesc}
                             onChange={(e) => setEditDesc(e.target.value)}
                             rows={3}
-                            className="w-full px-3 py-2 text-sm rounded-xl border border-border-primary bg-bg-secondary text-text-primary focus:outline-none focus:ring-2 focus:ring-accent-primary/20 transition-all resize-none"
                         />
                     </div>
 

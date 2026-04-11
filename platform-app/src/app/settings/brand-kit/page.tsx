@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Plus, Trash2, Save, Palette, Type as TypeIcon, Volume2 } from "lucide-react";
 import { useBrandKitStore } from "@/store/brandKitStore";
 import { Button } from "@/components/ui/Button";
+import { Textarea } from "@/components/ui/Textarea";
 import { AppShell } from "@/components/layout/AppShell";
 
 type BrandTab = "colors" | "typography" | "voice";
@@ -193,11 +194,10 @@ export default function BrandKitPage() {
                                 <p className="text-xs text-text-tertiary mb-3">
                                     Этот промпт автоматически добавляется во все ИИ-генерации текста. Опишите голос и тон вашего бренда.
                                 </p>
-                                <textarea
+                                <Textarea
                                     value={brandKit.toneOfVoice}
                                     onChange={(e) => setToneOfVoice(e.target.value)}
                                     rows={6}
-                                    className="w-full px-3 py-2 rounded-[var(--radius-md)] border border-border-primary bg-bg-secondary text-sm text-text-primary resize-none focus:outline-none focus:ring-2 focus:ring-border-focus"
                                 />
                             </div>
                             <div className="flex items-center gap-3 p-3 bg-purple-50 rounded-[var(--radius-md)] border border-purple-200">
