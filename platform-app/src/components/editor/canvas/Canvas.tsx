@@ -1178,10 +1178,23 @@ export function Canvas({ stageRef }: CanvasProps) {
                 const canvasY = (pointer.y - stage.y()) / stage.scaleY();
                 const targetId = target.id();
 
-                // Skip clip-bounds check if the target is already selected
+                // Skip clip-bounds check if:
+                // 1. The target layer is already selected (drag from outside clip)
+                // 2. The target is part of a Transformer (resize handles outside clip)
                 const isAlreadySelected = targetId && selectedLayerIds.includes(targetId);
 
-                if (!isAlreadySelected) {
+                // Walk up the parent chain to detect Transformer anchors
+                let isTransformerHandle = false;
+                let ancestor: Konva.Node | null = target;
+                while (ancestor && ancestor !== stage) {
+                    if (ancestor.getClassName() === 'Transformer') {
+                        isTransformerHandle = true;
+                        break;
+                    }
+                    ancestor = ancestor.getParent();
+                }
+
+                if (!isAlreadySelected && !isTransformerHandle) {
                     let shouldBlock = false;
 
                     // Check ARTBOARD clip
