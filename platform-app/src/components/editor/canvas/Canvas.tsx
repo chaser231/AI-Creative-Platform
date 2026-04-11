@@ -1248,6 +1248,46 @@ export function Canvas({ stageRef }: CanvasProps) {
             const startSceneX = (pointer.x - stage.x()) / stage.scaleX();
             const startSceneY = (pointer.y - stage.y()) / stage.scaleY();
 
+            // Figma-like: if clicking on the overflow area of a SELECTED layer
+            // (outside clip bounds but inside the layer's bounding box),
+            // keep the selection and initiate a drag instead of deselecting.
+            // This happens because Konva's clip Group blocks hit detection on
+            // overflow portions, making clicks there register as stage clicks.
+            if (selectedLayerIds.length > 0) {
+                for (const selId of selectedLayerIds) {
+                    const selLayer = layers.find(l => l.id === selId);
+                    if (selLayer) {
+                        // Use the layer's absolute position and dimensions
+                        const lx = selLayer.x;
+                        const ly = selLayer.y;
+                        const lw = selLayer.width;
+                        const lh = selLayer.height;
+                        if (
+                            startSceneX >= lx && startSceneX <= lx + lw &&
+                            startSceneY >= ly && startSceneY <= ly + lh
+                        ) {
+                            // Pointer is inside this selected layer's bounding box
+                            // Find the Konva node and start drag
+                            const node = stage.findOne("#" + selId);
+                            if (node) {
+                                node.startDrag(e.evt);
+                                isDragging.current = true;
+                                setStageDraggable(false);
+
+                                // Snapshot drag start positions
+                                const locs: Record<string, { x: number; y: number }> = {};
+                                selectedLayerIds.forEach(sid => {
+                                    const l = layers.find(lay => lay.id === sid);
+                                    if (l) locs[sid] = { x: l.x, y: l.y };
+                                });
+                                dragStartLocs.current = locs;
+                                return; // Don't deselect
+                            }
+                        }
+                    }
+                }
+            }
+
             setSelectionBox({
                 x: startSceneX,
                 y: startSceneY,
