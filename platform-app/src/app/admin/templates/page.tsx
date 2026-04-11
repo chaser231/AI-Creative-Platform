@@ -193,10 +193,10 @@ export default function AdminTemplatesPage() {
                         {/* Workspace filter */}
                         <Select
                             size="sm"
-                            value={wsFilter ?? ""}
-                            onChange={(val) => setWsFilter(val || null)}
+                            value={wsFilter ?? "__all__"}
+                            onChange={(val) => setWsFilter(val === "__all__" ? null : val)}
                             options={[
-                                { value: "", label: "Все воркспейсы" },
+                                { value: "__all__", label: "Все воркспейсы" },
                                 ...(workspaces?.map((ws) => ({ value: ws.id, label: ws.name })) ?? []),
                             ]}
                         />
@@ -204,12 +204,12 @@ export default function AdminTemplatesPage() {
                         {/* Official filter */}
                         <Select
                             size="sm"
-                            value={officialFilter === undefined ? "" : officialFilter ? "true" : "false"}
+                            value={officialFilter === undefined ? "__all__" : officialFilter ? "true" : "false"}
                             onChange={(val) => {
-                                setOfficialFilter(val === "" ? undefined : val === "true");
+                                setOfficialFilter(val === "__all__" ? undefined : val === "true");
                             }}
                             options={[
-                                { value: "", label: "Все" },
+                                { value: "__all__", label: "Все" },
                                 { value: "true", label: "⭐ Official" },
                                 { value: "false", label: "Пользовательские" },
                             ]}

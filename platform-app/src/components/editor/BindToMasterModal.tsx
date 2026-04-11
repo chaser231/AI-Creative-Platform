@@ -212,12 +212,12 @@ export function BindToMasterModal({ formatId, onClose }: BindToMasterModalProps)
                                 <div className="flex-1 min-w-0">
                                     <Select
                                         size="xs"
-                                        value={row.targetLayerId}
-                                        onChange={(val) => handleTargetChange(row.masterLayerId, val)}
+                                        value={row.targetLayerId || "__none__"}
+                                        onChange={(val) => handleTargetChange(row.masterLayerId, val === "__none__" ? "" : val)}
                                         disabled={!row.enabled}
                                         placeholder="— не привязан —"
                                         options={[
-                                            { value: "", label: "— не привязан —" },
+                                            { value: "__none__", label: "— не привязан —" },
                                             ...targetLayers
                                                 .filter(tl => tl.type === row.masterLayerType || row.masterLayerType === tl.type)
                                                 .map(tl => ({ value: tl.id, label: tl.name })),
