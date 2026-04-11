@@ -16,6 +16,7 @@ import {
     Compass,
     Plus,
     Sparkles,
+    Building2,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { UserMenu } from "@/components/auth/UserMenu";
@@ -28,13 +29,15 @@ interface NavItem {
     label: string;
     href: string;
     icon: React.ReactNode;
+    /** If true, only shown to ADMIN/CREATOR */
+    adminOnly?: boolean;
 }
 
 const navItems: NavItem[] = [
     { label: "Мои проекты", href: "/", icon: <LayoutDashboard size={18} /> },
     { label: "Все проекты", href: "/projects", icon: <FolderKanban size={18} /> },
     { label: "Шаблоны", href: "/templates", icon: <LayoutTemplate size={18} /> },
-    { label: "Команда", href: "/team", icon: <Users size={18} /> },
+    { label: "Воркспейс", href: "/settings/workspace", icon: <Building2 size={18} />, adminOnly: true },
     { label: "Настройки AI", href: "/settings/ai", icon: <Sparkles size={18} /> },
 ];
 
@@ -65,7 +68,7 @@ function wsGradient(name: string): string {
 
 export function Sidebar() {
     const pathname = usePathname();
-    const { workspaces, currentWorkspace, setWorkspaceId } = useWorkspace();
+    const { workspaces, currentWorkspace, setWorkspaceId, currentRole } = useWorkspace();
     const [wsDropdownOpen, setWsDropdownOpen] = useState(false);
     const dropdownRef = useRef<HTMLDivElement>(null);
 
@@ -200,7 +203,9 @@ export function Sidebar() {
 
                 {/* Navigation */}
                 <nav className="flex-1 px-3 py-2 space-y-0.5 overflow-y-auto">
-                    {navItems.map((item) => {
+                    {navItems
+                    .filter((item) => !item.adminOnly || currentRole === "ADMIN" || currentRole === "CREATOR")
+                    .map((item) => {
                         const isActive =
                             item.href === "/"
                                 ? pathname === "/"
