@@ -111,7 +111,7 @@ function CanvasLayer({
                     text={layer.textTransform === "uppercase" ? layer.text.toUpperCase() : layer.textTransform === "lowercase" ? layer.text.toLowerCase() : layer.text}
                     fontSize={layer.fontSize}
                     fontFamily={layer.fontFamily}
-                    fontStyle={layer.fontWeight === "700" || layer.fontWeight === "bold" ? "bold" : layer.fontWeight === "600" ? "600" : "normal"}
+                    fontStyle={layer.fontWeight || "normal"}
                     fill={layer.fillEnabled === false ? "transparent" : layer.fill}
                     align={layer.align}
                     letterSpacing={layer.letterSpacing}
@@ -294,6 +294,8 @@ function FrameLayerRenderer({
     const selectedLayerIds = useCanvasStore((s) => s.selectedLayerIds);
     const updateLayer = useCanvasStore((s) => s.updateLayer);
     const highlightedFrameId = useCanvasStore((s) => s.highlightedFrameId);
+    const isEditingText = useCanvasStore((s) => s.isEditingText);
+    const editingLayerId = useCanvasStore((s) => s.editingLayerId);
     const clipGroupRef = useRef<Konva.Group>(null);
     const childLayers = layer.childIds
         .map((id) => layers.find((l) => l.id === id))
@@ -454,7 +456,7 @@ function FrameLayerRenderer({
                         onDragEnd={onDragEnd}
                         onTransformEnd={handleChildTransformEnd}
                         onDblClickText={onDblClickText}
-                        isEditing={false}
+                        isEditing={isEditingText && editingLayerId === child.id}
                         isAutoLayoutChild={layer.layoutMode !== undefined && layer.layoutMode !== "none" && !child.isAbsolutePositioned}
                     />
                     );
@@ -1480,6 +1482,16 @@ export function Canvas({ stageRef }: CanvasProps) {
         [editingLayerId, updateLayer, stopTextEditing]
     );
 
+    // Real-time text update during inline editing (every keystroke)
+    const handleTextEditUpdate = useCallback(
+        (text: string) => {
+            if (editingLayerId) {
+                updateLayer(editingLayerId, { text });
+            }
+        },
+        [editingLayerId, updateLayer]
+    );
+
     /* ─── File Drag & Drop ────────────────────────────── */
     const handleDragOver = useCallback((e: React.DragEvent) => {
         e.preventDefault();
@@ -1783,6 +1795,7 @@ export function Canvas({ stageRef }: CanvasProps) {
                     stageX={stageX}
                     stageY={stageY}
                     onCommit={handleTextEditCommit}
+                    onUpdate={handleTextEditUpdate}
                 />
             )}
 
