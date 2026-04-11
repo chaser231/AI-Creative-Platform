@@ -149,7 +149,7 @@ export const aiRouter = createTRPCRouter({
 
   // ─── AI Presets ──────────────────────────────────────────
 
-  /** List AI presets for a workspace */
+  /** List AI presets for a workspace (workspace + own personal) */
   listPresets: protectedProcedure
     .input(
       z.object({
@@ -163,6 +163,13 @@ export const aiRouter = createTRPCRouter({
           workspaceId: input.workspaceId,
           ...(input.type && { type: input.type }),
           isActive: true,
+          OR: [
+            { visibility: "workspace" },
+            { createdById: ctx.user.id },
+          ],
+        },
+        include: {
+          createdBy: { select: { id: true, name: true } },
         },
         orderBy: [{ order: "asc" }, { name: "asc" }],
       });
@@ -180,11 +187,29 @@ export const aiRouter = createTRPCRouter({
         category: z.string().default("custom"),
         thumbnailUrl: z.string().optional(),
         order: z.number().default(0),
+        visibility: z.enum(["personal", "workspace"]).default("personal"),
       })
     )
     .mutation(async ({ ctx, input }) => {
+      // Only admins can create workspace-visible presets
+      if (input.visibility === "workspace") {
+        const membership = await ctx.prisma.workspaceMember.findUnique({
+          where: { userId_workspaceId: { userId: ctx.user.id, workspaceId: input.workspaceId } },
+          select: { role: true },
+        });
+        if (!membership || membership.role !== "ADMIN") {
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message: "Только админы могут создавать стили для всей команды",
+          });
+        }
+      }
+
       return ctx.prisma.aIPreset.create({
-        data: input,
+        data: {
+          ...input,
+          createdById: ctx.user.id,
+        },
       });
     }),
 
@@ -200,9 +225,33 @@ export const aiRouter = createTRPCRouter({
         category: z.string().optional(),
         thumbnailUrl: z.string().optional(),
         order: z.number().optional(),
+        visibility: z.enum(["personal", "workspace"]).optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
+      const preset = await ctx.prisma.aIPreset.findUnique({
+        where: { id: input.id },
+        select: { createdById: true, workspaceId: true },
+      });
+      if (!preset) throw new TRPCError({ code: "NOT_FOUND" });
+
+      // Check: only author or workspace admin can edit
+      const isAuthor = preset.createdById === ctx.user.id;
+      const membership = await ctx.prisma.workspaceMember.findUnique({
+        where: { userId_workspaceId: { userId: ctx.user.id, workspaceId: preset.workspaceId } },
+        select: { role: true },
+      });
+      const isWsAdmin = membership?.role === "ADMIN";
+
+      if (!isAuthor && !isWsAdmin) {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Нет прав для редактирования" });
+      }
+
+      // Non-admins can't set visibility to workspace
+      if (input.visibility === "workspace" && !isWsAdmin) {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Только админы могут делать стили публичными" });
+      }
+
       const { id, ...data } = input;
       return ctx.prisma.aIPreset.update({
         where: { id },
@@ -214,6 +263,24 @@ export const aiRouter = createTRPCRouter({
   deletePreset: protectedProcedure
     .input(z.object({ id: z.string() }))
     .mutation(async ({ ctx, input }) => {
+      const preset = await ctx.prisma.aIPreset.findUnique({
+        where: { id: input.id },
+        select: { createdById: true, workspaceId: true },
+      });
+      if (!preset) throw new TRPCError({ code: "NOT_FOUND" });
+
+      // Check: only author or workspace admin can delete
+      const isAuthor = preset.createdById === ctx.user.id;
+      const membership = await ctx.prisma.workspaceMember.findUnique({
+        where: { userId_workspaceId: { userId: ctx.user.id, workspaceId: preset.workspaceId } },
+        select: { role: true },
+      });
+      const isWsAdmin = membership?.role === "ADMIN";
+
+      if (!isAuthor && !isWsAdmin) {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Нет прав для удаления" });
+      }
+
       await ctx.prisma.aIPreset.delete({ where: { id: input.id } });
       return { success: true };
     }),
