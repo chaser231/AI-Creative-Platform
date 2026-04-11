@@ -11,6 +11,7 @@ import { trpc } from "@/lib/trpc";
 import { useWorkspace } from "@/providers/WorkspaceProvider";
 import { X, Loader2, Globe, Lock, Users, ShieldCheck } from "lucide-react";
 import { Select } from "@/components/ui/Select";
+import { SegmentedControl } from "@/components/ui/SegmentedControl";
 
 const BU_OPTIONS = [
     { value: "yandex-market", label: "Яндекс Маркет" },
@@ -163,30 +164,17 @@ export function CreateWorkspaceModal({ isOpen, onClose }: Props) {
                             <label className="text-[11px] text-text-tertiary uppercase tracking-wider font-medium mb-1.5 block">
                                 Видимость
                             </label>
-                            <div className="flex rounded-[var(--radius-lg)] border border-border-primary overflow-hidden">
-                                <button
-                                    type="button"
-                                    onClick={() => setVisibility("VISIBLE")}
-                                    className={`flex-1 flex items-center justify-center gap-1 py-2 text-[10px] font-medium transition-colors cursor-pointer ${
-                                        visibility === "VISIBLE"
-                                            ? "bg-accent-primary/10 text-accent-primary"
-                                            : "text-text-tertiary hover:text-text-primary hover:bg-bg-tertiary"
-                                    }`}
-                                >
-                                    <Globe size={10} /> Видима
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => setVisibility("HIDDEN")}
-                                    className={`flex-1 flex items-center justify-center gap-1 py-2 text-[10px] font-medium transition-colors cursor-pointer border-l border-border-primary ${
-                                        visibility === "HIDDEN"
-                                            ? "bg-accent-primary/10 text-accent-primary"
-                                            : "text-text-tertiary hover:text-text-primary hover:bg-bg-tertiary"
-                                    }`}
-                                >
-                                    <Lock size={10} /> Скрыта
-                                </button>
-                            </div>
+                            <SegmentedControl
+                                variant="bordered"
+                                size="sm"
+                                value={visibility}
+                                onChange={setVisibility}
+                                fullWidth
+                                options={[
+                                    { value: "VISIBLE", label: "Видима", icon: <Globe size={10} /> },
+                                    { value: "HIDDEN", label: "Скрыта", icon: <Lock size={10} /> },
+                                ]}
+                            />
                         </div>
 
                         <div>

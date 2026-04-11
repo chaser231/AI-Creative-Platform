@@ -22,6 +22,7 @@ import {
     Trash2, ShieldAlert, ArrowRight, Clock,
 } from "lucide-react";
 import { Select } from "@/components/ui/Select";
+import { SegmentedControl } from "@/components/ui/SegmentedControl";
 
 interface ExtendedWorkspace {
     id: string;
@@ -198,30 +199,16 @@ export default function WorkspaceSettingsPage() {
                         <div className="space-y-4 bg-bg-surface border border-border-primary rounded-[var(--radius-xl)] p-5">
                             <div>
                                 <label className="text-[11px] text-text-tertiary uppercase tracking-wider font-medium mb-1.5 block">Видимость</label>
-                                <div className="flex rounded-[var(--radius-lg)] border border-border-primary overflow-hidden">
-                                    <button
-                                        type="button"
-                                        onClick={() => setVisibility("VISIBLE")}
-                                        className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 text-xs font-medium transition-colors cursor-pointer ${
-                                            visibility === "VISIBLE"
-                                                ? "bg-accent-primary/10 text-accent-primary"
-                                                : "text-text-tertiary hover:text-text-primary hover:bg-bg-tertiary"
-                                        }`}
-                                    >
-                                        <Globe size={12} /> Видима в обзоре
-                                    </button>
-                                    <button
-                                        type="button"
-                                        onClick={() => setVisibility("HIDDEN")}
-                                        className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 text-xs font-medium transition-colors cursor-pointer border-l border-border-primary ${
-                                            visibility === "HIDDEN"
-                                                ? "bg-accent-primary/10 text-accent-primary"
-                                                : "text-text-tertiary hover:text-text-primary hover:bg-bg-tertiary"
-                                        }`}
-                                    >
-                                        <Lock size={12} /> Скрыта
-                                    </button>
-                                </div>
+                                <SegmentedControl
+                                    variant="bordered"
+                                    value={visibility}
+                                    onChange={setVisibility}
+                                    fullWidth
+                                    options={[
+                                        { value: "VISIBLE", label: "Видима в обзоре", icon: <Globe size={12} /> },
+                                        { value: "HIDDEN", label: "Скрыта", icon: <Lock size={12} /> },
+                                    ]}
+                                />
                                 <p className="text-[10px] text-text-tertiary mt-1.5">
                                     {visibility === "VISIBLE" ? "Команда видна в обзоре команд всем пользователям" : "Команда доступна только по приглашению"}
                                 </p>

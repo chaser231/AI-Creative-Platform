@@ -5,6 +5,7 @@ import { Plus, Trash2, Save, Palette, Type as TypeIcon, Volume2 } from "lucide-r
 import { useBrandKitStore } from "@/store/brandKitStore";
 import { Button } from "@/components/ui/Button";
 import { Textarea } from "@/components/ui/Textarea";
+import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import { AppShell } from "@/components/layout/AppShell";
 
 type BrandTab = "colors" | "typography" | "voice";
@@ -41,25 +42,12 @@ export default function BrandKitPage() {
                     </p>
 
                     {/* Tabs */}
-                    <div className="flex items-center gap-1 bg-bg-secondary rounded-[var(--radius-md)] p-1 mb-6 w-fit">
-                        {tabs.map((tab) => (
-                            <button
-                                key={tab.id}
-                                onClick={() => setActiveTab(tab.id)}
-                                className={`
-                                    flex items-center gap-2 px-4 py-2 rounded-[var(--radius-sm)] text-xs font-medium
-                                    transition-all cursor-pointer
-                                    ${activeTab === tab.id
-                                        ? "bg-bg-primary text-text-primary shadow-[var(--shadow-sm)]"
-                                        : "text-text-secondary hover:text-text-primary"
-                                    }
-                                `}
-                            >
-                                {tab.icon}
-                                {tab.label}
-                            </button>
-                        ))}
-                    </div>
+                    <SegmentedControl
+                        value={activeTab}
+                        onChange={setActiveTab}
+                        options={tabs.map((t) => ({ value: t.id, label: t.label, icon: t.icon }))}
+                        className="mb-6"
+                    />
 
                     {/* Colors */}
                     {activeTab === "colors" && (

@@ -20,6 +20,7 @@ import { TopBar } from "@/components/layout/TopBar";
 import { SYSTEM_IMAGE_PRESETS, SYSTEM_TEXT_PRESETS, IMAGE_CATEGORY_LABELS, TEXT_CATEGORY_LABELS } from "@/lib/stylePresets";
 import { Select } from "@/components/ui/Select";
 import { Textarea } from "@/components/ui/Textarea";
+import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import type { ImageStylePreset, TextStylePreset, DBPresetConfig } from "@/lib/stylePresets";
 
 type PresetTab = "image" | "text";
@@ -163,25 +164,11 @@ export default function StylePresetsPage() {
           </div>
 
           {/* Tabs */}
-          <div className="flex items-center gap-1 bg-bg-secondary rounded-[var(--radius-md)] p-1 w-fit">
-            {tabs.map((tab) => (
-              <button
-                key={tab.id}
-                onClick={() => { setActiveTab(tab.id); setEditing(null); }}
-                className={`
-                  flex items-center gap-2 px-4 py-2 rounded-[var(--radius-sm)] text-xs font-medium
-                  transition-all cursor-pointer
-                  ${activeTab === tab.id
-                    ? "bg-bg-primary text-text-primary shadow-[var(--shadow-sm)]"
-                    : "text-text-secondary hover:text-text-primary"
-                  }
-                `}
-              >
-                {tab.icon}
-                {tab.label}
-              </button>
-            ))}
-          </div>
+          <SegmentedControl
+            value={activeTab}
+            onChange={(val) => { setActiveTab(val as PresetTab); setEditing(null); }}
+            options={tabs.map((t) => ({ value: t.id, label: t.label, icon: t.icon }))}
+          />
 
           {/* ── System Presets (read-only) ── */}
           <section>
