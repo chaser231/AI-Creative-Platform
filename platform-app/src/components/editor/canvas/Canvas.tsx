@@ -42,6 +42,7 @@ interface CanvasLayerProps {
     onDblClickText: (layer: LayerType & { type: "text" }, node: Konva.Text) => void;
     isEditing: boolean;
     isAutoLayoutChild?: boolean;
+    onHover?: (layerId: string | null) => void;
 }
 
 function CanvasLayer({
@@ -56,6 +57,7 @@ function CanvasLayer({
     onDblClickText,
     isEditing,
     isAutoLayoutChild,
+    onHover,
 }: CanvasLayerProps) {
     const shapeRef = useRef<Konva.Shape>(null);
     const groupRef = useRef<Konva.Group>(null);
@@ -87,7 +89,9 @@ function CanvasLayer({
                 (e.evt as any)._isDeepSelect = true;
                 onSelect(e);
             }
-        }
+        },
+        onMouseEnter: () => onHover?.(layer.id),
+        onMouseLeave: () => onHover?.(null),
     };
 
     return (
@@ -157,6 +161,7 @@ function CanvasLayer({
                     onTransformEnd={onTransformEnd}
                     onDblClickText={onDblClickText}
                     isEditing={isEditing}
+                    onHover={onHover}
                 />
             )}
         </>
@@ -272,6 +277,7 @@ function FrameLayerRenderer({
     onTransformEnd,
     onDblClickText,
     isEditing,
+    onHover,
 }: {
     groupRef: React.RefObject<Konva.Group | null>;
     layer: FrameLayer;
@@ -289,6 +295,7 @@ function FrameLayerRenderer({
     onTransformEnd: (e: Konva.KonvaEventObject<any>) => void;
     onDblClickText: (layer: LayerType & { type: "text" }, node: Konva.Text) => void;
     isEditing: boolean;
+    onHover?: (layerId: string | null) => void;
 }) {
     const layers = useCanvasStore((s) => s.layers);
     const selectedLayerIds = useCanvasStore((s) => s.selectedLayerIds);
@@ -458,6 +465,7 @@ function FrameLayerRenderer({
                         onDblClickText={onDblClickText}
                         isEditing={isEditingText && editingLayerId === child.id}
                         isAutoLayoutChild={layer.layoutMode !== undefined && layer.layoutMode !== "none" && !child.isAbsolutePositioned}
+                        onHover={onHover}
                     />
                     );
                 })}
@@ -502,6 +510,7 @@ export function Canvas({ stageRef }: CanvasProps) {
     const [stageDraggable, setStageDraggable] = useState(true);
     const [isDraggingFile, setIsDraggingFile] = useState(false);
     const [contextMenu, setContextMenu] = useState<{ x: number; y: number; layerIds: string[] } | null>(null);
+    const [hoveredLayerId, setHoveredLayerId] = useState<string | null>(null);
 
     // Marquee State
     const [selectionBox, setSelectionBox] = useState<{ x: number; y: number; width: number; height: number; startX: number; startY: number } | null>(null);
@@ -702,6 +711,7 @@ export function Canvas({ stageRef }: CanvasProps) {
     const handleLayerDragStart = useCallback((e: Konva.KonvaEventObject<DragEvent>) => {
         setStageDraggable(false);
         isDragging.current = true;
+        setHoveredLayerId(null); // Clear hover during drag
         let id = e.target.id();
 
         // Block drag if the grab point is outside a clipped parent's bounds
@@ -1803,6 +1813,7 @@ export function Canvas({ stageRef }: CanvasProps) {
                                     onTransform={handleTransform}
                                     onDblClickText={handleDblClickText}
                                     isEditing={isEditingText && editingLayerId === layer.id}
+                                    onHover={setHoveredLayerId}
                                 />
                             ))}
                             </Group>
@@ -1832,6 +1843,7 @@ export function Canvas({ stageRef }: CanvasProps) {
                                     onTransform={handleTransform}
                                     onDblClickText={handleDblClickText}
                                     isEditing={isEditingText && editingLayerId === layer.id}
+                                    onHover={setHoveredLayerId}
                                 />
                             ))}
                         </>
@@ -1844,6 +1856,26 @@ export function Canvas({ stageRef }: CanvasProps) {
                         spacingGuides={spacingGuides}
                         selectionBox={selectionBox}
                     />
+
+                    {/* Hover Outline (Figma-like) */}
+                    {hoveredLayerId && !selectedLayerIds.includes(hoveredLayerId) && (() => {
+                        const hLayer = layers.find(l => l.id === hoveredLayerId);
+                        if (!hLayer) return null;
+                        return (
+                            <Rect
+                                x={hLayer.x}
+                                y={hLayer.y}
+                                width={hLayer.width}
+                                height={hLayer.height}
+                                rotation={hLayer.rotation}
+                                stroke="#6366F1"
+                                strokeWidth={1.5 / zoom}
+                                cornerRadius={hLayer.type === 'rectangle' ? (hLayer as any).cornerRadius || 0 : hLayer.type === 'frame' ? (hLayer as any).cornerRadius || 0 : 0}
+                                listening={false}
+                                perfectDrawEnabled={false}
+                            />
+                        );
+                    })()}
 
                     {/* Selection Transformer */}
                     <SelectionTransformer selectedLayerIds={selectedLayerIds} stageRef={stageRef} excludeIds={frameChildIds} />
