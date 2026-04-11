@@ -7,6 +7,15 @@ const nextConfig: NextConfig = {
     // your project has ESLint errors.
     ignoreDuringBuilds: true,
   },
+  images: {
+    remotePatterns: [
+      {
+        protocol: "https",
+        hostname: "storage.yandexcloud.net",
+        pathname: "/acp-assets/**",
+      },
+    ],
+  },
 };
 
 export default nextConfig;
