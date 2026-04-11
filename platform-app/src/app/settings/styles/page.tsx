@@ -6,12 +6,17 @@
  * Workspace-scoped CRUD for custom image and text generation styles.
  * System presets are displayed (non-editable), custom presets can be
  * created, edited, and deleted.
+ *
+ * Visibility:
+ *  - "personal" → only visible to the creator
+ *  - "workspace" → visible to all workspace members (admin-only)
  */
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import {
-  Plus, Trash2, Pencil, Palette, Type as TypeIcon,
-  Loader2, Check, X, ImageIcon, Save,
+  Plus, Trash2, Pencil, Type as TypeIcon,
+  Loader2, X, ImageIcon, Save, User, Users,
+  Globe, Lock,
 } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { useWorkspace } from "@/providers/WorkspaceProvider";
@@ -24,6 +29,7 @@ import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import type { ImageStylePreset, TextStylePreset, DBPresetConfig } from "@/lib/stylePresets";
 
 type PresetTab = "image" | "text";
+type Visibility = "personal" | "workspace";
 
 interface EditingPreset {
   id?: string;           // undefined = new preset
@@ -34,16 +40,17 @@ interface EditingPreset {
   category: string;
   icon: string;
   type: PresetTab;
+  visibility: Visibility;
 }
 
 const EMPTY_IMAGE_PRESET: EditingPreset = {
   name: "", description: "", promptSuffix: "", instruction: "",
-  category: "custom", icon: "🎨", type: "image",
+  category: "custom", icon: "🎨", type: "image", visibility: "personal",
 };
 
 const EMPTY_TEXT_PRESET: EditingPreset = {
   name: "", description: "", promptSuffix: "", instruction: "",
-  category: "custom", icon: "✨", type: "text",
+  category: "custom", icon: "✨", type: "text", visibility: "personal",
 };
 
 export default function StylePresetsPage() {
@@ -53,6 +60,10 @@ export default function StylePresetsPage() {
   const [activeTab, setActiveTab] = useState<PresetTab>("image");
   const [editing, setEditing] = useState<EditingPreset | null>(null);
   const [deleteId, setDeleteId] = useState<string | null>(null);
+
+  // ─── Current user ────────────────────────────────────────
+  const meQuery = trpc.auth.me.useQuery(undefined, { refetchOnWindowFocus: false });
+  const myUserId = meQuery.data?.id;
 
   // ─── tRPC queries ─────────────────────────────────────────
   const imagePresetsQ = trpc.ai.listPresets.useQuery(
@@ -92,6 +103,7 @@ export default function StylePresetsPage() {
         description: editing.description.trim(),
         config,
         category: editing.category,
+        visibility: editing.visibility,
       });
     } else {
       // Create new
@@ -102,6 +114,7 @@ export default function StylePresetsPage() {
         type: editing.type,
         config,
         category: editing.category,
+        visibility: editing.visibility,
       });
     }
     setEditing(null);
@@ -131,7 +144,13 @@ export default function StylePresetsPage() {
       category: p.category,
       icon: cfg?.icon ?? "🎨",
       type: p.type as PresetTab,
+      visibility: (p.visibility as Visibility) || "workspace",
     });
+  };
+
+  // Can user edit/delete this preset?
+  const canManagePreset = (preset: DBPreset) => {
+    return isAdmin || preset.createdById === myUserId;
   };
 
   const tabs: { id: PresetTab; label: string; icon: React.ReactNode }[] = [
@@ -158,8 +177,7 @@ export default function StylePresetsPage() {
           <div>
             <h1 className="text-2xl font-bold text-text-primary mb-1">AI Стили генерации</h1>
             <p className="text-sm text-text-secondary">
-              Настройте стили генерации для вашего воркспейса. Кастомные стили доступны во всех
-              AI-инструментах: баре, мастере и AI-редакторе.
+              Настройте стили генерации. Личные стили видны только вам, командные — всем участникам воркспейса.
             </p>
           </div>
 
@@ -220,21 +238,22 @@ export default function StylePresetsPage() {
                   {activeTab === "image" ? customImagePresets.length : customTextPresets.length} шт.
                 </span>
               </h2>
-              {isAdmin && (
-                <button
-                  onClick={() => setEditing(activeTab === "image" ? { ...EMPTY_IMAGE_PRESET } : { ...EMPTY_TEXT_PRESET })}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-[var(--radius-md)] text-xs font-medium text-accent-primary bg-accent-primary/10 hover:bg-accent-primary/20 transition-colors cursor-pointer"
-                >
-                  <Plus size={14} />
-                  Добавить стиль
-                </button>
-              )}
+              {/* Everyone can create styles (personal by default) */}
+              <button
+                onClick={() => setEditing(activeTab === "image" ? { ...EMPTY_IMAGE_PRESET } : { ...EMPTY_TEXT_PRESET })}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-[var(--radius-md)] text-xs font-medium text-accent-primary bg-accent-primary/10 hover:bg-accent-primary/20 transition-colors cursor-pointer"
+              >
+                <Plus size={14} />
+                Добавить стиль
+              </button>
             </div>
 
             {/* List of custom presets */}
             <div className="space-y-2">
               {(activeTab === "image" ? customImagePresets : customTextPresets).map((preset) => {
                 const cfg = preset.config as DBPresetConfig;
+                const isPersonal = preset.visibility === "personal";
+                const authorName = (preset as unknown as { createdBy?: { name: string } }).createdBy?.name;
                 return (
                   <div
                     key={preset.id}
@@ -253,14 +272,33 @@ export default function StylePresetsPage() {
 
                     {/* Content */}
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-text-primary truncate">{preset.name}</p>
-                      <p className="text-[10px] text-text-tertiary truncate">
-                        {activeTab === "image" ? cfg?.promptSuffix : cfg?.instruction}
-                      </p>
+                      <div className="flex items-center gap-2">
+                        <p className="text-sm font-medium text-text-primary truncate">{preset.name}</p>
+                        {/* Visibility badge */}
+                        {isPersonal ? (
+                          <span className="flex items-center gap-0.5 text-[9px] font-medium text-violet-500 bg-violet-500/10 px-1.5 py-0.5 rounded-full shrink-0">
+                            <User size={8} /> Личный
+                          </span>
+                        ) : (
+                          <span className="flex items-center gap-0.5 text-[9px] font-medium text-emerald-500 bg-emerald-500/10 px-1.5 py-0.5 rounded-full shrink-0">
+                            <Globe size={8} /> Для всех
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2 mt-0.5">
+                        <p className="text-[10px] text-text-tertiary truncate">
+                          {activeTab === "image" ? cfg?.promptSuffix : cfg?.instruction}
+                        </p>
+                        {authorName && (
+                          <span className="text-[9px] text-text-tertiary/60 shrink-0">
+                            · {authorName}
+                          </span>
+                        )}
+                      </div>
                     </div>
 
-                    {/* Actions */}
-                    {isAdmin && (
+                    {/* Actions — visible to author or admin */}
+                    {canManagePreset(preset) && (
                       <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
                         <button
                           onClick={() => editFromDB(preset)}
@@ -343,6 +381,46 @@ export default function StylePresetsPage() {
                           ]
                     }
                   />
+                </div>
+              </div>
+
+              {/* Visibility selector */}
+              <div>
+                <label className="text-[11px] text-text-tertiary uppercase tracking-wider font-medium mb-1.5 block">
+                  Видимость
+                </label>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setEditing({ ...editing, visibility: "personal" })}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-[var(--radius-lg)] border text-xs font-medium transition-all cursor-pointer ${
+                      editing.visibility === "personal"
+                        ? "border-violet-500/40 bg-violet-500/10 text-violet-600 dark:text-violet-400"
+                        : "border-border-primary bg-bg-secondary text-text-secondary hover:border-border-secondary"
+                    }`}
+                  >
+                    <User size={13} />
+                    Только для меня
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (isAdmin) {
+                        setEditing({ ...editing, visibility: "workspace" });
+                      }
+                    }}
+                    disabled={!isAdmin}
+                    title={!isAdmin ? "Только админы могут создавать стили для всей команды" : ""}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-[var(--radius-lg)] border text-xs font-medium transition-all ${
+                      editing.visibility === "workspace"
+                        ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 cursor-pointer"
+                        : !isAdmin
+                          ? "border-border-primary bg-bg-secondary text-text-tertiary opacity-50 cursor-not-allowed"
+                          : "border-border-primary bg-bg-secondary text-text-secondary hover:border-border-secondary cursor-pointer"
+                    }`}
+                  >
+                    <Users size={13} />
+                    Для всей команды
+                    {!isAdmin && <Lock size={10} className="text-text-tertiary" />}
+                  </button>
                 </div>
               </div>
 

@@ -34,6 +34,7 @@ model User {
   aiWorkflows  AIWorkflow[] @relation("WorkflowCreator")
   joinRequests JoinRequest[]
   sharedTemplates TemplateShare[]
+  aiPresets    AIPreset[]  @relation("PresetCreator")
 }
 
 model Account {
@@ -348,6 +349,7 @@ model AIPreset {
   category    String  @default("custom")  // photography, digital, artistic, tone, length, custom
   thumbnailUrl String?
   order       Int     @default(0)
+  visibility  String  @default("workspace") // "personal" | "workspace"
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -355,7 +357,11 @@ model AIPreset {
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   workspaceId String
 
-  @@index([workspaceId, type, isActive])
+  createdBy   User?    @relation("PresetCreator", fields: [createdById], references: [id])
+  createdById String?
+
+  @@index([workspaceId, type, isActive, visibility])
+  @@index([createdById])
 }
 
 model AISession {
