@@ -240,9 +240,26 @@ export default function WorkspaceSettingsPage() {
     if (!file || !currentWorkspace) return;
     setUploading(true);
     try {
-      const formData = new FormData();
-      formData.append("file", file);
-      const res = await fetch("/api/upload", { method: "POST", body: formData });
+      // Read file as base64 data URL
+      const base64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+
+      const res = await fetch("/api/upload", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          base64,
+          mimeType: file.type || "image/png",
+          projectId: "workspace-logos",
+        }),
+      });
+
+      if (!res.ok) throw new Error("Upload failed");
+
       const data = await res.json();
       if (data.url) {
         setLogoUrl(data.url);

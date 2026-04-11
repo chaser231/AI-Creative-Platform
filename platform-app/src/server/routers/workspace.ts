@@ -643,7 +643,8 @@ export const workspaceRouter = createTRPCRouter({
         }),
       ]);
 
-      // Count formats by parsing canvasState JSON for artboards
+      // Count formats by counting resizes in canvasState
+      // Canvas structure: { resizes: [{id, name, width, height}, ...], layers: [...], ... }
       const projects = await ctx.prisma.project.findMany({
         where: { workspaceId: input.workspaceId },
         select: { canvasState: true },
@@ -651,9 +652,10 @@ export const workspaceRouter = createTRPCRouter({
       let formatCount = 0;
       for (const p of projects) {
         if (p.canvasState && typeof p.canvasState === "object") {
-          const state = p.canvasState as { objects?: Array<{ type?: string }> };
-          if (Array.isArray(state.objects)) {
-            formatCount += state.objects.filter((o: { type?: string }) => o.type === "artboard").length;
+          const state = p.canvasState as { resizes?: Array<{ id?: string }> };
+          if (Array.isArray(state.resizes)) {
+            // Each entry in resizes is a format (including master)
+            formatCount += state.resizes.length;
           }
         }
       }
