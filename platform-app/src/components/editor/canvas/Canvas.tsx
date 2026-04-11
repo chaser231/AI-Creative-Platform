@@ -294,6 +294,8 @@ function FrameLayerRenderer({
     const selectedLayerIds = useCanvasStore((s) => s.selectedLayerIds);
     const updateLayer = useCanvasStore((s) => s.updateLayer);
     const highlightedFrameId = useCanvasStore((s) => s.highlightedFrameId);
+    const isEditingText = useCanvasStore((s) => s.isEditingText);
+    const editingLayerId = useCanvasStore((s) => s.editingLayerId);
     const clipGroupRef = useRef<Konva.Group>(null);
     const childLayers = layer.childIds
         .map((id) => layers.find((l) => l.id === id))
@@ -454,7 +456,7 @@ function FrameLayerRenderer({
                         onDragEnd={onDragEnd}
                         onTransformEnd={handleChildTransformEnd}
                         onDblClickText={onDblClickText}
-                        isEditing={false}
+                        isEditing={isEditingText && editingLayerId === child.id}
                         isAutoLayoutChild={layer.layoutMode !== undefined && layer.layoutMode !== "none" && !child.isAbsolutePositioned}
                     />
                     );
