@@ -383,7 +383,7 @@ export function ImageEditorModal({ imageSrc, onApply, onClose }: ImageEditorModa
                                     <button
                                         onClick={handleRemoveBg}
                                         disabled={isProcessing}
-                                        className="w-full h-10 flex items-center justify-center gap-2 rounded-[var(--radius-md)] bg-accent-lime text-accent-primary font-semibold text-sm hover:bg-accent-lime-hover disabled:opacity-50 transition-all cursor-pointer disabled:cursor-default"
+                                        className="w-full h-10 flex items-center justify-center gap-2 rounded-[var(--radius-md)] bg-accent-lime text-text-inverse font-semibold text-sm hover:bg-accent-lime-hover disabled:opacity-50 transition-all cursor-pointer disabled:cursor-default"
                                     >
                                         {isProcessing ? <Loader2 size={16} className="animate-spin" /> : <Eraser size={16} />}
                                         {isProcessing ? "Удаляю фон..." : "Удалить фон"}
@@ -419,7 +419,7 @@ export function ImageEditorModal({ imageSrc, onApply, onClose }: ImageEditorModa
                                     <button
                                         onClick={handleInpaint}
                                         disabled={isProcessing || !editPrompt.trim()}
-                                        className="w-full h-10 flex items-center justify-center gap-2 rounded-[var(--radius-md)] bg-accent-lime text-accent-primary font-semibold text-sm hover:bg-accent-lime-hover disabled:opacity-50 transition-all cursor-pointer disabled:cursor-default"
+                                        className="w-full h-10 flex items-center justify-center gap-2 rounded-[var(--radius-md)] bg-accent-lime text-text-inverse font-semibold text-sm hover:bg-accent-lime-hover disabled:opacity-50 transition-all cursor-pointer disabled:cursor-default"
                                     >
                                         {isProcessing ? <Loader2 size={16} className="animate-spin" /> : <Paintbrush size={16} />}
                                         {isProcessing ? "Рисую..." : "Применить Inpaint"}
@@ -463,7 +463,7 @@ export function ImageEditorModal({ imageSrc, onApply, onClose }: ImageEditorModa
                                     <button
                                         onClick={handleTextEdit}
                                         disabled={isProcessing || !editPrompt.trim()}
-                                        className="w-full h-10 flex items-center justify-center gap-2 rounded-[var(--radius-md)] bg-accent-lime text-accent-primary font-semibold text-sm hover:bg-accent-lime-hover disabled:opacity-50 transition-all cursor-pointer disabled:cursor-default"
+                                        className="w-full h-10 flex items-center justify-center gap-2 rounded-[var(--radius-md)] bg-accent-lime text-text-inverse font-semibold text-sm hover:bg-accent-lime-hover disabled:opacity-50 transition-all cursor-pointer disabled:cursor-default"
                                     >
                                         {isProcessing ? <Loader2 size={16} className="animate-spin" /> : <Type size={16} />}
                                         {isProcessing ? "Редактирую..." : "Применить"}
@@ -498,7 +498,7 @@ export function ImageEditorModal({ imageSrc, onApply, onClose }: ImageEditorModa
                                                         onClick={() => setOutpaintRatio(r.id)}
                                                         className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all cursor-pointer ${
                                                             outpaintRatio === r.id
-                                                                ? "bg-accent-lime text-accent-primary"
+                                                                ? "bg-accent-lime text-text-inverse"
                                                                 : "bg-bg-primary border border-border-primary text-text-secondary hover:bg-bg-tertiary"
                                                         }`}
                                                     >
@@ -540,7 +540,7 @@ export function ImageEditorModal({ imageSrc, onApply, onClose }: ImageEditorModa
                                     <button
                                         onClick={handleOutpaint}
                                         disabled={isProcessing || (outpaintMode === "padding" && Object.values(outpaintPadding).every(v => v === 0))}
-                                        className="w-full h-10 flex items-center justify-center gap-2 rounded-[var(--radius-md)] bg-accent-lime text-accent-primary font-semibold text-sm hover:bg-accent-lime-hover disabled:opacity-50 transition-all cursor-pointer disabled:cursor-default"
+                                        className="w-full h-10 flex items-center justify-center gap-2 rounded-[var(--radius-md)] bg-accent-lime text-text-inverse font-semibold text-sm hover:bg-accent-lime-hover disabled:opacity-50 transition-all cursor-pointer disabled:cursor-default"
                                     >
                                         {isProcessing ? <Loader2 size={16} className="animate-spin" /> : <Expand size={16} />}
                                         {isProcessing ? "Расширяю..." : (outpaintMode === "ratio" ? `Расширить до ${outpaintRatio}` : "Сгенерировать области")}

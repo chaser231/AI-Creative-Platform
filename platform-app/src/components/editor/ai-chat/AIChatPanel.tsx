@@ -865,7 +865,7 @@ export function AIChatPanel({ open, onClose, messages, onAddMessages, projectId 
                                 <button
                                     onClick={handleSend}
                                     disabled={!input.trim() || isThinking}
-                                    className="p-1.5 bg-[#BEF264] hover:bg-[#a3e635] disabled:opacity-30 disabled:cursor-not-allowed text-black rounded-lg transition-colors cursor-pointer flex items-center justify-center w-8 h-8"
+                                    className="p-1.5 bg-accent-lime-hover hover:bg-accent-lime disabled:opacity-30 disabled:cursor-not-allowed text-text-inverse rounded-lg transition-colors cursor-pointer flex items-center justify-center w-8 h-8"
                                 >
                                     <Send size={15} className="-ml-0.5" />
                                 </button>

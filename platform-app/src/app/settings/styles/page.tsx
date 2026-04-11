@@ -411,7 +411,7 @@ export default function StylePresetsPage() {
                 <button
                   onClick={handleSave}
                   disabled={isSaving || !editing.name.trim()}
-                  className="h-10 px-6 flex items-center gap-2 bg-accent-primary text-white rounded-[var(--radius-lg)] text-sm font-medium hover:bg-accent-primary/90 transition-colors disabled:opacity-50 cursor-pointer"
+                  className="h-10 px-6 flex items-center gap-2 bg-accent-primary text-text-inverse rounded-[var(--radius-lg)] text-sm font-medium hover:bg-accent-primary/90 transition-colors disabled:opacity-50 cursor-pointer"
                 >
                   {isSaving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
                   {editing.id ? "Сохранить" : "Создать"}

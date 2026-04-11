@@ -463,7 +463,7 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                             className={`
                                 flex items-center justify-center w-10 h-10 rounded-full
                                 transition-all duration-200 cursor-pointer
-                                bg-[#BEF264] hover:bg-[#a3e635] text-black
+                                bg-accent-lime-hover hover:bg-accent-lime text-text-inverse
                                 hover:scale-105 active:scale-95
                                 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100
                                 shadow-sm hover:shadow-md

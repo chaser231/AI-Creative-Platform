@@ -70,7 +70,7 @@ export function TextGroupSlot({
                     onClick={() => setShowGroupGen(!showGroupGen)}
                     className={`flex items-center gap-1.5 px-2 py-1 text-[11px] font-medium rounded-[var(--radius-sm)] border transition-all cursor-pointer ${
                         showGroupGen
-                            ? "bg-accent-lime text-accent-primary border-accent-lime-hover"
+                            ? "bg-accent-lime text-text-inverse border-accent-lime-hover"
                             : "bg-bg-secondary text-text-secondary border-border-primary hover:bg-bg-tertiary"
                     }`}
                 >
@@ -94,7 +94,7 @@ export function TextGroupSlot({
                         <button
                             onClick={handleGroupGenerate}
                             disabled={isGenerating}
-                            className="h-9 px-4 rounded-[var(--radius-md)] bg-accent-lime text-accent-primary font-semibold text-xs hover:bg-accent-lime-hover disabled:opacity-50 transition-all cursor-pointer disabled:cursor-default shrink-0 flex items-center gap-1.5"
+                            className="h-9 px-4 rounded-[var(--radius-md)] bg-accent-lime text-text-inverse font-semibold text-xs hover:bg-accent-lime-hover disabled:opacity-50 transition-all cursor-pointer disabled:cursor-default shrink-0 flex items-center gap-1.5"
                         >
                             {isGenerating ? <div className="animate-spin text-xs">⟳</div> : <Sparkles size={14} />}
                             {isGenerating ? "..." : "Связка"}

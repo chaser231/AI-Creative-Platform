@@ -205,7 +205,7 @@ export function CreateWorkspaceModal({ isOpen, onClose }: Props) {
                     <button
                         type="submit"
                         disabled={createMutation.isPending || !name.trim() || !slug.trim()}
-                        className="w-full h-10 flex items-center justify-center gap-2 bg-accent-primary text-white rounded-[var(--radius-lg)] text-sm font-medium hover:bg-accent-primary/90 transition-colors disabled:opacity-50 cursor-pointer"
+                        className="w-full h-10 flex items-center justify-center gap-2 bg-accent-primary text-text-inverse rounded-[var(--radius-lg)] text-sm font-medium hover:bg-accent-primary/90 transition-colors disabled:opacity-50 cursor-pointer"
                     >
                         {createMutation.isPending ? (
                             <Loader2 size={14} className="animate-spin" />

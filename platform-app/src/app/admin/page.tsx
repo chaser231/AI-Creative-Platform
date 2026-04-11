@@ -176,7 +176,7 @@ function CostAnalyticsSection({ data, period, onPeriodChange, customFrom, custom
                         onClick={() => setTab(t.id)}
                         className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
                             tab === t.id
-                                ? "bg-accent-primary text-white"
+                                ? "bg-accent-primary text-text-inverse"
                                 : "bg-bg-secondary text-text-tertiary hover:text-text-primary"
                         }`}
                     >

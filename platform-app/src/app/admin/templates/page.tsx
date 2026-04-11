@@ -414,7 +414,7 @@ export default function AdminTemplatesPage() {
                                             active ? prev.filter(c => c !== opt.value) : [...prev, opt.value]
                                         )}
                                         className={`px-2.5 py-1 rounded-full text-[11px] font-medium transition-all cursor-pointer border ${active
-                                            ? "bg-accent-primary text-white border-accent-primary"
+                                            ? "bg-accent-primary text-text-inverse border-accent-primary"
                                             : "bg-bg-secondary text-text-secondary border-border-primary hover:border-accent-primary/30"
                                         }`}
                                     >

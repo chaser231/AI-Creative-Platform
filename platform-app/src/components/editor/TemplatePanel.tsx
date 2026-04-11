@@ -61,7 +61,7 @@ function Chip({
         <button
             onClick={onClick}
             className={`px-2 py-1 rounded-full text-[10px] font-medium transition-all cursor-pointer border ${active
-                ? "bg-accent-primary text-white border-accent-primary"
+                ? "bg-accent-primary text-text-inverse border-accent-primary"
                 : "bg-bg-surface text-text-secondary border-border-primary hover:border-accent-primary/30"
                 }`}
         >

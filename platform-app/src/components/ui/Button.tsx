@@ -17,7 +17,7 @@ const buttonVariants = cva(
                 ghost:
                     "bg-transparent text-text-secondary hover:bg-bg-tertiary hover:text-text-primary",
                 accent:
-                    "bg-accent-lime text-accent-primary hover:bg-accent-lime-hover shadow-[var(--shadow-sm)] font-semibold",
+                    "bg-accent-lime text-text-inverse hover:bg-accent-lime-hover shadow-[var(--shadow-sm)] font-semibold",
                 ai: "ai-gradient text-white hover:opacity-90 shadow-[var(--shadow-md)]",
                 danger:
                     "bg-red-500 text-white hover:bg-red-600 shadow-[var(--shadow-sm)]",

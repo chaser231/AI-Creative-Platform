@@ -298,7 +298,7 @@ export default function WorkspaceSettingsPage() {
                         <button
                             onClick={handleSave}
                             disabled={updateMutation.isPending}
-                            className="h-10 px-6 flex items-center gap-2 bg-accent-primary text-white rounded-[var(--radius-lg)] text-sm font-medium hover:bg-accent-primary/90 transition-colors disabled:opacity-50 cursor-pointer"
+                            className="h-10 px-6 flex items-center gap-2 bg-accent-primary text-text-inverse rounded-[var(--radius-lg)] text-sm font-medium hover:bg-accent-primary/90 transition-colors disabled:opacity-50 cursor-pointer"
                         >
                             {updateMutation.isPending ? <Loader2 size={14} className="animate-spin" /> : "Сохранить"}
                         </button>
