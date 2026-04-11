@@ -243,7 +243,7 @@ export default function DashboardPage() {
                   <div className={`flex items-center justify-center w-9 h-9 rounded-[var(--radius-md)] ${type.iconBg} group-hover:scale-105 transition-transform`}>
                     {type.icon}
                   </div>
-                  <span className="text-[13px] font-semibold text-text-primary text-left whitespace-pre-line leading-tight">
+                  <span className="text-base font-semibold text-text-primary text-left whitespace-pre-line leading-snug">
                     {type.label}
                   </span>
                 </div>
@@ -252,7 +252,7 @@ export default function DashboardPage() {
                   src={type.image}
                   alt=""
                   aria-hidden
-                  className="absolute -bottom-2 -right-2 w-[100px] h-[100px] object-contain opacity-80 group-hover:opacity-100 group-hover:scale-110 transition-all duration-300 select-none pointer-events-none"
+                  className="absolute -bottom-3 -right-3 w-[120px] h-[120px] object-contain opacity-80 group-hover:opacity-100 group-hover:scale-110 transition-all duration-300 select-none pointer-events-none"
                 />
               </button>
             ))}
