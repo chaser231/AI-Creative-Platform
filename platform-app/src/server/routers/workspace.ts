@@ -560,7 +560,16 @@ export const workspaceRouter = createTRPCRouter({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      await requireRole(ctx.prisma, ctx.user.id, input.workspaceId, "ADMIN");
+      // SUPER_ADMIN can change roles in any workspace
+      const globalUser = await ctx.prisma.user.findUnique({
+        where: { id: ctx.user.id },
+        select: { role: true },
+      });
+      const isSuperAdmin = globalUser?.role === "SUPER_ADMIN";
+
+      if (!isSuperAdmin) {
+        await requireRole(ctx.prisma, ctx.user.id, input.workspaceId, "ADMIN");
+      }
 
       // Prevent self-demotion (so there's always at least one admin)
       const target = await ctx.prisma.workspaceMember.findUnique({
@@ -615,6 +624,31 @@ export const workspaceRouter = createTRPCRouter({
 
       await ctx.prisma.workspaceMember.delete({
         where: { id: input.memberId },
+      });
+
+      return { success: true };
+    }),
+
+  /** SUPER_ADMIN: promote self to ADMIN in any workspace (join if needed) */
+  selfPromoteAdmin: protectedProcedure
+    .input(z.object({ workspaceId: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      // Verify SUPER_ADMIN
+      const globalUser = await ctx.prisma.user.findUnique({
+        where: { id: ctx.user.id },
+        select: { role: true },
+      });
+      if (globalUser?.role !== "SUPER_ADMIN") {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Требуются права супер-администратора" });
+      }
+
+      // Upsert membership as ADMIN
+      await ctx.prisma.workspaceMember.upsert({
+        where: {
+          userId_workspaceId: { userId: ctx.user.id, workspaceId: input.workspaceId },
+        },
+        update: { role: "ADMIN" },
+        create: { userId: ctx.user.id, workspaceId: input.workspaceId, role: "ADMIN" },
       });
 
       return { success: true };

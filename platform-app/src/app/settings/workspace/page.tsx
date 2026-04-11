@@ -146,6 +146,7 @@ export default function WorkspaceSettingsPage() {
   // ─── Fetch current user to identify self ───────────────
   const meQuery = trpc.auth.me.useQuery(undefined, { refetchOnWindowFocus: false });
   const myUserId = meQuery.data?.id;
+  const isSuperAdmin = (meQuery.data as { role?: string } | undefined)?.role === "SUPER_ADMIN";
 
   // ─── Mutations ─────────────────────────────────────────
   const updateMutation = trpc.workspace.update.useMutation({
@@ -193,6 +194,15 @@ export default function WorkspaceSettingsPage() {
       joinRequestsQuery.refetch();
       membersQuery.refetch();
     },
+  });
+
+  const selfPromoteMutation = trpc.workspace.selfPromoteAdmin.useMutation({
+    onSuccess: () => {
+      refetch();
+      membersQuery.refetch();
+      showToast("Вы назначены администратором");
+    },
+    onError: (err) => showToast(err.message),
   });
 
   // ─── Handlers ──────────────────────────────────────────
@@ -411,13 +421,26 @@ export default function WorkspaceSettingsPage() {
                   {members.length}
                 </span>
               </h2>
-              <button
-                onClick={handleCopyInvite}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium text-text-secondary bg-bg-surface border border-border-primary rounded-[var(--radius-lg)] hover:border-border-secondary hover:text-text-primary transition-all cursor-pointer"
-              >
-                {copied ? <Check size={12} className="text-green-400" /> : <Link2 size={12} />}
-                {copied ? "Скопировано!" : "Ссылка-приглашение"}
-              </button>
+              <div className="flex items-center gap-2">
+                {/* SUPER_ADMIN self-promote button */}
+                {isSuperAdmin && !isAdmin && (
+                  <button
+                    onClick={() => currentWorkspace && selfPromoteMutation.mutate({ workspaceId: currentWorkspace.id })}
+                    disabled={selfPromoteMutation.isPending}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium text-amber-600 dark:text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded-[var(--radius-lg)] hover:bg-amber-500/15 transition-all cursor-pointer disabled:opacity-50"
+                  >
+                    {selfPromoteMutation.isPending ? <Loader2 size={12} className="animate-spin" /> : <Crown size={12} />}
+                    Стать админом
+                  </button>
+                )}
+                <button
+                  onClick={handleCopyInvite}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium text-text-secondary bg-bg-surface border border-border-primary rounded-[var(--radius-lg)] hover:border-border-secondary hover:text-text-primary transition-all cursor-pointer"
+                >
+                  {copied ? <Check size={12} className="text-green-400" /> : <Link2 size={12} />}
+                  {copied ? "Скопировано!" : "Ссылка-приглашение"}
+                </button>
+              </div>
             </div>
 
             {membersQuery.isLoading ? (
