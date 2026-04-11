@@ -92,7 +92,7 @@ export interface HistorySnapshot {
 
 export const DEFAULT_RESIZE: ResizeFormat = {
     id: "master",
-    name: "Master",
+    name: "Основной",
     width: 1080,
     height: 1080,
     label: "1080 × 1080",

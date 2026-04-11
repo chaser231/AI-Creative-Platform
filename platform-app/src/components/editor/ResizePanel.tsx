@@ -237,8 +237,8 @@ export function ResizePanel() {
                                     <Check size={11} className="text-accent-primary shrink-0" />
                                 )}
 
-                                {/* Phase 2: Master/Bind controls for snapshot formats */}
-                                {isSnapshot && resize.id !== "master" && (
+                                {/* Phase 2: Master/Bind controls — available for all formats */}
+                                {(
                                     <>
                                         {/* Promote/Demote master */}
                                         <button

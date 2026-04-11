@@ -97,15 +97,21 @@ export function PropertiesPanel() {
     return (
         <div className={panelPositionClass}>
             {/* Master/Instance indicator */}
-            {selectedLayer.masterId && (
-                <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-[var(--radius-full)] text-[10px] font-semibold shrink-0 ${activeResizeId === "master"
-                    ? "bg-green-600 text-white dark:bg-green-700"
-                    : "bg-blue-600 text-white dark:bg-blue-700"
+            {selectedLayer.masterId && (() => {
+                const activeFormat = layers.length > 0
+                    ? useCanvasStore.getState().resizes.find(r => r.id === activeResizeId)
+                    : null;
+                const isOnMaster = activeFormat?.isMaster === true || activeResizeId === "master";
+                return (
+                    <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-[var(--radius-full)] text-[10px] font-semibold shrink-0 ${isOnMaster
+                        ? "bg-green-600 text-white dark:bg-green-700"
+                        : "bg-blue-600 text-white dark:bg-blue-700"
                     }`}>
-                    <Link2 size={10} />
-                    {activeResizeId === "master" ? "Мастер" : "Инстанс"}
-                </div>
-            )}
+                        <Link2 size={10} />
+                        {isOnMaster ? "Мастер" : "Инстанс"}
+                    </div>
+                );
+            })()}
 
             {/* ── Alignment ────────── */}
             <div className={`flex items-center gap-0.5 bg-bg-secondary rounded-[var(--radius-lg)] p-0.5 border border-border-primary shrink-0 transition-opacity ${isInsideAL ? 'opacity-40 pointer-events-none' : ''}`}>
