@@ -113,12 +113,16 @@ export function Sidebar() {
                     >
                         <div className="flex items-center gap-2.5 min-w-0">
                             <div className={cn(
-                                "flex items-center justify-center w-8 h-8 rounded-[var(--radius-lg)] bg-gradient-to-br shrink-0",
+                                "flex items-center justify-center w-8 h-8 rounded-[var(--radius-lg)] bg-gradient-to-br shrink-0 overflow-hidden",
                                 wsGradient(currentWorkspace?.name || "AI")
                             )}>
-                                <span className="text-white text-sm font-semibold">
-                                    {(currentWorkspace?.name || "A").charAt(0).toUpperCase()}
-                                </span>
+                                {currentWorkspace?.logoUrl ? (
+                                    <img src={currentWorkspace.logoUrl} alt="" className="w-8 h-8 object-cover" />
+                                ) : (
+                                    <span className="text-white text-sm font-semibold">
+                                        {(currentWorkspace?.name || "A").charAt(0).toUpperCase()}
+                                    </span>
+                                )}
                             </div>
                             <div className="min-w-0 text-left">
                                 <p className="text-[13px] font-semibold text-text-primary truncate leading-tight">
@@ -160,10 +164,14 @@ export function Sidebar() {
                                 >
                                     <div className="flex items-center gap-2 min-w-0">
                                         <div className={cn(
-                                            "flex items-center justify-center w-5 h-5 rounded-[var(--radius-sm)] bg-gradient-to-br shrink-0 text-[9px] font-semibold text-white",
+                                            "flex items-center justify-center w-5 h-5 rounded-[var(--radius-sm)] bg-gradient-to-br shrink-0 text-[9px] font-semibold text-white overflow-hidden",
                                             wsGradient(ws.name)
                                         )}>
-                                            {ws.name.charAt(0).toUpperCase()}
+                                            {ws.logoUrl ? (
+                                                <img src={ws.logoUrl} alt="" className="w-5 h-5 object-cover" />
+                                            ) : (
+                                                ws.name.charAt(0).toUpperCase()
+                                            )}
                                         </div>
                                         <span className="truncate">{ws.name}</span>
                                         <span className="text-[9px] text-text-tertiary">

@@ -17,6 +17,7 @@ interface WorkspaceInfo {
   slug: string;
   businessUnit: string;
   role: string;
+  logoUrl?: string | null;
 }
 
 interface WorkspaceContextValue {
