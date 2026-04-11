@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useMemo, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { X, Link2, Unlink2, ChevronDown } from "lucide-react";
 import { useCanvasStore } from "@/store/canvasStore";
 import { useShallow } from "zustand/react/shallow";
@@ -135,7 +136,7 @@ export function BindToMasterModal({ formatId, onClose }: BindToMasterModalProps)
 
     const enabledCount = bindings.filter(b => b.enabled && b.targetLayerId).length;
 
-    return (
+    return createPortal(
         <div
             className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 backdrop-blur-sm"
             onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
@@ -283,7 +284,8 @@ export function BindToMasterModal({ formatId, onClose }: BindToMasterModalProps)
                     </div>
                 </div>
             </div>
-        </div>
+        </div>,
+        document.body
     );
 }
 
