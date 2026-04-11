@@ -15,6 +15,7 @@ import {
     ShieldCheck,
     Compass,
     Plus,
+    Sparkles,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { UserMenu } from "@/components/auth/UserMenu";
@@ -34,6 +35,7 @@ const navItems: NavItem[] = [
     { label: "Все проекты", href: "/projects", icon: <FolderKanban size={18} /> },
     { label: "Шаблоны", href: "/templates", icon: <LayoutTemplate size={18} /> },
     { label: "Команда", href: "/team", icon: <Users size={18} /> },
+    { label: "Настройки AI", href: "/settings/ai", icon: <Sparkles size={18} /> },
 ];
 
 /** Workspace role label map */
