@@ -339,10 +339,37 @@ function FrameLayerRenderer({
         const frameAbsX = storeFrame?.x ?? layer.x;
         const frameAbsY = storeFrame?.y ?? layer.y;
 
+        // Build extra props for auto-sizing overrides
+        let extraProps: Record<string, unknown> = {};
+        if (childLayer) {
+            const hasScaledX = Math.abs(scaleX - 1) > 0.01;
+            const hasScaledY = Math.abs(scaleY - 1) > 0.01;
+
+            if (hasScaledX || hasScaledY) {
+                // Switch auto-layout sizing to fixed on manual resize
+                if (childLayer.layoutSizingWidth === "fill" || childLayer.layoutSizingWidth === "hug") {
+                    extraProps.layoutSizingWidth = "fixed";
+                }
+                if (childLayer.layoutSizingHeight === "fill" || childLayer.layoutSizingHeight === "hug") {
+                    extraProps.layoutSizingHeight = "fixed";
+                }
+
+                // Switch text container mode to fixed on manual resize
+                if (childLayer.type === "text") {
+                    const txt = childLayer as any;
+                    if (txt.textAdjust === "auto_width") {
+                        extraProps.textAdjust = "fixed";
+                    } else if (txt.textAdjust === "auto_height") {
+                        if (hasScaledY) extraProps.textAdjust = "fixed";
+                    }
+                }
+            }
+        }
+
         if (isAutoLayout && childLayer) {
             // Auto-layout children: update size, then reset node position
             // to the store's local coords so React can reconcile properly.
-            updateLayer(id, { width, height, rotation });
+            updateLayer(id, { width, height, rotation, ...extraProps });
             // Force node back to store position (frame-local coords)
             node.x(childLayer.x - frameAbsX);
             node.y(childLayer.y - frameAbsY);
@@ -350,7 +377,7 @@ function FrameLayerRenderer({
             // Non-auto-layout: convert frame-local coords to absolute scene coords.
             const newX = node.x() + frameAbsX;
             const newY = node.y() + frameAbsY;
-            updateLayer(id, { x: newX, y: newY, width, height, rotation });
+            updateLayer(id, { x: newX, y: newY, width, height, rotation, ...extraProps });
         }
     }, [updateLayer, layer.x, layer.y, layer.layoutMode, layer.id, layers]);
 

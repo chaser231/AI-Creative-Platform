@@ -59,6 +59,7 @@ interface FrameChildTransformerProps {
 export function FrameChildTransformer({ selectedChildIds, containerRef }: FrameChildTransformerProps) {
     const trRef = useRef<Konva.Transformer>(null);
     const editingLayerId = useCanvasStore((s) => s.editingLayerId);
+    const layers = useCanvasStore((s) => s.layers);
 
     useEffect(() => {
         if (!trRef.current || !containerRef.current) return;
@@ -76,9 +77,32 @@ export function FrameChildTransformer({ selectedChildIds, containerRef }: FrameC
         trRef.current.getLayer()?.batchDraw();
     }, [selectedChildIds, containerRef, editingLayerId]);
 
+    // Live transform handler: reset text scale to prevent visual stretching
+    const handleTransform = () => {
+        const tr = trRef.current;
+        if (!tr) return;
+        const nodes = tr.nodes();
+        nodes.forEach((node) => {
+            const layer = layers.find(l => l.id === node.id());
+            if (layer?.type === "text") {
+                const scaleX = node.scaleX();
+                const scaleY = node.scaleY();
+                if (Math.abs(scaleX - 1) > 0.001 || Math.abs(scaleY - 1) > 0.001) {
+                    const newWidth = Math.max(node.width() * scaleX, 10);
+                    const newHeight = Math.max(node.height() * scaleY, 10);
+                    node.scaleX(1);
+                    node.scaleY(1);
+                    node.width(newWidth);
+                    node.height(newHeight);
+                }
+            }
+        });
+    };
+
     return (
         <Transformer
             ref={trRef}
+            onTransform={handleTransform}
             boundBoxFunc={(oldBox, newBox) => {
                 if (newBox.width < 5 || newBox.height < 5) return oldBox;
                 return newBox;
