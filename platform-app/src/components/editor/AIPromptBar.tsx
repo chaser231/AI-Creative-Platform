@@ -1,6 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { createPortal } from "react-dom";
-import { Sparkles, Wand2, Image as ImageIcon, Send, MessageCircle, Settings2, Ratio, Type, Grip, CheckCircle2, Circle, X, ChevronDown } from "lucide-react";
+import { Sparkles, Wand2, Image as ImageIcon, Send, MessageCircle, Settings2, Ratio, Type, Grip, CheckCircle2, Circle, X, ChevronDown, Eraser, Paintbrush, Expand, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { ReferenceImageInput } from "@/components/ui/ReferenceImageInput";
 import { RefAutocompleteTextarea, type RefAutocompleteTextareaHandle } from "@/components/ui/RefAutocompleteTextarea";
@@ -8,7 +7,6 @@ import { ImageStylePresetPicker, TextStylePresetPicker } from "@/components/ui/S
 import { useCanvasStore } from "@/store/canvasStore";
 import { useShallow } from "zustand/react/shallow";
 import { RemoteTextProvider, RemoteImageProvider } from "@/services/aiService";
-import { ImageEditorModal } from "@/components/wizard/blocks/ImageEditorModal";
 import { getModelById, getMaxRefs, getAspectRatios, getResolutions, resolveRefTags } from "@/lib/ai-models";
 import { getImagePresetPromptSuffix, getTextPresetInstruction } from "@/lib/stylePresets";
 import { useStylePresets } from "@/hooks/useStylePresets";
@@ -35,9 +33,25 @@ const IMAGE_MODELS = [
     { id: "dall-e-3", name: "DALL-E 3" },
 ];
 
-const OUTPAINT_MODELS = [
-    { id: "bria-expand", name: "Bria Expand" },
-    { id: "flux-fill", name: "Flux Fill" },
+// Models available for AI image editing (with "edit" cap or specialized tools)
+const EDIT_MODELS = [
+    { id: "nano-banana-2", name: "Nano Banana 2" },
+    { id: "nano-banana-pro", name: "Nano Banana Pro" },
+    { id: "nano-banana", name: "Nano Banana" },
+    { id: "flux-2-pro", name: "Flux 2 Pro" },
+    { id: "seedream", name: "Seedream 4.5" },
+    { id: "gpt-image", name: "GPT Image 1.5" },
+    { id: "qwen-image-edit", name: "Qwen Image Edit" },
+];
+
+// Outpaint target aspect ratios (used within the edit tab's "Expand" action)
+const OUTPAINT_RATIOS = [
+    { id: "16:9", label: "16:9" },
+    { id: "9:16", label: "9:16" },
+    { id: "4:3", label: "4:3" },
+    { id: "3:4", label: "3:4" },
+    { id: "1:1", label: "1:1" },
+    { id: "21:9", label: "21:9" },
 ];
 
 // Aspect ratios and resolutions are now dynamic per model — see ai-models.ts
@@ -80,24 +94,67 @@ function OutlinedSelector({
     );
 }
 
+// ─── Quick Action Button ────────────────────────────────────────────────────
+// Pill-shaped action buttons for the edit tab (Remove BG, Inpaint, Expand)
+
+function QuickActionButton({
+    icon,
+    label,
+    active,
+    disabled,
+    loading,
+    onClick,
+}: {
+    icon: React.ReactNode;
+    label: string;
+    active?: boolean;
+    disabled?: boolean;
+    loading?: boolean;
+    onClick: () => void;
+}) {
+    return (
+        <button
+            onClick={onClick}
+            disabled={disabled || loading}
+            className={`
+                flex items-center gap-1.5 px-3 py-1.5 rounded-[10px]
+                text-[12px] font-medium transition-all cursor-pointer
+                border whitespace-nowrap
+                disabled:opacity-40 disabled:cursor-not-allowed
+                ${active
+                    ? "bg-accent-lime/15 text-accent-lime-hover border-accent-lime/40 shadow-sm"
+                    : "bg-bg-tertiary/40 text-text-secondary border-border-primary/60 hover:bg-bg-tertiary hover:border-border-secondary hover:text-text-primary"
+                }
+            `}
+        >
+            {loading ? <Loader2 size={13} className="animate-spin" /> : icon}
+            {label}
+        </button>
+    );
+}
+
 export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult, projectId }: AIPromptBarProps) {
     const { addTextLayer, addImageLayer, selectedLayerIds, updateLayer, layers, canvasWidth, canvasHeight } = useCanvasStore(useShallow((s) => ({
         addTextLayer: s.addTextLayer, addImageLayer: s.addImageLayer,
         selectedLayerIds: s.selectedLayerIds, updateLayer: s.updateLayer, layers: s.layers,
         canvasWidth: s.canvasWidth, canvasHeight: s.canvasHeight,
     })));
-    const [activeTab, setActiveTab] = useState<"text" | "image" | "outpaint">("text");
+    const [activeTab, setActiveTab] = useState<"text" | "image" | "edit">("text");
     const [prompt, setPrompt] = useState("");
     const [selectedModel, setSelectedModel] = useState(TEXT_MODELS[0].id);
     const [aspectRatio, setAspectRatio] = useState("1:1");
     const [scale, setScale] = useState("");
     const [applyToSelection, setApplyToSelection] = useState(false);
     const [isGenerating, setIsGenerating] = useState(false);
-    const [showEditorModal, setShowEditorModal] = useState(false);
     const [referenceImages, setReferenceImages] = useState<string[]>([]);
     const [imageStyleId, setImageStyleId] = useState("none");
     const [textStyleId, setTextStyleId] = useState<string | undefined>(undefined);
     const promptRef = useRef<RefAutocompleteTextareaHandle>(null);
+
+    // ── Edit tab state ──
+    const [editAction, setEditAction] = useState<"prompt" | "remove-bg" | "inpaint" | "expand" | null>(null);
+    const [editError, setEditError] = useState<string | null>(null);
+    const [outpaintRatio, setOutpaintRatio] = useState("16:9");
 
     // Workspace-aware presets (system + custom from DB)
     const { imagePresets, textPresets } = useStylePresets();
@@ -112,12 +169,17 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
         : undefined;
 
     // Reset model on tab change
-    const handleTabChange = (tab: "text" | "image" | "outpaint") => {
+    const handleTabChange = (tab: "text" | "image" | "edit") => {
         setActiveTab(tab);
-        const models = tab === "text" ? TEXT_MODELS : tab === "image" ? IMAGE_MODELS : OUTPAINT_MODELS;
+        const models = tab === "text" ? TEXT_MODELS : tab === "image" ? IMAGE_MODELS : EDIT_MODELS;
         setSelectedModel(models[0].id);
         // Clear reference images when switching to text tab
         if (tab === "text") setReferenceImages([]);
+        // Reset edit-specific state
+        if (tab === "edit") {
+            setEditAction(null);
+            setEditError(null);
+        }
     };
 
     // When model changes, clear refs if new model has no vision + reset aspect/resolution
@@ -137,7 +199,144 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
     const modelAspectRatios = getAspectRatios(selectedModel);
     const modelResolutions = getResolutions(selectedModel);
 
+    // ── Parse AI errors into user-friendly messages ──
+    const parseAiError = (e: Error) => {
+        const msg = String(e.message || "");
+        if (msg.includes("E003") || msg.includes("high demand") || msg.includes("fetch failed")) {
+            return "Слишком много запросов к модели. Подождите 10-15 секунд и попробуйте снова.";
+        }
+        if (msg.includes("prompt is required")) {
+            return "Для этой функции необходимо ввести текстовый запрос (prompt).";
+        }
+        if (msg.includes("timed out")) {
+            return "Генерация заняла слишком много времени. Попробуйте снова или выберите более быструю модель.";
+        }
+        if (msg.includes("Replicate error (429)")) {
+            return "Слишком много запросов. Попробуйте через 10 секунд.";
+        }
+        return `Ошибка: ${msg}`;
+    };
+
+    // ── Apply edited image to the selected layer on canvas ──
+    const applyEditedImageToLayer = useCallback(async (editedSrc: string) => {
+        if (!selectedImageLayer) return;
+
+        // Persist to S3
+        let persistedSrc = editedSrc;
+        if (projectId) {
+            try {
+                persistedSrc = await persistImageToS3(editedSrc, projectId);
+            } catch (e) {
+                console.warn("Failed to persist edited image to S3:", e);
+            }
+        }
+
+        try {
+            // Measure old and new dimensions to scale the layer proportionally
+            const oldImg = new window.Image();
+            await new Promise((resolve, reject) => {
+                oldImg.onload = resolve;
+                oldImg.onerror = reject;
+                oldImg.src = selectedImageLayer.src;
+            });
+
+            const newImg = new window.Image();
+            await new Promise((resolve, reject) => {
+                newImg.onload = resolve;
+                newImg.onerror = reject;
+                newImg.src = persistedSrc;
+            });
+
+            const scaleX = newImg.naturalWidth / oldImg.naturalWidth;
+            const scaleY = newImg.naturalHeight / oldImg.naturalHeight;
+
+            const newWidth = selectedImageLayer.width * scaleX;
+            const newHeight = selectedImageLayer.height * scaleY;
+
+            updateLayer(selectedImageLayer.id, {
+                src: persistedSrc,
+                width: newWidth,
+                height: newHeight,
+            } as any);
+        } catch (e) {
+            console.error("Failed to measure new image dimensions", e);
+            updateLayer(selectedImageLayer.id, { src: persistedSrc } as any);
+        }
+    }, [selectedImageLayer, projectId, updateLayer]);
+
+    // ── Image edit API call (shared by all edit actions) ──
+    const callImageEdit = useCallback(async (action: string, editPrompt?: string) => {
+        if (!selectedImageLayer) return;
+        setIsGenerating(true);
+        setEditError(null);
+
+        try {
+            const styleSuffix = getImagePresetPromptSuffix(imageStyleId, imagePresets);
+            const rawPrompt = editPrompt || "";
+            const styledPrompt = styleSuffix && rawPrompt ? `${rawPrompt}. Style: ${styleSuffix}` : rawPrompt;
+            const resolvedPrompt = resolveRefTags(styledPrompt, selectedModel);
+
+            const response = await fetch("/api/ai/image-edit", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    action,
+                    prompt: resolvedPrompt,
+                    imageBase64: selectedImageLayer.src,
+                    model: action === "remove-bg" ? "rembg" : selectedModel,
+                    referenceImages: referenceImages.length > 0 ? referenceImages : undefined,
+                    aspectRatio: action === "outpaint" ? outpaintRatio : undefined,
+                    projectId,
+                }),
+            });
+            const data = await response.json();
+            if (data.error) throw new Error(data.error);
+            if (data.content) {
+                await applyEditedImageToLayer(data.content);
+                // Pass result to chat history
+                onResult({
+                    type: "edit",
+                    content: data.content,
+                    prompt: rawPrompt || action,
+                    model: data.model,
+                });
+                setPrompt("");
+                setReferenceImages([]);
+            }
+        } catch (e: unknown) {
+            const error = e as Error;
+            console.error(`Image edit (${action}) failed:`, error);
+            setEditError(parseAiError(error));
+        } finally {
+            setIsGenerating(false);
+        }
+    }, [selectedImageLayer, selectedModel, imageStyleId, imagePresets, referenceImages, outpaintRatio, projectId, applyEditedImageToLayer, onResult]);
+
+    // ── Edit tab handlers ──
+    const handleRemoveBg = () => callImageEdit("remove-bg");
+    const handleInpaint = () => {
+        if (!prompt.trim()) return;
+        callImageEdit("inpaint", prompt);
+    };
+    const handleTextEdit = () => {
+        if (!prompt.trim()) return;
+        callImageEdit("text-edit", prompt);
+    };
+    const handleExpand = () => {
+        callImageEdit("outpaint", prompt || "Fill seamlessly");
+    };
+
+    // ── Standard text/image generation (non-edit tabs) ──
     const handleGenerate = async () => {
+        // In edit mode, route to the appropriate edit handler
+        if (activeTab === "edit") {
+            if (editAction === "remove-bg") return handleRemoveBg();
+            if (editAction === "inpaint") return handleInpaint();
+            if (editAction === "expand") return handleExpand();
+            // Default: text-edit with prompt
+            return handleTextEdit();
+        }
+
         if (!prompt) return;
         setIsGenerating(true);
 
@@ -199,7 +398,7 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                 } else {
                     // Dynamically measure the new image to preserve aspect ratio
                     // Fit to artboard: scale down if larger than canvas
-                    const img = new Image();
+                    const img = new window.Image();
                     img.onload = () => {
                         let w = img.naturalWidth;
                         let h = img.naturalHeight;
@@ -249,16 +448,35 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
     if (!open) return null;
 
     const currentModels = activeTab === "text" ? TEXT_MODELS :
-        activeTab === "image" ? IMAGE_MODELS : OUTPAINT_MODELS;
+        activeTab === "image" ? IMAGE_MODELS : EDIT_MODELS;
 
     const hasSelection = selectedLayerIds.length > 0;
+
+    // In edit tab, determine placeholder and whether prompt is required for the generate button
+    const editPromptPlaceholder = editAction === "inpaint"
+        ? "Что нарисовать в этой области? Например: голубое небо, текстура дерева..."
+        : editAction === "expand"
+            ? "Описание расширенной области (опционально)..."
+            : "Опишите изменения: добавь тень, сделай фон синим, измени освещение...";
+
+    const promptPlaceholder = activeTab === "text"
+        ? "Например: Заголовок для распродажи кроссовок..."
+        : activeTab === "image"
+            ? "Например: Футуристичный город в неоновых тонах..."
+            : editPromptPlaceholder;
+
+    // In edit mode, the generate button should be enabled for remove-bg (no prompt needed)
+    // and expand (prompt is optional). For inpaint and default text-edit, prompt is required.
+    const isEditGenerateDisabled = activeTab === "edit"
+        ? isGenerating || (editAction !== "remove-bg" && editAction !== "expand" && !prompt.trim())
+        : isGenerating || !prompt;
 
     return (
         /* Outer wrapper — allows "Apply to selection" badge to float above 
            without stretching the bar itself. Uses flex-col with items-start */
         <div className="flex flex-col items-start gap-2">
-            {/* ── Floating "Apply to selection" badge — rendered above the bar ── */}
-            {hasSelection && (
+            {/* ── Floating "Apply to selection" badge — hidden in edit tab ── */}
+            {hasSelection && activeTab !== "edit" && (
                 <div
                     className={`
                         inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full
@@ -307,20 +525,22 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                         <button
                             onClick={() => {
                                 if (selectedImageLayer) {
-                                    setShowEditorModal(true);
+                                    handleTabChange("edit");
                                 } else {
                                     alert("Выделите изображение на канвасе для AI-редактирования");
                                 }
                             }}
                             className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-[10px] text-[12px] font-medium transition-all cursor-pointer whitespace-nowrap ${
-                                selectedImageLayer
-                                    ? "text-text-tertiary hover:text-text-secondary"
-                                    : "text-text-tertiary/30 cursor-not-allowed"
+                                activeTab === "edit"
+                                    ? "bg-bg-surface text-text-primary shadow-sm"
+                                    : selectedImageLayer
+                                        ? "text-text-tertiary hover:text-text-secondary"
+                                        : "text-text-tertiary/30 cursor-not-allowed"
                             }`}
-                            disabled={!selectedImageLayer}
+                            disabled={!selectedImageLayer && activeTab !== "edit"}
                             title={selectedImageLayer ? "AI-редактирование выбранного изображения" : "Выберите изображение на канвасе"}
                         >
-                            <Wand2 size={13} strokeWidth={2} />
+                            <Wand2 size={13} strokeWidth={activeTab === "edit" ? 2.5 : 2} />
                             AI-редактирование
                         </button>
                     </div>
@@ -361,7 +581,7 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                         value={prompt}
                         onChange={setPrompt}
                         referenceImages={referenceImages}
-                        placeholder={activeTab === "text" ? "Например: Заголовок для распродажи кроссовок..." : "Например: Футуристичный город в неоновых тонах..."}
+                        placeholder={promptPlaceholder}
                         className="w-full h-full min-h-[70px] bg-transparent text-[15px] text-text-primary placeholder:text-text-tertiary/50 focus:outline-none resize-none leading-relaxed"
                         onKeyDown={(e) => {
                             e.stopPropagation();
@@ -372,6 +592,66 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                         }}
                     />
                 </div>
+
+                {/* ── QUICK ACTIONS (Edit tab only) ── */}
+                {activeTab === "edit" && (
+                    <div className="px-4 pb-1 flex items-center gap-1.5 flex-wrap">
+                        <QuickActionButton
+                            icon={<Eraser size={13} />}
+                            label="Удалить фон"
+                            active={editAction === "remove-bg"}
+                            loading={isGenerating && editAction === "remove-bg"}
+                            disabled={isGenerating}
+                            onClick={() => {
+                                if (editAction === "remove-bg") {
+                                    setEditAction(null);
+                                } else {
+                                    setEditAction("remove-bg");
+                                    // Remove BG is instant — call immediately
+                                    handleRemoveBg();
+                                }
+                            }}
+                        />
+                        <QuickActionButton
+                            icon={<Paintbrush size={13} />}
+                            label="Inpaint"
+                            active={editAction === "inpaint"}
+                            disabled={isGenerating}
+                            onClick={() => setEditAction(editAction === "inpaint" ? null : "inpaint")}
+                        />
+                        <QuickActionButton
+                            icon={<Expand size={13} />}
+                            label="Расширить фон"
+                            active={editAction === "expand"}
+                            disabled={isGenerating}
+                            onClick={() => setEditAction(editAction === "expand" ? null : "expand")}
+                        />
+
+                        {/* Outpaint ratio selector — shown when expand is active */}
+                        {editAction === "expand" && (
+                            <OutlinedSelector icon={<Ratio size={13} />}>
+                                <select
+                                    value={outpaintRatio}
+                                    onChange={(e) => setOutpaintRatio(e.target.value)}
+                                    className="bg-transparent text-[12px] font-medium text-text-secondary focus:outline-none cursor-pointer hover:text-text-primary appearance-none pr-0"
+                                >
+                                    {OUTPAINT_RATIOS.map(r => (
+                                        <option key={r.id} value={r.id}>{r.label}</option>
+                                    ))}
+                                </select>
+                            </OutlinedSelector>
+                        )}
+
+                        {/* Error banner */}
+                        {editError && (
+                            <div className="flex-1 min-w-0">
+                                <div className="bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-1.5 animate-in fade-in zoom-in-95">
+                                    <p className="text-[11px] text-red-500 leading-relaxed font-medium truncate">{editError}</p>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                )}
 
                 {/* ── BOTTOM BAR: Outlined selectors + Reference + Generate ── */}
                 <div className="px-4 pb-3 pt-1 flex items-center">
@@ -390,8 +670,8 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                             </select>
                         </OutlinedSelector>
 
-                        {/* Aspect Ratio (Image Only) */}
-                        {activeTab !== "text" && (
+                        {/* Aspect Ratio (Image tab only) */}
+                        {activeTab === "image" && (
                             <OutlinedSelector icon={<Ratio size={13} />}>
                                 <select
                                     value={aspectRatio}
@@ -405,8 +685,8 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                             </OutlinedSelector>
                         )}
 
-                        {/* Resolution (Image Only, if model supports) */}
-                        {activeTab !== "text" && modelResolutions.length > 0 && (
+                        {/* Resolution (Image tab only, if model supports) */}
+                        {activeTab === "image" && modelResolutions.length > 0 && (
                             <OutlinedSelector>
                                 <select
                                     value={scale}
@@ -420,8 +700,8 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                             </OutlinedSelector>
                         )}
 
-                        {/* Style Preset (Image mode) */}
-                        {activeTab !== "text" && (
+                        {/* Style Preset (Image or Edit mode) */}
+                        {(activeTab === "image" || activeTab === "edit") && (
                             <ImageStylePresetPicker
                                 presets={imagePresets}
                                 selectedId={imageStyleId}
@@ -445,7 +725,7 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
 
                     {/* RIGHT: Reference + Generate */}
                     <div className="flex items-center gap-2">
-                        {/* Reference Images (vision-capable models only) */}
+                        {/* Reference Images (vision-capable models, image or edit tab) */}
                         {supportsVision && (
                             <ReferenceImageInput
                                 images={referenceImages}
@@ -458,8 +738,8 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                         {/* Generate Button — compact icon-only circle */}
                         <button
                             onClick={handleGenerate}
-                            disabled={isGenerating || !prompt}
-                            title={isGenerating ? "Генерирую..." : "Сгенерировать"}
+                            disabled={isEditGenerateDisabled}
+                            title={isGenerating ? "Генерирую..." : activeTab === "edit" ? "Применить редактирование" : "Сгенерировать"}
                             className={`
                                 flex items-center justify-center w-10 h-10 rounded-full
                                 transition-all duration-200 cursor-pointer
@@ -470,66 +750,13 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                             `}
                         >
                             {isGenerating ? (
-                                <div className="animate-spin text-[16px]">⟳</div>
+                                <Loader2 size={18} className="animate-spin" />
                             ) : (
-                                <Sparkles size={18} />
+                                activeTab === "edit" ? <Wand2 size={18} /> : <Sparkles size={18} />
                             )}
                         </button>
                     </div>
                 </div>
-
-                {/* ImageEditorModal via Portal — renders at document.body level */}
-                {showEditorModal && selectedImageLayer && createPortal(
-                    <ImageEditorModal
-                        imageSrc={selectedImageLayer.src}
-                        onApply={async (editedSrc) => {
-                            // Persist the edited image to S3 immediately
-                            let persistedSrc = editedSrc;
-                            if (projectId) {
-                                try {
-                                    persistedSrc = await persistImageToS3(editedSrc, projectId);
-                                } catch (e) {
-                                    console.warn("Failed to persist edited image to S3:", e);
-                                }
-                            }
-                            try {
-                                // Load both old and new images to measure how much pixel dimensions changed
-                                const oldImg = new Image();
-                                await new Promise((resolve, reject) => {
-                                    oldImg.onload = resolve;
-                                    oldImg.onerror = reject;
-                                    oldImg.src = selectedImageLayer.src;
-                                });
-
-                                const newImg = new Image();
-                                await new Promise((resolve, reject) => {
-                                    newImg.onload = resolve;
-                                    newImg.onerror = reject;
-                                    newImg.src = persistedSrc;
-                                });
-                                
-                                const scaleX = newImg.naturalWidth / oldImg.naturalWidth;
-                                const scaleY = newImg.naturalHeight / oldImg.naturalHeight;
-                                
-                                const newWidth = selectedImageLayer.width * scaleX;
-                                const newHeight = selectedImageLayer.height * scaleY;
-                                
-                                updateLayer(selectedImageLayer.id, { 
-                                    src: persistedSrc,
-                                    width: newWidth,
-                                    height: newHeight 
-                                } as any);
-                            } catch (e) {
-                                console.error("Failed to measure new image dimensions", e);
-                                updateLayer(selectedImageLayer.id, { src: persistedSrc } as any);
-                            }
-                            
-                            setShowEditorModal(false);
-                        }}
-                        onClose={() => setShowEditorModal(false)}
-                    />,
-                    document.body
-                )}
             </div>
         </div>
     );
