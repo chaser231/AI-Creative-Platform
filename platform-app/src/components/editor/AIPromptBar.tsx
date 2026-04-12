@@ -139,6 +139,12 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
         selectedLayerIds: s.selectedLayerIds, updateLayer: s.updateLayer, layers: s.layers,
         canvasWidth: s.canvasWidth, canvasHeight: s.canvasHeight,
     })));
+
+    // Expand mode from canvas store
+    const expandMode = useCanvasStore((s) => s.expandMode);
+    const expandPadding = useCanvasStore((s) => s.expandPadding);
+    const setExpandMode = useCanvasStore((s) => s.setExpandMode);
+    const resetExpandMode = useCanvasStore((s) => s.resetExpandMode);
     const [activeTab, setActiveTab] = useState<"text" | "image" | "edit">("text");
     const [prompt, setPrompt] = useState("");
     const [selectedModel, setSelectedModel] = useState(TEXT_MODELS[0].id);
@@ -180,6 +186,8 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
             setEditAction(null);
             setEditError(null);
         }
+        // Always reset expand mode when switching tabs
+        if (tab !== "edit") resetExpandMode();
     };
 
     // When model changes, clear refs if new model has no vision + reset aspect/resolution
@@ -283,9 +291,11 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                     action,
                     prompt: resolvedPrompt,
                     imageBase64: selectedImageLayer.src,
-                    model: action === "remove-bg" ? "rembg" : selectedModel,
+                    model: action === "remove-bg" ? "rembg" : (action === "outpaint" ? "bria-expand" : selectedModel),
                     referenceImages: referenceImages.length > 0 ? referenceImages : undefined,
-                    aspectRatio: action === "outpaint" ? outpaintRatio : undefined,
+                    // For outpaint: send expandPadding from canvas store + original image size
+                    expandPadding: action === "outpaint" ? expandPadding : undefined,
+                    originalSize: action === "outpaint" ? [selectedImageLayer.width, selectedImageLayer.height] : undefined,
                     projectId,
                 }),
             });
@@ -293,6 +303,8 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
             if (data.error) throw new Error(data.error);
             if (data.content) {
                 await applyEditedImageToLayer(data.content);
+                // Reset expand mode after successful outpaint
+                if (action === "outpaint") resetExpandMode();
                 // Pass result to chat history
                 onResult({
                     type: "edit",
@@ -310,7 +322,7 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
         } finally {
             setIsGenerating(false);
         }
-    }, [selectedImageLayer, selectedModel, imageStyleId, imagePresets, referenceImages, outpaintRatio, projectId, applyEditedImageToLayer, onResult]);
+    }, [selectedImageLayer, selectedModel, imageStyleId, imagePresets, referenceImages, expandPadding, projectId, applyEditedImageToLayer, onResult, resetExpandMode]);
 
     // ── Edit tab handlers ──
     const handleRemoveBg = () => callImageEdit("remove-bg");
@@ -323,6 +335,8 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
         callImageEdit("text-edit", prompt);
     };
     const handleExpand = () => {
+        const hasPadding = expandPadding.top > 0 || expandPadding.right > 0 || expandPadding.bottom > 0 || expandPadding.left > 0;
+        if (!hasPadding) return; // nothing to expand
         callImageEdit("outpaint", prompt || "Fill seamlessly");
     };
 
@@ -624,22 +638,25 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                             label="Расширить фон"
                             active={editAction === "expand"}
                             disabled={isGenerating}
-                            onClick={() => setEditAction(editAction === "expand" ? null : "expand")}
+                            onClick={() => {
+                                if (editAction === "expand") {
+                                    setEditAction(null);
+                                    resetExpandMode();
+                                } else {
+                                    setEditAction("expand");
+                                    setExpandMode(true);
+                                }
+                            }}
                         />
 
-                        {/* Outpaint ratio selector — shown when expand is active */}
+                        {/* Expand hint — shown when expand is active */}
                         {editAction === "expand" && (
-                            <OutlinedSelector icon={<Ratio size={13} />}>
-                                <select
-                                    value={outpaintRatio}
-                                    onChange={(e) => setOutpaintRatio(e.target.value)}
-                                    className="bg-transparent text-[12px] font-medium text-text-secondary focus:outline-none cursor-pointer hover:text-text-primary appearance-none pr-0"
-                                >
-                                    {OUTPAINT_RATIOS.map(r => (
-                                        <option key={r.id} value={r.id}>{r.label}</option>
-                                    ))}
-                                </select>
-                            </OutlinedSelector>
+                            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-[10px] border border-accent-lime/30 bg-accent-lime/5">
+                                <Expand size={12} className="text-accent-lime" />
+                                <span className="text-[11px] text-accent-lime font-medium">
+                                    Потяните за ручки на canvas
+                                </span>
+                            </div>
                         )}
 
                         {/* Error banner */}

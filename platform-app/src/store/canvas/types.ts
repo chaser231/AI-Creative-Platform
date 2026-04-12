@@ -56,6 +56,22 @@ export interface ArtboardProps {
     strokeWidth: number;
 }
 
+// ─── Expand Padding (Generative Expand) ─────────────
+
+export interface ExpandPadding {
+    top: number;
+    right: number;
+    bottom: number;
+    left: number;
+}
+
+export const DEFAULT_EXPAND_PADDING: ExpandPadding = {
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+};
+
 export const DEFAULT_ARTBOARD_PROPS: ArtboardProps = {
     fill: "#FFFFFF",
     cornerRadius: 0,
@@ -138,6 +154,11 @@ export interface CanvasStore {
     // Inline text editing
     isEditingText: boolean;
     editingLayerId: string | null;
+
+    // Generative Expand (outpaint with drag handles)
+    expandMode: boolean;
+    expandPadding: ExpandPadding;
+    expandTargetLayerId: string | null;
 
     // Undo / Redo
     history: HistorySnapshot[];
@@ -223,4 +244,9 @@ export interface CanvasStore {
     // Inline text editing
     startTextEditing: (layerId: string) => void;
     stopTextEditing: () => void;
+
+    // Generative Expand actions
+    setExpandMode: (active: boolean) => void;
+    setExpandPadding: (padding: Partial<ExpandPadding>) => void;
+    resetExpandMode: () => void;
 }

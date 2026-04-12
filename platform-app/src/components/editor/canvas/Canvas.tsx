@@ -14,6 +14,7 @@ import { isFocusedOnInput } from "@/utils/keyboard";
 import Konva from "konva";
 import { useImage } from "./useImage";
 import { SelectionTransformer, FrameChildTransformer } from "./transformers";
+import { ExpandOverlay } from "./ExpandOverlay";
 import { InlineTextEditor } from "./InlineTextEditor";
 import { SnapGuides } from "./SnapGuides";
 import { usePanZoom } from "./usePanZoom";
@@ -624,6 +625,10 @@ export function Canvas({ stageRef }: CanvasProps) {
         moveLayerToFrame: s.moveLayerToFrame,
         removeLayerFromFrame: s.removeLayerFromFrame,
     })));
+
+    // Expand mode state
+    const expandMode = useCanvasStore((s) => s.expandMode);
+    const expandTargetLayerId = useCanvasStore((s) => s.expandTargetLayerId);
 
     // Collect all IDs that are children of any frame (to exclude from top-level SelectionTransformer)
     const frameChildIds = useMemo(() => {
@@ -1948,8 +1953,15 @@ export function Canvas({ stageRef }: CanvasProps) {
                         );
                     })()}
 
-                    {/* Selection Transformer */}
-                    <SelectionTransformer selectedLayerIds={selectedLayerIds} stageRef={stageRef} excludeIds={frameChildIds} />
+                    {/* Selection Transformer — hidden when expand mode is active */}
+                    {!expandMode && (
+                        <SelectionTransformer selectedLayerIds={selectedLayerIds} stageRef={stageRef} excludeIds={frameChildIds} />
+                    )}
+
+                    {/* Expand Overlay — drag handles for generative expand */}
+                    {expandMode && expandTargetLayerId && (
+                        <ExpandOverlay layerId={expandTargetLayerId} />
+                    )}
 
                 </Layer>
             </Stage>

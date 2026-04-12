@@ -36,6 +36,8 @@ export interface AIRequestParams {
     canvasSize?: [number, number];
     originalSize?: [number, number];
     originalLocation?: [number, number];
+    /** Per-side pixel offsets for free-form outpainting */
+    expandPadding?: { top: number; right: number; bottom: number; left: number };
 }
 
 export interface AIResponse {
@@ -185,10 +187,30 @@ class ReplicateProvider implements AIProviderImplementation {
                 image: params.imageBase64,
             };
             if (params.prompt) expandInput.prompt = params.prompt;
-            if (params.aspectRatio) expandInput.aspect_ratio = params.aspectRatio;
-            if (params.canvasSize) expandInput.canvas_size = params.canvasSize;
-            if (params.originalSize) expandInput.original_image_size = params.originalSize;
-            if (params.originalLocation) expandInput.original_image_location = params.originalLocation;
+
+            // zsxkib/outpainter: direct pixel offsets
+            if (expandEntry.slug === "zsxkib/outpainter" && params.expandPadding) {
+                expandInput.extend_top = params.expandPadding.top || 0;
+                expandInput.extend_bottom = params.expandPadding.bottom || 0;
+                expandInput.extend_left = params.expandPadding.left || 0;
+                expandInput.extend_right = params.expandPadding.right || 0;
+                expandInput.preset = "none";
+            } else {
+                // bria/expand-image and others: canvas_size + position
+                if (params.aspectRatio) expandInput.aspect_ratio = params.aspectRatio;
+                if (params.canvasSize) expandInput.canvas_size = params.canvasSize;
+                if (params.originalSize) expandInput.original_image_size = params.originalSize;
+                if (params.originalLocation) expandInput.original_image_location = params.originalLocation;
+
+                // Convert expandPadding to canvas_size + original_image_location for bria
+                if (params.expandPadding && params.originalSize) {
+                    const [origW, origH] = params.originalSize;
+                    const pad = params.expandPadding;
+                    expandInput.canvas_size = [origW + pad.left + pad.right, origH + pad.top + pad.bottom];
+                    expandInput.original_image_location = [pad.left, pad.top];
+                    expandInput.original_image_size = [origW, origH];
+                }
+            }
             
             const result = await this.callReplicate(expandEntry, expandInput, token);
             const output = Array.isArray(result) ? result[0] : result;
@@ -423,6 +445,7 @@ const FAL_MODEL_MAP: Record<string, string> = {
     "nano-banana-2":   "fal-ai/nano-banana-2",
     "nano-banana-pro": "fal-ai/nano-banana-pro",
     "seedream":        "fal-ai/seedream-4.5",
+    "bria-expand":     "fal-ai/bria/expand",
 };
 
 /** Model ID → fal.ai /edit endpoint (required for reference images) */
@@ -449,6 +472,78 @@ class FalProvider implements AIProviderImplementation {
         // Text models not supported on fal.ai in this implementation
         if (entry.caps.includes("text")) {
             throw new Error(`Text models not supported on fal.ai fallback`);
+        }
+
+        // ── Outpainting (bria-expand on fal.ai) ────────────────────
+        if (params.type === "outpainting") {
+            const falEndpoint = FAL_MODEL_MAP[modelId];
+            if (!falEndpoint) throw new Error(`Model ${modelId} is not available on fal.ai for outpainting`);
+            
+            const outpaintInput: Record<string, unknown> = {
+                image_url: params.imageBase64, // fal.ai accepts base64 data URIs
+            };
+            if (params.prompt) outpaintInput.prompt = params.prompt;
+            
+            // Convert expandPadding to canvas_size + original_image_location
+            if (params.expandPadding && params.originalSize) {
+                const [origW, origH] = params.originalSize;
+                const pad = params.expandPadding;
+                outpaintInput.canvas_size = [origW + pad.left + pad.right, origH + pad.top + pad.bottom];
+                outpaintInput.original_image_location = [pad.left, pad.top];
+                outpaintInput.original_image_size = [origW, origH];
+            } else if (params.canvasSize) {
+                outpaintInput.canvas_size = params.canvasSize;
+                if (params.originalSize) outpaintInput.original_image_size = params.originalSize;
+                if (params.originalLocation) outpaintInput.original_image_location = params.originalLocation;
+            } else if (params.aspectRatio) {
+                outpaintInput.aspect_ratio = params.aspectRatio;
+            }
+
+            console.log(`[fal.ai] Outpainting via ${falEndpoint}, padding=${JSON.stringify(params.expandPadding)}`);
+
+            // Submit to fal.ai queue
+            const submitRes = await fetch(`https://queue.fal.run/${falEndpoint}`, {
+                method: "POST",
+                headers: {
+                    "Authorization": `Key ${apiKey}`,
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify(outpaintInput),
+            });
+            if (!submitRes.ok) {
+                const errBody = await submitRes.text();
+                throw new Error(`fal.ai outpaint submit failed (${submitRes.status}): ${errBody}`);
+            }
+            const queue = await submitRes.json() as { request_id: string; status_url?: string };
+            
+            // Poll for result
+            const resultUrl = `https://queue.fal.run/${falEndpoint}/requests/${queue.request_id}`;
+            const maxWait = 240_000;
+            const start = Date.now();
+            while (Date.now() - start < maxWait) {
+                await new Promise(r => setTimeout(r, 2000));
+                const statusRes = await fetch(`${resultUrl}/status`, {
+                    headers: { "Authorization": `Key ${apiKey}` },
+                });
+                if (!statusRes.ok) continue;
+                const status = await statusRes.json() as { status: string };
+                if (status.status === "COMPLETED") break;
+                if (status.status === "FAILED") throw new Error("fal.ai outpaint generation failed");
+            }
+            
+            const resultRes = await fetch(resultUrl, {
+                headers: { "Authorization": `Key ${apiKey}` },
+            });
+            if (!resultRes.ok) throw new Error(`fal.ai outpaint result failed (${resultRes.status})`);
+            const result = await resultRes.json() as { image?: { url: string } };
+            if (!result.image?.url) throw new Error("fal.ai outpaint returned no image");
+            
+            return {
+                content: result.image.url,
+                format: "url",
+                model: modelId,
+                provider: "fal.ai",
+            };
         }
 
         // ── Determine endpoint ─────────────────────────────────────
@@ -619,6 +714,7 @@ const FAL_PRIMARY_MODELS = new Set([
     "nano-banana-2",
     "nano-banana",
     "nano-banana-pro",
+    "bria-expand",
 ]);
 
 
@@ -631,6 +727,8 @@ const MODEL_FALLBACK_CHAIN: Record<string, string[]> = {
     "nano-banana-2":   ["nano-banana", "nano-banana-pro"],
     "nano-banana":     ["nano-banana-2", "nano-banana-pro"],
     "nano-banana-pro": ["nano-banana-2", "nano-banana"],
+    "bria-expand":     ["outpainter"],
+    "outpainter":      ["bria-expand"],
 };
 
 /**

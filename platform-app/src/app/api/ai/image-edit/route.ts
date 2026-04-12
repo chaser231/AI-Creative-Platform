@@ -15,7 +15,7 @@ export async function POST(req: NextRequest) {
         }
 
         const body = await req.json();
-        const { action, prompt, imageBase64, maskBase64, model, aspectRatio, canvasSize, originalSize, originalLocation, referenceImages, projectId } = body;
+        const { action, prompt, imageBase64, maskBase64, model, aspectRatio, canvasSize, originalSize, originalLocation, referenceImages, projectId, expandPadding } = body;
 
         if (!action) {
             return NextResponse.json(
@@ -100,7 +100,8 @@ export async function POST(req: NextRequest) {
                     aspectRatio,
                     canvasSize,
                     originalSize,
-                    originalLocation
+                    originalLocation,
+                    expandPadding,
                 });
                 if (result.model) usedModel = result.model;
                 break;
