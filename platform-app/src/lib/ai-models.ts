@@ -214,6 +214,14 @@ export const MODEL_REGISTRY: ModelEntry[] = [
         costPerRun: 0.04,
     },
     {
+        id: "outpainter",
+        label: "Outpainter",
+        slug: "zsxkib/outpainter",
+        provider: "replicate",
+        caps: ["outpaint"],
+        costPerRun: 0.05,
+    },
+    {
         id: "rembg",
         label: "RemBG",
         slug: "cjwbw/rembg",

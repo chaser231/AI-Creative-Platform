@@ -3,7 +3,8 @@
  */
 
 import type { StateCreator } from "zustand";
-import type { CanvasStore, ArtboardProps, SnapConfig, EditorMode, FrameLayer } from "./types";
+import type { CanvasStore, ArtboardProps, SnapConfig, EditorMode, FrameLayer, ExpandPadding } from "./types";
+import { DEFAULT_EXPAND_PADDING } from "./types";
 import { DEFAULT_SNAP_CONFIG } from "@/services/snapService";
 
 export type ViewportSlice = Pick<CanvasStore,
@@ -11,11 +12,13 @@ export type ViewportSlice = Pick<CanvasStore,
     | "artboardProps" | "snapConfig"
     | "highlightedFrameId" | "hoveredLayerId" | "editorMode"
     | "isEditingText" | "editingLayerId"
+    | "expandMode" | "expandPadding" | "expandTargetLayerId"
     | "setZoom" | "setStagePosition"
     | "updateArtboardProps" | "updateSnapConfig"
     | "setHighlightedFrameId" | "setHoveredLayerId" | "getFrameAtPoint"
     | "setEditorMode" | "setActiveTool"
     | "startTextEditing" | "stopTextEditing"
+    | "setExpandMode" | "setExpandPadding" | "resetExpandMode"
     | "activeTool"
 >;
 
@@ -39,6 +42,11 @@ export const createViewportSlice: StateCreator<CanvasStore, [], [], ViewportSlic
     editorMode: "studio",
     isEditingText: false,
     editingLayerId: null,
+
+    // Generative Expand
+    expandMode: false,
+    expandPadding: { ...DEFAULT_EXPAND_PADDING },
+    expandTargetLayerId: null,
 
     setActiveTool: (tool) => {
         set({ activeTool: tool, selectedLayerIds: [] });
@@ -116,5 +124,32 @@ export const createViewportSlice: StateCreator<CanvasStore, [], [], ViewportSlic
 
     stopTextEditing: () => {
         set({ isEditingText: false, editingLayerId: null });
+    },
+
+    // ── Generative Expand ────────────────────────────────
+    setExpandMode: (active) => {
+        if (active) {
+            const { selectedLayerIds, layers } = get();
+            const targetId = selectedLayerIds[0] || null;
+            const targetLayer = targetId ? layers.find(l => l.id === targetId) : null;
+            // Only allow expand on image layers
+            if (!targetLayer || targetLayer.type !== "image") {
+                set({ expandMode: false, expandTargetLayerId: null, expandPadding: { ...DEFAULT_EXPAND_PADDING } });
+                return;
+            }
+            set({ expandMode: true, expandTargetLayerId: targetId, expandPadding: { ...DEFAULT_EXPAND_PADDING } });
+        } else {
+            set({ expandMode: false, expandTargetLayerId: null, expandPadding: { ...DEFAULT_EXPAND_PADDING } });
+        }
+    },
+
+    setExpandPadding: (padding) => {
+        set((state) => ({
+            expandPadding: { ...state.expandPadding, ...padding },
+        }));
+    },
+
+    resetExpandMode: () => {
+        set({ expandMode: false, expandTargetLayerId: null, expandPadding: { ...DEFAULT_EXPAND_PADDING } });
     },
 });
