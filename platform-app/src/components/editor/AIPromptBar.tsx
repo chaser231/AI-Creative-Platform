@@ -122,7 +122,7 @@ function QuickActionButton({
                 border whitespace-nowrap
                 disabled:opacity-40 disabled:cursor-not-allowed
                 ${active
-                    ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/40 shadow-sm"
+                    ? "bg-accent-lime/20 text-accent-primary border-accent-lime-hover/50 shadow-sm"
                     : "bg-bg-tertiary/40 text-text-secondary border-border-primary/60 hover:bg-bg-tertiary hover:border-border-secondary hover:text-text-primary"
                 }
             `}
@@ -709,9 +709,9 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
 
                         {/* Expand hint — shown when expand is active */}
                         {editAction === "expand" && (
-                            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-[10px] border border-emerald-500/30 bg-emerald-500/5">
-                                <Expand size={12} className="text-emerald-700 dark:text-emerald-400" />
-                                <span className="text-[11px] text-emerald-700 dark:text-emerald-400 font-medium">
+                            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-[10px] border border-accent-lime-hover/50 bg-accent-lime/10">
+                                <Expand size={12} className="text-accent-primary" />
+                                <span className="text-[11px] text-accent-primary font-medium">
                                     Потяните за ручки на canvas
                                 </span>
                             </div>
@@ -818,7 +818,7 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                             className={`
                                 flex items-center justify-center w-10 h-10 rounded-full
                                 transition-all duration-200 cursor-pointer
-                                bg-accent-lime-hover hover:bg-accent-lime text-text-inverse
+                                bg-accent-lime-hover hover:bg-accent-lime text-accent-primary
                                 hover:scale-105 active:scale-95
                                 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100
                                 shadow-sm hover:shadow-md
