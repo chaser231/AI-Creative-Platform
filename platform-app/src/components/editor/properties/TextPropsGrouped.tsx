@@ -228,15 +228,23 @@ export function TextPropsGrouped({
                                 value={layer.textAdjust || "auto_width"}
                                 onChange={(val) => {
                                     const updates: any = { textAdjust: val };
-                                    if (val === "auto_width" && layer.layoutSizingWidth === "fill") {
-                                        updates.layoutSizingWidth = "fixed";
+                                    if (val === "auto_width") {
+                                        // auto_width: text determines its own width → fill width is a conflict
+                                        if (layer.layoutSizingWidth === "fill") {
+                                            updates.layoutSizingWidth = "fixed";
+                                        }
+                                    } else if (val === "auto_height") {
+                                        // auto_height: text determines its own height → fill height is a conflict
+                                        if (layer.layoutSizingHeight === "fill") {
+                                            updates.layoutSizingHeight = "fixed";
+                                        }
                                     }
                                     onChange(updates);
                                 }}
                                 options={[
-                                    { value: "auto_width", label: "Auto Width" },
-                                    { value: "auto_height", label: "Auto Height" },
-                                    { value: "fixed", label: "Fixed Size" },
+                                    { value: "auto_width", label: "Автоширина" },
+                                    { value: "auto_height", label: "Автовысота" },
+                                    { value: "fixed", label: "Фиксированный" },
                                 ]}
                             />
                         </div>

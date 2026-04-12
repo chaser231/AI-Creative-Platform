@@ -382,15 +382,21 @@ RULES:
         }
       }
 
-      // Scan both layerTree and masterComponents
+      // Scan all three possible data formats: layerTree, masterComponents, and raw layers[]
       const td = templateData as Record<string, unknown>;
       if (td.layerTree) scanLayers(td.layerTree as TemplateNode[]);
       if (td.masterComponents) {
-        for (const mc of td.masterComponents as TemplateNode[]) {
-          if (mc.slotId && mc.slotId !== "none") {
-            slots.push({ id: mc.id || "", type: mc.type || "", slotId: mc.slotId });
+        for (const mc of td.masterComponents as any[]) {
+          // Check both MC-level slotId and nested props.slotId
+          const mcSlotId = mc.slotId || mc.props?.slotId;
+          if (mcSlotId && mcSlotId !== "none") {
+            slots.push({ id: mc.id || "", type: mc.type || "", slotId: mcSlotId });
           }
         }
+      }
+      // Raw canvas state format — layers[] at top level (new template editor format)
+      if (td.layers && Array.isArray(td.layers)) {
+        scanLayers(td.layers as TemplateNode[]);
       }
 
       const canvasActions: CanvasInstruction[] = [];

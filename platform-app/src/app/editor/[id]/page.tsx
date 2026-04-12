@@ -135,20 +135,50 @@ export default function EditorPage({ params }: EditorPageProps) {
         if (!isTemplateMode) return;
         setTemplateSaveStatus("saving");
         const store = useCanvasStore.getState();
-        // Update active format's snapshot with current layers
+
+        // Snapshot ALL formats: active format uses store.layers, others keep their existing snapshot
         const resizesWithSnapshot = store.resizes.map(r =>
             r.id === store.activeResizeId
                 ? { ...r, layerSnapshot: store.layers }
                 : r
         );
+
+        // Find master format — its layers are the canonical "layers" field
+        const masterFormat = resizesWithSnapshot.find(r => r.isMaster);
+        const masterLayers = masterFormat
+            ? (masterFormat.id === store.activeResizeId
+                ? store.layers                     // master is currently active → use live layers
+                : masterFormat.layerSnapshot ?? []) // master is not active → use its snapshot
+            : store.layers; // no master designated → fall back to current layers
+
+        // ── Rebuild masterComponents from master layers ──
+        // This ensures the wizard always sees up-to-date fields,
+        // regardless of whether the template was created in legacy or raw canvas state format.
+        const CONTENT_TYPES = ["text", "image", "badge"];
+        const rebuiltMC = (masterLayers as any[])
+            .filter((l: any) => {
+                // Include content layers with slotId
+                if (CONTENT_TYPES.includes(l.type) && l.slotId && l.slotId !== "none") return true;
+                // Include frame layers with groupSlotId (for wizard text grouping)
+                if (l.type === "frame" && l.groupSlotId) return true;
+                return false;
+            })
+            .map((l: any) => ({
+                id: l.id,
+                type: l.type as string,
+                name: l.name || l.type,
+                slotId: l.slotId,
+                props: { ...l },
+            }));
+
         const canvasState = {
-            layers: store.layers,
-            masterComponents: store.masterComponents,
+            layers: masterLayers,
+            masterComponents: rebuiltMC.length > 0 ? rebuiltMC : store.masterComponents,
             componentInstances: store.componentInstances,
             resizes: resizesWithSnapshot,
             artboardProps: store.artboardProps,
-            canvasWidth: store.canvasWidth,
-            canvasHeight: store.canvasHeight,
+            canvasWidth: masterFormat?.width ?? store.canvasWidth,
+            canvasHeight: masterFormat?.height ?? store.canvasHeight,
         };
         templateSaveMutation.mutate({ id, data: canvasState });
     }, [isTemplateMode, id, templateSaveMutation]);

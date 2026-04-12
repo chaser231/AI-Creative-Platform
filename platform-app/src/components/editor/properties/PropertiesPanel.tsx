@@ -207,7 +207,7 @@ export function PropertiesPanel() {
                                             <label className="text-[9px] text-text-tertiary uppercase tracking-wider font-medium mb-1.5 block">Размер в Авто-лейауте</label>
                                             <div className="grid grid-cols-2 gap-2">
                                                 <div>
-                                                    <span className="text-[10px] text-text-tertiary font-light mb-1 block">По горизонтали</span>
+                                                    <span className="text-[10px] text-text-tertiary font-light mb-1 block">Ширина</span>
                                                     <Select
                                                         size="sm"
                                                         value={selectedLayer.layoutSizingWidth || "fixed"}
@@ -219,6 +219,8 @@ export function PropertiesPanel() {
                                                                     updates.textAdjust = "auto_height";
                                                                 }
                                                             }
+                                                            // Fill-on-Hug resolution: if parent's counter axis is hug,
+                                                            // fill is meaningless. Engine handles it, but warn.
                                                             updateLayer(selectedLayer.id, updates);
                                                         }}
                                                         options={[
@@ -229,11 +231,30 @@ export function PropertiesPanel() {
                                                     />
                                                 </div>
                                                 <div>
-                                                    <span className="text-[10px] text-text-tertiary font-light mb-1 block">По вертикали</span>
+                                                    <span className="text-[10px] text-text-tertiary font-light mb-1 block">Высота</span>
                                                     <Select
                                                         size="sm"
                                                         value={selectedLayer.layoutSizingHeight || "fixed"}
-                                                        onChange={(val) => updateLayer(selectedLayer.id, { layoutSizingHeight: val as Layer["layoutSizingHeight"] })}
+                                                        onChange={(val) => {
+                                                            const updates: any = { layoutSizingHeight: val };
+                                                            // Text conflict resolution: Fill height means parent
+                                                            // determines height → text should be fixed or auto_width
+                                                            if (selectedLayer.type === "text" && val === "fill") {
+                                                                const txt = selectedLayer as TextLayer;
+                                                                if (txt.textAdjust === "auto_height") {
+                                                                    updates.textAdjust = "fixed";
+                                                                }
+                                                            }
+                                                            // If switching to hug on height for text,
+                                                            // ensure textAdjust supports auto-height
+                                                            if (selectedLayer.type === "text" && val === "hug") {
+                                                                const txt = selectedLayer as TextLayer;
+                                                                if (txt.textAdjust === "fixed") {
+                                                                    updates.textAdjust = "auto_height";
+                                                                }
+                                                            }
+                                                            updateLayer(selectedLayer.id, updates);
+                                                        }}
                                                         options={[
                                                             { value: "fixed", label: "Fixed" },
                                                             { value: "fill", label: "Fill" },

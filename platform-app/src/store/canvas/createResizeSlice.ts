@@ -8,7 +8,7 @@
 
 import type { StateCreator } from "zustand";
 import type { CanvasStore, Layer, ComponentProps, ComponentInstance, ResizeFormat, LayerBinding } from "./types";
-import type { SyncMode } from "@/types";
+import { migrateLegacyBinding } from "@/types";
 import { DEFAULT_RESIZE } from "./types";
 import { v4 as uuid } from "uuid";
 import { applyLayout, applyAllAutoLayouts } from "@/utils/layoutEngine";
@@ -335,27 +335,33 @@ export const createResizeSlice: StateCreator<CanvasStore, [], [], ResizeSlice> =
 
 // ── Cascade helper ──────────────────────────────────────
 
-/** Property sets for each sync mode */
+/** Property sets for each sync category */
 const CONTENT_PROPS = ['text', 'src', 'label'] as const;
 const STYLE_PROPS = [
     'fill', 'stroke', 'strokeWidth', 'fontSize', 'fontFamily', 'fontWeight',
     'align', 'letterSpacing', 'lineHeight', 'cornerRadius', 'objectFit',
     'textColor', 'textAdjust', 'truncateText', 'verticalTrim',
 ] as const;
-const GEOMETRY_PROPS = ['x', 'y', 'width', 'height', 'rotation'] as const;
+const SIZE_PROPS = ['width', 'height'] as const;
+const POSITION_PROPS = ['x', 'y', 'rotation'] as const;
 
-function getPropsForSyncMode(mode: SyncMode): readonly string[] {
-    switch (mode) {
-        case 'content_only':
-            return CONTENT_PROPS;
-        case 'content_and_style':
-            return [...CONTENT_PROPS, ...STYLE_PROPS];
-        case 'all':
-            return [...CONTENT_PROPS, ...STYLE_PROPS, ...GEOMETRY_PROPS];
-        case 'none':
-        default:
-            return [];
+/**
+ * Build the list of properties to sync based on binding flags.
+ * Auto-migrates legacy syncMode if flags are missing.
+ */
+function getPropsForBinding(binding: LayerBinding): readonly string[] {
+    // Auto-migrate legacy syncMode if flags aren't set
+    if (binding.syncContent === undefined && binding.syncMode) {
+        const migrated = migrateLegacyBinding(binding);
+        return getPropsForBinding(migrated);
     }
+
+    const props: string[] = [];
+    if (binding.syncContent) props.push(...CONTENT_PROPS);
+    if (binding.syncStyle) props.push(...STYLE_PROPS);
+    if (binding.syncSize) props.push(...SIZE_PROPS);
+    if (binding.syncPosition) props.push(...POSITION_PROPS);
+    return props;
 }
 
 /**
@@ -374,13 +380,23 @@ function applyCascade(
 
     let changed = false;
     const result = targetLayers.map(layer => {
-        const binding = bindings.find(b => b.targetLayerId === layer.id);
-        if (!binding || binding.syncMode === 'none') return layer;
+        const rawBinding = bindings.find(b => b.targetLayerId === layer.id);
+        if (!rawBinding) return layer;
+
+        // Auto-migrate legacy binding on the fly
+        const binding = rawBinding.syncContent !== undefined
+            ? rawBinding
+            : migrateLegacyBinding(rawBinding);
+
+        // Check if all flags are off (equivalent to 'none')
+        if (!binding.syncContent && !binding.syncStyle && !binding.syncSize && !binding.syncPosition) {
+            return layer;
+        }
 
         const masterLayer = masterMap.get(binding.masterLayerId);
         if (!masterLayer) return layer;
 
-        const propsToSync = getPropsForSyncMode(binding.syncMode);
+        const propsToSync = getPropsForBinding(binding);
         const updates: Record<string, unknown> = {};
         let hasUpdate = false;
 

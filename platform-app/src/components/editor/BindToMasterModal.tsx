@@ -2,23 +2,87 @@
 
 import { useState, useMemo, useCallback } from "react";
 import { createPortal } from "react-dom";
-import { X, Link2, Unlink2, ChevronDown } from "lucide-react";
+import { X, Link2, Unlink2, Type, Palette, Move, Maximize2 } from "lucide-react";
 import { Select } from "@/components/ui/Select";
+import { Button } from "@/components/ui/Button";
 import { useCanvasStore } from "@/store/canvasStore";
 import { useShallow } from "zustand/react/shallow";
-import type { LayerBinding, SyncMode, Layer } from "@/types";
+import type { LayerBinding, Layer } from "@/types";
+import { migrateLegacyBinding } from "@/types";
 
 interface BindToMasterModalProps {
     formatId: string;
     onClose: () => void;
 }
 
-const SYNC_MODES: { value: SyncMode; label: string; description: string }[] = [
-    { value: "content_only", label: "Содержимое", description: "Текст, изображения" },
-    { value: "content_and_style", label: "Содержимое + стили", description: "Текст, цвета, шрифты" },
-    { value: "all", label: "Все свойства", description: "Содержимое, стили, позиция, размер" },
-    { value: "none", label: "Не синхронизировать", description: "Полностью независимый" },
+/* ─── Sync Flag Definitions ───────────────────────────── */
+
+interface SyncFlag {
+    key: keyof Pick<LayerBinding, 'syncContent' | 'syncStyle' | 'syncSize' | 'syncPosition'>;
+    label: string;
+    shortLabel: string;
+    icon: React.ReactNode;
+    description: string;
+}
+
+const SYNC_FLAGS: SyncFlag[] = [
+    { key: "syncContent",  label: "Содержимое", shortLabel: "Содерж.", icon: <Type size={10} />,     description: "Текст, изображения" },
+    { key: "syncStyle",    label: "Стили",      shortLabel: "Стили",   icon: <Palette size={10} />,  description: "Цвета, шрифты" },
+    { key: "syncSize",     label: "Размер",     shortLabel: "Размер",  icon: <Maximize2 size={10} />,description: "Ширина, высота" },
+    { key: "syncPosition", label: "Позиция",    shortLabel: "Позиция", icon: <Move size={10} />,     description: "X, Y, поворот" },
 ];
+
+/* ─── Quick Presets ────────────────────────────────────── */
+
+interface SyncPreset {
+    label: string;
+    syncContent: boolean;
+    syncStyle: boolean;
+    syncSize: boolean;
+    syncPosition: boolean;
+}
+
+const PRESETS: SyncPreset[] = [
+    { label: "Содержимое",         syncContent: true,  syncStyle: false, syncSize: false, syncPosition: false },
+    { label: "Содержимое + размер",syncContent: true,  syncStyle: false, syncSize: true,  syncPosition: false },
+    { label: "Полная синхронизация",syncContent: true,  syncStyle: true,  syncSize: true,  syncPosition: true },
+];
+
+/* ─── Toggle Chip ──────────────────────────────────────── */
+
+function SyncChip({
+    flag,
+    active,
+    disabled,
+    onToggle,
+}: {
+    flag: SyncFlag;
+    active: boolean;
+    disabled: boolean;
+    onToggle: () => void;
+}) {
+    return (
+        <button
+            onClick={onToggle}
+            disabled={disabled}
+            title={`${flag.label}: ${flag.description}`}
+            className={`
+                inline-flex items-center gap-1 px-1.5 py-0.5 rounded-[var(--radius-sm)] text-[9px] font-medium
+                transition-all duration-[var(--transition-fast)] cursor-pointer border
+                ${disabled ? "opacity-30 pointer-events-none" : ""}
+                ${active
+                    ? "bg-accent-primary/10 border-accent-primary/30 text-accent-primary"
+                    : "bg-bg-surface border-border-primary text-text-tertiary hover:border-border-secondary hover:text-text-secondary"
+                }
+            `}
+        >
+            <span className={active ? "text-accent-primary" : "text-text-quaternary"}>{flag.icon}</span>
+            {flag.shortLabel}
+        </button>
+    );
+}
+
+/* ─── Main Component ───────────────────────────────────── */
 
 export function BindToMasterModal({ formatId, onClose }: BindToMasterModalProps) {
     const {
@@ -55,11 +119,24 @@ export function BindToMasterModal({ formatId, onClose }: BindToMasterModalProps)
     // Initialize bindings from existing or auto-map by name
     const initialBindings = useMemo(() => {
         if (targetFormat?.layerBindings && targetFormat.layerBindings.length > 0) {
-            return targetFormat.layerBindings;
+            // Auto-migrate legacy bindings
+            return targetFormat.layerBindings.map(b => migrateLegacyBinding(b));
         }
         // Auto-map by name
         return autoMapByName(masterLayers, targetLayers);
     }, [targetFormat, masterLayers, targetLayers]);
+
+    interface BindingRow {
+        masterLayerId: string;
+        masterLayerName: string;
+        masterLayerType: string;
+        targetLayerId: string;
+        syncContent: boolean;
+        syncStyle: boolean;
+        syncSize: boolean;
+        syncPosition: boolean;
+        enabled: boolean;
+    }
 
     const [bindings, setBindings] = useState<BindingRow[]>(() =>
         masterLayers.map(ml => {
@@ -69,20 +146,14 @@ export function BindToMasterModal({ formatId, onClose }: BindToMasterModalProps)
                 masterLayerName: ml.name,
                 masterLayerType: ml.type,
                 targetLayerId: existing?.targetLayerId ?? "",
-                syncMode: existing?.syncMode ?? "content_only",
+                syncContent: existing?.syncContent ?? true,
+                syncStyle: existing?.syncStyle ?? false,
+                syncSize: existing?.syncSize ?? false,
+                syncPosition: existing?.syncPosition ?? false,
                 enabled: !!existing?.targetLayerId,
             };
         })
     );
-
-    interface BindingRow {
-        masterLayerId: string;
-        masterLayerName: string;
-        masterLayerType: string;
-        targetLayerId: string;
-        syncMode: SyncMode;
-        enabled: boolean;
-    }
 
     const handleToggle = useCallback((masterLayerId: string) => {
         setBindings(prev => prev.map(b =>
@@ -100,10 +171,24 @@ export function BindToMasterModal({ formatId, onClose }: BindToMasterModalProps)
         ));
     }, []);
 
-    const handleSyncModeChange = useCallback((masterLayerId: string, syncMode: SyncMode) => {
+    const handleFlagToggle = useCallback((masterLayerId: string, flag: SyncFlag['key']) => {
         setBindings(prev => prev.map(b =>
             b.masterLayerId === masterLayerId
-                ? { ...b, syncMode }
+                ? { ...b, [flag]: !b[flag] }
+                : b
+        ));
+    }, []);
+
+    const handleApplyPreset = useCallback((preset: SyncPreset) => {
+        setBindings(prev => prev.map(b =>
+            b.enabled && b.targetLayerId
+                ? {
+                    ...b,
+                    syncContent: preset.syncContent,
+                    syncStyle: preset.syncStyle,
+                    syncSize: preset.syncSize,
+                    syncPosition: preset.syncPosition,
+                }
                 : b
         ));
     }, []);
@@ -114,7 +199,10 @@ export function BindToMasterModal({ formatId, onClose }: BindToMasterModalProps)
             .map(b => ({
                 masterLayerId: b.masterLayerId,
                 targetLayerId: b.targetLayerId,
-                syncMode: b.syncMode,
+                syncContent: b.syncContent,
+                syncStyle: b.syncStyle,
+                syncSize: b.syncSize,
+                syncPosition: b.syncPosition,
             }));
 
         if (activeBindings.length > 0) {
@@ -142,7 +230,7 @@ export function BindToMasterModal({ formatId, onClose }: BindToMasterModalProps)
             className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 backdrop-blur-sm"
             onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
         >
-            <div className="w-[560px] max-h-[80vh] bg-bg-primary rounded-[var(--radius-xl)] border border-border-primary shadow-[var(--shadow-lg)] flex flex-col overflow-hidden">
+            <div className="w-[640px] max-h-[80vh] bg-bg-primary rounded-[var(--radius-xl)] border border-border-primary shadow-[var(--shadow-lg)] flex flex-col overflow-hidden">
                 {/* Header */}
                 <div className="flex items-center justify-between px-5 py-4 border-b border-border-primary">
                     <div>
@@ -161,6 +249,22 @@ export function BindToMasterModal({ formatId, onClose }: BindToMasterModalProps)
                     </button>
                 </div>
 
+                {/* Quick presets */}
+                <div className="flex items-center gap-2 px-5 py-2.5 border-b border-border-primary bg-bg-secondary/50">
+                    <span className="text-[10px] text-text-tertiary font-medium mr-1">Пресеты:</span>
+                    {PRESETS.map(preset => (
+                        <Button
+                            key={preset.label}
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleApplyPreset(preset)}
+                            className="!h-6 !px-2.5 !text-[10px] !rounded-[var(--radius-md)]"
+                        >
+                            {preset.label}
+                        </Button>
+                    ))}
+                </div>
+
                 {/* Bindings list */}
                 <div className="flex-1 overflow-y-auto px-5 py-3">
                     {/* Column headers */}
@@ -169,7 +273,7 @@ export function BindToMasterModal({ formatId, onClose }: BindToMasterModalProps)
                         <div className="flex-1">Слой мастера</div>
                         <div className="w-px h-3 bg-border-secondary" />
                         <div className="flex-1">Слой формата</div>
-                        <div className="w-[130px] text-right">Синхронизация</div>
+                        <div className="w-[180px] text-right">Синхронизация</div>
                     </div>
 
                     <div className="space-y-1">
@@ -225,15 +329,17 @@ export function BindToMasterModal({ formatId, onClose }: BindToMasterModalProps)
                                     />
                                 </div>
 
-                                {/* Sync mode selector */}
-                                <div className="w-[130px]">
-                                    <Select
-                                        size="xs"
-                                        value={row.syncMode}
-                                        onChange={(val) => handleSyncModeChange(row.masterLayerId, val as SyncMode)}
-                                        disabled={!row.enabled || !row.targetLayerId}
-                                        options={SYNC_MODES.map(sm => ({ value: sm.value, label: sm.label }))}
-                                    />
+                                {/* Sync flag chips */}
+                                <div className="w-[180px] flex items-center gap-1 justify-end flex-wrap">
+                                    {SYNC_FLAGS.map(flag => (
+                                        <SyncChip
+                                            key={flag.key}
+                                            flag={flag}
+                                            active={row[flag.key]}
+                                            disabled={!row.enabled || !row.targetLayerId}
+                                            onToggle={() => handleFlagToggle(row.masterLayerId, flag.key)}
+                                        />
+                                    ))}
                                 </div>
                             </div>
                         ))}
@@ -260,21 +366,12 @@ export function BindToMasterModal({ formatId, onClose }: BindToMasterModalProps)
                         <span className="text-[10px] text-text-tertiary">
                             {enabledCount} из {bindings.length} связей
                         </span>
-                        <button
-                            onClick={onClose}
-                            className="px-4 py-1.5 rounded-[var(--radius-md)] border border-border-primary text-[11px] text-text-secondary hover:text-text-primary hover:bg-bg-tertiary transition-colors cursor-pointer"
-                        >
+                        <Button variant="ghost" size="sm" onClick={onClose}>
                             Отмена
-                        </button>
-                        <button
-                            onClick={handleApply}
-                            className="px-4 py-1.5 rounded-[var(--radius-md)] bg-accent-primary text-text-inverse text-[11px] font-medium hover:bg-accent-primary-hover transition-colors cursor-pointer"
-                        >
-                            <span className="flex items-center gap-1">
-                                <Link2 size={11} />
-                                Применить
-                            </span>
-                        </button>
+                        </Button>
+                        <Button size="sm" onClick={handleApply} icon={<Link2 size={11} />}>
+                            Применить
+                        </Button>
                     </div>
                 </div>
             </div>
@@ -297,7 +394,10 @@ function autoMapByName(masterLayers: Layer[], targetLayers: Layer[]): LayerBindi
             bindings.push({
                 masterLayerId: ml.id,
                 targetLayerId: exactMatch.id,
-                syncMode: "content_only",
+                syncContent: true,
+                syncStyle: false,
+                syncSize: false,
+                syncPosition: false,
             });
             usedTargets.add(exactMatch.id);
             continue;
@@ -312,7 +412,10 @@ function autoMapByName(masterLayers: Layer[], targetLayers: Layer[]): LayerBindi
             bindings.push({
                 masterLayerId: ml.id,
                 targetLayerId: partialMatch.id,
-                syncMode: "content_only",
+                syncContent: true,
+                syncStyle: false,
+                syncSize: false,
+                syncPosition: false,
             });
             usedTargets.add(partialMatch.id);
         }

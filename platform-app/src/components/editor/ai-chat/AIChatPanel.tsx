@@ -30,6 +30,59 @@ import {
 import type { AIChatMessage } from "./types";
 import { MessageBubble } from "./MessageBubble";
 
+/**
+ * Wait for Zustand store to have layers populated after template load.
+ * Uses subscribe() for reliable detection instead of setTimeout.
+ */
+function waitForStoreUpdate(timeoutMs = 2000): Promise<void> {
+    return new Promise((resolve) => {
+        const { useCanvasStore } = require("@/store/canvasStore");
+        const currentLayers = useCanvasStore.getState().layers;
+
+        // If layers are already populated, resolve immediately
+        if (currentLayers.length > 0) {
+            // Still yield to microtask queue so setState fully propagates
+            queueMicrotask(resolve);
+            return;
+        }
+
+        // Subscribe and wait for layers to appear
+        const timeout = setTimeout(() => {
+            unsub();
+            resolve(); // resolve even on timeout to avoid deadlocks
+        }, timeoutMs);
+
+        const unsub = useCanvasStore.subscribe((state: { layers: unknown[] }) => {
+            if (state.layers.length > 0) {
+                clearTimeout(timeout);
+                unsub();
+                // Yield one more tick so any dependent effects settle
+                queueMicrotask(resolve);
+            }
+        });
+    });
+}
+
+/**
+ * Find a layer by slotId, checking layers directly and via masterComponents.
+ */
+function findLayerBySlotId(
+    slotId: string,
+    layers: Layer[],
+    masters: MasterComponent[]
+): Layer | undefined {
+    // Direct match on layer.slotId
+    let target = layers.find((l: Layer) => l.slotId === slotId);
+    if (target) return target;
+
+    // Match via masterComponent.slotId → layer.masterId
+    const mc = masters?.find((m: MasterComponent) => m.slotId === slotId || (m.props as any).slotId === slotId);
+    if (mc) {
+        target = layers.find((l: Layer) => l.masterId === mc.id);
+    }
+    return target;
+}
+
 export type { AIChatMessage };
 
 interface AIChatPanelProps {
@@ -168,41 +221,45 @@ export function AIChatPanel({ open, onClose, messages, onAddMessages, projectId 
 
             const newMessages: AIChatMessage[] = [];
 
-            // Execute canvas actions (place content on canvas)
+            // Execute canvas actions — two-phase: load templates first, then update layers
             if (result.canvasActions && result.canvasActions.length > 0) {
-                for (const ca of result.canvasActions) {
+                const loadActions = result.canvasActions.filter(ca => ca.action === "load_template");
+                const updateActions = result.canvasActions.filter(ca => ca.action === "update_layer");
+                const otherActions = result.canvasActions.filter(ca => ca.action !== "load_template" && ca.action !== "update_layer");
+
+                // Phase 1: Execute non-template actions (add_text, add_image)
+                for (const ca of otherActions) {
                     if (ca.action === "add_text") {
                         addTextLayer(ca.params as any);
                     } else if (ca.action === "add_image") {
                         const p = ca.params as { src: string; width: number; height: number };
-                        // Persist temporary URL to S3 before adding to canvas
                         let src = p.src;
                         if (projectId) {
                             try { src = await persistImageToS3(src, projectId); } catch {}
                         }
                         addImageLayer(src, p.width, p.height);
-                    } else if (ca.action === "load_template") {
-                        // Load template onto canvas
-                        const { applyTemplatePack } = await import("@/services/templateService");
-                        await applyTemplatePack((ca.params as { templateData: TemplatePackV2 }).templateData);
-                    } else if (ca.action === "update_layer") {
-                        // Find layer by slotId and update
-                        const { slotId, updates } = ca.params as { slotId: string; updates: Record<string, unknown> };
-                        const currentLayers = useCanvasStore.getState().layers;
-                        const targetLayer = currentLayers.find((l: Layer) => l.slotId === slotId);
-                        if (targetLayer) {
-                            updateLayer(targetLayer.id, updates as any);
-                        }
-                        // Also check masterComponents
-                        const masters = useCanvasStore.getState().masterComponents;
-                        const targetMaster = masters?.find((mc: MasterComponent) => mc.slotId === slotId);
-                        if (targetMaster && !targetLayer) {
-                            // Update via master if no direct layer found
-                            const masterLayer = currentLayers.find((l: Layer) => l.masterId === targetMaster.id);
-                            if (masterLayer) {
-                                updateLayer(masterLayer.id, updates as any);
-                            }
-                        }
+                    }
+                }
+
+                // Phase 2: Load templates
+                for (const ca of loadActions) {
+                    const { applyTemplatePack } = await import("@/services/templateService");
+                    await applyTemplatePack((ca.params as { templateData: TemplatePackV2 }).templateData);
+                }
+
+                // Phase 3: Wait for store to reflect loaded template layers
+                if (loadActions.length > 0 && updateActions.length > 0) {
+                    await waitForStoreUpdate();
+                }
+
+                // Phase 4: Apply update_layer actions (content filling)
+                for (const ca of updateActions) {
+                    const { slotId, updates } = ca.params as { slotId: string; updates: Record<string, unknown> };
+                    const currentLayers = useCanvasStore.getState().layers;
+                    const masters = useCanvasStore.getState().masterComponents;
+                    const targetLayer = findLayerBySlotId(slotId, currentLayers, masters);
+                    if (targetLayer) {
+                        updateLayer(targetLayer.id, updates as any);
                     }
                 }
             }
@@ -419,31 +476,15 @@ export function AIChatPanel({ open, onClose, messages, onAddMessages, projectId 
             referenceImages: pendingReferenceImages.current.length > 0 ? pendingReferenceImages.current : undefined,
             lastGeneratedImageUrl: lastGeneratedImageUrl.current || undefined,
         }).then(async (result) => {
-            // Execute canvas actions
+            // Execute canvas actions — two-phase: load templates first, then update layers
             if (result.canvasActions && result.canvasActions.length > 0) {
-                for (const ca of result.canvasActions) {
-                    if (ca.action === "load_template") {
-                        const { applyTemplatePack } = await import("@/services/templateService");
-                        await applyTemplatePack((ca.params as { templateData: TemplatePackV2 }).templateData);
-                    } else if (ca.action === "update_layer") {
-                        const { slotId, updates } = ca.params as { slotId: string; updates: Record<string, unknown> };
-                        // Wait for template to finish loading
-                        await new Promise(r => setTimeout(r, 200));
-                        const currentLayers = useCanvasStore.getState().layers;
-                        const targetLayer = currentLayers.find((l: Layer) => l.slotId === slotId);
-                        if (targetLayer) {
-                            updateLayer(targetLayer.id, updates as any);
-                        }
-                        // Check masterComponents
-                        const masters = useCanvasStore.getState().masterComponents;
-                        const targetMaster = masters?.find((mc: MasterComponent) => mc.slotId === slotId);
-                        if (targetMaster && !targetLayer) {
-                            const masterLayer = currentLayers.find((l: Layer) => l.masterId === targetMaster.id);
-                            if (masterLayer) {
-                                updateLayer(masterLayer.id, updates as any);
-                            }
-                        }
-                    } else if (ca.action === "add_text") {
+                const loadActions = result.canvasActions.filter(ca => ca.action === "load_template");
+                const updateActions = result.canvasActions.filter(ca => ca.action === "update_layer");
+                const otherActions = result.canvasActions.filter(ca => ca.action !== "load_template" && ca.action !== "update_layer");
+
+                // Phase 1: Other actions
+                for (const ca of otherActions) {
+                    if (ca.action === "add_text") {
                         addTextLayer(ca.params as any);
                     } else if (ca.action === "add_image") {
                         const p = ca.params as { src: string; width: number; height: number };
@@ -452,6 +493,28 @@ export function AIChatPanel({ open, onClose, messages, onAddMessages, projectId 
                             try { src = await persistImageToS3(src, projectId); } catch {}
                         }
                         addImageLayer(src, p.width, p.height);
+                    }
+                }
+
+                // Phase 2: Load templates
+                for (const ca of loadActions) {
+                    const { applyTemplatePack } = await import("@/services/templateService");
+                    await applyTemplatePack((ca.params as { templateData: TemplatePackV2 }).templateData);
+                }
+
+                // Phase 3: Wait for store to reflect loaded template
+                if (loadActions.length > 0 && updateActions.length > 0) {
+                    await waitForStoreUpdate();
+                }
+
+                // Phase 4: Apply update_layer actions
+                for (const ca of updateActions) {
+                    const { slotId, updates } = ca.params as { slotId: string; updates: Record<string, unknown> };
+                    const currentLayers = useCanvasStore.getState().layers;
+                    const masters = useCanvasStore.getState().masterComponents;
+                    const targetLayer = findLayerBySlotId(slotId, currentLayers, masters);
+                    if (targetLayer) {
+                        updateLayer(targetLayer.id, updates as any);
                     }
                 }
             }

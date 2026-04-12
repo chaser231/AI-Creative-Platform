@@ -23,12 +23,50 @@ export interface Project {
 }
 
 // ─── Layer Binding (Phase 2: Master System v2) ──────────
+/** @deprecated Legacy sync mode — use individual sync flags instead */
 export type SyncMode = 'all' | 'content_and_style' | 'content_only' | 'none';
 
 export interface LayerBinding {
     masterLayerId: string;     // ID слоя в мастер-формате
     targetLayerId: string;     // ID слоя в этом формате
-    syncMode: SyncMode;
+
+    // Granular sync flags (Phase 2.1)
+    syncContent: boolean;      // text, src, label
+    syncStyle: boolean;        // fill, fontSize, fontFamily, etc.
+    syncSize: boolean;         // width, height
+    syncPosition: boolean;     // x, y, rotation
+
+    /** @deprecated Legacy field — auto-migrated to flags on read */
+    syncMode?: SyncMode;
+}
+
+/**
+ * Migrate a legacy LayerBinding (syncMode enum) to flag-based format.
+ * Safe to call on already-migrated bindings — flags take precedence.
+ */
+export function migrateLegacyBinding(binding: Partial<LayerBinding> & { masterLayerId: string; targetLayerId: string }): LayerBinding {
+    // If flags are already set (even if all false), skip migration
+    if (binding.syncContent !== undefined) {
+        return {
+            masterLayerId: binding.masterLayerId,
+            targetLayerId: binding.targetLayerId,
+            syncContent: binding.syncContent ?? false,
+            syncStyle: binding.syncStyle ?? false,
+            syncSize: binding.syncSize ?? false,
+            syncPosition: binding.syncPosition ?? false,
+        };
+    }
+
+    // Migrate from legacy syncMode
+    const mode = binding.syncMode ?? 'content_only';
+    return {
+        masterLayerId: binding.masterLayerId,
+        targetLayerId: binding.targetLayerId,
+        syncContent: mode !== 'none',
+        syncStyle: mode === 'content_and_style' || mode === 'all',
+        syncSize: mode === 'all',
+        syncPosition: mode === 'all',
+    };
 }
 
 // ─── Resize Formats ─────────────────────────────────────
