@@ -39,13 +39,12 @@ export function ExpandOverlay({ layerId }: ExpandOverlayProps) {
     const zoom = useCanvasStore((s) => s.zoom);
 
     const layer = layers.find((l) => l.id === layerId);
-    if (!layer || layer.type !== "image") return null;
 
-    // Original layer bounds
-    const origX = layer.x;
-    const origY = layer.y;
-    const origW = layer.width;
-    const origH = layer.height;
+    // Use safe fallback values so hooks below always run (React Rules of Hooks)
+    const origX = layer?.x ?? 0;
+    const origY = layer?.y ?? 0;
+    const origW = layer?.width ?? 0;
+    const origH = layer?.height ?? 0;
 
     // Expanded bounds (outward from original)
     const { top, right, bottom, left } = expandPadding;
@@ -68,12 +67,10 @@ export function ExpandOverlay({ layerId }: ExpandOverlayProps) {
     const onDragTop = useCallback(
         (e: Konva.KonvaEventObject<DragEvent>) => {
             const node = e.target as Konva.Circle;
-            // Delta = how far we moved the handle upward from origY
             const newTop = clamp(origY - node.y(), 0, MAX_PADDING);
             setExpandPadding({ top: Math.round(newTop) });
-            // Keep the node anchored to logical position (prevent drift)
             node.y(origY - newTop);
-            node.x(origX + origW / 2); // locked X
+            node.x(origX + origW / 2);
         },
         [origY, origX, origW, setExpandPadding],
     );
@@ -162,6 +159,9 @@ export function ExpandOverlay({ layerId }: ExpandOverlayProps) {
 
     const hasPadding = top > 0 || right > 0 || bottom > 0 || left > 0;
     const labelFontSize = Math.max(11, 12 / zoom);
+
+    // ── Early return AFTER all hooks (React Rules of Hooks) ──
+    if (!layer || layer.type !== "image") return null;
 
     return (
         <Group listening={true}>
