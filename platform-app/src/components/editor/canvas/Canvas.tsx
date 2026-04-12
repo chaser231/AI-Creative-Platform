@@ -42,6 +42,7 @@ interface CanvasLayerProps {
     onDblClickText: (layer: LayerType & { type: "text" }, node: Konva.Text) => void;
     isEditing: boolean;
     isAutoLayoutChild?: boolean;
+    onHover?: (layerId: string | null) => void;
 }
 
 function CanvasLayer({
@@ -56,6 +57,7 @@ function CanvasLayer({
     onDblClickText,
     isEditing,
     isAutoLayoutChild,
+    onHover,
 }: CanvasLayerProps) {
     const shapeRef = useRef<Konva.Shape>(null);
     const groupRef = useRef<Konva.Group>(null);
@@ -87,7 +89,9 @@ function CanvasLayer({
                 (e.evt as any)._isDeepSelect = true;
                 onSelect(e);
             }
-        }
+        },
+        onMouseEnter: () => onHover?.(layer.id),
+        onMouseLeave: () => onHover?.(null),
     };
 
     return (
@@ -157,6 +161,7 @@ function CanvasLayer({
                     onTransformEnd={onTransformEnd}
                     onDblClickText={onDblClickText}
                     isEditing={isEditing}
+                    onHover={onHover}
                 />
             )}
         </>
@@ -272,6 +277,7 @@ function FrameLayerRenderer({
     onTransformEnd,
     onDblClickText,
     isEditing,
+    onHover,
 }: {
     groupRef: React.RefObject<Konva.Group | null>;
     layer: FrameLayer;
@@ -289,6 +295,7 @@ function FrameLayerRenderer({
     onTransformEnd: (e: Konva.KonvaEventObject<any>) => void;
     onDblClickText: (layer: LayerType & { type: "text" }, node: Konva.Text) => void;
     isEditing: boolean;
+    onHover?: (layerId: string | null) => void;
 }) {
     const layers = useCanvasStore((s) => s.layers);
     const selectedLayerIds = useCanvasStore((s) => s.selectedLayerIds);
@@ -332,10 +339,40 @@ function FrameLayerRenderer({
         const frameAbsX = storeFrame?.x ?? layer.x;
         const frameAbsY = storeFrame?.y ?? layer.y;
 
+        // Build extra props for auto-sizing overrides.
+        // NOTE: For text nodes, onTransform already resets scale to 1 during
+        // the live transform, so scaleX/Y are 1 here. We detect resize by
+        // comparing final dimensions to the store's original values instead.
+        let extraProps: Record<string, unknown> = {};
+        if (childLayer) {
+            const hasSizedX = Math.abs(width - childLayer.width) > 0.5;
+            const hasSizedY = Math.abs(height - childLayer.height) > 0.5;
+
+            if (hasSizedX || hasSizedY) {
+                // Switch auto-layout sizing to fixed on manual resize
+                if (hasSizedX && (childLayer.layoutSizingWidth === "fill" || childLayer.layoutSizingWidth === "hug")) {
+                    extraProps.layoutSizingWidth = "fixed";
+                }
+                if (hasSizedY && (childLayer.layoutSizingHeight === "fill" || childLayer.layoutSizingHeight === "hug")) {
+                    extraProps.layoutSizingHeight = "fixed";
+                }
+
+                // Switch text container mode to fixed on manual resize
+                if (childLayer.type === "text") {
+                    const txt = childLayer as any;
+                    if (txt.textAdjust === "auto_width") {
+                        extraProps.textAdjust = "fixed";
+                    } else if (txt.textAdjust === "auto_height") {
+                        if (hasSizedY) extraProps.textAdjust = "fixed";
+                    }
+                }
+            }
+        }
+
         if (isAutoLayout && childLayer) {
             // Auto-layout children: update size, then reset node position
             // to the store's local coords so React can reconcile properly.
-            updateLayer(id, { width, height, rotation });
+            updateLayer(id, { width, height, rotation, ...extraProps });
             // Force node back to store position (frame-local coords)
             node.x(childLayer.x - frameAbsX);
             node.y(childLayer.y - frameAbsY);
@@ -343,7 +380,7 @@ function FrameLayerRenderer({
             // Non-auto-layout: convert frame-local coords to absolute scene coords.
             const newX = node.x() + frameAbsX;
             const newY = node.y() + frameAbsY;
-            updateLayer(id, { x: newX, y: newY, width, height, rotation });
+            updateLayer(id, { x: newX, y: newY, width, height, rotation, ...extraProps });
         }
     }, [updateLayer, layer.x, layer.y, layer.layoutMode, layer.id, layers]);
 
@@ -458,6 +495,7 @@ function FrameLayerRenderer({
                         onDblClickText={onDblClickText}
                         isEditing={isEditingText && editingLayerId === child.id}
                         isAutoLayoutChild={layer.layoutMode !== undefined && layer.layoutMode !== "none" && !child.isAbsolutePositioned}
+                        onHover={onHover}
                     />
                     );
                 })}
@@ -547,6 +585,8 @@ export function Canvas({ stageRef }: CanvasProps) {
         stopTextEditing,
         artboardProps,
         setHighlightedFrameId,
+        hoveredLayerId,
+        setHoveredLayerId,
         getFrameAtPoint,
         moveLayerToFrame,
         removeLayerFromFrame,
@@ -578,6 +618,8 @@ export function Canvas({ stageRef }: CanvasProps) {
         stopTextEditing: s.stopTextEditing,
         artboardProps: s.artboardProps,
         setHighlightedFrameId: s.setHighlightedFrameId,
+        hoveredLayerId: s.hoveredLayerId,
+        setHoveredLayerId: s.setHoveredLayerId,
         getFrameAtPoint: s.getFrameAtPoint,
         moveLayerToFrame: s.moveLayerToFrame,
         removeLayerFromFrame: s.removeLayerFromFrame,
@@ -702,15 +744,19 @@ export function Canvas({ stageRef }: CanvasProps) {
     const handleLayerDragStart = useCallback((e: Konva.KonvaEventObject<DragEvent>) => {
         setStageDraggable(false);
         isDragging.current = true;
+        setHoveredLayerId(null); // Clear hover during drag
         let id = e.target.id();
 
         // Block drag if the grab point is outside a clipped parent's bounds
-        const stage = e.target.getStage();
-        const pointer = stage?.getPointerPosition() ?? null;
-        if (isClickOutsideClipBounds(id, pointer)) {
-            e.target.stopDrag();
-            selectLayer(null);
-            return;
+        // EXCEPTION: allow if the layer is already selected (Figma-like behavior)
+        if (!selectedLayerIds.includes(id)) {
+            const stage = e.target.getStage();
+            const pointer = stage?.getPointerPosition() ?? null;
+            if (isClickOutsideClipBounds(id, pointer)) {
+                e.target.stopDrag();
+                selectLayer(null);
+                return;
+            }
         }
 
         const isDeepSelect = e.evt?.metaKey || e.evt?.ctrlKey;
@@ -1007,19 +1053,21 @@ export function Canvas({ stageRef }: CanvasProps) {
         let extraProps: any = {};
         const layer = layers.find(l => l.id === id);
         if (layer) {
-            const hasScaledX = Math.abs(scaleX - 1) > 0.01;
-            const hasScaledY = Math.abs(scaleY - 1) > 0.01;
+            // NOTE: For text nodes, handleTransform already resets scale to 1
+            // during the live transform. Compare dimensions instead of scale.
+            const hasSizedX = Math.abs(width - layer.width) > 0.5;
+            const hasSizedY = Math.abs(height - layer.height) > 0.5;
 
-            if (hasScaledX || hasScaledY) {
-                if (layer.layoutSizingWidth === "fill" || layer.layoutSizingWidth === "hug") extraProps.layoutSizingWidth = "fixed";
-                if (layer.layoutSizingHeight === "fill" || layer.layoutSizingHeight === "hug") extraProps.layoutSizingHeight = "fixed";
+            if (hasSizedX || hasSizedY) {
+                if (hasSizedX && (layer.layoutSizingWidth === "fill" || layer.layoutSizingWidth === "hug")) extraProps.layoutSizingWidth = "fixed";
+                if (hasSizedY && (layer.layoutSizingHeight === "fill" || layer.layoutSizingHeight === "hug")) extraProps.layoutSizingHeight = "fixed";
                 
                 if (layer.type === "text") {
                     const txt = layer as TextLayer;
                     if (txt.textAdjust === "auto_width") {
                          extraProps.textAdjust = "fixed";
                     } else if (txt.textAdjust === "auto_height") {
-                         if (hasScaledY) extraProps.textAdjust = "fixed";
+                         if (hasSizedY) extraProps.textAdjust = "fixed";
                     }
                 }
             }
@@ -1071,6 +1119,22 @@ export function Canvas({ stageRef }: CanvasProps) {
         const id = node.id();
         const stage = node.getStage();
         if (!stage) return;
+
+        // For TEXT nodes: reset scale immediately and apply width/height.
+        // This prevents the visual "stretching" effect — text re-wraps in real-time.
+        const layer = layers.find(l => l.id === id);
+        if (layer?.type === "text") {
+            const scaleX = node.scaleX();
+            const scaleY = node.scaleY();
+            if (Math.abs(scaleX - 1) > 0.001 || Math.abs(scaleY - 1) > 0.001) {
+                const newWidth = Math.max(node.width() * scaleX, 10);
+                const newHeight = Math.max(node.height() * scaleY, 10);
+                node.scaleX(1);
+                node.scaleY(1);
+                node.width(newWidth);
+                node.height(newHeight);
+            }
+        }
 
         const { snapConfig } = useCanvasStore.getState();
         if (!snapConfig.objectSnap && !snapConfig.artboardSnap) return;
@@ -1162,6 +1226,10 @@ export function Canvas({ stageRef }: CanvasProps) {
         // the pointer falls outside the clip bounds of any clipped parent.
         // This MUST happen here because Konva fires shape-level onClick/onDragStart
         // AFTER mousedown, and we can't reliably block them.
+        //
+        // EXCEPTION (Figma-like): If the target is already selected, allow interaction
+        // even outside clip bounds — this lets users drag/transform objects whose
+        // handles or body extend beyond the parent's clip area.
         const target = e.target;
         const stage = target.getStage();
         if (stage && target !== stage) {
@@ -1171,40 +1239,58 @@ export function Canvas({ stageRef }: CanvasProps) {
                 const canvasY = (pointer.y - stage.y()) / stage.scaleY();
                 const targetId = target.id();
 
-                let shouldBlock = false;
+                // Skip clip-bounds check if:
+                // 1. The target layer is already selected (drag from outside clip)
+                // 2. The target is part of a Transformer (resize handles outside clip)
+                const isAlreadySelected = targetId && selectedLayerIds.includes(targetId);
 
-                // Check ARTBOARD clip
-                if (artboardProps.clipContent) {
-                    if (canvasX < 0 || canvasX > canvasWidth || canvasY < 0 || canvasY > canvasHeight) {
-                        shouldBlock = true;
+                // Walk up the parent chain to detect Transformer anchors
+                let isTransformerHandle = false;
+                let ancestor: Konva.Node | null = target;
+                while (ancestor && ancestor !== stage) {
+                    if (ancestor.getClassName() === 'Transformer') {
+                        isTransformerHandle = true;
+                        break;
                     }
+                    ancestor = ancestor.getParent();
                 }
 
-                // Check FRAME clip (if target is a frame child)
-                if (!shouldBlock && targetId) {
-                    const parentFrame = layers.find(
-                        l => l.type === 'frame' && (l as FrameLayer).childIds.includes(targetId)
-                    ) as FrameLayer | undefined;
-                    if (parentFrame && parentFrame.clipContent) {
-                        if (
-                            canvasX < parentFrame.x ||
-                            canvasX > parentFrame.x + parentFrame.width ||
-                            canvasY < parentFrame.y ||
-                            canvasY > parentFrame.y + parentFrame.height
-                        ) {
+                if (!isAlreadySelected && !isTransformerHandle) {
+                    let shouldBlock = false;
+
+                    // Check ARTBOARD clip
+                    if (artboardProps.clipContent) {
+                        if (canvasX < 0 || canvasX > canvasWidth || canvasY < 0 || canvasY > canvasHeight) {
                             shouldBlock = true;
                         }
                     }
-                }
 
-                if (shouldBlock) {
-                    // Prevent the shape from receiving any further events
-                    // by stopping the event and deselecting
-                    target.stopDrag();
-                    e.cancelBubble = true;
-                    clipBlocked.current = true;  // flag so onClick handler skips
-                    selectLayer(null);
-                    return;
+                    // Check FRAME clip (if target is a frame child)
+                    if (!shouldBlock && targetId) {
+                        const parentFrame = layers.find(
+                            l => l.type === 'frame' && (l as FrameLayer).childIds.includes(targetId)
+                        ) as FrameLayer | undefined;
+                        if (parentFrame && parentFrame.clipContent) {
+                            if (
+                                canvasX < parentFrame.x ||
+                                canvasX > parentFrame.x + parentFrame.width ||
+                                canvasY < parentFrame.y ||
+                                canvasY > parentFrame.y + parentFrame.height
+                            ) {
+                                shouldBlock = true;
+                            }
+                        }
+                    }
+
+                    if (shouldBlock) {
+                        // Prevent the shape from receiving any further events
+                        // by stopping the event and deselecting
+                        target.stopDrag();
+                        e.cancelBubble = true;
+                        clipBlocked.current = true;  // flag so onClick handler skips
+                        selectLayer(null);
+                        return;
+                    }
                 }
             }
         }
@@ -1222,6 +1308,46 @@ export function Canvas({ stageRef }: CanvasProps) {
             // Convert to Scene Coordinates for starting point
             const startSceneX = (pointer.x - stage.x()) / stage.scaleX();
             const startSceneY = (pointer.y - stage.y()) / stage.scaleY();
+
+            // Figma-like: if clicking on the overflow area of a SELECTED layer
+            // (outside clip bounds but inside the layer's bounding box),
+            // keep the selection and initiate a drag instead of deselecting.
+            // This happens because Konva's clip Group blocks hit detection on
+            // overflow portions, making clicks there register as stage clicks.
+            if (selectedLayerIds.length > 0) {
+                for (const selId of selectedLayerIds) {
+                    const selLayer = layers.find(l => l.id === selId);
+                    if (selLayer) {
+                        // Use the layer's absolute position and dimensions
+                        const lx = selLayer.x;
+                        const ly = selLayer.y;
+                        const lw = selLayer.width;
+                        const lh = selLayer.height;
+                        if (
+                            startSceneX >= lx && startSceneX <= lx + lw &&
+                            startSceneY >= ly && startSceneY <= ly + lh
+                        ) {
+                            // Pointer is inside this selected layer's bounding box
+                            // Find the Konva node and start drag
+                            const node = stage.findOne("#" + selId);
+                            if (node) {
+                                node.startDrag(e.evt);
+                                isDragging.current = true;
+                                setStageDraggable(false);
+
+                                // Snapshot drag start positions
+                                const locs: Record<string, { x: number; y: number }> = {};
+                                selectedLayerIds.forEach(sid => {
+                                    const l = layers.find(lay => lay.id === sid);
+                                    if (l) locs[sid] = { x: l.x, y: l.y };
+                                });
+                                dragStartLocs.current = locs;
+                                return; // Don't deselect
+                            }
+                        }
+                    }
+                }
+            }
 
             setSelectionBox({
                 x: startSceneX,
@@ -1245,7 +1371,7 @@ export function Canvas({ stageRef }: CanvasProps) {
                 stopTextEditing();
             }
         }
-    }, [selectLayer, isEditingText, stopTextEditing, isPanning, artboardProps.clipContent, canvasWidth, canvasHeight, layers]);
+    }, [selectLayer, isEditingText, stopTextEditing, isPanning, artboardProps.clipContent, canvasWidth, canvasHeight, layers, selectedLayerIds]);
 
     const handleStageMouseMove = useCallback((e: Konva.KonvaEventObject<MouseEvent>) => {
         const stage = e.target.getStage();
@@ -1738,6 +1864,7 @@ export function Canvas({ stageRef }: CanvasProps) {
                                     onTransform={handleTransform}
                                     onDblClickText={handleDblClickText}
                                     isEditing={isEditingText && editingLayerId === layer.id}
+                                    onHover={setHoveredLayerId}
                                 />
                             ))}
                             </Group>
@@ -1767,6 +1894,7 @@ export function Canvas({ stageRef }: CanvasProps) {
                                     onTransform={handleTransform}
                                     onDblClickText={handleDblClickText}
                                     isEditing={isEditingText && editingLayerId === layer.id}
+                                    onHover={setHoveredLayerId}
                                 />
                             ))}
                         </>
@@ -1779,6 +1907,46 @@ export function Canvas({ stageRef }: CanvasProps) {
                         spacingGuides={spacingGuides}
                         selectionBox={selectionBox}
                     />
+
+                    {/* Hover Outline (Figma-like) */}
+                    {hoveredLayerId && !selectedLayerIds.includes(hoveredLayerId) && (() => {
+                        const hLayer = layers.find(l => l.id === hoveredLayerId);
+                        if (!hLayer) return null;
+
+                        // Try to get real bounds from Konva node (handles auto-sized text etc.)
+                        let hx = hLayer.x;
+                        let hy = hLayer.y;
+                        let hw = hLayer.width;
+                        let hh = hLayer.height;
+                        let hr = hLayer.rotation || 0;
+
+                        const node = stageRef.current?.findOne("#" + hoveredLayerId);
+                        if (node) {
+                            const rect = node.getClientRect({ skipTransform: false, relativeTo: stageRef.current?.getLayers()[0] });
+                            if (rect && rect.width > 0 && rect.height > 0) {
+                                hx = rect.x;
+                                hy = rect.y;
+                                hw = rect.width;
+                                hh = rect.height;
+                                hr = 0; // getClientRect returns axis-aligned bounds, rotation already applied
+                            }
+                        }
+
+                        return (
+                            <Rect
+                                x={hx}
+                                y={hy}
+                                width={hw}
+                                height={hh}
+                                rotation={hr}
+                                stroke="#6366F1"
+                                strokeWidth={1.5 / zoom}
+                                cornerRadius={hLayer.type === 'rectangle' ? (hLayer as any).cornerRadius || 0 : hLayer.type === 'frame' ? (hLayer as any).cornerRadius || 0 : 0}
+                                listening={false}
+                                perfectDrawEnabled={false}
+                            />
+                        );
+                    })()}
 
                     {/* Selection Transformer */}
                     <SelectionTransformer selectedLayerIds={selectedLayerIds} stageRef={stageRef} excludeIds={frameChildIds} />

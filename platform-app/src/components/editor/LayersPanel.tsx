@@ -53,7 +53,8 @@ function LayerRow({
         sendToBack,
         updateLayer,
         moveLayerToFrame,
-        removeLayerFromFrame
+        removeLayerFromFrame,
+        setHoveredLayerId,
     } = useCanvasStore(useShallow((s) => ({
         layers: s.layers, selectedLayerIds: s.selectedLayerIds,
         selectLayer: s.selectLayer, toggleSelection: s.toggleSelection,
@@ -63,6 +64,7 @@ function LayerRow({
         bringToFront: s.bringToFront, sendToBack: s.sendToBack,
         updateLayer: s.updateLayer, moveLayerToFrame: s.moveLayerToFrame,
         removeLayerFromFrame: s.removeLayerFromFrame,
+        setHoveredLayerId: s.setHoveredLayerId,
     })));
 
     const [expanded, setExpanded] = useState(true);
@@ -185,6 +187,8 @@ function LayerRow({
                 onDragLeave={handleDragLeave}
                 onDrop={handleDrop}
                 onClick={handleClick}
+                onMouseEnter={() => setHoveredLayerId(layer.id)}
+                onMouseLeave={() => setHoveredLayerId(null)}
                 onContextMenu={(e) => {
                     e.preventDefault();
                     e.stopPropagation();

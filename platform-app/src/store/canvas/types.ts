@@ -121,6 +121,9 @@ export interface CanvasStore {
     // Drag-to-frame highlight
     highlightedFrameId: string | null;
 
+    // Hover highlight (layers panel + canvas)
+    hoveredLayerId: string | null;
+
     // Component model
     masterComponents: MasterComponent[];
     componentInstances: ComponentInstance[];
@@ -177,6 +180,7 @@ export interface CanvasStore {
 
     // Drag-to-frame actions
     setHighlightedFrameId: (id: string | null) => void;
+    setHoveredLayerId: (id: string | null) => void;
     getFrameAtPoint: (x: number, y: number, excludeId?: string) => FrameLayer | null;
 
     // Component actions
