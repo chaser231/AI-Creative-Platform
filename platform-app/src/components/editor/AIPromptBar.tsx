@@ -122,7 +122,7 @@ function QuickActionButton({
                 border whitespace-nowrap
                 disabled:opacity-40 disabled:cursor-not-allowed
                 ${active
-                    ? "bg-accent-lime/15 text-accent-lime-hover border-accent-lime/40 shadow-sm"
+                    ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/40 shadow-sm"
                     : "bg-bg-tertiary/40 text-text-secondary border-border-primary/60 hover:bg-bg-tertiary hover:border-border-secondary hover:text-text-primary"
                 }
             `}
@@ -226,7 +226,10 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
     };
 
     // ── Apply edited image to the selected layer on canvas ──
-    const applyEditedImageToLayer = useCallback(async (editedSrc: string) => {
+    const applyEditedImageToLayer = useCallback(async (
+        editedSrc: string,
+        opts?: { action?: string; padding?: { top: number; right: number; bottom: number; left: number } },
+    ) => {
         if (!selectedImageLayer) return;
 
         // Persist to S3
@@ -239,6 +242,25 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
             }
         }
 
+        // ── Outpaint: use expand padding for sizing (not pixel ratio) ──
+        if (opts?.action === "outpaint" && opts.padding) {
+            const pad = opts.padding;
+            const newWidth = selectedImageLayer.width + pad.left + pad.right;
+            const newHeight = selectedImageLayer.height + pad.top + pad.bottom;
+            const newX = selectedImageLayer.x - pad.left;
+            const newY = selectedImageLayer.y - pad.top;
+
+            updateLayer(selectedImageLayer.id, {
+                src: persistedSrc,
+                width: newWidth,
+                height: newHeight,
+                x: newX,
+                y: newY,
+            } as any);
+            return;
+        }
+
+        // ── Generic edit: scale proportionally based on pixel dimensions ──
         try {
             // Measure old and new dimensions to scale the layer proportionally
             const oldImg = new window.Image();
@@ -278,11 +300,43 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
         setIsGenerating(true);
         setEditError(null);
 
+        // Snapshot expand padding BEFORE the API call (resetExpandMode clears it)
+        const currentExpandPadding = { ...expandPadding };
+
         try {
             const styleSuffix = getImagePresetPromptSuffix(imageStyleId, imagePresets);
             const rawPrompt = editPrompt || "";
             const styledPrompt = styleSuffix && rawPrompt ? `${rawPrompt}. Style: ${styleSuffix}` : rawPrompt;
             const resolvedPrompt = resolveRefTags(styledPrompt, selectedModel);
+
+            // For outpaint: measure actual image pixel dimensions (not canvas dimensions)
+            // to ensure bria/expand works at the real image resolution
+            let outpaintOriginalSize: [number, number] | undefined;
+            if (action === "outpaint") {
+                try {
+                    const img = new window.Image();
+                    await new Promise<void>((resolve, reject) => {
+                        img.onload = () => resolve();
+                        img.onerror = reject;
+                        img.src = selectedImageLayer.src;
+                    });
+                    outpaintOriginalSize = [img.naturalWidth, img.naturalHeight];
+                    console.log(`[Outpaint] Real image pixels: ${img.naturalWidth}×${img.naturalHeight}, canvas layer: ${selectedImageLayer.width}×${selectedImageLayer.height}`);
+                } catch {
+                    // Fallback to canvas dimensions if image fails to load
+                    outpaintOriginalSize = [Math.round(selectedImageLayer.width), Math.round(selectedImageLayer.height)];
+                }
+
+                // Scale padding proportionally from canvas-space to pixel-space
+                const pixelScaleX = outpaintOriginalSize[0] / selectedImageLayer.width;
+                const pixelScaleY = outpaintOriginalSize[1] / selectedImageLayer.height;
+                currentExpandPadding.left = Math.round(currentExpandPadding.left * pixelScaleX);
+                currentExpandPadding.right = Math.round(currentExpandPadding.right * pixelScaleX);
+                currentExpandPadding.top = Math.round(currentExpandPadding.top * pixelScaleY);
+                currentExpandPadding.bottom = Math.round(currentExpandPadding.bottom * pixelScaleY);
+
+                console.log(`[Outpaint] Pixel-space padding: T=${currentExpandPadding.top} R=${currentExpandPadding.right} B=${currentExpandPadding.bottom} L=${currentExpandPadding.left}`);
+            }
 
             const response = await fetch("/api/ai/image-edit", {
                 method: "POST",
@@ -293,16 +347,20 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                     imageBase64: selectedImageLayer.src,
                     model: action === "remove-bg" ? "rembg" : (action === "outpaint" ? "bria-expand" : selectedModel),
                     referenceImages: referenceImages.length > 0 ? referenceImages : undefined,
-                    // For outpaint: send expandPadding from canvas store + original image size
-                    expandPadding: action === "outpaint" ? expandPadding : undefined,
-                    originalSize: action === "outpaint" ? [selectedImageLayer.width, selectedImageLayer.height] : undefined,
+                    // For outpaint: send pixel-space expandPadding + real image pixel size
+                    expandPadding: action === "outpaint" ? currentExpandPadding : undefined,
+                    originalSize: action === "outpaint" ? outpaintOriginalSize : undefined,
                     projectId,
                 }),
             });
             const data = await response.json();
             if (data.error) throw new Error(data.error);
             if (data.content) {
-                await applyEditedImageToLayer(data.content);
+                // For outpaint: pass canvas-space padding (the original, un-scaled) for layer sizing
+                await applyEditedImageToLayer(data.content, action === "outpaint" ? {
+                    action: "outpaint",
+                    padding: expandPadding, // canvas-space padding for layer resizing
+                } : undefined);
                 // Reset expand mode after successful outpaint
                 if (action === "outpaint") resetExpandMode();
                 // Pass result to chat history
@@ -651,9 +709,9 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
 
                         {/* Expand hint — shown when expand is active */}
                         {editAction === "expand" && (
-                            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-[10px] border border-accent-lime/30 bg-accent-lime/5">
-                                <Expand size={12} className="text-accent-lime" />
-                                <span className="text-[11px] text-accent-lime font-medium">
+                            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-[10px] border border-emerald-500/30 bg-emerald-500/5">
+                                <Expand size={12} className="text-emerald-700 dark:text-emerald-400" />
+                                <span className="text-[11px] text-emerald-700 dark:text-emerald-400 font-medium">
                                     Потяните за ручки на canvas
                                 </span>
                             </div>

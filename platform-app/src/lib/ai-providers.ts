@@ -190,25 +190,25 @@ class ReplicateProvider implements AIProviderImplementation {
 
             // zsxkib/outpainter: direct pixel offsets
             if (expandEntry.slug === "zsxkib/outpainter" && params.expandPadding) {
-                expandInput.extend_top = params.expandPadding.top || 0;
-                expandInput.extend_bottom = params.expandPadding.bottom || 0;
-                expandInput.extend_left = params.expandPadding.left || 0;
-                expandInput.extend_right = params.expandPadding.right || 0;
+                expandInput.extend_top = Math.round(params.expandPadding.top || 0);
+                expandInput.extend_bottom = Math.round(params.expandPadding.bottom || 0);
+                expandInput.extend_left = Math.round(params.expandPadding.left || 0);
+                expandInput.extend_right = Math.round(params.expandPadding.right || 0);
                 expandInput.preset = "none";
             } else {
                 // bria/expand-image and others: canvas_size + position
                 if (params.aspectRatio) expandInput.aspect_ratio = params.aspectRatio;
-                if (params.canvasSize) expandInput.canvas_size = params.canvasSize;
-                if (params.originalSize) expandInput.original_image_size = params.originalSize;
-                if (params.originalLocation) expandInput.original_image_location = params.originalLocation;
+                if (params.canvasSize) expandInput.canvas_size = (params.canvasSize as number[]).map(Math.round);
+                if (params.originalSize) expandInput.original_image_size = (params.originalSize as number[]).map(Math.round);
+                if (params.originalLocation) expandInput.original_image_location = (params.originalLocation as number[]).map(Math.round);
 
                 // Convert expandPadding to canvas_size + original_image_location for bria
                 if (params.expandPadding && params.originalSize) {
                     const [origW, origH] = params.originalSize;
                     const pad = params.expandPadding;
-                    expandInput.canvas_size = [origW + pad.left + pad.right, origH + pad.top + pad.bottom];
-                    expandInput.original_image_location = [pad.left, pad.top];
-                    expandInput.original_image_size = [origW, origH];
+                    expandInput.canvas_size = [Math.round(origW + pad.left + pad.right), Math.round(origH + pad.top + pad.bottom)];
+                    expandInput.original_image_location = [Math.round(pad.left), Math.round(pad.top)];
+                    expandInput.original_image_size = [Math.round(origW), Math.round(origH)];
                 }
             }
             
@@ -485,21 +485,23 @@ class FalProvider implements AIProviderImplementation {
             if (params.prompt) outpaintInput.prompt = params.prompt;
             
             // Convert expandPadding to canvas_size + original_image_location
+            // NOTE: fal.ai bria/expand requires all pixel values to be integers
             if (params.expandPadding && params.originalSize) {
                 const [origW, origH] = params.originalSize;
                 const pad = params.expandPadding;
-                outpaintInput.canvas_size = [origW + pad.left + pad.right, origH + pad.top + pad.bottom];
-                outpaintInput.original_image_location = [pad.left, pad.top];
-                outpaintInput.original_image_size = [origW, origH];
+                outpaintInput.canvas_size = [Math.round(origW + pad.left + pad.right), Math.round(origH + pad.top + pad.bottom)];
+                outpaintInput.original_image_location = [Math.round(pad.left), Math.round(pad.top)];
+                outpaintInput.original_image_size = [Math.round(origW), Math.round(origH)];
             } else if (params.canvasSize) {
-                outpaintInput.canvas_size = params.canvasSize;
-                if (params.originalSize) outpaintInput.original_image_size = params.originalSize;
-                if (params.originalLocation) outpaintInput.original_image_location = params.originalLocation;
+                outpaintInput.canvas_size = (params.canvasSize as number[]).map(Math.round);
+                if (params.originalSize) outpaintInput.original_image_size = (params.originalSize as number[]).map(Math.round);
+                if (params.originalLocation) outpaintInput.original_image_location = (params.originalLocation as number[]).map(Math.round);
             } else if (params.aspectRatio) {
                 outpaintInput.aspect_ratio = params.aspectRatio;
             }
 
             console.log(`[fal.ai] Outpainting via ${falEndpoint}, padding=${JSON.stringify(params.expandPadding)}`);
+            console.log(`[fal.ai] Outpaint input keys: ${Object.keys(outpaintInput).join(", ")}`);
 
             // Submit to fal.ai queue
             const submitRes = await fetch(`https://queue.fal.run/${falEndpoint}`, {
@@ -514,32 +516,66 @@ class FalProvider implements AIProviderImplementation {
                 const errBody = await submitRes.text();
                 throw new Error(`fal.ai outpaint submit failed (${submitRes.status}): ${errBody}`);
             }
-            const queue = await submitRes.json() as { request_id: string; status_url?: string };
-            
-            // Poll for result
-            const resultUrl = `https://queue.fal.run/${falEndpoint}/requests/${queue.request_id}`;
-            const maxWait = 240_000;
-            const start = Date.now();
-            while (Date.now() - start < maxWait) {
+            const submitData = await submitRes.json();
+            const requestId = submitData.request_id;
+
+            if (!requestId) {
+                // Synchronous result — no polling needed
+                console.log(`[fal.ai] Outpaint returned synchronously`);
+                const imageUrl = submitData.image?.url;
+                if (!imageUrl) throw new Error("fal.ai outpaint returned no image (sync)");
+                return { content: imageUrl, format: "url" as const, model: modelId, provider: "fal.ai" };
+            }
+
+            // Use URLs from fal.ai response (may route to different hosts)
+            const statusUrl = submitData.status_url
+                || `https://queue.fal.run/${falEndpoint}/requests/${requestId}/status`;
+            const responseUrl = submitData.response_url
+                || `https://queue.fal.run/${falEndpoint}/requests/${requestId}`;
+
+            console.log(`[fal.ai] Outpaint queued: ${requestId}`);
+            console.log(`[fal.ai] Status URL: ${statusUrl}`);
+            console.log(`[fal.ai] Response URL: ${responseUrl}`);
+
+            // Poll for result (up to 300s)
+            for (let i = 0; i < 150; i++) {
                 await new Promise(r => setTimeout(r, 2000));
-                const statusRes = await fetch(`${resultUrl}/status`, {
-                    headers: { "Authorization": `Key ${apiKey}` },
-                });
-                if (!statusRes.ok) continue;
-                const status = await statusRes.json() as { status: string };
-                if (status.status === "COMPLETED") break;
-                if (status.status === "FAILED") throw new Error("fal.ai outpaint generation failed");
+                try {
+                    const statusRes = await fetch(statusUrl, {
+                        headers: { "Authorization": `Key ${apiKey}` },
+                    });
+                    if (!statusRes.ok) {
+                        console.warn(`[fal.ai] Outpaint poll ${i + 1} HTTP ${statusRes.status}`);
+                        continue;
+                    }
+                    const status = await statusRes.json() as { status: string };
+                    if (status.status === "COMPLETED") {
+                        console.log(`[fal.ai] Outpaint completed after ${(i + 1) * 2}s`);
+                        break;
+                    }
+                    if (status.status === "FAILED") throw new Error("fal.ai outpaint generation failed");
+                } catch (err: unknown) {
+                    const msg = err instanceof Error ? err.message : String(err);
+                    if (err instanceof TypeError && msg.includes("fetch")) {
+                        console.warn(`[fal.ai] Outpaint poll network error: ${msg}`);
+                        continue;
+                    }
+                    throw err;
+                }
             }
             
-            const resultRes = await fetch(resultUrl, {
+            const resultRes = await fetch(responseUrl, {
                 headers: { "Authorization": `Key ${apiKey}` },
             });
             if (!resultRes.ok) throw new Error(`fal.ai outpaint result failed (${resultRes.status})`);
-            const result = await resultRes.json() as { image?: { url: string } };
-            if (!result.image?.url) throw new Error("fal.ai outpaint returned no image");
+            const result = await resultRes.json();
+            console.log(`[fal.ai] Outpaint response keys: ${Object.keys(result).join(", ")}`);
+            
+            const imageUrl = result.image?.url;
+            if (!imageUrl) throw new Error(`fal.ai outpaint returned no image. Response: ${JSON.stringify(result).slice(0, 300)}`);
             
             return {
-                content: result.image.url,
+                content: imageUrl,
                 format: "url",
                 model: modelId,
                 provider: "fal.ai",
