@@ -339,18 +339,21 @@ function FrameLayerRenderer({
         const frameAbsX = storeFrame?.x ?? layer.x;
         const frameAbsY = storeFrame?.y ?? layer.y;
 
-        // Build extra props for auto-sizing overrides
+        // Build extra props for auto-sizing overrides.
+        // NOTE: For text nodes, onTransform already resets scale to 1 during
+        // the live transform, so scaleX/Y are 1 here. We detect resize by
+        // comparing final dimensions to the store's original values instead.
         let extraProps: Record<string, unknown> = {};
         if (childLayer) {
-            const hasScaledX = Math.abs(scaleX - 1) > 0.01;
-            const hasScaledY = Math.abs(scaleY - 1) > 0.01;
+            const hasSizedX = Math.abs(width - childLayer.width) > 0.5;
+            const hasSizedY = Math.abs(height - childLayer.height) > 0.5;
 
-            if (hasScaledX || hasScaledY) {
+            if (hasSizedX || hasSizedY) {
                 // Switch auto-layout sizing to fixed on manual resize
-                if (childLayer.layoutSizingWidth === "fill" || childLayer.layoutSizingWidth === "hug") {
+                if (hasSizedX && (childLayer.layoutSizingWidth === "fill" || childLayer.layoutSizingWidth === "hug")) {
                     extraProps.layoutSizingWidth = "fixed";
                 }
-                if (childLayer.layoutSizingHeight === "fill" || childLayer.layoutSizingHeight === "hug") {
+                if (hasSizedY && (childLayer.layoutSizingHeight === "fill" || childLayer.layoutSizingHeight === "hug")) {
                     extraProps.layoutSizingHeight = "fixed";
                 }
 
@@ -360,7 +363,7 @@ function FrameLayerRenderer({
                     if (txt.textAdjust === "auto_width") {
                         extraProps.textAdjust = "fixed";
                     } else if (txt.textAdjust === "auto_height") {
-                        if (hasScaledY) extraProps.textAdjust = "fixed";
+                        if (hasSizedY) extraProps.textAdjust = "fixed";
                     }
                 }
             }
@@ -1050,19 +1053,21 @@ export function Canvas({ stageRef }: CanvasProps) {
         let extraProps: any = {};
         const layer = layers.find(l => l.id === id);
         if (layer) {
-            const hasScaledX = Math.abs(scaleX - 1) > 0.01;
-            const hasScaledY = Math.abs(scaleY - 1) > 0.01;
+            // NOTE: For text nodes, handleTransform already resets scale to 1
+            // during the live transform. Compare dimensions instead of scale.
+            const hasSizedX = Math.abs(width - layer.width) > 0.5;
+            const hasSizedY = Math.abs(height - layer.height) > 0.5;
 
-            if (hasScaledX || hasScaledY) {
-                if (layer.layoutSizingWidth === "fill" || layer.layoutSizingWidth === "hug") extraProps.layoutSizingWidth = "fixed";
-                if (layer.layoutSizingHeight === "fill" || layer.layoutSizingHeight === "hug") extraProps.layoutSizingHeight = "fixed";
+            if (hasSizedX || hasSizedY) {
+                if (hasSizedX && (layer.layoutSizingWidth === "fill" || layer.layoutSizingWidth === "hug")) extraProps.layoutSizingWidth = "fixed";
+                if (hasSizedY && (layer.layoutSizingHeight === "fill" || layer.layoutSizingHeight === "hug")) extraProps.layoutSizingHeight = "fixed";
                 
                 if (layer.type === "text") {
                     const txt = layer as TextLayer;
                     if (txt.textAdjust === "auto_width") {
                          extraProps.textAdjust = "fixed";
                     } else if (txt.textAdjust === "auto_height") {
-                         if (hasScaledY) extraProps.textAdjust = "fixed";
+                         if (hasSizedY) extraProps.textAdjust = "fixed";
                     }
                 }
             }
