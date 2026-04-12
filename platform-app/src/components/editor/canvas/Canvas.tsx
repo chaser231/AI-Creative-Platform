@@ -1088,6 +1088,22 @@ export function Canvas({ stageRef }: CanvasProps) {
         const stage = node.getStage();
         if (!stage) return;
 
+        // For TEXT nodes: reset scale immediately and apply width/height.
+        // This prevents the visual "stretching" effect — text re-wraps in real-time.
+        const layer = layers.find(l => l.id === id);
+        if (layer?.type === "text") {
+            const scaleX = node.scaleX();
+            const scaleY = node.scaleY();
+            if (Math.abs(scaleX - 1) > 0.001 || Math.abs(scaleY - 1) > 0.001) {
+                const newWidth = Math.max(node.width() * scaleX, 10);
+                const newHeight = Math.max(node.height() * scaleY, 10);
+                node.scaleX(1);
+                node.scaleY(1);
+                node.width(newWidth);
+                node.height(newHeight);
+            }
+        }
+
         const { snapConfig } = useCanvasStore.getState();
         if (!snapConfig.objectSnap && !snapConfig.artboardSnap) return;
 
