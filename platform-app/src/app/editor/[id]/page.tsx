@@ -489,7 +489,8 @@ export default function EditorPage({ params }: EditorPageProps) {
                                     id: (Date.now() + 1).toString(),
                                     role: "assistant",
                                     content: res.content,
-                                    type: res.type as "text" | "image" | "outpaint",
+                                    // Map "edit" → "image" for TRPC schema compatibility (edit results are images)
+                                    type: (res.type === "edit" || res.type === "outpaint") ? "image" : res.type as "text" | "image",
                                     timestamp: Date.now(),
                                     model: res.model,
                                     costUnits: res.model ? (getModelById(res.model)?.costPerRun ?? 0) : undefined,

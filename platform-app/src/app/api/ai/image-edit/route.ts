@@ -43,21 +43,23 @@ export async function POST(req: NextRequest) {
 
             case "inpaint": {
                 // Use flux-fill or nano-banana models for inpainting
+                // generateWithFallback tries fal.ai → Replicate with retries
                 const inpaintModel = model || "flux-fill";
                 usedModel = inpaintModel;
-                const provider = getProvider(inpaintModel);
-                result = await provider.generate({
+                result = await generateWithFallback({
                     prompt: prompt || "Fill in the masked area naturally",
                     type: "inpainting",
                     model: inpaintModel,
                     imageBase64,
                     maskBase64,
                 });
+                if (result.model) usedModel = result.model;
                 break;
             }
 
             case "text-edit": {
                 // Use models that support "edit" cap (nano-banana, flux-2-pro, gpt-image, seedream, qwen-image-edit)
+                // generateWithFallback tries fal.ai → Replicate with retries and model fallback chains
                 const editModel = model || "nano-banana-2";
                 usedModel = editModel;
                 const entry = getModelById(editModel);
@@ -65,8 +67,7 @@ export async function POST(req: NextRequest) {
 
                 if (supportsEdit) {
                     // Native image editing: pass image + text prompt → modified image
-                    const provider = getProvider(editModel);
-                    result = await provider.generate({
+                    result = await generateWithFallback({
                         prompt: prompt || "Edit this image",
                         type: "edit",
                         model: editModel,
@@ -76,22 +77,22 @@ export async function POST(req: NextRequest) {
                     });
                 } else {
                     // Fallback: text-to-image with prompt (no editing, just regenerate)
-                    const provider = getProvider(editModel);
-                    result = await provider.generate({
+                    result = await generateWithFallback({
                         prompt: prompt || "Generate an image",
                         type: "image",
                         model: editModel,
                         referenceImages: referenceImages && referenceImages.length > 0 ? referenceImages : undefined,
                     });
                 }
+                if (result.model) usedModel = result.model;
                 break;
             }
 
             case "outpaint": {
+                // generateWithFallback tries fal.ai → Replicate with retries
                 const outpaintModel = model || "bria-expand";
                 usedModel = outpaintModel;
-                const provider = getProvider(outpaintModel);
-                result = await provider.generate({
+                result = await generateWithFallback({
                     prompt: prompt || "",
                     type: "outpainting",
                     model: outpaintModel,
@@ -101,6 +102,7 @@ export async function POST(req: NextRequest) {
                     originalSize,
                     originalLocation
                 });
+                if (result.model) usedModel = result.model;
                 break;
             }
 
