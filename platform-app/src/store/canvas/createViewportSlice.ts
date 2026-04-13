@@ -4,6 +4,7 @@
 
 import type { StateCreator } from "zustand";
 import type { CanvasStore, ArtboardProps, SnapConfig, EditorMode, FrameLayer, ExpandPadding } from "./types";
+import type Konva from "konva";
 import { DEFAULT_EXPAND_PADDING } from "./types";
 import { DEFAULT_SNAP_CONFIG } from "@/services/snapService";
 
@@ -20,6 +21,7 @@ export type ViewportSlice = Pick<CanvasStore,
     | "startTextEditing" | "stopTextEditing"
     | "setExpandMode" | "setExpandPadding" | "resetExpandMode"
     | "activeTool"
+    | "stageRef" | "setStageRef"
 >;
 
 export const createViewportSlice: StateCreator<CanvasStore, [], [], ViewportSlice> = (set, get) => ({
@@ -47,6 +49,12 @@ export const createViewportSlice: StateCreator<CanvasStore, [], [], ViewportSlic
     expandMode: false,
     expandPadding: { ...DEFAULT_EXPAND_PADDING },
     expandTargetLayerId: null,
+
+    // Stage ref (for Copy as PNG from keyboard shortcuts)
+    stageRef: null,
+    setStageRef: (ref: React.RefObject<Konva.Stage | null>) => {
+        set({ stageRef: ref });
+    },
 
     setActiveTool: (tool) => {
         set({ activeTool: tool, selectedLayerIds: [] });

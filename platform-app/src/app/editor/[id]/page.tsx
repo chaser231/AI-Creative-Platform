@@ -20,6 +20,7 @@ import { AIChatPanel } from "@/components/editor/ai-chat";
 import { VersionHistoryPanel } from "@/components/editor/VersionHistoryPanel";
 import { AssetLibraryModal } from "@/components/editor/AssetLibraryModal";
 import { TemplateSettingsModal } from "@/components/editor/TemplateSettingsModal";
+import { MissingFontsModal } from "@/components/editor/MissingFontsModal";
 import { WizardFlow } from "@/components/wizard/WizardFlow";
 import { useProjectStore } from "@/store/projectStore";
 import { useCanvasStore } from "@/store/canvasStore";
@@ -31,6 +32,8 @@ import { getModelById } from "@/lib/ai-models";
 import { trpc } from "@/lib/trpc";
 import { loadAllCustomFonts } from "@/lib/customFonts";
 import { hydrateTemplate } from "@/services/templateService";
+import { extractRequiredFonts, findMissingFonts, applyFontReplacements, getAvailableFontFamilies } from "@/utils/fontUtils";
+import type { RequiredFont } from "@/utils/fontUtils";
 import Konva from "konva";
 
 // Dynamic import for Canvas (Konva needs client-only, no SSR)
@@ -65,6 +68,11 @@ export default function EditorPage({ params }: EditorPageProps) {
     const [versionPanelOpen, setVersionPanelOpen] = useState(false);
     const [assetLibraryOpen, setAssetLibraryOpen] = useState(false);
     const [templateSaveStatus, setTemplateSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+    // Missing Fonts state for template loading
+    const [missingFontsData, setMissingFontsData] = useState<{
+        missing: RequiredFont[];
+        available: string[];
+    } | null>(null);
     const projects = useProjectStore((s) => s.projects);
     const updateProject = useProjectStore((s) => s.updateProject);
     const { editorMode, setEditorMode, undo, redo, history, future, artboardProps, updateArtboardProps } = useCanvasStore(useShallow((s) => ({
@@ -130,6 +138,23 @@ export default function EditorPage({ params }: EditorPageProps) {
         }
     }, [isTemplateMode, templateQuery.data]);
 
+    // Check for missing fonts after template data is loaded
+    useEffect(() => {
+        if (!isTemplateMode || !templateQuery.data?.data) return;
+        const data = templateQuery.data.data as any;
+        const templateLayers: any[] = data.layers || [];
+        const required = data.requiredFonts || (templateLayers.length > 0 ? extractRequiredFonts(templateLayers) : []);
+        if (required.length === 0) return;
+
+        (async () => {
+            const available = await getAvailableFontFamilies();
+            const missing = findMissingFonts(required, available);
+            if (missing.length > 0) {
+                setMissingFontsData({ missing, available });
+            }
+        })();
+    }, [isTemplateMode, templateQuery.data]);
+
     // Manual save for template mode
     const handleTemplateSave = useCallback(() => {
         if (!isTemplateMode) return;
@@ -179,6 +204,8 @@ export default function EditorPage({ params }: EditorPageProps) {
             artboardProps: store.artboardProps,
             canvasWidth: masterFormat?.width ?? store.canvasWidth,
             canvasHeight: masterFormat?.height ?? store.canvasHeight,
+            // v1.2+: embed font metadata for missing-font detection
+            requiredFonts: extractRequiredFonts(masterLayers as any[]),
         };
         templateSaveMutation.mutate({ id, data: canvasState });
     }, [isTemplateMode, id, templateSaveMutation]);
@@ -717,6 +744,34 @@ export default function EditorPage({ params }: EditorPageProps) {
                     open={templateSettingsOpen}
                     onClose={() => setTemplateSettingsOpen(false)}
                     onSaved={() => templateQuery.refetch()}
+                />
+            )}
+
+            {/* Missing Fonts Modal (template mode) */}
+            {missingFontsData && (
+                <MissingFontsModal
+                    open={!!missingFontsData}
+                    onClose={() => setMissingFontsData(null)}
+                    missingFonts={missingFontsData.missing}
+                    availableFonts={missingFontsData.available}
+                    onReplace={(replacementMap) => {
+                        // Apply font replacements to current canvas layers
+                        const store = useCanvasStore.getState();
+                        const updatedLayers = applyFontReplacements(store.layers, replacementMap);
+                        useCanvasStore.setState({ layers: updatedLayers });
+
+                        // Also update format snapshots
+                        const updatedResizes = store.resizes.map(r => {
+                            if (r.layerSnapshot && Array.isArray(r.layerSnapshot)) {
+                                return { ...r, layerSnapshot: applyFontReplacements(r.layerSnapshot, replacementMap) };
+                            }
+                            return r;
+                        });
+                        useCanvasStore.setState({ resizes: updatedResizes });
+
+                        setMissingFontsData(null);
+                    }}
+                    onContinueWithoutReplace={() => setMissingFontsData(null)}
                 />
             )}
 

@@ -13,6 +13,10 @@ import {
     Unlock,
     Pencil,
     Download,
+    Clipboard,
+    ClipboardPaste,
+    Image,
+    Scissors,
 } from "lucide-react";
 
 export interface ContextMenuItem {
@@ -158,9 +162,52 @@ export function buildLayerContextMenuItems(
         toggleLock: () => void;
         rename?: () => void;
         exportLayer?: () => void;
+        copyLayers?: () => void;
+        cutLayers?: () => void;
+        pasteLayers?: () => void;
+        copyAsPng?: () => void;
     }
 ): ContextMenuEntry[] {
-    const items: ContextMenuEntry[] = [
+    const items: ContextMenuEntry[] = [];
+
+    // Clipboard actions
+    if (actions.copyLayers) {
+        items.push({
+            label: "Копировать",
+            icon: <Clipboard size={13} />,
+            shortcut: "⌘C",
+            onClick: actions.copyLayers,
+        });
+    }
+    if (actions.cutLayers) {
+        items.push({
+            label: "Вырезать",
+            icon: <Scissors size={13} />,
+            shortcut: "⌘X",
+            onClick: actions.cutLayers,
+        });
+    }
+    if (actions.pasteLayers) {
+        items.push({
+            label: "Вставить",
+            icon: <ClipboardPaste size={13} />,
+            shortcut: "⌘V",
+            onClick: actions.pasteLayers,
+        });
+    }
+    if (actions.copyAsPng) {
+        items.push({
+            label: "Копировать как PNG",
+            icon: <Image size={13} />,
+            shortcut: "⌘⇧C",
+            onClick: actions.copyAsPng,
+        });
+    }
+    if (items.length > 0) {
+        items.push({ separator: true });
+    }
+
+    items.push(
         {
             label: "Дублировать",
             icon: <Copy size={13} />,
@@ -189,7 +236,7 @@ export function buildLayerContextMenuItems(
             icon: isLocked ? <Unlock size={13} /> : <Lock size={13} />,
             onClick: actions.toggleLock,
         },
-    ];
+    );
 
     if (actions.rename) {
         items.push(
@@ -237,9 +284,43 @@ export function buildMultiSelectionContextMenuItems(
         duplicateAll: () => void;
         removeAll: () => void;
         exportAll: () => void;
+        copyLayers?: () => void;
+        cutLayers?: () => void;
+        pasteLayers?: () => void;
     }
 ): ContextMenuEntry[] {
-    return [
+    const items: ContextMenuEntry[] = [];
+
+    // Clipboard actions
+    if (actions.copyLayers) {
+        items.push({
+            label: `Копировать (${count})`,
+            icon: <Clipboard size={13} />,
+            shortcut: "⌘C",
+            onClick: actions.copyLayers,
+        });
+    }
+    if (actions.cutLayers) {
+        items.push({
+            label: `Вырезать (${count})`,
+            icon: <Scissors size={13} />,
+            shortcut: "⌘X",
+            onClick: actions.cutLayers,
+        });
+    }
+    if (actions.pasteLayers) {
+        items.push({
+            label: "Вставить",
+            icon: <ClipboardPaste size={13} />,
+            shortcut: "⌘V",
+            onClick: actions.pasteLayers,
+        });
+    }
+    if (items.length > 0) {
+        items.push({ separator: true });
+    }
+
+    items.push(
         {
             label: `Дублировать (${count})`,
             icon: <Copy size={13} />,
@@ -260,5 +341,7 @@ export function buildMultiSelectionContextMenuItems(
             danger: true,
             onClick: actions.removeAll,
         },
-    ];
+    );
+
+    return items;
 }

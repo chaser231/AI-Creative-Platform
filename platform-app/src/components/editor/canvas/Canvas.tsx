@@ -630,6 +630,12 @@ export function Canvas({ stageRef }: CanvasProps) {
     const expandMode = useCanvasStore((s) => s.expandMode);
     const expandTargetLayerId = useCanvasStore((s) => s.expandTargetLayerId);
 
+    // Register stageRef in store (for Copy as PNG from keyboard shortcuts)
+    const setStageRef = useCanvasStore((s) => s.setStageRef);
+    useEffect(() => {
+        setStageRef(stageRef);
+    }, [stageRef, setStageRef]);
+
     // Collect all IDs that are children of any frame (to exclude from top-level SelectionTransformer)
     const frameChildIds = useMemo(() => {
         const ids = new Set<string>();
@@ -2008,6 +2014,31 @@ export function Canvas({ stageRef }: CanvasProps) {
                 const menuLayers = layers.filter(l => menuLayerIds.includes(l.id));
                 if (menuLayers.length === 0) return null;
 
+                // Shared clipboard actions
+                const clipboardActions = {
+                    copyLayers: () => {
+                        import("@/utils/clipboardUtils").then(({ copyLayersToClipboard }) => {
+                            copyLayersToClipboard(menuLayerIds, layers);
+                        });
+                    },
+                    cutLayers: () => {
+                        import("@/utils/clipboardUtils").then(({ copyLayersToClipboard }) => {
+                            copyLayersToClipboard(menuLayerIds, layers).then(() => {
+                                menuLayerIds.forEach(id => removeLayer(id));
+                            });
+                        });
+                    },
+                    pasteLayers: () => {
+                        import("@/utils/clipboardUtils").then(({ pasteLayersFromClipboard }) => {
+                            pasteLayersFromClipboard().then(data => {
+                                if (data && data.layers.length > 0) {
+                                    useCanvasStore.getState().pasteLayers(data.layers);
+                                }
+                            });
+                        });
+                    },
+                };
+
                 // Multi-selection menu
                 if (menuLayers.length > 1) {
                     return (
@@ -2021,6 +2052,7 @@ export function Canvas({ stageRef }: CanvasProps) {
                                     duplicateAll: () => menuLayerIds.forEach(id => duplicateLayer(id)),
                                     removeAll: () => menuLayerIds.forEach(id => removeLayer(id)),
                                     exportAll: () => exportLayers(menuLayerIds),
+                                    ...clipboardActions,
                                 }
                             )}
                         />
@@ -2047,6 +2079,14 @@ export function Canvas({ stageRef }: CanvasProps) {
                                 toggleVisibility: () => toggleLayerVisibility(layer.id),
                                 toggleLock: () => toggleLayerLock(layer.id),
                                 exportLayer: () => exportLayers([layer.id]),
+                                ...clipboardActions,
+                                copyAsPng: () => {
+                                    if (stageRef.current) {
+                                        import("@/utils/clipboardUtils").then(({ copyLayerAsPng }) => {
+                                            copyLayerAsPng(stageRef.current!, [layer.id], layers);
+                                        });
+                                    }
+                                },
                             }
                         )}
                     />

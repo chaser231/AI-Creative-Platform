@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback } from "react";
 import { v4 as uuid } from "uuid";
 import { LayoutTemplate, Plus, ArrowRight, Check, Search, X, Star, Download, Upload, Shuffle, Lock, Globe, Users, Eye, Pencil } from "lucide-react";
 import { useRouter } from "next/navigation";
@@ -20,6 +20,9 @@ import type { TemplatePackV2, TemplatePack } from "@/services/templateService";
 import type { BusinessUnit, TemplateCategory, ContentType, TemplateTag, TemplateVisibility, TemplateEditPermission } from "@/types";
 import { SlotMappingModal } from "@/components/editor/SlotMappingModal";
 import { extractSingleFormatFromPack } from "@/services/templateService";
+import { MissingFontsModal } from "@/components/editor/MissingFontsModal";
+import { extractRequiredFonts, findMissingFonts, applyFontReplacements, getAvailableFontFamilies } from "@/utils/fontUtils";
+import type { RequiredFont } from "@/utils/fontUtils";
 
 interface TemplatePanelProps {
     open: boolean;
@@ -134,6 +137,14 @@ export function TemplatePanel({ open, onClose }: TemplatePanelProps) {
     const [smartResizePack, setSmartResizePack] = useState<TemplatePack | null>(null);
     const [smartResizePackName, setSmartResizePackName] = useState("");
 
+    // Missing Fonts state
+    const [missingFontsData, setMissingFontsData] = useState<{
+        missing: RequiredFont[];
+        available: string[];
+        pendingPack: TemplatePackV2;
+        mode: "destructive" | "smart";
+    } | null>(null);
+
     // Search results
     const searchResults = useMemo(() => {
         if (!packSearch) return null;
@@ -166,6 +177,26 @@ export function TemplatePanel({ open, onClose }: TemplatePanelProps) {
         }
 
         const finalPack = extractSingleFormatIfRequested(fullPack);
+
+        // ── Missing fonts check ──
+        const packData = finalPack as any;
+        const templateLayers: any[] = packData.layers || [];
+        const required = packData.requiredFonts || (templateLayers.length > 0 ? extractRequiredFonts(templateLayers) : []);
+        if (required.length > 0) {
+            const available = await getAvailableFontFamilies();
+            const missing = findMissingFonts(required, available);
+            if (missing.length > 0) {
+                setMissingFontsData({
+                    missing,
+                    available,
+                    pendingPack: finalPack,
+                    mode: "destructive",
+                });
+                setPackToApply(null);
+                setSelectedResizeId(null);
+                return;
+            }
+        }
 
         applyTemplatePack(finalPack, {
             onSuccess: () => {
@@ -932,6 +963,47 @@ export function TemplatePanel({ open, onClose }: TemplatePanelProps) {
                     />
                 )
             }
+
+            {/* Missing Fonts Modal */}
+            {missingFontsData && (
+                <MissingFontsModal
+                    open={!!missingFontsData}
+                    onClose={() => setMissingFontsData(null)}
+                    missingFonts={missingFontsData.missing}
+                    availableFonts={missingFontsData.available}
+                    onReplace={async (replacementMap) => {
+                        const { applyTemplatePack } = await import("@/services/templateService");
+                        const pack = missingFontsData.pendingPack;
+                        const packData = pack as any;
+
+                        // Apply font replacements to layers within the pack
+                        if (packData.layers && Array.isArray(packData.layers)) {
+                            packData.layers = applyFontReplacements(packData.layers, replacementMap);
+                        }
+                        // Also replace in format snapshots
+                        if (packData.resizes) {
+                            for (const r of packData.resizes) {
+                                if (r.layerSnapshot && Array.isArray(r.layerSnapshot)) {
+                                    r.layerSnapshot = applyFontReplacements(r.layerSnapshot, replacementMap);
+                                }
+                            }
+                        }
+
+                        setMissingFontsData(null);
+                        applyTemplatePack(pack, {
+                            onSuccess: () => onClose(),
+                        });
+                    }}
+                    onContinueWithoutReplace={async () => {
+                        const { applyTemplatePack } = await import("@/services/templateService");
+                        const pack = missingFontsData.pendingPack;
+                        setMissingFontsData(null);
+                        applyTemplatePack(pack, {
+                            onSuccess: () => onClose(),
+                        });
+                    }}
+                />
+            )}
         </>
     );
 }
