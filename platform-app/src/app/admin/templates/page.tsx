@@ -4,7 +4,8 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import {
     Search, Star, MoreHorizontal, Copy, Trash2, Pencil, ExternalLink,
-    LayoutTemplate, X, Check, StarOff, ShieldX,
+    LayoutTemplate, X, Check, StarOff, ShieldX, Package, FileText,
+    AlertTriangle, Lock, Globe, Users,
 } from "lucide-react";
 import { AppShell } from "@/components/layout/AppShell";
 import { TopBar } from "@/components/layout/TopBar";
@@ -14,6 +15,10 @@ import { Select } from "@/components/ui/Select";
 import { Textarea } from "@/components/ui/Textarea";
 import { Input } from "@/components/ui/Input";
 import { trpc } from "@/lib/trpc";
+
+/* ─── Types ──────────────────────────────────────────── */
+
+type TemplateType = "single" | "pack";
 
 /* ─── Main Page ──────────────────────────────────────── */
 
@@ -28,12 +33,14 @@ export default function AdminTemplatesPage() {
     const [search, setSearch] = useState("");
     const [wsFilter, setWsFilter] = useState<string | null>(null);
     const [officialFilter, setOfficialFilter] = useState<boolean | undefined>(undefined);
+    const [typeFilter, setTypeFilter] = useState<TemplateType | undefined>(undefined);
 
     // Data — only query if admin
     const { data, isLoading } = trpc.adminTemplate.list.useQuery({
         search: search || undefined,
         workspaceId: wsFilter || undefined,
         isOfficial: officialFilter,
+        templateType: typeFilter,
     }, { enabled: isSuperAdmin });
     const { data: workspaces } = trpc.admin.workspaces.useQuery(undefined, { enabled: isSuperAdmin });
 
@@ -59,8 +66,16 @@ export default function AdminTemplatesPage() {
     // Context menu state
     const [contextMenu, setContextMenu] = useState<{ id: string; x: number; y: number } | null>(null);
 
-    // Delete confirm
-    const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+    // Delete confirm state (extended)
+    const [deleteTarget, setDeleteTarget] = useState<{
+        id: string;
+        name: string;
+        templateType: TemplateType;
+        formatCount: number;
+        formatNames: string[];
+    } | null>(null);
+    const [deleteNameConfirm, setDeleteNameConfirm] = useState("");
+    const [deleteError, setDeleteError] = useState<string | null>(null);
 
     // All available category+BU values
     const CATEGORY_OPTIONS = [
@@ -110,9 +125,42 @@ export default function AdminTemplatesPage() {
         setContextMenu(null);
     };
 
-    const handleDelete = async (id: string) => {
-        await deleteMutation.mutateAsync({ id });
-        setDeleteConfirm(null);
+    const handleDelete = async () => {
+        if (!deleteTarget) return;
+        setDeleteError(null);
+
+        // For packs: require name confirmation
+        if (deleteTarget.templateType === "pack") {
+            if (deleteNameConfirm.trim() !== deleteTarget.name.trim()) {
+                setDeleteError("Введённое имя не совпадает с названием шаблона");
+                return;
+            }
+        }
+
+        try {
+            await deleteMutation.mutateAsync({
+                id: deleteTarget.id,
+                confirmPack: deleteTarget.templateType === "pack",
+            });
+            setDeleteTarget(null);
+            setDeleteNameConfirm("");
+            setDeleteError(null);
+            setContextMenu(null);
+        } catch (err: any) {
+            setDeleteError(err?.message || "Ошибка удаления");
+        }
+    };
+
+    const openDeleteModal = (tmpl: any) => {
+        setDeleteTarget({
+            id: tmpl.id,
+            name: tmpl.name,
+            templateType: tmpl.templateType,
+            formatCount: tmpl.formatCount,
+            formatNames: tmpl.formatNames || [],
+        });
+        setDeleteNameConfirm("");
+        setDeleteError(null);
         setContextMenu(null);
     };
 
@@ -124,6 +172,29 @@ export default function AdminTemplatesPage() {
     const handleEditInCanvas = (templateId: string) => {
         router.push(`/editor/template-${templateId}?mode=template-edit`);
         setContextMenu(null);
+    };
+
+    /* ─── Visibility badge helper ─────────────────────── */
+    const VisibilityBadge = ({ visibility }: { visibility?: string }) => {
+        if (visibility === "PRIVATE") {
+            return (
+                <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md bg-bg-secondary border border-border-primary text-[9px] text-text-tertiary">
+                    <Lock size={8} /> Приват
+                </span>
+            );
+        }
+        if (visibility === "PUBLIC") {
+            return (
+                <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md bg-blue-500/10 border border-blue-500/20 text-[9px] text-blue-500">
+                    <Globe size={8} /> Публичный
+                </span>
+            );
+        }
+        return (
+            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md bg-violet-500/10 border border-violet-500/20 text-[9px] text-violet-500">
+                <Users size={8} /> Команда
+            </span>
+        );
     };
 
     if (meLoading) {
@@ -176,6 +247,19 @@ export default function AdminTemplatesPage() {
                                 {data?.total ?? 0} шаблонов по всем воркспейсам
                             </p>
                         </div>
+                        {/* Type summary badges */}
+                        {data && (
+                            <div className="flex items-center gap-2">
+                                <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-bg-surface border border-border-primary text-xs text-text-secondary">
+                                    <FileText size={13} className="text-emerald-500" />
+                                    {data.templates.filter(t => t.templateType === "single").length} одиночных
+                                </span>
+                                <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-bg-surface border border-border-primary text-xs text-text-secondary">
+                                    <Package size={13} className="text-violet-500" />
+                                    {data.templates.filter(t => t.templateType === "pack").length} пакетов
+                                </span>
+                            </div>
+                        )}
                     </div>
 
                     {/* Filters */}
@@ -189,6 +273,18 @@ export default function AdminTemplatesPage() {
                                 className="h-9 text-xs"
                             />
                         </div>
+
+                        {/* Template type filter */}
+                        <Select
+                            size="sm"
+                            value={typeFilter ?? "__all__"}
+                            onChange={(val) => setTypeFilter(val === "__all__" ? undefined : val as TemplateType)}
+                            options={[
+                                { value: "__all__", label: "Все типы" },
+                                { value: "single", label: "📄 Одиночные" },
+                                { value: "pack", label: "📦 Пакеты" },
+                            ]}
+                        />
 
                         {/* Workspace filter */}
                         <Select
@@ -222,7 +318,9 @@ export default function AdminTemplatesPage() {
                             <thead>
                                 <tr className="border-b border-border-primary bg-bg-secondary/50">
                                     <th className="text-left px-4 py-3 font-medium text-text-tertiary">Название</th>
+                                    <th className="text-left px-4 py-3 font-medium text-text-tertiary">Тип</th>
                                     <th className="text-left px-4 py-3 font-medium text-text-tertiary">Воркспейс</th>
+                                    <th className="text-left px-4 py-3 font-medium text-text-tertiary">Видимость</th>
                                     <th className="text-left px-4 py-3 font-medium text-text-tertiary">Категории</th>
                                     <th className="text-center px-4 py-3 font-medium text-text-tertiary">Official</th>
                                     <th className="text-center px-4 py-3 font-medium text-text-tertiary">Популярность</th>
@@ -232,9 +330,9 @@ export default function AdminTemplatesPage() {
                             </thead>
                             <tbody>
                                 {isLoading ? (
-                                    <tr><td colSpan={7} className="px-4 py-12 text-center text-text-tertiary">Загрузка...</td></tr>
+                                    <tr><td colSpan={9} className="px-4 py-12 text-center text-text-tertiary">Загрузка...</td></tr>
                                 ) : data?.templates.length === 0 ? (
-                                    <tr><td colSpan={7} className="px-4 py-12 text-center text-text-tertiary">Шаблоны не найдены</td></tr>
+                                    <tr><td colSpan={9} className="px-4 py-12 text-center text-text-tertiary">Шаблоны не найдены</td></tr>
                                 ) : data?.templates.map((tmpl) => (
                                     <tr
                                         key={tmpl.id}
@@ -252,9 +350,25 @@ export default function AdminTemplatesPage() {
                                             </div>
                                         </td>
                                         <td className="px-4 py-3">
+                                            {tmpl.templateType === "pack" ? (
+                                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-violet-500/10 border border-violet-500/20 text-[10px] font-semibold text-violet-500">
+                                                    <Package size={10} />
+                                                    Пакет · {tmpl.formatCount} фмт
+                                                </span>
+                                            ) : (
+                                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-500/10 border border-emerald-500/20 text-[10px] font-semibold text-emerald-500">
+                                                    <FileText size={10} />
+                                                    Одиночный
+                                                </span>
+                                            )}
+                                        </td>
+                                        <td className="px-4 py-3">
                                             <span className="px-2 py-0.5 rounded-md bg-bg-secondary border border-border-primary text-[10px] text-text-secondary">
                                                 {tmpl.workspace.name}
                                             </span>
+                                        </td>
+                                        <td className="px-4 py-3">
+                                            <VisibilityBadge visibility={tmpl.visibility} />
                                         </td>
                                         <td className="px-4 py-3">
                                             <div className="flex gap-1 flex-wrap">
@@ -356,8 +470,8 @@ export default function AdminTemplatesPage() {
                         <div className="border-t border-border-primary my-1" />
                         <button
                             onClick={() => {
-                                setDeleteConfirm(contextMenu.id);
-                                setContextMenu(null);
+                                const tmpl = data?.templates.find((t) => t.id === contextMenu.id);
+                                if (tmpl) openDeleteModal(tmpl);
                             }}
                             className="w-full flex items-center gap-2 px-3 py-2 text-xs text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
                         >
@@ -437,28 +551,98 @@ export default function AdminTemplatesPage() {
                 </div>
             </Modal>
 
-            {/* Delete Confirm Modal */}
+            {/* Delete Confirm Modal (smart) */}
             <Modal
-                open={!!deleteConfirm}
-                onClose={() => setDeleteConfirm(null)}
+                open={!!deleteTarget}
+                onClose={() => { setDeleteTarget(null); setDeleteNameConfirm(""); setDeleteError(null); }}
                 title="Удалить шаблон?"
-                maxWidth="max-w-sm"
+                maxWidth="max-w-md"
                 footer={
                     <>
-                        <Button variant="ghost" onClick={() => setDeleteConfirm(null)}>Отмена</Button>
+                        <Button variant="ghost" onClick={() => { setDeleteTarget(null); setDeleteNameConfirm(""); setDeleteError(null); }}>Отмена</Button>
                         <Button
-                            onClick={() => deleteConfirm && handleDelete(deleteConfirm)}
+                            onClick={handleDelete}
                             className="!bg-red-500 hover:!bg-red-600"
-                            disabled={deleteMutation.isPending}
+                            disabled={
+                                deleteMutation.isPending ||
+                                (deleteTarget?.templateType === "pack" && deleteNameConfirm.trim() !== deleteTarget?.name?.trim())
+                            }
                         >
-                            {deleteMutation.isPending ? "Удаление..." : "Удалить"}
+                            {deleteMutation.isPending ? "Удаление..." : "Удалить навсегда"}
                         </Button>
                     </>
                 }
             >
-                <p className="text-sm text-text-secondary">
-                    Это действие нельзя отменить. Шаблон будет удалён из базы данных.
-                </p>
+                {deleteTarget && (
+                    <div className="space-y-4">
+                        {/* Pack warning */}
+                        {deleteTarget.templateType === "pack" ? (
+                            <div className="space-y-3">
+                                {/* Danger banner */}
+                                <div className="flex items-start gap-3 p-3.5 rounded-xl bg-red-500/8 border border-red-500/20">
+                                    <AlertTriangle size={18} className="text-red-400 shrink-0 mt-0.5" />
+                                    <div>
+                                        <p className="text-sm font-semibold text-red-400">
+                                            Удаление пакетного шаблона
+                                        </p>
+                                        <p className="text-xs text-text-secondary mt-1">
+                                            Этот шаблон содержит <strong className="text-text-primary">{deleteTarget.formatCount} форматов</strong>.
+                                            Удаление уничтожит все форматы безвозвратно.
+                                        </p>
+                                    </div>
+                                </div>
+
+                                {/* Format list */}
+                                {deleteTarget.formatNames.length > 0 && (
+                                    <div className="px-3 py-2 rounded-lg bg-bg-secondary border border-border-primary">
+                                        <p className="text-[10px] font-medium text-text-tertiary uppercase tracking-wider mb-1.5">
+                                            Форматы в пакете:
+                                        </p>
+                                        <div className="flex flex-wrap gap-1">
+                                            {deleteTarget.formatNames.map((name, i) => (
+                                                <span
+                                                    key={i}
+                                                    className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-md bg-bg-surface border border-border-primary text-[10px] text-text-secondary"
+                                                >
+                                                    <LayoutTemplate size={9} className="text-violet-500" />
+                                                    {name}
+                                                </span>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Name confirmation */}
+                                <div>
+                                    <label className="text-xs text-text-secondary mb-1.5 block">
+                                        Для подтверждения введите имя шаблона: <strong className="text-text-primary">{deleteTarget.name}</strong>
+                                    </label>
+                                    <input
+                                        type="text"
+                                        value={deleteNameConfirm}
+                                        onChange={(e) => setDeleteNameConfirm(e.target.value)}
+                                        placeholder={deleteTarget.name}
+                                        className="w-full h-9 px-3 text-sm rounded-xl border border-red-500/30 bg-bg-secondary text-text-primary focus:outline-none focus:ring-2 focus:ring-red-500/20 transition-all placeholder:text-text-tertiary"
+                                        autoFocus
+                                    />
+                                </div>
+                            </div>
+                        ) : (
+                            /* Simple single template deletion */
+                            <p className="text-sm text-text-secondary">
+                                Это действие нельзя отменить. Шаблон <strong className="text-text-primary">«{deleteTarget.name}»</strong> будет удалён из базы данных.
+                            </p>
+                        )}
+
+                        {/* Error */}
+                        {deleteError && (
+                            <div className="flex items-center gap-2 p-2.5 rounded-lg bg-red-500/10 border border-red-500/20 text-xs text-red-400">
+                                <X size={12} />
+                                {deleteError}
+                            </div>
+                        )}
+                    </div>
+                )}
             </Modal>
         </AppShell>
     );

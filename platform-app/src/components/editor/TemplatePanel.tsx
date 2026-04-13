@@ -5,7 +5,7 @@ import { v4 as uuid } from "uuid";
 import { LayoutTemplate, Plus, ArrowRight, Check, Search, X, Star, Download, Upload, Shuffle, Lock, Globe, Users, Eye, Pencil } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useTemplateStore } from "@/store/templateStore";
-import { useTemplateListSync } from "@/hooks/useTemplateSync";
+import { useTemplateListSync, useSaveTemplateSync } from "@/hooks/useTemplateSync";
 import { trpc } from "@/lib/trpc";
 import { useCanvasStore } from "@/store/canvasStore";
 import { useShallow } from "zustand/react/shallow";
@@ -72,7 +72,8 @@ function Chip({
 
 export function TemplatePanel({ open, onClose }: TemplatePanelProps) {
     const { savedPacks, addPack, deletePack } = useTemplateStore();
-    const { backendTemplates, refetch } = useTemplateListSync();
+    const { backendTemplates, refetch, workspaceId } = useTemplateListSync();
+    const { saveTemplate } = useSaveTemplateSync();
     const router = useRouter();
     const updateMutation = trpc.template.update.useMutation({
         onSuccess: () => refetch(),
@@ -199,7 +200,7 @@ export function TemplatePanel({ open, onClose }: TemplatePanelProps) {
         setSelectedResizeId(null);
     };
 
-    const handleSaveAsTemplate = () => {
+    const handleSaveAsTemplate = async () => {
         const state = useCanvasStore.getState();
         const activeProject = projects.find((p) => p.id === activeProjectId);
         const projectData = activeProject || { name: "Новый шаблон" };
@@ -223,9 +224,28 @@ export function TemplatePanel({ open, onClose }: TemplatePanelProps) {
         };
 
         addPack(newPack, meta);
+
+        // Persist to backend DB so it appears in Catalog & Admin
+        const v2Pack: TemplatePackV2 = {
+            ...newPack,
+            businessUnits: meta.businessUnits as TemplatePackV2["businessUnits"],
+            categories: meta.categories as TemplatePackV2["categories"],
+            contentType: meta.contentType as TemplatePackV2["contentType"],
+            occasion: "default" as TemplatePackV2["occasion"],
+            tags: [],
+            author: meta.author ?? "user",
+            isOfficial: false,
+            visibility: meta.visibility as TemplatePackV2["visibility"],
+            editPermission: "AUTHOR_ONLY" as TemplatePackV2["editPermission"],
+            popularity: 0,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+        };
+        await saveTemplate(v2Pack, workspaceId || undefined);
+        refetch();
     };
 
-    const handleSaveAsPack = () => {
+    const handleSaveAsPack = async () => {
         if (!saveName.trim()) return;
 
         const activeProject = projects.find((p) => p.id === activeProjectId);
@@ -252,6 +272,27 @@ export function TemplatePanel({ open, onClose }: TemplatePanelProps) {
         };
 
         addPack(newPack, meta);
+
+        // Persist to backend DB so it appears in Catalog & Admin
+        const v2Pack: TemplatePackV2 = {
+            ...newPack,
+            description: meta.description ?? "",
+            businessUnits: meta.businessUnits as TemplatePackV2["businessUnits"],
+            categories: meta.categories as TemplatePackV2["categories"],
+            contentType: meta.contentType as TemplatePackV2["contentType"],
+            occasion: "default" as TemplatePackV2["occasion"],
+            tags: meta.tags as TemplatePackV2["tags"],
+            author: meta.author ?? "user",
+            isOfficial: false,
+            visibility: (meta.visibility || "WORKSPACE") as TemplatePackV2["visibility"],
+            editPermission: (meta.editPermission || "AUTHOR_ONLY") as TemplatePackV2["editPermission"],
+            popularity: 0,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+        };
+        await saveTemplate(v2Pack, workspaceId || undefined);
+        refetch();
+
         setShowSaveForm(false);
         resetSaveForm();
         setActiveTab("pack");
