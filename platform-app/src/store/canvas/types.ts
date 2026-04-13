@@ -23,6 +23,7 @@ import type {
 } from "@/types";
 import type { SnapConfig } from "@/services/snapService";
 import type { SlotMapping } from "@/services/slotMappingService";
+import type Konva from "konva";
 import type { TemplatePack } from "@/services/templateService";
 
 // ─── Re-export layer types for slice convenience ────────
@@ -190,6 +191,7 @@ export interface CanvasStore {
     sendToBack: (id: string) => void;
     moveLayerToFrame: (layerId: string, frameId: string, dropIndex?: number) => void;
     removeLayerFromFrame: (layerId: string) => void;
+    pasteLayers: (layers: Layer[]) => void;
 
     // Undo / Redo actions
     undo: () => void;
@@ -212,6 +214,8 @@ export interface CanvasStore {
     addResize: (format: ResizeFormat) => void;
     removeResize: (resizeId: string) => void;
     renameResize: (resizeId: string, name: string) => void;
+    resizeFormat: (resizeId: string, width: number, height: number) => void;
+    duplicateResize: (resizeId: string) => void;
     setActiveResize: (resizeId: string) => void;
     syncLayersToResize: () => void;
     toggleInstanceMode: (resizeId: string) => void;
@@ -249,4 +253,8 @@ export interface CanvasStore {
     setExpandMode: (active: boolean) => void;
     setExpandPadding: (padding: Partial<ExpandPadding>) => void;
     resetExpandMode: () => void;
+
+    // Stage ref (for Copy as PNG)
+    stageRef: React.RefObject<Konva.Stage | null> | null;
+    setStageRef: (ref: React.RefObject<Konva.Stage | null>) => void;
 }

@@ -33,6 +33,7 @@ export type LayerSlice = Pick<CanvasStore,
     | "toggleLayerVisibility" | "toggleLayerLock"
     | "bringToFront" | "sendToBack"
     | "moveLayerToFrame" | "removeLayerFromFrame"
+    | "pasteLayers"
 >;
 
 // ─── Helper: create layer + master + instances for all add* actions ──
@@ -772,6 +773,104 @@ export const createLayerSlice: StateCreator<CanvasStore, [], [], LayerSlice> = (
     toggleLayerLock: (id) => {
         set((state) => ({
             layers: state.layers.map((l) => (l.id === id ? { ...l, locked: !l.locked } as Layer : l)),
+        }));
+    },
+
+    // ─── pasteLayers (from clipboard) ───────────────────
+
+    pasteLayers: (rawLayers) => {
+        if (rawLayers.length === 0) return;
+        const state = get();
+
+        pushSnapshot(set as (p: Partial<CanvasStore>) => void, get);
+
+        // Build old→new ID mapping
+        const idMap = new Map<string, string>();
+        for (const layer of rawLayers) {
+            idMap.set(layer.id, uuid());
+        }
+
+        const OFFSET = 20;
+        const newLayers: Layer[] = [];
+        const newMasters: MasterComponent[] = [];
+        const newInstances: ComponentInstance[] = [];
+        const newSelectedIds: string[] = [];
+
+        // Find root layers (those that are NOT children of any frame in the paste set)
+        const allChildIds = new Set<string>();
+        for (const layer of rawLayers) {
+            if (layer.type === "frame") {
+                for (const cid of (layer as FrameLayer).childIds) {
+                    allChildIds.add(cid);
+                }
+            }
+        }
+        const rootLayerIds = new Set(
+            rawLayers.filter(l => !allChildIds.has(l.id)).map(l => l.id)
+        );
+
+        for (const rawLayer of rawLayers) {
+            const newId = idMap.get(rawLayer.id)!;
+            const isRoot = rootLayerIds.has(rawLayer.id);
+
+            const newLayer: Layer = {
+                ...rawLayer,
+                id: newId,
+                // Only offset root layers (children stay relative to parent)
+                x: isRoot ? rawLayer.x + OFFSET : rawLayer.x,
+                y: isRoot ? rawLayer.y + OFFSET : rawLayer.y,
+            } as Layer;
+
+            // Remap frame childIds
+            if (newLayer.type === "frame") {
+                (newLayer as FrameLayer).childIds = (rawLayer as FrameLayer).childIds
+                    .map(cid => idMap.get(cid) ?? cid)
+                    .filter(cid => cid !== undefined);
+            }
+
+            // Clear old masterId — each pasted layer gets a fresh master
+            delete (newLayer as any).masterId;
+
+            // Create new master component
+            const masterId = uuid();
+            const propsClone = { ...newLayer } as any;
+            delete propsClone.id;
+            delete propsClone.masterId;
+
+            const master: MasterComponent = {
+                id: masterId,
+                name: newLayer.name,
+                type: newLayer.type,
+                slotId: newLayer.slotId,
+                props: propsClone as ComponentProps,
+            };
+
+            newLayer.masterId = masterId;
+
+            // Create instances for other formats
+            const instances: ComponentInstance[] = state.resizes
+                .filter(r => r.id !== "master")
+                .map(r => ({
+                    id: uuid(),
+                    masterId,
+                    resizeId: r.id,
+                    localProps: { ...master.props },
+                }));
+
+            newLayers.push(newLayer);
+            newMasters.push(master);
+            newInstances.push(...instances);
+
+            if (isRoot) {
+                newSelectedIds.push(newId);
+            }
+        }
+
+        set((s) => ({
+            layers: [...s.layers, ...newLayers],
+            masterComponents: [...s.masterComponents, ...newMasters],
+            componentInstances: [...s.componentInstances, ...newInstances],
+            selectedLayerIds: newSelectedIds,
         }));
     },
 });

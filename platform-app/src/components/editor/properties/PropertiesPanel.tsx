@@ -30,10 +30,11 @@ import { FramePropsGrouped } from "./FramePropsGrouped";
 import { ImagePropsInline } from "./ImagePropsInline";
 
 export function PropertiesPanel() {
-    const { layers, selectedLayerIds, updateLayer, activeResizeId, artboardProps, updateArtboardProps, alignSelectedLayers } = useCanvasStore(useShallow((s) => ({
+    const { layers, selectedLayerIds, updateLayer, activeResizeId, artboardProps, updateArtboardProps, alignSelectedLayers, canvasWidth, canvasHeight, setCanvasSize } = useCanvasStore(useShallow((s) => ({
         layers: s.layers, selectedLayerIds: s.selectedLayerIds, updateLayer: s.updateLayer,
         activeResizeId: s.activeResizeId, artboardProps: s.artboardProps,
         updateArtboardProps: s.updateArtboardProps, alignSelectedLayers: s.alignSelectedLayers,
+        canvasWidth: s.canvasWidth, canvasHeight: s.canvasHeight, setCanvasSize: s.setCanvasSize,
     })));
 
     const isMultiSelection = selectedLayerIds.length > 1;
@@ -70,6 +71,9 @@ export function PropertiesPanel() {
         return (
             <div className={panelPositionClass}>
                 <span className="text-[10px] text-text-tertiary font-medium uppercase tracking-wider shrink-0">Артборд</span>
+                <div className="w-px h-5 bg-border-primary shrink-0" />
+                <CompactInput label="W" value={canvasWidth} min={1} onChange={(v) => setCanvasSize(Math.max(1, Number(v)), canvasHeight)} />
+                <CompactInput label="H" value={canvasHeight} min={1} onChange={(v) => setCanvasSize(canvasWidth, Math.max(1, Number(v)))} />
                 <div className="w-px h-5 bg-border-primary shrink-0" />
                 <span className="text-[10px] text-text-tertiary font-light shrink-0">Фон</span>
                 <ColorInput value={artboardProps.fill} onChange={(v) => updateArtboardProps({ fill: v })} />

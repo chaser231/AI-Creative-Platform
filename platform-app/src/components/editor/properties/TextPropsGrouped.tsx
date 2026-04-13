@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import {
     Type,
     ALargeSmall,
@@ -11,10 +11,12 @@ import {
     Paintbrush,
     Eye,
     EyeOff,
+    AlertTriangle,
 } from "lucide-react";
 import { Popover, PopoverButton } from "@/components/ui/Popover";
 import { Select } from "@/components/ui/Select";
 import { PREINSTALLED_FONTS, saveUserFont, getUserFonts } from "@/lib/customFonts";
+import { getAvailableFontFamiliesSync } from "@/utils/fontUtils";
 import type { TextLayer } from "@/types";
 import { ColorInput } from "./ColorInput";
 import { AlignButton } from "./AlignButton";
@@ -35,6 +37,13 @@ export function TextPropsGrouped({
     const [availableFonts, setAvailableFonts] = useState<string[]>(SYSTEM_FONTS);
     const [isUploadingFont, setIsUploadingFont] = useState(false);
     const [availableWeights, setAvailableWeights] = useState<string[]>([]);
+
+    // Check if current layer's font is available locally
+    const isFontMissing = useMemo(() => {
+        if (!layer.fontFamily) return false;
+        const available = getAvailableFontFamiliesSync();
+        return !available.some(f => f.toLowerCase() === layer.fontFamily.toLowerCase());
+    }, [layer.fontFamily]);
 
     useEffect(() => {
         if (!activePopover) return;
@@ -90,13 +99,32 @@ export function TextPropsGrouped({
             {/* Шрифт — font family + weight */}
             <div className="relative">
                 <PopoverButton
-                    icon={<Type size={12} />}
-                    label="Шрифт"
+                    icon={isFontMissing
+                        ? <AlertTriangle size={12} className="text-amber-500" />
+                        : <Type size={12} />
+                    }
+                    label={isFontMissing ? "Шрифт ⚠" : "Шрифт"}
                     isActive={activePopover === "font"}
                     onClick={() => togglePopover("font")}
                 />
+                {isFontMissing && (
+                    <div className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-amber-500 border border-bg-surface" />
+                )}
                 <Popover isOpen={activePopover === "font"} onClose={() => setActivePopover(null)}>
                     <div className="space-y-3">
+                        {isFontMissing && (
+                            <div className="flex items-start gap-2 p-2 rounded-lg bg-amber-500/10 border border-amber-500/20">
+                                <AlertTriangle size={12} className="text-amber-500 shrink-0 mt-0.5" />
+                                <div>
+                                    <p className="text-[10px] font-medium text-amber-500">
+                                        Шрифт «{layer.fontFamily}» не установлен
+                                    </p>
+                                    <p className="text-[9px] text-text-tertiary mt-0.5">
+                                        Выберите замену ниже или загрузите файл шрифта
+                                    </p>
+                                </div>
+                            </div>
+                        )}
                         <div>
                             <label className="text-[9px] text-text-tertiary uppercase tracking-wider font-medium mb-1.5 block">Семейство</label>
                             <Select

@@ -15,6 +15,7 @@ import type {
     TemplateVisibility,
     TemplateEditPermission,
 } from "@/types";
+import type { RequiredFont } from "@/utils/fontUtils";
 
 /* ─── Template Pack (v1 — backward compat) ──────────────── */
 export interface TemplatePack {
@@ -29,6 +30,8 @@ export interface TemplatePack {
     resizes: ResizeFormat[];
     /** v1.1+: serialized layer tree preserving frame→children nesting */
     layerTree?: SerializedLayerNode[];
+    /** v1.2+: fonts required by this template (family + weights) */
+    requiredFonts?: RequiredFont[];
 }
 
 /* ─── Template Pack V2 (with full catalogization) ───────── */
@@ -64,9 +67,16 @@ export function serializeTemplate(
     instances?: ComponentInstance[],
     layers?: Layer[]
 ): TemplatePack {
+    // Extract required fonts from layers if available
+    let requiredFonts: RequiredFont[] | undefined;
+    if (layers && layers.length > 0) {
+        const { extractRequiredFonts } = require("@/utils/fontUtils") as typeof import("@/utils/fontUtils");
+        requiredFonts = extractRequiredFonts(layers);
+    }
+
     return {
         id: uuid(),
-        version: "1.1.0",
+        version: "1.2.0",
         name: project.name || "Untitled Template",
         description: "Exported from AI Creative Platform",
         baseWidth: 1080,
@@ -75,6 +85,7 @@ export function serializeTemplate(
         componentInstances: instances,
         resizes: resizes.filter(r => r.id !== "master"),
         layerTree: layers ? buildLayerTree(layers) : undefined,
+        requiredFonts,
     };
 }
 

@@ -18,7 +18,7 @@ import { cloneLayerTree } from "@/utils/cloneLayerTree";
 
 export type ResizeSlice = Pick<CanvasStore,
     | "resizes" | "activeResizeId" | "canvasWidth" | "canvasHeight"
-    | "addResize" | "removeResize" | "renameResize"
+    | "addResize" | "removeResize" | "renameResize" | "resizeFormat" | "duplicateResize"
     | "setActiveResize" | "syncLayersToResize" | "toggleInstanceMode"
     | "setCanvasSize"
     | "promoteFormatToMaster" | "demoteFormatFromMaster"
@@ -129,6 +129,43 @@ export const createResizeSlice: StateCreator<CanvasStore, [], [], ResizeSlice> =
             resizes: state.resizes.map((r) =>
                 r.id === resizeId ? { ...r, name } : r
             ),
+        }));
+    },
+
+    resizeFormat: (resizeId, width, height) => {
+        const state = get();
+        const newLabel = `${width} × ${height}`;
+
+        set({
+            resizes: state.resizes.map((r) =>
+                r.id === resizeId ? { ...r, width, height, label: newLabel } : r
+            ),
+            // If resizing the active format, also update canvas dimensions
+            ...(state.activeResizeId === resizeId ? { canvasWidth: width, canvasHeight: height } : {}),
+        });
+    },
+
+    duplicateResize: (resizeId) => {
+        const state = get();
+        const source = state.resizes.find(r => r.id === resizeId);
+        if (!source) return;
+
+        // Get source layers: if source is active, use current layers; otherwise snapshot
+        const sourceLayers = state.activeResizeId === resizeId
+            ? state.layers
+            : (source.layerSnapshot ?? []);
+
+        const newFormat: ResizeFormat = {
+            ...source,
+            id: `dup-${Date.now()}`,
+            name: `${source.name} (копия)`,
+            isMaster: undefined, // never duplicate master status
+            layerBindings: undefined, // don't copy bindings
+            layerSnapshot: cloneLayerTree(sourceLayers),
+        };
+
+        set((s) => ({
+            resizes: [...s.resizes, newFormat],
         }));
     },
 

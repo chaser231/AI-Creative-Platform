@@ -5,6 +5,11 @@ import { useCanvasStore } from "@/store/canvasStore";
 import { useShallow } from "zustand/react/shallow";
 import { isFocusedOnInput } from "@/utils/keyboard";
 import type { FrameLayer } from "@/types";
+import {
+    copyLayersToClipboard,
+    pasteLayersFromClipboard,
+    copyLayerAsPng,
+} from "@/utils/clipboardUtils";
 
 /**
  * Global keyboard shortcuts for the editor.
@@ -22,11 +27,14 @@ export function useKeyboardShortcuts() {
         redo,
         selectLayer,
         reorderLayer,
+        pasteLayers,
+        stageRef,
     } = useCanvasStore(useShallow((s) => ({
         selectedLayerIds: s.selectedLayerIds, layers: s.layers,
         isEditingText: s.isEditingText, deleteSelectedLayers: s.deleteSelectedLayers,
         duplicateSelectedLayers: s.duplicateSelectedLayers, updateLayer: s.updateLayer,
         undo: s.undo, redo: s.redo, selectLayer: s.selectLayer, reorderLayer: s.reorderLayer,
+        pasteLayers: s.pasteLayers, stageRef: s.stageRef,
     })));
 
     // clipboard state lives in a ref so it persists across renders
@@ -40,6 +48,46 @@ export function useKeyboardShortcuts() {
             if (isEditingText) return;
 
             const isMeta = e.metaKey || e.ctrlKey;
+
+            // ─── Copy: Cmd+C ────────────────────────────
+            if (isMeta && !e.shiftKey && e.key === "c") {
+                if (selectedLayerIds.length > 0) {
+                    e.preventDefault();
+                    copyLayersToClipboard(selectedLayerIds, layers);
+                }
+                return;
+            }
+
+            // ─── Copy as PNG: Cmd+Shift+C ────────────────
+            if (isMeta && e.shiftKey && e.key === "C") {
+                if (selectedLayerIds.length > 0 && stageRef?.current) {
+                    e.preventDefault();
+                    copyLayerAsPng(stageRef.current, selectedLayerIds, layers);
+                }
+                return;
+            }
+
+            // ─── Paste: Cmd+V ────────────────────────────
+            if (isMeta && !e.shiftKey && e.key === "v") {
+                e.preventDefault();
+                pasteLayersFromClipboard().then((data) => {
+                    if (data && data.layers.length > 0) {
+                        pasteLayers(data.layers);
+                    }
+                });
+                return;
+            }
+
+            // ─── Cut: Cmd+X ─────────────────────────────
+            if (isMeta && e.key === "x") {
+                if (selectedLayerIds.length > 0) {
+                    e.preventDefault();
+                    copyLayersToClipboard(selectedLayerIds, layers).then(() => {
+                        deleteSelectedLayers();
+                    });
+                }
+                return;
+            }
 
             // ─── Undo: Cmd+Z ─────────────────────────────
             if (isMeta && !e.shiftKey && e.key === "z") {
@@ -142,7 +190,7 @@ export function useKeyboardShortcuts() {
                 if (didMove) return;
             }
         },
-        [selectedLayerIds, layers, isEditingText, deleteSelectedLayers, duplicateSelectedLayers, updateLayer, undo, redo, selectLayer, reorderLayer]
+        [selectedLayerIds, layers, isEditingText, deleteSelectedLayers, duplicateSelectedLayers, updateLayer, undo, redo, selectLayer, reorderLayer, pasteLayers, stageRef]
     );
 
     useEffect(() => {
