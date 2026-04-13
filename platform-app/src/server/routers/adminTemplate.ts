@@ -13,6 +13,24 @@ import {
   deleteS3Objects,
 } from "../utils/s3-cleanup";
 
+/** Extract resizes count from template JSON data */
+function getResizesCount(data: unknown): number {
+  if (!data || typeof data !== "object") return 0;
+  const d = data as Record<string, unknown>;
+  if (Array.isArray(d.resizes)) return d.resizes.length;
+  return 0;
+}
+
+/** Extract resize names from template JSON data */
+function getResizeNames(data: unknown): string[] {
+  if (!data || typeof data !== "object") return [];
+  const d = data as Record<string, unknown>;
+  if (Array.isArray(d.resizes)) {
+    return d.resizes.map((r: any) => r.name || r.id || "—");
+  }
+  return [];
+}
+
 export const adminTemplateRouter = createTRPCRouter({
   /** List all templates across all workspaces */
   list: superAdminProcedure
@@ -21,12 +39,13 @@ export const adminTemplateRouter = createTRPCRouter({
         search: z.string().optional(),
         workspaceId: z.string().optional(),
         isOfficial: z.boolean().optional(),
+        templateType: z.enum(["single", "pack"]).optional(),
         limit: z.number().min(1).max(200).default(100),
         offset: z.number().min(0).default(0),
       }).optional()
     )
     .query(async ({ ctx, input }) => {
-      const { search, workspaceId, isOfficial, limit = 100, offset = 0 } = input || {};
+      const { search, workspaceId, isOfficial, templateType, limit = 100, offset = 0 } = input || {};
 
       const where: Record<string, unknown> = {};
       if (workspaceId) where.workspaceId = workspaceId;
@@ -55,6 +74,8 @@ export const adminTemplateRouter = createTRPCRouter({
             updatedAt: true,
             workspaceId: true,
             author: true,
+            visibility: true,
+            data: true, // needed to extract resizes count
             workspace: {
               select: { name: true, slug: true },
             },
@@ -66,7 +87,32 @@ export const adminTemplateRouter = createTRPCRouter({
         ctx.prisma.template.count({ where }),
       ]);
 
-      return { templates, total };
+      // Enrich with type info and filter by templateType if needed
+      const enriched = templates.map((tmpl) => {
+        const formatCount = getResizesCount(tmpl.data);
+        const type: "single" | "pack" = formatCount >= 2 ? "pack" : "single";
+        const formatNames = getResizeNames(tmpl.data);
+
+        // Strip heavy data field from response
+        const { data, ...rest } = tmpl;
+
+        return {
+          ...rest,
+          formatCount,
+          templateType: type,
+          formatNames,
+        };
+      });
+
+      // Apply client-side templateType filter (can't do JSON-level filtering in Prisma easily)
+      const filtered = templateType
+        ? enriched.filter((t) => t.templateType === templateType)
+        : enriched;
+
+      return {
+        templates: filtered,
+        total: templateType ? filtered.length : total,
+      };
     }),
 
   /** Get full template with data (for editing) */
@@ -151,18 +197,30 @@ export const adminTemplateRouter = createTRPCRouter({
       return duplicate;
     }),
 
-  /** Delete a template (with S3 storage cleanup) */
+  /** Delete a template (with S3 storage cleanup + pack safety check) */
   delete: superAdminProcedure
-    .input(z.object({ id: z.string() }))
+    .input(z.object({
+      id: z.string(),
+      confirmPack: z.boolean().optional().default(false),
+    }))
     .mutation(async ({ ctx, input }) => {
       // Fetch template to extract S3 URLs before deletion
       const template = await ctx.prisma.template.findUnique({
         where: { id: input.id },
-        select: { data: true, thumbnailUrl: true },
+        select: { name: true, data: true, thumbnailUrl: true },
       });
 
       if (!template) {
         throw new TRPCError({ code: "NOT_FOUND", message: "Шаблон не найден" });
+      }
+
+      // Pack safety: if template has 2+ resizes, require explicit confirmation
+      const formatCount = getResizesCount(template.data);
+      if (formatCount >= 2 && !input.confirmPack) {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: `Этот шаблон является пакетом с ${formatCount} форматами. Для удаления требуется подтверждение.`,
+        });
       }
 
       // ── S3 cleanup ──
