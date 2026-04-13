@@ -13,7 +13,7 @@ import { Input } from "@/components/ui/Input";
 import { DEFAULT_PACKS, type TemplatePackMeta } from "@/constants/defaultPacks";
 import { getRecommendedPacks, searchPacks } from "@/services/templateCatalogService";
 import { type TemplatePackV2, extractSingleFormatFromPack } from "@/services/templateService";
-import type { BusinessUnit, FrameLayer, TemplateTag } from "@/types";
+import type { BusinessUnit, FrameLayer, Layer, TemplateTag } from "@/types";
 import { TextContentBlock } from "@/components/wizard/blocks/TextContentBlock";
 import { ImageContentBlock } from "@/components/wizard/blocks/ImageContentBlock";
 import { BadgeContentBlock } from "@/components/wizard/blocks/BadgeContentBlock";
@@ -224,15 +224,65 @@ export function WizardFlow({ projectId, onSwitchToStudio, initialTemplateId }: W
                 }))
             } as unknown as TemplatePackV2;
         } else {
-            // We already fetched and extracted the correct format in the eager fetch useEffect!
-            // So we can just use `fullSelectedTemplate` as the pack to apply!
             if (!fullSelectedTemplate) return;
             packToApply = JSON.parse(JSON.stringify(fullSelectedTemplate));
         }
 
         const { applyTemplatePack } = await import("@/services/templateService");
 
-        // Content Mapping based on Dynamic Fields
+        // Build contentOverrides map: slotId → value
+        const contentOverrides: Record<string, string> = {};
+
+        // Source 1: masterComponents (for legacy + post-fix templates where MC IDs match layer IDs)
+        for (const mc of packToApply.masterComponents) {
+            const sid = mc.slotId || (mc.props as any).slotId;
+            if (!sid) continue;
+
+            if ((mc.type === "text" || mc.type === "badge") && textValues[mc.id] !== undefined) {
+                contentOverrides[sid] = textValues[mc.id];
+            }
+            if (mc.type === "image" && imageValues[mc.id] !== undefined) {
+                contentOverrides[sid] = imageValues[mc.id];
+            }
+        }
+
+        // Source 2: Scan layers[] directly for raw canvas state (covers pre-fix templates
+        // where MC IDs may not match, and ensures layers[] gets overrides applied)
+        const dataAny = packToApply as any;
+        if (dataAny.layers && Array.isArray(dataAny.layers)) {
+            for (const layer of dataAny.layers) {
+                const sid = layer.slotId;
+                if (!sid || sid === "none") continue;
+
+                if ((layer.type === "text" || layer.type === "badge") && textValues[layer.id] !== undefined) {
+                    contentOverrides[sid] = textValues[layer.id];
+                    // Also mutate layer directly for raw canvas state path
+                    layer[layer.type === "text" ? "text" : "label"] = textValues[layer.id];
+                }
+                if (layer.type === "image" && imageValues[layer.id] !== undefined) {
+                    contentOverrides[sid] = imageValues[layer.id];
+                    layer.src = imageValues[layer.id];
+                }
+            }
+
+            // Also apply to all format snapshots in resizes
+            if (dataAny.resizes && Array.isArray(dataAny.resizes)) {
+                for (const resize of dataAny.resizes) {
+                    if (resize.layerSnapshot && Array.isArray(resize.layerSnapshot)) {
+                        for (const layer of resize.layerSnapshot) {
+                            const sid = layer.slotId;
+                            if (!sid || sid === "none" || !contentOverrides[sid]) continue;
+                            const val = contentOverrides[sid];
+                            if (layer.type === "text") layer.text = val;
+                            else if (layer.type === "image") layer.src = val;
+                            else if (layer.type === "badge") layer.label = val;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Also apply content by mc.id directly to masterComponents (for hydration path)
         packToApply.masterComponents = packToApply.masterComponents.map(mc => {
             if ((mc.type === "text" || mc.type === "badge") && textValues[mc.id] !== undefined) {
                 return { 
@@ -250,6 +300,7 @@ export function WizardFlow({ projectId, onSwitchToStudio, initialTemplateId }: W
         });
 
         applyTemplatePack(packToApply, {
+            contentOverrides: Object.keys(contentOverrides).length > 0 ? contentOverrides : undefined,
             onSuccess: () => {
                 if (templateMode === "manual") {
                     onSwitchToStudio();
@@ -557,56 +608,119 @@ export function WizardFlow({ projectId, onSwitchToStudio, initialTemplateId }: W
                             </div>
                             <div className="space-y-3">
                                 {(() => {
-                                    const frameMasters = selectedTemplate.masterComponents.filter(
-                                        mc => mc.type === "frame" && (mc.props as FrameComponentProps).groupSlotId
+                                    // ── Resolve master format layers ──
+                                    // Only show content fields for the master format;
+                                    // instance formats inherit content via bindings
+                                    const dataAny = selectedTemplate as any;
+                                    const getMasterLayers = (): Layer[] => {
+                                        if (dataAny.resizes && Array.isArray(dataAny.resizes)) {
+                                            const masterResize = dataAny.resizes.find((r: any) => r.isMaster);
+                                            if (masterResize?.layerSnapshot && Array.isArray(masterResize.layerSnapshot)) {
+                                                return masterResize.layerSnapshot as Layer[];
+                                            }
+                                        }
+                                        // Fallback: top-level layers (assuming they are master's)
+                                        if (dataAny.layers && Array.isArray(dataAny.layers)) {
+                                            return dataAny.layers as Layer[];
+                                        }
+                                        return [];
+                                    };
+                                    const masterLayers = getMasterLayers();
+
+                                    // ── Determine data source ──
+                                    // masterComponents is rebuilt from layers on each save (post-fix),
+                                    // but for pre-fix templates it may be stale. Check if MC has content entries.
+                                    const CONTENT_TYPES = ["text", "image", "badge"];
+                                    const mcContentEntries = selectedTemplate.masterComponents.filter(
+                                        mc => CONTENT_TYPES.includes(mc.type)
                                     );
-                                    const groupedTextIds = new Set<string>();
+                                    const useMC = mcContentEntries.length > 0;
+
+                                    const groupedIds = new Set<string>();
                                     const groups: { groupId: string; members: typeof selectedTemplate.masterComponents }[] = [];
 
-                                    for (const frame of frameMasters) {
-                                        const frameProps = frame.props as FrameComponentProps;
+                                    if (useMC) {
+                                        // ── MC-based path (legacy + post-fix) ──
+                                        const frameMCs = selectedTemplate.masterComponents.filter(
+                                            mc => mc.type === "frame" && (mc.props as FrameComponentProps).groupSlotId
+                                        );
 
-                                        // Discover child master components based on layerTree
-                                        let childMasterIds = new Set<string>();
-                                        
-                                        if (selectedTemplate.layerTree && selectedTemplate.layerTree.length > 0) {
-                                            interface TreeNode { masterId?: string; layer?: { masterId?: string }; children?: TreeNode[] }
-                                            const findNode = (nodes: TreeNode[], mId: string): TreeNode | null => {
-                                                for (const n of nodes) {
-                                                    if (n.masterId === mId || n.layer?.masterId === mId) return n;
-                                                    if (n.children) {
-                                                        const found = findNode(n.children, mId);
-                                                        if (found) return found;
+                                        for (const frame of frameMCs) {
+                                            const frameProps = frame.props as FrameComponentProps;
+                                            let childIds = new Set<string>();
+
+                                            // Discover children via layerTree, fallback to childIds
+                                            if (selectedTemplate.layerTree && selectedTemplate.layerTree.length > 0) {
+                                                interface TreeNode { masterId?: string; layer?: { masterId?: string }; children?: TreeNode[] }
+                                                const findNode = (nodes: TreeNode[], mId: string): TreeNode | null => {
+                                                    for (const n of nodes) {
+                                                        if (n.masterId === mId || n.layer?.masterId === mId) return n;
+                                                        if (n.children) { const f = findNode(n.children, mId); if (f) return f; }
                                                     }
+                                                    return null;
+                                                };
+                                                const frameNode = findNode(selectedTemplate.layerTree, frame.id);
+                                                if (frameNode?.children) {
+                                                    frameNode.children.forEach((c: TreeNode) => {
+                                                        if (c.masterId) childIds.add(c.masterId);
+                                                        if (c.layer?.masterId) childIds.add(c.layer.masterId);
+                                                    });
                                                 }
-                                                return null;
-                                            };
-                                            const frameNode = findNode(selectedTemplate.layerTree, frame.id);
-                                            if (frameNode && frameNode.children) {
-                                                frameNode.children.forEach((c: TreeNode) => {
-                                                    if (c.masterId) childMasterIds.add(c.masterId);
-                                                    if (c.layer?.masterId) childMasterIds.add(c.layer.masterId);
-                                                });
+                                            } else {
+                                                (frameProps.childIds || []).forEach((cid: string) => childIds.add(cid));
                                             }
-                                        } else {
-                                            // Fallback for legacy templates without layerTree
-                                            (frameProps.childIds || []).forEach((cid: string) => childMasterIds.add(cid));
+
+                                            const textMembers = selectedTemplate.masterComponents.filter(mc => {
+                                                if (mc.type !== "text") return false;
+                                                return childIds.has(mc.id) || (mc.slotId && childIds.has(mc.slotId));
+                                            });
+
+                                            if (textMembers.length > 0) {
+                                                groups.push({ groupId: frameProps.groupSlotId!, members: textMembers });
+                                                textMembers.forEach(tm => groupedIds.add(tm.id));
+                                            }
                                         }
+                                    } else if (masterLayers.length > 0) {
+                                        // ── Layers-based path (pre-fix raw canvas state) ──
+                                        const frameLayers = masterLayers.filter(
+                                            (l: any) => l.type === "frame" && l.groupSlotId
+                                        );
 
-                                        const textMembers = selectedTemplate.masterComponents.filter(mc => {
-                                            if (mc.type !== "text") return false;
-                                            return childMasterIds.has(mc.id) || (mc.slotId && childMasterIds.has(mc.slotId));
-                                        });
-
-                                        if (textMembers.length > 0) {
-                                            groups.push({ groupId: frameProps.groupSlotId!, members: textMembers });
-                                            textMembers.forEach(tm => groupedTextIds.add(tm.id));
+                                        for (const fl of frameLayers) {
+                                            const fProps = fl as FrameLayer;
+                                            const cIds = fProps.childIds || [];
+                                            const textChildren = masterLayers.filter(
+                                                (l: Layer) => cIds.includes(l.id) && l.type === "text"
+                                            );
+                                            if (textChildren.length > 0) {
+                                                const syntheticMembers = textChildren.map((tl: any) => ({
+                                                    id: tl.id, type: "text" as const, name: tl.name,
+                                                    slotId: tl.slotId, props: tl,
+                                                }));
+                                                groups.push({ groupId: fProps.groupSlotId!, members: syntheticMembers as any });
+                                                textChildren.forEach((tl: Layer) => groupedIds.add(tl.id));
+                                            }
                                         }
                                     }
 
-                                    const ungrouped = selectedTemplate.masterComponents.filter(
-                                        mc => ["text", "image", "badge"].includes(mc.type) && !groupedTextIds.has(mc.id)
-                                    );
+                                    // ── Build ungrouped content ──
+                                    let ungrouped: typeof selectedTemplate.masterComponents;
+                                    if (useMC) {
+                                        ungrouped = selectedTemplate.masterComponents.filter(
+                                            mc => CONTENT_TYPES.includes(mc.type) && !groupedIds.has(mc.id)
+                                        );
+                                    } else {
+                                        // Build from masterLayers
+                                        const layerUngrouped = masterLayers.filter(
+                                            (l: Layer) => CONTENT_TYPES.includes(l.type)
+                                                && !groupedIds.has(l.id)
+                                                && l.slotId && l.slotId !== "none"
+                                        );
+                                        ungrouped = layerUngrouped.map((l: any) => ({
+                                            id: l.id, type: l.type, name: l.name,
+                                            slotId: l.slotId, props: l,
+                                        })) as any;
+                                    }
 
                                     return (
                                         <>

@@ -250,41 +250,120 @@ function hydrateLayerTree(
 /* ─── Unified Loading Utility ───────────────────────────── */
 
 /**
+ * Apply content overrides to a flat layers array based on slotId.
+ * Mutates layers in-place for efficiency.
+ */
+function applyContentOverridesToLayers(
+    layers: any[],
+    overrides: Record<string, string>
+): void {
+    for (const layer of layers) {
+        const sid = layer.slotId as string | undefined;
+        if (!sid || !overrides[sid]) continue;
+
+        const value = overrides[sid];
+        if (layer.type === "text") {
+            layer.text = value;
+        } else if (layer.type === "image") {
+            layer.src = value;
+        } else if (layer.type === "badge") {
+            layer.label = value;
+        }
+    }
+}
+
+/**
  * Standardized function to apply a template pack across the App.
  * Safely extracts data (if wrapped in Meta), hydrates, and loads into CanvasStore.
+ *
+ * @param options.contentOverrides — map of slotId → value to inject before loading.
+ *   For text slots: value = text string. For image slots: value = image URL.
  */
 export async function applyTemplatePack(
     pack: TemplatePackV2 | { data: TemplatePackV2 },
-    options?: { onSuccess?: () => void; onError?: (err: unknown) => void }
+    options?: {
+        onSuccess?: () => void;
+        onError?: (err: unknown) => void;
+        contentOverrides?: Record<string, string>;
+    }
 ) {
     try {
         const data = ('data' in pack) ? pack.data : pack; // Handle TemplatePackMeta wrapper if present
         const { useCanvasStore } = await import("@/store/canvasStore");
+        const { applyAllAutoLayouts } = await import("@/utils/layoutEngine");
+        const overrides = options?.contentOverrides;
 
         // If data is raw canvas state (saved from template editor), load directly.
         // This preserves layer hierarchy (parentId), slots, and all structure.
         // Raw canvas state has a `layers` array at the top level — TemplatePack format does not.
         const dataAny = data as any;
         if (dataAny.layers && Array.isArray(dataAny.layers) && dataAny.layers.length > 0) {
+            const layers = dataAny.layers.map((l: any) => ({ ...l })); // shallow clone to avoid mutating original
+
+            // Apply content overrides before loading
+            if (overrides && Object.keys(overrides).length > 0) {
+                applyContentOverridesToLayers(layers, overrides);
+                const updatedLayers = applyAllAutoLayouts(layers);
+                // We keep the original 'layers' reference semantics, but overwrite with updated
+                layers.length = 0;
+                layers.push(...updatedLayers);
+            }
+
             const resizes = dataAny.resizes ?? [{ id: "master", name: "Мастер макет", width: dataAny.canvasWidth || 1080, height: dataAny.canvasHeight || 1080, label: `${dataAny.canvasWidth || 1080} × ${dataAny.canvasHeight || 1080}`, instancesEnabled: false }];
-            const activeResizeId = resizes[0]?.id || "master";
-            const activeResize = resizes.find((r: any) => r.id === activeResizeId);
+
+            // Find master format — prefer isMaster flag, then fall back to first resize
+            const masterResize = resizes.find((r: any) => r.isMaster) || resizes[0];
+            const activeResizeId = masterResize?.id || "master";
+
+            // Apply content overrides to ALL format snapshots (for instance formats)
+            if (overrides && Object.keys(overrides).length > 0) {
+                for (const resize of resizes) {
+                    if (resize.layerSnapshot && Array.isArray(resize.layerSnapshot)) {
+                        resize.layerSnapshot = resize.layerSnapshot.map((l: any) => ({ ...l }));
+                        applyContentOverridesToLayers(resize.layerSnapshot, overrides);
+                        resize.layerSnapshot = applyAllAutoLayouts(resize.layerSnapshot);
+                    }
+                }
+            }
 
             useCanvasStore.setState({
-                layers: dataAny.layers,
+                layers,
                 masterComponents: dataAny.masterComponents ?? [],
                 componentInstances: dataAny.componentInstances ?? [],
                 resizes,
                 activeResizeId,
                 selectedLayerIds: [],
                 history: [],
-                canvasWidth: activeResize?.width ?? dataAny.canvasWidth ?? 1080,
-                canvasHeight: activeResize?.height ?? dataAny.canvasHeight ?? 1080,
+                canvasWidth: masterResize?.width ?? dataAny.canvasWidth ?? 1080,
+                canvasHeight: masterResize?.height ?? dataAny.canvasHeight ?? 1080,
                 artboardProps: dataAny.artboardProps ?? useCanvasStore.getState().artboardProps,
             });
         } else {
             // Legacy TemplatePack format — hydrate with ID regeneration
             const hydrated = hydrateTemplate(data);
+
+            // Apply content overrides to hydrated layers if present
+            if (overrides && Object.keys(overrides).length > 0 && hydrated.layers) {
+                applyContentOverridesToLayers(hydrated.layers, overrides);
+                hydrated.layers = applyAllAutoLayouts(hydrated.layers);
+            }
+
+            // Also apply overrides to masterComponents (for instance generation path)
+            if (overrides && Object.keys(overrides).length > 0) {
+                for (const mc of hydrated.masterComponents) {
+                    const sid = mc.slotId || (mc.props as any).slotId;
+                    if (!sid || !overrides[sid]) continue;
+                    const value = overrides[sid];
+                    if (mc.type === "text") {
+                        (mc.props as any).text = value;
+                    } else if (mc.type === "image") {
+                        (mc.props as any).src = value;
+                    } else if (mc.type === "badge") {
+                        (mc.props as any).label = value;
+                    }
+                }
+            }
+
             useCanvasStore.getState().loadTemplatePack(hydrated);
         }
 

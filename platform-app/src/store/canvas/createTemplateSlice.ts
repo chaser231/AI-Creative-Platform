@@ -58,12 +58,15 @@ export const createTemplateSlice: StateCreator<CanvasStore, [], [], TemplateSlic
             initialLayers = hydratedLayers;
         } else {
             initialLayers = masterComponents.map((m) => {
+                // Ensure slotId is propagated from both MC-level and props-level
+                const slotId = m.slotId || (m.props as any).slotId;
                 return {
                     ...m.props,
                     id: uuid(),
                     name: m.name,
                     masterId: m.id,
                     type: m.type,
+                    ...(slotId ? { slotId } : {}),
                 } as Layer;
             });
         }

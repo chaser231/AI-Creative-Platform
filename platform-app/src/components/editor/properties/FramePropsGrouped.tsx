@@ -89,26 +89,30 @@ export function FramePropsGrouped({
                                     <label className="text-[9px] text-text-tertiary uppercase tracking-wider font-medium mb-1.5 block">Размер Контейнера</label>
                                     <div className="grid grid-cols-2 gap-2">
                                         <div>
-                                            <span className="text-[9px] text-text-tertiary font-light mb-1 block">Осн. Ось (Main)</span>
+                                            <span className="text-[9px] text-text-tertiary font-light mb-1 block">
+                                                {layer.layoutMode === "horizontal" ? "Ширина (Main)" : "Высота (Main)"}
+                                            </span>
                                             <Select
                                                 size="xs"
                                                 value={layer.primaryAxisSizingMode || "fixed"}
                                                 onChange={(val) => onChange({ primaryAxisSizingMode: val as FrameLayer["primaryAxisSizingMode"] })}
                                                 options={[
                                                     { value: "fixed", label: "Fixed" },
-                                                    { value: "auto", label: "Hug Contents" },
+                                                    { value: "auto", label: "Hug" },
                                                 ]}
                                             />
                                         </div>
                                         <div>
-                                            <span className="text-[9px] text-text-tertiary font-light mb-1 block">Попер. Ось (Cross)</span>
+                                            <span className="text-[9px] text-text-tertiary font-light mb-1 block">
+                                                {layer.layoutMode === "horizontal" ? "Высота (Cross)" : "Ширина (Cross)"}
+                                            </span>
                                             <Select
                                                 size="xs"
                                                 value={layer.counterAxisSizingMode || "fixed"}
                                                 onChange={(val) => onChange({ counterAxisSizingMode: val as FrameLayer["counterAxisSizingMode"] })}
                                                 options={[
                                                     { value: "fixed", label: "Fixed" },
-                                                    { value: "auto", label: "Hug Contents" },
+                                                    { value: "auto", label: "Hug" },
                                                 ]}
                                             />
                                         </div>

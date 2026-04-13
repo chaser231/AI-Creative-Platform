@@ -309,33 +309,90 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
             const styledPrompt = styleSuffix && rawPrompt ? `${rawPrompt}. Style: ${styleSuffix}` : rawPrompt;
             const resolvedPrompt = resolveRefTags(styledPrompt, selectedModel);
 
-            // For outpaint: measure actual image pixel dimensions (not canvas dimensions)
-            // to ensure bria/expand works at the real image resolution
+            let finalImageBase64 = selectedImageLayer.src;
             let outpaintOriginalSize: [number, number] | undefined;
-            if (action === "outpaint") {
-                try {
-                    const img = new window.Image();
-                    await new Promise<void>((resolve, reject) => {
-                        img.onload = () => resolve();
-                        img.onerror = reject;
-                        img.src = selectedImageLayer.src;
-                    });
-                    outpaintOriginalSize = [img.naturalWidth, img.naturalHeight];
+
+            try {
+                const img = new window.Image();
+                img.crossOrigin = "anonymous"; // Prevents tainted canvas error
+                await new Promise<void>((resolve, reject) => {
+                    img.onload = () => resolve();
+                    img.onerror = reject;
+                    img.src = selectedImageLayer.src;
+                });
+                
+                let realW = img.naturalWidth;
+                let realH = img.naturalHeight;
+
+                if (action === "outpaint") {
                     console.log(`[Outpaint] Real image pixels: ${img.naturalWidth}×${img.naturalHeight}, canvas layer: ${selectedImageLayer.width}×${selectedImageLayer.height}`);
-                } catch {
-                    // Fallback to canvas dimensions if image fails to load
+                    
+                    const pixelScaleX = realW / selectedImageLayer.width;
+                    const pixelScaleY = realH / selectedImageLayer.height;
+
+                    let targetPadTop = currentExpandPadding.top * pixelScaleY;
+                    let targetPadRight = currentExpandPadding.right * pixelScaleX;
+                    let targetPadBottom = currentExpandPadding.bottom * pixelScaleY;
+                    let targetPadLeft = currentExpandPadding.left * pixelScaleX;
+
+                    const finalW = realW + targetPadLeft + targetPadRight;
+                    const finalH = realH + targetPadTop + targetPadBottom;
+
+                    const MAX_FINAL_DIMENSION = 3500; // Safe limit keeps area below 25M pixels
+
+                    if (finalW > MAX_FINAL_DIMENSION || finalH > MAX_FINAL_DIMENSION) {
+                        const downscaleRatio = Math.min(MAX_FINAL_DIMENSION / finalW, MAX_FINAL_DIMENSION / finalH);
+                        
+                        realW = Math.round(realW * downscaleRatio);
+                        realH = Math.round(realH * downscaleRatio);
+
+                        targetPadTop *= downscaleRatio;
+                        targetPadRight *= downscaleRatio;
+                        targetPadBottom *= downscaleRatio;
+                        targetPadLeft *= downscaleRatio;
+
+                        const canvas = document.createElement("canvas");
+                        canvas.width = realW;
+                        canvas.height = realH;
+                        const ctx = canvas.getContext("2d");
+                        if (ctx) {
+                            ctx.drawImage(img, 0, 0, realW, realH);
+                            finalImageBase64 = canvas.toDataURL("image/png");
+                            console.log(`[Outpaint] Downscaled base image to ${realW}×${realH} to prevent API limits`);
+                        }
+                    }
+
+                    outpaintOriginalSize = [realW, realH];
+                    
+                    currentExpandPadding.top = Math.round(targetPadTop);
+                    currentExpandPadding.right = Math.round(targetPadRight);
+                    currentExpandPadding.bottom = Math.round(targetPadBottom);
+                    currentExpandPadding.left = Math.round(targetPadLeft);
+
+                    console.log(`[Outpaint] Final pixel-space padding: T=${currentExpandPadding.top} R=${currentExpandPadding.right} B=${currentExpandPadding.bottom} L=${currentExpandPadding.left}`);
+                } else {
+                    const MAX_DIMENSION = 2048; // Standard limit for inpaint/edit models
+                    if (realW > MAX_DIMENSION || realH > MAX_DIMENSION) {
+                        const downscaleRatio = Math.min(MAX_DIMENSION / realW, MAX_DIMENSION / realH);
+                        realW = Math.round(realW * downscaleRatio);
+                        realH = Math.round(realH * downscaleRatio);
+                        
+                        const canvas = document.createElement("canvas");
+                        canvas.width = realW;
+                        canvas.height = realH;
+                        const ctx = canvas.getContext("2d");
+                        if (ctx) {
+                            ctx.drawImage(img, 0, 0, realW, realH);
+                            finalImageBase64 = canvas.toDataURL("image/png");
+                            console.log(`[Image Edit] Downscaled base image to ${realW}×${realH} to prevent API limits`);
+                        }
+                    }
+                }
+            } catch (e) {
+                console.error("Downscaling image failed, using original base64", e);
+                if (action === "outpaint") {
                     outpaintOriginalSize = [Math.round(selectedImageLayer.width), Math.round(selectedImageLayer.height)];
                 }
-
-                // Scale padding proportionally from canvas-space to pixel-space
-                const pixelScaleX = outpaintOriginalSize[0] / selectedImageLayer.width;
-                const pixelScaleY = outpaintOriginalSize[1] / selectedImageLayer.height;
-                currentExpandPadding.left = Math.round(currentExpandPadding.left * pixelScaleX);
-                currentExpandPadding.right = Math.round(currentExpandPadding.right * pixelScaleX);
-                currentExpandPadding.top = Math.round(currentExpandPadding.top * pixelScaleY);
-                currentExpandPadding.bottom = Math.round(currentExpandPadding.bottom * pixelScaleY);
-
-                console.log(`[Outpaint] Pixel-space padding: T=${currentExpandPadding.top} R=${currentExpandPadding.right} B=${currentExpandPadding.bottom} L=${currentExpandPadding.left}`);
             }
 
             const response = await fetch("/api/ai/image-edit", {
@@ -344,7 +401,7 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                 body: JSON.stringify({
                     action,
                     prompt: resolvedPrompt,
-                    imageBase64: selectedImageLayer.src,
+                    imageBase64: finalImageBase64,
                     model: action === "remove-bg" ? "rembg" : (action === "outpaint" ? "bria-expand" : selectedModel),
                     referenceImages: referenceImages.length > 0 ? referenceImages : undefined,
                     // For outpaint: send pixel-space expandPadding + real image pixel size

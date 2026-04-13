@@ -1,8 +1,14 @@
 import { Layer, FrameLayer, TextLayer, TemplateSlotRole, ResizeFormat } from "@/types";
+import Konva from "konva";
 
 // ─── Text Size Estimation ──────────────────────────────────────
-// Uses an OffscreenCanvas (or in-memory canvas) to measure text
-// dimensions the same way Konva would, without needing a live stage.
+// Uses Konva.Text for measurement to guarantee exact parity with rendering.
+// Fallback to OffscreenCanvas/rough estimate for SSR.
+
+function getKonva(): typeof Konva | null {
+    if (typeof window === "undefined") return null;
+    return Konva;
+}
 
 let _measureCanvas: OffscreenCanvas | HTMLCanvasElement | null = null;
 
@@ -13,7 +19,6 @@ function getMeasureCanvas(): OffscreenCanvas | HTMLCanvasElement | null {
         } else if (typeof document !== "undefined") {
             _measureCanvas = document.createElement("canvas");
         } else {
-            // SSR fallback — will use rough estimates
             return null;
         }
     }
@@ -21,9 +26,11 @@ function getMeasureCanvas(): OffscreenCanvas | HTMLCanvasElement | null {
 }
 
 /**
- * Estimate the rendered size of a text layer.
+ * Measure the rendered size of a text layer.
+ * Uses Konva.Text internally so the measurement exactly matches canvas rendering.
+ * 
  * - `auto_width`: single-line, width = measured text width, height = single line height
- * - `auto_height`: width is fixed (from layer.width), height = wrapped line count × line height
+ * - `auto_height`: width is fixed (from containerWidth or layer.width), height = wrapped text height
  * - `fixed`: uses stored width/height as-is
  */
 function estimateTextSize(
@@ -36,6 +43,42 @@ function estimateTextSize(
         return { width: text.width, height: text.height };
     }
 
+    // ── Primary path: Konva.Text measurement (pixel-perfect) ──
+    const Konva = getKonva();
+    if (Konva) {
+        const fontStyle = text.fontWeight === "700" || text.fontWeight === "bold"
+            ? "bold"
+            : text.fontWeight === "600"
+                ? "600"
+                : "normal";
+
+        const isAutoWidth = textAdjust === "auto_width";
+        const measureW = isAutoWidth ? undefined : (containerWidth ?? text.width);
+
+        const node = new Konva.Text({
+            text: text.text,
+            fontSize: text.fontSize,
+            fontFamily: text.fontFamily,
+            fontStyle: fontStyle,
+            letterSpacing: text.letterSpacing || 0,
+            lineHeight: text.lineHeight || 1.2,
+            width: measureW,
+            wrap: isAutoWidth ? "none" : "word",
+        });
+
+        const w = isAutoWidth ? node.width() : (measureW ?? text.width);
+        const h = node.height();
+
+        // Destroy to prevent memory leaks (not attached to stage, but good practice)
+        node.destroy();
+
+        return {
+            width: Math.max(1, w),
+            height: Math.max(1, h),
+        };
+    }
+
+    // ── Fallback: OffscreenCanvas / rough estimate (SSR only) ──
     const fontStyle = text.fontWeight === "700" || text.fontWeight === "bold"
         ? "bold"
         : text.fontWeight === "600"
@@ -47,7 +90,6 @@ function estimateTextSize(
 
     const canvas = getMeasureCanvas();
     if (!canvas) {
-        // SSR fallback: rough estimate
         const avgCharWidth = text.fontSize * 0.6;
         const totalLetterSpacing = Math.max(0, text.text.length - 1) * (text.letterSpacing || 0);
 
@@ -55,7 +97,6 @@ function estimateTextSize(
             const w = text.text.length * avgCharWidth + totalLetterSpacing;
             return { width: Math.max(1, w), height: Math.max(1, singleLineHeight) };
         }
-        // auto_height
         const fixedW = containerWidth ?? text.width;
         const charsPerLine = Math.max(1, Math.floor(fixedW / (avgCharWidth + (text.letterSpacing || 0))));
         const lineCount = Math.max(1, Math.ceil(text.text.length / charsPerLine));
@@ -69,7 +110,6 @@ function estimateTextSize(
     ctx.font = fontSpec;
 
     if (textAdjust === "auto_width") {
-        // Single line, no wrapping
         const metrics = ctx.measureText(text.text);
         const totalLetterSpacing = Math.max(0, text.text.length - 1) * (text.letterSpacing || 0);
         const measuredWidth = metrics.width + totalLetterSpacing;
@@ -79,7 +119,6 @@ function estimateTextSize(
         };
     }
 
-    // auto_height — wrap text within `containerWidth` (or stored width) and count lines
     const fixedW = containerWidth ?? text.width;
     const lineCount = countWrappedLines(ctx, text.text, fixedW, text.letterSpacing || 0);
     return {
@@ -216,10 +255,24 @@ export function computeAutoLayout(
                 // Sync back to store
                 updates[child.id] = { ...updates[child.id], width: w, height: h };
             } else if (adj === "auto_height") {
-                // Width stays fixed (or fill — handled below), height is measured
-                const est = estimateTextSize(textChild, child.width);
+                // For fill-width children, pre-compute the expected fill width.
+                // In non-hug horizontal frame, counter-axis fill gives frame width - padding.
+                // In non-hug vertical frame, primary-axis fill gives remaining proportional space.
+                // But we don't have fill sizes yet; use the best available width.
+                let measureWidth = child.width;
+
+                // If this text is fill on the counter axis (vertical frame, fill width)
+                // and the frame itself has a fixed width, we can pre-compute
+                if (!isHorizontal && child.layoutSizingWidth === "fill" && !counterHug) {
+                    measureWidth = frame.width - paddingLeft - paddingRight;
+                }
+                // If horizontal frame and fill on counter(height), width stays as is
+                // If horizontal frame and fill on primary(width), width is fill — measured later
+
+                const est = estimateTextSize(textChild, measureWidth);
+                w = measureWidth;
                 h = est.height;
-                updates[child.id] = { ...updates[child.id], height: h };
+                updates[child.id] = { ...updates[child.id], width: w, height: h };
             }
         }
 
@@ -341,13 +394,21 @@ export function computeAutoLayout(
             else w = finalFrameWidth - paddingLeft - paddingRight;
         }
 
-        // If text child is auto_height and just got a new width via fill, re-measure height
+        // Re-measure text after fill resolution.
+        // ALWAYS re-measure because text content may have changed since the
+        // stored dimensions were last computed. Also, auto_width text inside
+        // a fill-width slot needs its natural width re-calculated.
         const originalChild = childLayers.find(c => c.id === m.id);
         if (originalChild && originalChild.type === "text") {
             const textChild = originalChild as TextLayer;
             const adj = textChild.textAdjust || "auto_width";
-            if (adj === "auto_height" && Math.abs(w - textChild.width) > 0.01) {
+            if (adj === "auto_height") {
                 const est = estimateTextSize(textChild, w);
+                h = est.height;
+                updates[m.id] = { ...updates[m.id], width: w, height: h };
+            } else if (adj === "auto_width") {
+                const est = estimateTextSize(textChild);
+                w = est.width;
                 h = est.height;
                 updates[m.id] = { ...updates[m.id], width: w, height: h };
             }
