@@ -5,7 +5,7 @@
  *
  * Client-side redirect component that checks the user's account status.
  * - PENDING/REJECTED → redirect to /auth/waitlist
- * - APPROVED → render children normally
+ * - APPROVED or undefined (legacy session) → render children normally
  * - Not authenticated → skip (middleware handles redirect to signin)
  *
  * Wraps the main app layout to enforce waitlist before any platform access.
@@ -13,7 +13,7 @@
 
 import { useSession } from "next-auth/react";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 // Routes that bypass the waitlist guard
 const BYPASS_ROUTES = [
@@ -24,30 +24,42 @@ const BYPASS_ROUTES = [
 ];
 
 export function WaitlistGuard({ children }: { children: ReactNode }) {
-    const { data: session, status } = useSession();
+    const { data: session, status, update: updateSession } = useSession();
     const pathname = usePathname();
     const router = useRouter();
+    const [hasRefreshed, setHasRefreshed] = useState(false);
 
     const accountStatus = session?.user?.status;
     const isBypassRoute = BYPASS_ROUTES.some((route) => pathname.startsWith(route));
 
+    // Force-refresh session once on mount to get fresh status from DB
+    // This handles stale cached sessions that don't include the status field
+    useEffect(() => {
+        if (status === "authenticated" && !hasRefreshed) {
+            setHasRefreshed(true);
+            updateSession();
+        }
+    }, [status, hasRefreshed, updateSession]);
+
     useEffect(() => {
         // Skip for bypass routes, unauthenticated users, and loading state
         if (isBypassRoute || status !== "authenticated") return;
+        // Wait for session refresh before making decisions
+        if (!hasRefreshed) return;
 
-        // Redirect non-approved users to waitlist
-        if (accountStatus && accountStatus !== "APPROVED") {
+        // Only redirect if status is explicitly PENDING or REJECTED
+        if (accountStatus === "PENDING" || accountStatus === "REJECTED") {
             router.replace("/auth/waitlist");
         }
-    }, [accountStatus, status, isBypassRoute, pathname, router]);
+    }, [accountStatus, status, hasRefreshed, isBypassRoute, pathname, router]);
 
     // Bypass routes always render children immediately (signin, waitlist, etc.)
     if (isBypassRoute) {
         return <>{children}</>;
     }
 
-    // Show spinner while session is loading (prevents flash of dashboard)
-    if (status === "loading") {
+    // Show spinner while session is loading or refreshing
+    if (status === "loading" || (status === "authenticated" && !hasRefreshed)) {
         return (
             <div className="min-h-screen flex items-center justify-center bg-bg-canvas">
                 <div className="w-6 h-6 border-2 border-accent-primary border-t-transparent rounded-full animate-spin" />
@@ -55,8 +67,8 @@ export function WaitlistGuard({ children }: { children: ReactNode }) {
         );
     }
 
-    // Block rendering for non-approved authenticated users (prevent flash)
-    if (status === "authenticated" && accountStatus && accountStatus !== "APPROVED") {
+    // Block rendering for explicitly non-approved authenticated users (prevent flash)
+    if (status === "authenticated" && (accountStatus === "PENDING" || accountStatus === "REJECTED")) {
         return (
             <div className="min-h-screen flex items-center justify-center bg-bg-canvas">
                 <div className="w-6 h-6 border-2 border-accent-primary border-t-transparent rounded-full animate-spin" />

@@ -17,8 +17,17 @@ export default function WaitlistPage() {
     const router = useRouter();
     const { data: session, status: sessionStatus, update: updateSession } = useSession();
     const [isRefreshing, setIsRefreshing] = useState(false);
+    const [hasRefreshedOnce, setHasRefreshedOnce] = useState(false);
 
     const accountStatus = session?.user?.status;
+
+    // Force-refresh session on first mount to get fresh status from DB
+    useEffect(() => {
+        if (sessionStatus === "authenticated" && !hasRefreshedOnce) {
+            setHasRefreshedOnce(true);
+            updateSession();
+        }
+    }, [sessionStatus, hasRefreshedOnce, updateSession]);
 
     // Redirect to sign-in if not authenticated
     useEffect(() => {
@@ -27,16 +36,18 @@ export default function WaitlistPage() {
         }
     }, [sessionStatus, router]);
 
-    // Redirect to dashboard if already approved
+    // Redirect to dashboard if approved (or if status is missing — legacy session)
     useEffect(() => {
-        if (accountStatus === "APPROVED") {
+        if (sessionStatus !== "authenticated" || !hasRefreshedOnce) return;
+        // If status is APPROVED or undefined (pre-waitlist session), let them through
+        if (!accountStatus || accountStatus === "APPROVED") {
             router.replace("/");
         }
-    }, [accountStatus, router]);
+    }, [accountStatus, sessionStatus, hasRefreshedOnce, router]);
 
     // Auto-poll session every 30 seconds to detect status change
     useEffect(() => {
-        if (accountStatus === "APPROVED") return;
+        if (!accountStatus || accountStatus === "APPROVED") return;
 
         const interval = setInterval(async () => {
             await updateSession();
