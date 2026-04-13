@@ -26,7 +26,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="ru" suppressHydrationWarning>
-      <body className={`${plusJakarta.variable} font-sans antialiased`}>
+      <body className={`${plusJakarta.variable} font-sans antialiased`} suppressHydrationWarning>
         <SessionProvider>
           <TRPCProvider>
             <WorkspaceProvider>
