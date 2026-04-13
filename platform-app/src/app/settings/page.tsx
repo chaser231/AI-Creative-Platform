@@ -17,8 +17,8 @@ export default function SettingsPage() {
     const [mounted, setMounted] = useState(false);
 
     useEffect(() => {
-        const t = setTimeout(() => setMounted(true), 0);
-        return () => clearTimeout(t);
+        // eslint-disable-next-line
+        setMounted(true);
     }, []);
 
     const currentTheme = mounted ? theme : undefined;
