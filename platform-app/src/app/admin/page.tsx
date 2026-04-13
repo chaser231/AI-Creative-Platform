@@ -397,18 +397,12 @@ export default function AdminDashboardPage() {
                     </div>
 
                     {/* KPI Cards */}
-                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-7 gap-4">
+                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
                         <KPICard
                             label="Пользователи"
                             value={statsLoading ? "..." : stats?.totalUsers ?? 0}
                             icon={Users}
                             color="bg-blue-500/15 text-blue-400"
-                        />
-                        <KPICard
-                            label="Ожидают одобрения"
-                            value={statsLoading ? "..." : stats?.pendingUsers ?? 0}
-                            icon={Clock}
-                            color="bg-amber-500/15 text-amber-400"
                         />
                         <KPICard
                             label="Воркспейсы"
