@@ -41,9 +41,18 @@ export function WaitlistGuard({ children }: { children: ReactNode }) {
         }
     }, [accountStatus, status, isBypassRoute, pathname, router]);
 
-    // Don't block rendering while loading or on bypass routes
-    if (status === "loading" || isBypassRoute) {
+    // Bypass routes always render children immediately (signin, waitlist, etc.)
+    if (isBypassRoute) {
         return <>{children}</>;
+    }
+
+    // Show spinner while session is loading (prevents flash of dashboard)
+    if (status === "loading") {
+        return (
+            <div className="min-h-screen flex items-center justify-center bg-bg-canvas">
+                <div className="w-6 h-6 border-2 border-accent-primary border-t-transparent rounded-full animate-spin" />
+            </div>
+        );
     }
 
     // Block rendering for non-approved authenticated users (prevent flash)
