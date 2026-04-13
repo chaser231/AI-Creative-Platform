@@ -8,9 +8,10 @@
  */
 
 import { useState } from "react";
+import { signOut } from "next-auth/react";
 import { trpc } from "@/lib/trpc";
 import { useWorkspace } from "@/providers/WorkspaceProvider";
-import { Users, ShoppingCart, Utensils, Car, Store, Loader2, Check } from "lucide-react";
+import { Users, ShoppingCart, Utensils, Car, Store, Loader2, Check, LogOut } from "lucide-react";
 
 const TEAM_ICONS: Record<string, React.ReactNode> = {
   "yandex-market": <ShoppingCart size={28} />,
@@ -124,7 +125,7 @@ export function WorkspaceOnboarding() {
         </div>
 
         {/* Join button */}
-        <div className="flex justify-center">
+        <div className="flex flex-col items-center gap-3">
           <button
             onClick={handleJoin}
             disabled={!selectedId || joining}
@@ -138,6 +139,13 @@ export function WorkspaceOnboarding() {
             ) : (
               "Присоединиться к команде"
             )}
+          </button>
+          <button
+            onClick={() => signOut({ callbackUrl: "/auth/signin" })}
+            className="flex items-center gap-2 px-4 py-2 rounded-[var(--radius-xl)] text-xs text-text-tertiary hover:text-text-primary hover:bg-bg-surface/60 transition-colors cursor-pointer"
+          >
+            <LogOut size={14} />
+            Выйти из аккаунта
           </button>
         </div>
       </div>
