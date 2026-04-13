@@ -80,6 +80,14 @@ export function Sidebar() {
     const meQuery = trpc.auth.me.useQuery(undefined, { refetchOnWindowFocus: false });
     const isSuperAdmin = meQuery.data?.role === "SUPER_ADMIN";
 
+    // Pending user registrations count (for admin badge)
+    const pendingQuery = trpc.admin.pendingUsers.useQuery(undefined, {
+        enabled: isSuperAdmin,
+        refetchOnWindowFocus: false,
+        refetchInterval: 60_000, // poll every 60s
+    });
+    const pendingCount = pendingQuery.data?.length ?? 0;
+
     // Fetch favorite projects from DB
     const favoritesQuery = trpc.project.listFavorites.useQuery(
         { workspaceId: currentWorkspace?.id ?? "" },
@@ -264,8 +272,8 @@ export function Sidebar() {
                                 Администрирование
                             </p>
                             {[
-                                { label: "Админ-панель", href: "/admin", icon: <ShieldCheck size={18} /> },
-                                { label: "Шаблоны (админ)", href: "/admin/templates", icon: <LayoutTemplate size={18} /> },
+                                { label: "Админ-панель", href: "/admin", icon: <ShieldCheck size={18} />, showBadge: true },
+                                { label: "Шаблоны (админ)", href: "/admin/templates", icon: <LayoutTemplate size={18} />, showBadge: false },
                             ].map((item) => {
                                 const isActive = pathname === item.href || pathname.startsWith(item.href + "/");
                                 return (
@@ -282,7 +290,12 @@ export function Sidebar() {
                                         <span className={cn(isActive ? "text-amber-500" : "text-text-tertiary")}>
                                             {item.icon}
                                         </span>
-                                        {item.label}
+                                        <span className="flex-1">{item.label}</span>
+                                        {item.showBadge && pendingCount > 0 && (
+                                            <span className="px-1.5 py-0.5 rounded-full bg-amber-500/15 border border-amber-500/25 text-amber-500 text-[9px] font-bold leading-none">
+                                                {pendingCount}
+                                            </span>
+                                        )}
                                     </Link>
                                 );
                             })}

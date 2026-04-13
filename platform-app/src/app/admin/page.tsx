@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import {
     Users, Building2, FolderKanban, LayoutTemplate, Sparkles, DollarSign,
     Search, Shield, ShieldCheck, ChevronDown, MoreHorizontal, ShieldX,
+    UserCheck, UserX, Clock,
 } from "lucide-react";
 import { AppShell } from "@/components/layout/AppShell";
 import { TopBar } from "@/components/layout/TopBar";
@@ -50,6 +51,35 @@ function RoleBadge({ role }: { role: string }) {
             User
         </span>
     );
+}
+
+/* ─── Account Status Badge ─────────────────────────────── */
+
+function StatusBadge({ status }: { status: string }) {
+    switch (status) {
+        case "APPROVED":
+            return (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-500/15 border border-emerald-500/25 text-emerald-500 text-[10px] font-semibold">
+                    <UserCheck size={10} />
+                    Одобрен
+                </span>
+            );
+        case "REJECTED":
+            return (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-red-500/15 border border-red-500/25 text-red-400 text-[10px] font-semibold">
+                    <UserX size={10} />
+                    Отклонён
+                </span>
+            );
+        case "PENDING":
+        default:
+            return (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-500/15 border border-amber-500/25 text-amber-500 text-[10px] font-semibold">
+                    <Clock size={10} />
+                    Ожидание
+                </span>
+            );
+    }
 }
 
 /* ─── Cost Analytics Tabs ──────────────────────────────── */
@@ -306,6 +336,13 @@ export default function AdminDashboardPage() {
     );
 
     const updateRoleMutation = trpc.admin.updateUserRole.useMutation();
+    const { data: pendingUsers, isLoading: pendingLoading, refetch: refetchPending } = trpc.admin.pendingUsers.useQuery(undefined, { enabled: isSuperAdmin });
+    const approveMutation = trpc.admin.approveUser.useMutation({
+        onSuccess: () => { refetchPending(); window.location.reload(); },
+    });
+    const rejectMutation = trpc.admin.rejectUser.useMutation({
+        onSuccess: () => { refetchPending(); window.location.reload(); },
+    });
 
     const handleToggleRole = async (userId: string, currentRole: string) => {
         const newRole = currentRole === "SUPER_ADMIN" ? "USER" as const : "SUPER_ADMIN" as const;
@@ -360,12 +397,18 @@ export default function AdminDashboardPage() {
                     </div>
 
                     {/* KPI Cards */}
-                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-7 gap-4">
                         <KPICard
                             label="Пользователи"
                             value={statsLoading ? "..." : stats?.totalUsers ?? 0}
                             icon={Users}
                             color="bg-blue-500/15 text-blue-400"
+                        />
+                        <KPICard
+                            label="Ожидают одобрения"
+                            value={statsLoading ? "..." : stats?.pendingUsers ?? 0}
+                            icon={Clock}
+                            color="bg-amber-500/15 text-amber-400"
                         />
                         <KPICard
                             label="Воркспейсы"
@@ -399,6 +442,69 @@ export default function AdminDashboardPage() {
                         />
                     </div>
 
+                    {/* Pending Users Section */}
+                    {!pendingLoading && pendingUsers && pendingUsers.length > 0 && (
+                        <section>
+                            <div className="flex items-center gap-3 mb-4">
+                                <h2 className="text-lg font-semibold text-text-primary">Заявки на регистрацию</h2>
+                                <span className="px-2 py-0.5 rounded-full bg-amber-500/15 border border-amber-500/25 text-amber-500 text-[11px] font-semibold">
+                                    {pendingUsers.length}
+                                </span>
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                                {pendingUsers.map((user) => (
+                                    <div
+                                        key={user.id}
+                                        className="flex items-center gap-3 p-4 rounded-2xl bg-bg-surface border border-border-primary hover:border-amber-500/30 transition-colors"
+                                    >
+                                        {/* Avatar */}
+                                        {(user.avatarUrl || user.image) ? (
+                                            <img
+                                                src={user.avatarUrl || user.image || ""}
+                                                alt=""
+                                                className="w-10 h-10 rounded-full object-cover shrink-0"
+                                            />
+                                        ) : (
+                                            <div className="w-10 h-10 rounded-full bg-amber-500/10 flex items-center justify-center text-amber-500 font-semibold text-sm shrink-0">
+                                                {user.name.charAt(0).toUpperCase()}
+                                            </div>
+                                        )}
+
+                                        {/* Info */}
+                                        <div className="min-w-0 flex-1">
+                                            <p className="text-sm font-medium text-text-primary truncate">{user.name}</p>
+                                            <p className="text-[11px] text-text-tertiary truncate">{user.email}</p>
+                                            <p className="text-[10px] text-text-tertiary mt-0.5">
+                                                {new Date(user.createdAt).toLocaleDateString("ru-RU", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}
+                                            </p>
+                                        </div>
+
+                                        {/* Actions */}
+                                        <div className="flex gap-1.5 shrink-0">
+                                            <button
+                                                onClick={() => approveMutation.mutate({ userId: user.id })}
+                                                disabled={approveMutation.isPending}
+                                                className="p-2 rounded-xl bg-emerald-500/10  border border-emerald-500/20 text-emerald-500 hover:bg-emerald-500/20 transition-colors cursor-pointer disabled:opacity-50"
+                                                title="Одобрить"
+                                            >
+                                                <UserCheck size={16} />
+                                            </button>
+                                            <button
+                                                onClick={() => rejectMutation.mutate({ userId: user.id })}
+                                                disabled={rejectMutation.isPending}
+                                                className="p-2 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 hover:bg-red-500/20 transition-colors cursor-pointer disabled:opacity-50"
+                                                title="Отклонить"
+                                            >
+                                                <UserX size={16} />
+                                            </button>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </section>
+                    )}
+
                     {/* Users Table */}
                     <section>
                         <div className="flex items-center justify-between mb-4">
@@ -421,6 +527,7 @@ export default function AdminDashboardPage() {
                                         <th className="text-left px-4 py-3 font-medium text-text-tertiary">Имя</th>
                                         <th className="text-left px-4 py-3 font-medium text-text-tertiary">Email</th>
                                         <th className="text-left px-4 py-3 font-medium text-text-tertiary">Роль</th>
+                                        <th className="text-left px-4 py-3 font-medium text-text-tertiary">Статус</th>
                                         <th className="text-center px-4 py-3 font-medium text-text-tertiary">Воркспейсы</th>
                                         <th className="text-center px-4 py-3 font-medium text-text-tertiary">Проекты</th>
                                         <th className="text-center px-4 py-3 font-medium text-text-tertiary">AI-генерации</th>
@@ -431,12 +538,13 @@ export default function AdminDashboardPage() {
                                 </thead>
                                 <tbody>
                                     {usersLoading ? (
-                                        <tr><td colSpan={9} className="px-4 py-8 text-center text-text-tertiary">Загрузка...</td></tr>
+                                        <tr><td colSpan={10} className="px-4 py-8 text-center text-text-tertiary">Загрузка...</td></tr>
                                     ) : usersData?.users.map((user) => (
                                         <tr key={user.id} className="border-b border-border-primary/50 hover:bg-bg-secondary/30 transition-colors">
                                             <td className="px-4 py-3 font-medium text-text-primary">{user.name}</td>
                                             <td className="px-4 py-3 text-text-secondary">{user.email}</td>
                                             <td className="px-4 py-3"><RoleBadge role={user.role} /></td>
+                                            <td className="px-4 py-3"><StatusBadge status={user.status} /></td>
                                             <td className="px-4 py-3 text-center text-text-secondary">{user._count.memberships}</td>
                                             <td className="px-4 py-3 text-center text-text-secondary">{user._count.projects}</td>
                                             <td className="px-4 py-3 text-center text-text-secondary">{user.aiGenerations}</td>

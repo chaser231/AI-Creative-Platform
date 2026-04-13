@@ -31,6 +31,7 @@ async function getDevUser() {
         email: DEV_EMAIL,
         name: "Dev User",
         role: "SUPER_ADMIN",
+        status: "APPROVED",
       },
     });
 
@@ -43,6 +44,12 @@ async function getDevUser() {
         create: { userId: user.id, workspaceId: ws.id, role: "ADMIN" },
       });
     }
+  } else if (user.status !== "APPROVED") {
+    // Ensure dev user is always approved
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { status: "APPROVED" },
+    });
   }
 
   return { id: user.id, name: user.name, email: user.email, image: user.avatarUrl };
@@ -91,7 +98,7 @@ export const createCallerFactory = t.createCallerFactory;
 /** Public procedure — no auth required */
 export const publicProcedure = t.procedure;
 
-/** Protected procedure — requires authenticated session */
+/** Protected procedure — requires authenticated session (any status) */
 export const protectedProcedure = t.procedure.use(async ({ ctx, next }) => {
   if (!ctx.session || !ctx.user) {
     throw new TRPCError({ code: "UNAUTHORIZED" });
@@ -104,6 +111,27 @@ export const protectedProcedure = t.procedure.use(async ({ ctx, next }) => {
       user: ctx.user,
     },
   });
+});
+
+/**
+ * Approved procedure — requires authenticated session AND approved account status.
+ * Use this for all platform operations that should be restricted to approved users.
+ * The basic `protectedProcedure` allows pending users (needed for `auth.me` etc.).
+ */
+export const approvedProcedure = protectedProcedure.use(async ({ ctx, next }) => {
+  const dbUser = await prisma.user.findUnique({
+    where: { id: ctx.user.id },
+    select: { status: true },
+  });
+
+  if (!dbUser || dbUser.status !== "APPROVED") {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "Ваш аккаунт ожидает одобрения администратором",
+    });
+  }
+
+  return next({ ctx });
 });
 
 /** Super-admin procedure — requires SUPER_ADMIN global role */

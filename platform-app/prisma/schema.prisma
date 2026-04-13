@@ -21,6 +21,7 @@ model User {
   avatarUrl     String?
   image         String?   // Required by @auth/prisma-adapter (NextAuth v5)
   role          GlobalRole @default(USER)
+  status        AccountStatus @default(PENDING)
   createdAt     DateTime   @default(now())
   updatedAt     DateTime   @updatedAt
 
@@ -76,6 +77,12 @@ model VerificationToken {
 enum GlobalRole {
   SUPER_ADMIN
   USER
+}
+
+enum AccountStatus {
+  PENDING    // Ожидает одобрения администратора
+  APPROVED   // Одобрен, полный доступ
+  REJECTED   // Отклонён
 }
 
 // ─── WORKSPACES ──────────────────────────────────────────

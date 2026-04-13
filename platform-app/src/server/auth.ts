@@ -42,9 +42,15 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     },
   ],
   callbacks: {
-    session({ session, user }) {
+    async session({ session, user }) {
       if (session.user) {
         session.user.id = user.id;
+        // Fetch account status for waitlist guard
+        const dbUser = await prisma.user.findUnique({
+          where: { id: user.id },
+          select: { status: true },
+        });
+        session.user.status = dbUser?.status ?? "PENDING";
       }
       return session;
     },

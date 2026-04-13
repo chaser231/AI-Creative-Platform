@@ -14,6 +14,7 @@ import type { NextRequest } from "next/server";
 // Routes that don't require authentication
 const PUBLIC_ROUTES = [
   "/auth/signin",
+  "/auth/waitlist",
   "/auth/error",
   "/api/auth",      // NextAuth API routes
   "/api/trpc",      // tRPC handles its own auth via protectedProcedure

@@ -15,6 +15,7 @@ export const adminRouter = createTRPCRouter({
   stats: superAdminProcedure.query(async ({ ctx }) => {
     const [
       totalUsers,
+      pendingUsers,
       totalWorkspaces,
       totalProjects,
       totalTemplates,
@@ -22,6 +23,7 @@ export const adminRouter = createTRPCRouter({
       trackedMessages,
     ] = await Promise.all([
       ctx.prisma.user.count(),
+      ctx.prisma.user.count({ where: { status: "PENDING" } }),
       ctx.prisma.workspace.count(),
       ctx.prisma.project.count(),
       ctx.prisma.template.count(),
@@ -43,6 +45,7 @@ export const adminRouter = createTRPCRouter({
 
     return {
       totalUsers,
+      pendingUsers,
       totalWorkspaces,
       totalProjects,
       totalTemplates,
@@ -80,6 +83,7 @@ export const adminRouter = createTRPCRouter({
             name: true,
             email: true,
             role: true,
+            status: true,
             avatarUrl: true,
             createdAt: true,
             _count: {
@@ -320,6 +324,50 @@ export const adminRouter = createTRPCRouter({
         where: { id: input.userId },
         data: { role: input.role },
         select: { id: true, name: true, role: true },
+      });
+
+      return user;
+    }),
+
+  /** List pending user registrations */
+  pendingUsers: superAdminProcedure.query(async ({ ctx }) => {
+    const users = await ctx.prisma.user.findMany({
+      where: { status: "PENDING" },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        avatarUrl: true,
+        image: true,
+        createdAt: true,
+      },
+      orderBy: { createdAt: "desc" },
+    });
+
+    return users;
+  }),
+
+  /** Approve a pending user registration */
+  approveUser: superAdminProcedure
+    .input(z.object({ userId: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      const user = await ctx.prisma.user.update({
+        where: { id: input.userId },
+        data: { status: "APPROVED" },
+        select: { id: true, name: true, email: true, status: true },
+      });
+
+      return user;
+    }),
+
+  /** Reject a pending user registration */
+  rejectUser: superAdminProcedure
+    .input(z.object({ userId: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      const user = await ctx.prisma.user.update({
+        where: { id: input.userId },
+        data: { status: "REJECTED" },
+        select: { id: true, name: true, email: true, status: true },
       });
 
       return user;
