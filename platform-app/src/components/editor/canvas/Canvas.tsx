@@ -554,6 +554,7 @@ export function Canvas({ stageRef }: CanvasProps) {
     const isDragging = useRef(false);
     const isTransforming = useRef(false);
     const clipBlocked = useRef(false);  // set when a mouseDown is blocked by clip bounds
+    const frameHoverCandidate = useRef<{ frameId: string | null; since: number }>({ frameId: null, since: 0 });
 
     // Track start positions for multi-drag
     const dragStartLocs = useRef<Record<string, { x: number; y: number }>>({});
@@ -635,6 +636,46 @@ export function Canvas({ stageRef }: CanvasProps) {
     useEffect(() => {
         setStageRef(stageRef);
     }, [stageRef, setStageRef]);
+
+    const getPointerScenePosition = useCallback((stage: Konva.Stage) => {
+        const pointer = stage.getPointerPosition();
+        if (!pointer) return null;
+        return {
+            x: (pointer.x - stage.x()) / stage.scaleX(),
+            y: (pointer.y - stage.y()) / stage.scaleY(),
+        };
+    }, []);
+
+    const resolveFrameHoverTarget = useCallback((stage: Konva.Stage, draggedLayerId: string) => {
+        const pointerScene = getPointerScenePosition(stage);
+        if (!pointerScene) return null;
+        return getFrameAtPoint(pointerScene.x, pointerScene.y, draggedLayerId);
+    }, [getFrameAtPoint, getPointerScenePosition]);
+
+    const updateFrameHoverHighlight = useCallback((stage: Konva.Stage, draggedLayerId: string) => {
+        const hoveredFrame = resolveFrameHoverTarget(stage, draggedLayerId);
+        const hoveredFrameId = hoveredFrame?.id ?? null;
+        const now = Date.now();
+
+        if (hoveredFrameId !== frameHoverCandidate.current.frameId) {
+            frameHoverCandidate.current = { frameId: hoveredFrameId, since: now };
+            setHighlightedFrameId(null);
+            return null;
+        }
+
+        if (!hoveredFrameId) {
+            setHighlightedFrameId(null);
+            return null;
+        }
+
+        if (now - frameHoverCandidate.current.since >= 220) {
+            setHighlightedFrameId(hoveredFrameId);
+            return hoveredFrame;
+        }
+
+        setHighlightedFrameId(null);
+        return null;
+    }, [resolveFrameHoverTarget, setHighlightedFrameId]);
 
     // Collect all IDs that are children of any frame (to exclude from top-level SelectionTransformer)
     const frameChildIds = useMemo(() => {
@@ -942,18 +983,13 @@ export function Canvas({ stageRef }: CanvasProps) {
             }
         });
 
-        const sceneWidth = e.target.width() * e.target.scaleX();
-        const sceneHeight = e.target.height() * e.target.scaleY();
-        const centerX = (startLoc.x + dx) + sceneWidth / 2;
-        const centerY = (startLoc.y + dy) + sceneHeight / 2;
-
         if (Object.keys(dragStartLocs.current).length === 1) {
-            const frame = getFrameAtPoint(centerX, centerY, id);
-            setHighlightedFrameId(frame?.id || null);
+            updateFrameHoverHighlight(stage, id);
         } else {
+            frameHoverCandidate.current = { frameId: null, since: 0 };
             setHighlightedFrameId(null);
         }
-    }, [layers, selectedLayerIds, getFrameAtPoint, setHighlightedFrameId, canvasWidth, canvasHeight]);
+    }, [layers, selectedLayerIds, setHighlightedFrameId, canvasWidth, canvasHeight, updateFrameHoverHighlight]);
 
     const handleLayerDragEnd = useCallback((e: Konva.KonvaEventObject<DragEvent>) => {
         setSnapLines([]);
@@ -988,8 +1024,7 @@ export function Canvas({ stageRef }: CanvasProps) {
                 const sceneHeight = e.target.height() * e.target.scaleY();
                 const centerX = currentSceneX + sceneWidth / 2;
                 const centerY = currentSceneY + sceneHeight / 2;
-
-                const frame = getFrameAtPoint(centerX, centerY, id);
+                const frame = updateFrameHoverHighlight(stage, id);
                 if (frame) {
                     if (frame.layoutMode && frame.layoutMode !== "none") {
                         const siblings = frame.childIds.filter(cId => cId !== id).map(cId => layers.find(l => l.id === cId)).filter(Boolean) as LayerType[];
@@ -1016,6 +1051,7 @@ export function Canvas({ stageRef }: CanvasProps) {
                     // Dropped completely outside of any frame
                     removeLayerFromFrame(id);
                 }
+                frameHoverCandidate.current = { frameId: null, since: 0 };
                 setHighlightedFrameId(null);
             }
         } else if (stage) {
@@ -1027,7 +1063,7 @@ export function Canvas({ stageRef }: CanvasProps) {
         }
 
         dragStartLocs.current = {};
-    }, [updateLayer, getFrameAtPoint, moveLayerToFrame, removeLayerFromFrame, setHighlightedFrameId, layers]);
+    }, [updateLayer, moveLayerToFrame, removeLayerFromFrame, setHighlightedFrameId, layers, updateFrameHoverHighlight]);
 
     const handleTransformEnd = useCallback((e: Konva.KonvaEventObject<Event>) => {
         isTransforming.current = false;

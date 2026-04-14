@@ -3,13 +3,20 @@
 import { useEffect } from "react";
 import { useThemeStore } from "@/store/themeStore";
 import { loadAllCustomFonts } from "@/lib/customFonts";
+import { trpc } from "@/lib/trpc";
+import { useWorkspace } from "@/providers/WorkspaceProvider";
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
     const theme = useThemeStore((s) => s.theme);
+    const { currentWorkspace } = useWorkspace();
+    const { data: workspaceFonts = [] } = trpc.asset.list.useQuery(
+        { workspaceId: currentWorkspace?.id ?? "", type: "FONT" },
+        { enabled: !!currentWorkspace?.id, refetchOnWindowFocus: false }
+    );
 
     useEffect(() => {
         // Load custom fonts entirely on the client side once on mount
-        loadAllCustomFonts().catch(err => console.error("Failed to inject custom fonts on load", err));
+        loadAllCustomFonts(workspaceFonts).catch(err => console.error("Failed to inject custom fonts on load", err));
 
         const root = document.documentElement;
 
@@ -34,7 +41,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
             mq.addEventListener("change", handler);
             return () => mq.removeEventListener("change", handler);
         }
-    }, [theme]);
+    }, [theme, workspaceFonts]);
 
     return <>{children}</>;
 }

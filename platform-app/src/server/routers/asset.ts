@@ -94,6 +94,7 @@ export const assetRouter = createTRPCRouter({
         mimeType: z.string(),
         sizeBytes: z.number(),
         type: z.enum(["IMAGE", "VIDEO", "AUDIO", "FONT", "LOGO", "OTHER"]),
+        metadata: z.record(z.string(), z.unknown()).optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -116,6 +117,7 @@ export const assetRouter = createTRPCRouter({
           url: publicUrl,
           mimeType: input.mimeType,
           sizeBytes: input.sizeBytes,
+          metadata: input.metadata,
           workspaceId: input.workspaceId,
           uploadedById: ctx.user.id,
         },

@@ -1,20 +1,30 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { Stage, Layer, Rect, Text, Image as KonvaImage, Group } from "react-konva";
-import type { Layer as LayerType } from "@/types";
+import type { Layer as LayerType, TextLayer, BadgeLayer, FrameLayer, ImageLayer } from "@/types";
 import { computeImageFitProps } from "@/utils/imageFitUtils";
 import Konva from "konva";
 
-type ImageLoadStatus = "loading" | "loaded" | "error";
+function useImage(src: string): HTMLImageElement | undefined {
+    const [loadedImg, setLoadedImg] = useState<HTMLImageElement | undefined>(undefined);
+    useEffect(() => {
+        if (!src) return;
+        const img = new window.Image();
+        img.crossOrigin = "anonymous";
+        img.src = src;
+        img.onload = () => {
+            setLoadedImg(img);
+        };
+    }, [src]);
+    return loadedImg;
+}
 
 interface PreviewLayerProps {
     layer: LayerType;
-    loadedImages: Map<string, HTMLImageElement>;
-    imageStatuses: Record<string, ImageLoadStatus>;
 }
 
-function PreviewLayer({ layer, loadedImages, imageStatuses }: PreviewLayerProps) {
+function PreviewLayer({ layer }: PreviewLayerProps) {
     if (!layer.visible) return null;
 
     const commonProps = {
@@ -54,34 +64,9 @@ function PreviewLayer({ layer, loadedImages, imageStatuses }: PreviewLayerProps)
                 />
             );
         case "image":
-            const img = loadedImages.get(layer.src);
-            const imageStatus = imageStatuses[layer.src] ?? "loading";
-
-            if (!img) {
-                return (
-                    <Group {...commonProps}>
-                        <Rect
-                            width={layer.width}
-                            height={layer.height}
-                            fill={imageStatus === "error" ? "#FEE2E2" : "#F3F4F6"}
-                            stroke={imageStatus === "error" ? "#EF4444" : "#D1D5DB"}
-                            dash={[6, 4]}
-                            cornerRadius={8}
-                        />
-                        <Text
-                            width={layer.width}
-                            height={layer.height}
-                            text={imageStatus === "error" ? "Ошибка загрузки" : "Изображение загружается"}
-                            fontSize={Math.max(12, Math.min(layer.width / 10, 18))}
-                            fontFamily="Inter"
-                            fill={imageStatus === "error" ? "#B91C1C" : "#6B7280"}
-                            align="center"
-                            verticalAlign="middle"
-                        />
-                    </Group>
-                );
-            }
-
+            // eslint-disable-next-line react-hooks/rules-of-hooks
+            const img = useImage(layer.src);
+            if (!img) return null;
             const fitMode = layer.objectFit || "cover";
             const nw = img.naturalWidth || img.width;
             const nh = img.naturalHeight || img.height;
@@ -169,53 +154,6 @@ interface PreviewCanvasProps {
 
 export function PreviewCanvas({ layers, artboardWidth, artboardHeight, containerWidth, containerHeight }: PreviewCanvasProps) {
     const stageRef = useRef<Konva.Stage>(null);
-    const [loadedImages, setLoadedImages] = useState<Map<string, HTMLImageElement>>(new Map());
-    const [imageStatuses, setImageStatuses] = useState<Record<string, ImageLoadStatus>>({});
-    const imageSources = useMemo(
-        () => Array.from(new Set(layers.filter((layer) => layer.type === "image" && layer.visible && layer.src).map((layer) => layer.src))),
-        [layers]
-    );
-
-    useEffect(() => {
-        if (imageSources.length === 0) {
-            setLoadedImages(new Map());
-            setImageStatuses({});
-            return;
-        }
-
-        let disposed = false;
-
-        setImageStatuses((prev) => {
-            const next: Record<string, ImageLoadStatus> = {};
-            imageSources.forEach((src) => {
-                next[src] = prev[src] === "loaded" ? "loaded" : "loading";
-            });
-            return next;
-        });
-
-        imageSources.forEach((src) => {
-            const img = new window.Image();
-            img.crossOrigin = "anonymous";
-            img.onload = () => {
-                if (disposed) return;
-                setLoadedImages((prev) => {
-                    const next = new Map(prev);
-                    next.set(src, img);
-                    return next;
-                });
-                setImageStatuses((prev) => ({ ...prev, [src]: "loaded" }));
-            };
-            img.onerror = () => {
-                if (disposed) return;
-                setImageStatuses((prev) => ({ ...prev, [src]: "error" }));
-            };
-            img.src = src;
-        });
-
-        return () => {
-            disposed = true;
-        };
-    }, [imageSources]);
 
     // Calculate scale to fit artboard within container (with 40px padding)
     const padding = 40;
@@ -232,9 +170,13 @@ export function PreviewCanvas({ layers, artboardWidth, artboardHeight, container
     const stageX = (containerWidth - artboardWidth * scale) / 2;
     const stageY = (containerHeight - artboardHeight * scale) / 2;
 
-    const pendingImages = imageSources.filter((src) => imageStatuses[src] === "loading").length;
-    const failedImages = imageSources.filter((src) => imageStatuses[src] === "error").length;
-    const showPreviewStatus = pendingImages > 0 || failedImages > 0;
+    // Separate background (frames) and standard layers if needed, 
+    // or just render them in z-index order. 
+    // We assume the stores layers are already sorted by z-index properly.
+
+    // Handle nested frame children. Wait, flat layers in store are flat, z-index determines rendering.
+    // If a frame has children, we need to nest them in Konva? 
+    // Wait, the main Canvas.tsx handles nesting frames carefully. Let's look at it.
 
     return (
         <Stage
@@ -251,7 +193,7 @@ export function PreviewCanvas({ layers, artboardWidth, artboardHeight, container
                     y={stageY}
                     width={artboardWidth * scale}
                     height={artboardHeight * scale}
-                    fill="#FAFAFA"
+                    fill="#FFFFFF"
                     shadowColor="#000"
                     shadowBlur={10}
                     shadowOpacity={0.05}
@@ -263,38 +205,10 @@ export function PreviewCanvas({ layers, artboardWidth, artboardHeight, container
                     {/* Artboard clip bounds */}
                     <Group clipX={0} clipY={0} clipWidth={artboardWidth} clipHeight={artboardHeight}>
                         {layers.map((layer) => (
-                            <PreviewLayer
-                                key={layer.id}
-                                layer={layer}
-                                loadedImages={loadedImages}
-                                imageStatuses={imageStatuses}
-                            />
+                            <PreviewLayer key={layer.id} layer={layer} />
                         ))}
                     </Group>
                 </Group>
-                {showPreviewStatus && (
-                    <Group x={stageX + 16} y={stageY + 16}>
-                        <Rect
-                            width={failedImages > 0 ? 230 : 210}
-                            height={44}
-                            fill="rgba(17, 24, 39, 0.78)"
-                            cornerRadius={12}
-                        />
-                        <Text
-                            x={12}
-                            y={10}
-                            width={failedImages > 0 ? 206 : 186}
-                            text={
-                                failedImages > 0
-                                    ? "Часть изображений не загрузилась в превью"
-                                    : "Подгружаю изображения для превью"
-                            }
-                            fontSize={13}
-                            fontFamily="Inter"
-                            fill="#FFFFFF"
-                        />
-                    </Group>
-                )}
             </Layer>
         </Stage>
     );

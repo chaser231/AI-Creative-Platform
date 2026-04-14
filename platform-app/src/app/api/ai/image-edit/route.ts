@@ -3,15 +3,17 @@ import { getProvider, getModelById, generateWithFallback } from "@/lib/ai-provid
 import { getModelById as getModelEntryById } from "@/lib/ai-models";
 import { auth } from "@/server/auth";
 import { prisma } from "@/server/db";
+import { randomUUID } from "crypto";
 
 // Allow up to 5 minutes for AI generation (retry + fallback + model fallback)
 export const maxDuration = 300;
 
 export async function POST(req: NextRequest) {
+    const requestId = randomUUID();
     try {
         const session = await auth();
         if (!session?.user) {
-            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+            return NextResponse.json({ error: "Unauthorized", requestId }, { status: 401 });
         }
 
         const body = await req.json();
@@ -19,10 +21,24 @@ export async function POST(req: NextRequest) {
 
         if (!action) {
             return NextResponse.json(
-                { error: "Action is required (remove-bg, inpaint, text-edit, outpaint, generate)" },
+                { error: "Action is required (remove-bg, inpaint, text-edit, outpaint, generate)", requestId },
                 { status: 400 }
             );
         }
+
+        console.log("[/api/ai/image-edit] request", {
+            requestId,
+            userId: session.user.id,
+            action,
+            model,
+            projectId,
+            hasMask: Boolean(maskBase64),
+            hasPrompt: Boolean(prompt),
+            hasReferenceImages: Array.isArray(referenceImages) && referenceImages.length > 0,
+            aspectRatio,
+            originalSize,
+            expandPadding,
+        });
 
         let result;
         let usedModel = model || "nano-banana-2"; // Track which model was actually used
@@ -121,7 +137,7 @@ export async function POST(req: NextRequest) {
             }
 
             default:
-                return NextResponse.json({ error: `Unknown action: ${action}` }, { status: 400 });
+                return NextResponse.json({ error: `Unknown action: ${action}`, requestId }, { status: 400 });
         }
 
         // ── Track AI cost ──────────────────────────────────────────
@@ -165,11 +181,12 @@ export async function POST(req: NextRequest) {
             action,
             model: result.model,
             provider: result.provider,
+            requestId,
         });
 
     } catch (error: unknown) {
         const err = error as Error;
-        console.error("Image Edit API Error:", err);
-        return NextResponse.json({ error: err.message || "Internal Server Error" }, { status: 500 });
+        console.error("Image Edit API Error:", { requestId, error: err });
+        return NextResponse.json({ error: err.message || "Internal Server Error", requestId }, { status: 500 });
     }
 }

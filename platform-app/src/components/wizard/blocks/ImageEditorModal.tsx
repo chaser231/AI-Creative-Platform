@@ -48,6 +48,10 @@ const IMAGE_EDIT_MODELS: { id: string; label: string; caps: EditorTool[] }[] = [
     { id: "bria-expand", label: "Bria Expand", caps: ["outpaint"] },
 ];
 
+function getFirstModelForTool(tool: EditorTool): string {
+    return IMAGE_EDIT_MODELS.find((model) => model.caps.includes(tool))?.id || IMAGE_EDIT_MODELS[0].id;
+}
+
 interface ImageEditorModalProps {
     imageSrc: string;
     onApply: (editedImageSrc: string) => void;
@@ -88,6 +92,10 @@ export function ImageEditorModal({ imageSrc, onApply, onClose }: ImageEditorModa
         if (msg.includes("prompt is required")) {
             return "Для этой функции необходимо ввести текстовый запрос (prompt).";
         }
+        const requestId = msg.match(/\[request:\s*([^\]]+)\]/i)?.[1];
+        if (requestId) {
+            return `Ошибка AI. requestId: ${requestId}`;
+        }
         return `Ошибка обработки: ${msg}`;
     };
 
@@ -126,7 +134,7 @@ export function ImageEditorModal({ imageSrc, onApply, onClose }: ImageEditorModa
                 }),
             });
             const data = await response.json();
-            if (data.error) throw new Error(data.error);
+            if (data.error) throw new Error(data.requestId ? `${data.error} [request: ${data.requestId}]` : data.error);
             if (data.content) pushHistory(data.content);
         } catch (e: unknown) {
             const error = e as Error;
@@ -140,7 +148,7 @@ export function ImageEditorModal({ imageSrc, onApply, onClose }: ImageEditorModa
     const handleRemoveBg = () => callImageEdit("remove-bg");
     const handleTextEdit = () => {
         if (!editPrompt.trim()) return;
-        const styleSuffix = getImagePresetPromptSuffix(editStyleId);
+        const styleSuffix = getImagePresetPromptSuffix(editStyleId, imagePresets);
         const styledPrompt = styleSuffix ? `${editPrompt}. Style: ${styleSuffix}` : editPrompt;
         callImageEdit("text-edit", styledPrompt);
     };
@@ -148,7 +156,7 @@ export function ImageEditorModal({ imageSrc, onApply, onClose }: ImageEditorModa
         if (!editPrompt.trim()) return;
         const canvas = canvasRef.current;
         const maskB64 = canvas ? canvas.toDataURL("image/png") : undefined;
-        const styleSuffix = getImagePresetPromptSuffix(editStyleId);
+        const styleSuffix = getImagePresetPromptSuffix(editStyleId, imagePresets);
         const styledPrompt = styleSuffix ? `${editPrompt}. Style: ${styleSuffix}` : editPrompt;
         callImageEdit("inpaint", styledPrompt, maskB64);
     };
@@ -212,7 +220,7 @@ export function ImageEditorModal({ imageSrc, onApply, onClose }: ImageEditorModa
                     }),
                 });
                 const data = await response.json();
-                if (data.error) throw new Error(data.error);
+                if (data.error) throw new Error(data.requestId ? `${data.error} [request: ${data.requestId}]` : data.error);
                 if (data.content) {
                     pushHistory(data.content);
                 }
@@ -232,7 +240,7 @@ export function ImageEditorModal({ imageSrc, onApply, onClose }: ImageEditorModa
                 }),
             });
             const data = await response.json();
-            if (data.error) throw new Error(data.error);
+            if (data.error) throw new Error(data.requestId ? `${data.error} [request: ${data.requestId}]` : data.error);
             if (data.content) pushHistory(data.content);
         } catch (e: unknown) {
             const error = e as Error;
@@ -340,7 +348,9 @@ export function ImageEditorModal({ imageSrc, onApply, onClose }: ImageEditorModa
                                     value={selectedModel}
                                     onChange={(val) => {
                                         setSelectedModel(val);
-                                        setActiveTool(null);
+                                        if (activeTool && !IMAGE_EDIT_MODELS.find((model) => model.id === val)?.caps.includes(activeTool)) {
+                                            setActiveTool(null);
+                                        }
                                     }}
                                     options={IMAGE_EDIT_MODELS.map(m => ({ value: m.id, label: m.label }))}
                                 />
@@ -352,7 +362,18 @@ export function ImageEditorModal({ imageSrc, onApply, onClose }: ImageEditorModa
                             {tools.filter(tool => currentModelCaps.includes(tool.id)).map((tool) => (
                                 <button
                                     key={tool.id}
-                                    onClick={() => { setActiveTool(activeTool === tool.id ? null : tool.id); setEditPrompt(""); clearMask(); }}
+                                    onClick={() => {
+                                        const nextTool = activeTool === tool.id ? null : tool.id;
+                                        setActiveTool(nextTool);
+                                        if (nextTool) {
+                                            const supportsTool = IMAGE_EDIT_MODELS.find((model) => model.id === selectedModel)?.caps.includes(nextTool);
+                                            if (!supportsTool) {
+                                                setSelectedModel(getFirstModelForTool(nextTool));
+                                            }
+                                        }
+                                        setEditPrompt("");
+                                        clearMask();
+                                    }}
                                     disabled={isProcessing}
                                     className={`w-full text-left p-3 rounded-[var(--radius-md)] border transition-all cursor-pointer ${
                                         activeTool === tool.id

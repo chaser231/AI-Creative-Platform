@@ -10,13 +10,15 @@
  * 3. Upload missing font files (.ttf, .otf)
  */
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { AlertTriangle, Upload, ArrowRight, X, Type, RefreshCw } from "lucide-react";
 import { Modal } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
 import { Select } from "@/components/ui/Select";
-import { saveUserFont, getUserFonts } from "@/lib/customFonts";
+import { normalizeFontFamilyName, saveUserFont } from "@/lib/customFonts";
 import type { RequiredFont } from "@/utils/fontUtils";
+import { useWorkspace } from "@/providers/WorkspaceProvider";
+import { useAssetList, useAssetUpload } from "@/hooks/useAssetUpload";
 
 interface MissingFontsModalProps {
     open: boolean;
@@ -37,11 +39,15 @@ export function MissingFontsModal({
     onReplace,
     onContinueWithoutReplace,
 }: MissingFontsModalProps) {
+    const { currentWorkspace } = useWorkspace();
+    const { assets: workspaceFontAssets } = useAssetList("FONT");
+    const { uploadFile } = useAssetUpload();
     // Map of originalFontFamily → selected replacement font
     const [replacements, setReplacements] = useState<Record<string, string>>(() => {
         const initial: Record<string, string> = {};
+        const fallbackFont = availableFonts.includes("Inter") ? "Inter" : availableFonts[0] || "Inter";
         for (const f of missingFonts) {
-            initial[f.family] = availableFonts[0] || "Inter";
+            initial[f.family] = fallbackFont;
         }
         return initial;
     });
@@ -49,6 +55,19 @@ export function MissingFontsModal({
     const [isUploadingFont, setIsUploadingFont] = useState(false);
     const [uploadedFontNames, setUploadedFontNames] = useState<string[]>([]);
     const [resolvedFonts, setResolvedFonts] = useState<Set<string>>(new Set());
+
+    useEffect(() => {
+        const fallbackFont = availableFonts.includes("Inter") ? "Inter" : availableFonts[0] || "Inter";
+        setReplacements(() => {
+            const initial: Record<string, string> = {};
+            for (const f of missingFonts) {
+                initial[f.family] = fallbackFont;
+            }
+            return initial;
+        });
+        setUploadedFontNames([]);
+        setResolvedFonts(new Set());
+    }, [availableFonts, missingFonts]);
 
     const handleReplacementChange = useCallback((family: string, newValue: string) => {
         setReplacements(prev => ({ ...prev, [family]: newValue }));
@@ -61,7 +80,7 @@ export function MissingFontsModal({
         setIsUploadingFont(true);
 
         for (const file of Array.from(files)) {
-            const fontName = file.name.replace(/\.[^/.]+$/, "").replace(/[^a-zA-Z0-9\s-]/g, "");
+            const fontName = normalizeFontFamilyName(file.name);
             if (!fontName) continue;
 
             try {
@@ -70,6 +89,13 @@ export function MissingFontsModal({
                 const loadedFace = await f.load();
                 document.fonts.add(loadedFace);
                 await saveUserFont(fontName, buffer);
+                if (currentWorkspace?.id) {
+                    await uploadFile(file, {
+                        type: "FONT",
+                        workspaceId: currentWorkspace.id,
+                        metadata: { family: fontName },
+                    });
+                }
                 setUploadedFontNames(prev => [...prev, fontName]);
 
                 // Check if this resolves any missing font
@@ -87,7 +113,7 @@ export function MissingFontsModal({
         setIsUploadingFont(false);
         // Reset the input
         e.target.value = "";
-    }, [missingFonts]);
+    }, [currentWorkspace?.id, missingFonts, uploadFile]);
 
     const handleReplace = useCallback(() => {
         // Only include replacements for fonts that weren't resolved by upload
@@ -110,7 +136,11 @@ export function MissingFontsModal({
 
     if (!open) return null;
 
-    const fontOptions = availableFonts.map(f => ({ value: f, label: f }));
+    const mergedAvailableFonts = Array.from(new Set([
+        ...availableFonts,
+        ...workspaceFontAssets.map((asset: any) => String(asset.metadata?.family || normalizeFontFamilyName(asset.filename))),
+    ])).sort();
+    const fontOptions = mergedAvailableFonts.map(f => ({ value: f, label: f }));
 
     return (
         <Modal open={open} onClose={onClose} title="Недостающие шрифты" maxWidth="max-w-lg">
@@ -184,7 +214,7 @@ export function MissingFontsModal({
                                         <div className="flex-1">
                                             <Select
                                                 size="sm"
-                                                value={replacements[font.family] || availableFonts[0]}
+                                                value={replacements[font.family] || mergedAvailableFonts[0]}
                                                 onChange={(val) => handleReplacementChange(font.family, val)}
                                                 options={fontOptions}
                                             />

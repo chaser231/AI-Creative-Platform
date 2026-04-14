@@ -39,7 +39,12 @@ export function WizardFlow({ projectId, onSwitchToStudio, initialTemplateId }: W
         const uniqueLocal = savedPacks.filter(p => !backendIds.has(p.id));
         return [...backendTemplates, ...uniqueLocal];
     }, [backendTemplates, savedPacks]);
-    const { resetCanvas } = useCanvasStore(useShallow((s) => ({ resetCanvas: s.resetCanvas })));
+    const { resetCanvas, previewLayers, previewCanvasWidth, previewCanvasHeight } = useCanvasStore(useShallow((s) => ({
+        resetCanvas: s.resetCanvas,
+        previewLayers: s.layers,
+        previewCanvasWidth: s.canvasWidth,
+        previewCanvasHeight: s.canvasHeight,
+    })));
     const { projects } = useProjectStore();
     const [step, setStep] = useState<WizardStep>(initialTemplateId ? "content" : "template");
     const [templateMode, setTemplateMode] = useState<"single" | "pack" | "manual">("single");
@@ -811,9 +816,9 @@ export function WizardFlow({ projectId, onSwitchToStudio, initialTemplateId }: W
                             
                             <div className="flex-1 min-h-[400px] w-full bg-bg-secondary rounded-[var(--radius-lg)] border border-border-primary overflow-hidden relative">
                                 <PreviewCanvas
-                                    layers={useCanvasStore.getState().layers}
-                                    artboardWidth={useCanvasStore.getState().canvasWidth}
-                                    artboardHeight={useCanvasStore.getState().canvasHeight}
+                                    layers={previewLayers}
+                                    artboardWidth={previewCanvasWidth}
+                                    artboardHeight={previewCanvasHeight}
                                     containerWidth={800} // Approximate width, could be dynamic but fixed is ok for a modal
                                     containerHeight={400} // Approximate height
                                 />
