@@ -1,0 +1,312 @@
+"use client";
+
+import { useState, useMemo, useEffect, useCallback } from "react";
+import { useRouter } from "next/navigation";
+import { ChevronRight, LayoutTemplate, FileText, ImagePlus, Sparkles, Search, Star, X } from "lucide-react";
+import { useTemplateStore } from "@/store/templateStore";
+import { useTemplateListSync } from "@/hooks/useTemplateSync";
+import { useCanvasStore } from "@/store/canvasStore";
+import { useShallow } from "zustand/react/shallow";
+import { useProjectStore } from "@/store/projectStore";
+import { Button } from "@/components/ui/Button";
+import { Input } from "@/components/ui/Input";
+import { DEFAULT_PACKS, type TemplatePackMeta } from "@/constants/defaultPacks";
+import { getRecommendedPacks, searchPacks } from "@/services/templateCatalogService";
+import { type TemplatePackV2, extractSingleFormatFromPack } from "@/services/templateService";
+import type { BusinessUnit, FrameLayer, Layer, TemplateTag } from "@/types";
+import { TextContentBlock } from "@/components/wizard/blocks/TextContentBlock";
+import { ImageContentBlock } from "@/components/wizard/blocks/ImageContentBlock";
+import { BadgeContentBlock } from "@/components/wizard/blocks/BadgeContentBlock";
+import { TextGroupSlot } from "@/components/wizard/blocks/TextGroupSlot";
+import { PreviewCanvas } from "@/components/editor/PreviewCanvas";
+import type { FrameComponentProps } from "@/types";
+
+interface WizardFlowProps {
+    projectId: string;
+    onSwitchToStudio: () => void;
+    initialTemplateId?: string | null;
+}
+
+type WizardStep = "template" | "content" | "review";
+
+export function WizardFlow({ projectId, onSwitchToStudio, initialTemplateId }: WizardFlowProps) {
+    const { savedPacks } = useTemplateStore();
+    const { backendTemplates } = useTemplateListSync();
+
+    // Merge backend + local templates, backend takes priority
+    const allPacks = useMemo(() => {
+        const backendIds = new Set(backendTemplates.map(t => t.id));
+        const uniqueLocal = savedPacks.filter(p => !backendIds.has(p.id));
+        return [...backendTemplates, ...uniqueLocal];
+    }, [backendTemplates, savedPacks]);
+    const { resetCanvas } = useCanvasStore(useShallow((s) => ({ resetCanvas: s.resetCanvas })));
+    const { projects } = useProjectStore();
+    const [step, setStep] = useState<WizardStep>(initialTemplateId ? "content" : "template");
+    const [templateMode, setTemplateMode] = useState<"single" | "pack" | "manual">("single");
+    const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(initialTemplateId || null);
+    const [fullSelectedTemplate, setFullSelectedTemplate] = useState<TemplatePackV2 | null>(null);
+    const [manualSizes, setManualSizes] = useState<{width: number; height: number; id: string}[]>([]);
+    const [manualW, setManualW] = useState("1080");
+    const [manualH, setManualH] = useState("1080");
+    const [textValues, setTextValues] = useState<Record<string, string>>({});
+    const [imageValues, setImageValues] = useState<Record<string, string>>({});
+    const [productDescription, setProductDescription] = useState("");
+    const [isGenerating, setIsGenerating] = useState(false);
+    const [packSearch, setPackSearch] = useState("");
+
+    // Get project BU for recommendations
+    const activeProject = projects.find(p => p.id === projectId);
+    const projectBU: BusinessUnit = activeProject?.businessUnit || "yandex-market";
+
+    // Recommended packs for this project's BU
+    const recommended = useMemo(
+        () => getRecommendedPacks(projectBU, allPacks, 4),
+        [projectBU, allPacks]
+    );
+
+    // Search results (all packs filtered by search query)
+    const searchResults = useMemo(() => {
+        if (!packSearch) return null;
+        return searchPacks({
+            query: packSearch,
+            sortBy: "popularity",
+            sortOrder: "desc",
+        }, allPacks);
+    }, [packSearch, allPacks]);
+
+    // Search results (all packs filtered by search query)
+    const singlePacks = useMemo(() => {
+        const list: (TemplatePackV2 & { _originalId?: string; _sourceResizeId?: string })[] = [];
+        allPacks.forEach(pack => {
+            if (!pack.resizes || pack.resizes.length === 0) {
+                list.push(pack);
+            } else {
+                pack.resizes.forEach(resize => {
+                    list.push({
+                        ...pack,
+                        id: `${pack.id}_${resize.id}`,
+                        name: resize.name || `${resize.width}×${resize.height}`,
+                        description: pack.name,
+                        _originalId: pack.id,
+                        _sourceResizeId: resize.id,
+                    });
+                });
+            }
+        });
+        return list;
+    }, [allPacks]);
+
+    const allPacksRef = { current: allPacks };
+    const singlePacksRef = { current: singlePacks };
+
+    // Fetch full template data when user selects a template
+    useEffect(() => {
+        if (!selectedTemplateId) { setFullSelectedTemplate(null); return; }
+
+        let fetchId = selectedTemplateId;
+        const vPack = singlePacksRef.current.find(p => p.id === selectedTemplateId);
+        if (vPack && vPack._originalId) {
+            fetchId = vPack._originalId;
+        } else if (selectedTemplateId && !vPack) {
+            // Check if it's already a regular pack ID not mapped to single
+            fetchId = selectedTemplateId;
+        }
+
+        const applyExtract = (pack: any) => {
+            if (vPack && vPack._sourceResizeId) {
+                return extractSingleFormatFromPack(pack as TemplatePackV2, vPack._sourceResizeId);
+            }
+            return pack;
+        };
+
+        // Check if it's a DEFAULT_PACK (already has full data)
+        const defaultPack = DEFAULT_PACKS.find(p => p.id === fetchId || p.data.id === fetchId);
+        if (defaultPack) { setFullSelectedTemplate(applyExtract(defaultPack.data)); return; }
+
+        // Check if it's a local pack (has masterComponents)
+        const localPack = savedPacks.find(p => p.id === fetchId);
+        if (localPack && localPack.masterComponents?.length > 0) { setFullSelectedTemplate(applyExtract(localPack)); return; }
+
+        // Fetch full data from backend REST endpoint
+        let cancelled = false;
+        (async () => {
+            try {
+                const res = await fetch(`/api/template/${fetchId}`);
+                if (res.ok && !cancelled) {
+                    const template = await res.json();
+                    if (template?.data) {
+                        setFullSelectedTemplate(applyExtract(template.data as TemplatePackV2));
+                        return;
+                    }
+                }
+            } catch {
+                // Fallback: use listing data (no masterComponents)
+                if (!cancelled) {
+                    const listingPack = allPacksRef.current.find(p => p.id === fetchId);
+                    if (listingPack) setFullSelectedTemplate(applyExtract(listingPack));
+                }
+            }
+        })();
+        return () => { cancelled = true; };
+    }, [selectedTemplateId, savedPacks]);
+
+    const selectedTemplate = fullSelectedTemplate;
+
+    const handleGenerateContent = async () => {
+        if (!productDescription || !selectedTemplate) return;
+        setIsGenerating(true);
+        try {
+            const { RemoteTextProvider } = await import("@/services/aiService");
+            const newValues = { ...textValues };
+
+            for (const mc of selectedTemplate.masterComponents) {
+                if (mc.type !== "text") continue;
+                const name = mc.name.toLowerCase();
+                
+                if (name.includes("head") || name.includes("заголовок") || name.includes("title")) {
+                    const params = { model: "openai", context: "You are a marketing copywriter. Generate a short, punchy headline (2-3 words, CAPS) for a banner." };
+                    const res = await RemoteTextProvider.generate(`Create a headline for: ${productDescription}`, params);
+                    newValues[mc.id] = res.content.replace(/"/g, '').trim();
+                } else if (name.includes("cta") || name.includes("кнопк") || name.includes("button")) {
+                    const params = { model: "openai", context: "Generate a short Call to Action button text (max 2 words, no quotes)." };
+                    const res = await RemoteTextProvider.generate(`CTA for: ${productDescription}`, params);
+                    newValues[mc.id] = res.content.replace(/"/g, '').trim();
+                } else if (name.includes("subhead") || name.includes("подзаголовок") || name.includes("desc") || name.includes("описан")) {
+                    const params = { model: "openai", context: "Generate a short subtitle/description (5-7 words)." };
+                    const res = await RemoteTextProvider.generate(`Subtitle for: ${productDescription}`, params);
+                    newValues[mc.id] = res.content.replace(/"/g, '').trim();
+                }
+            }
+            setTextValues(newValues);
+        } catch (err) {
+            console.error("AI Generation failed", err);
+            alert("Не удалось сгенерировать контент. Проверьте API.");
+        } finally {
+            setIsGenerating(false);
+        }
+    };
+
+    const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>, id: string) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        import("@/utils/imageUpload").then(({ compressImageFile }) => {
+            compressImageFile(file).then((compressedBase64) => {
+                setImageValues(prev => ({ ...prev, [id]: compressedBase64 }));
+            });
+        });
+    };
+
+    const handleApplyAndContinue = async () => {
+        if (templateMode !== "manual" && !selectedTemplateId) return;
+
+        let packToApply: TemplatePackV2;
+
+        if (templateMode === "manual") {
+            if (manualSizes.length === 0) return;
+            const masterSize = manualSizes[0];
+            
+            packToApply = {
+                id: "manual_" + Date.now(),
+                name: "Свой пакет форматов",
+                description: "Собранные вручную форматы",
+                isOfficial: false,
+                baseWidth: masterSize.width,
+                baseHeight: masterSize.height,
+                masterComponents: [],
+                componentInstances: [],
+                resizes: manualSizes.map((sz, i) => ({
+                     id: i === 0 ? "master" : `resize_${i}`,
+                     name: `Формат ${sz.width}x${sz.height}`,
+                     label: `${sz.width}×${sz.height}`,
+                     width: sz.width,
+                     height: sz.height,
+                     instancesEnabled: i !== 0
+                }))
+            } as unknown as TemplatePackV2;
+        } else {
+            if (!fullSelectedTemplate) return;
+            packToApply = JSON.parse(JSON.stringify(fullSelectedTemplate));
+        }
+
+        const { applyTemplatePack } = await import("@/services/templateService");
+
+        // Build contentOverrides map: slotId → value
+        const contentOverrides: Record<string, string> = {};
+
+        // Source 1: masterComponents (for legacy + post-fix templates where MC IDs match layer IDs)
+        for (const mc of packToApply.masterComponents) {
+            const sid = mc.slotId || (mc.props as any).slotId;
+            if (!sid) continue;
+
+            if ((mc.type === "text" || mc.type === "badge") && textValues[mc.id] !== undefined) {
+                contentOverrides[sid] = textValues[mc.id];
+            }
+            if (mc.type === "image" && imageValues[mc.id] !== undefined) {
+                contentOverrides[sid] = imageValues[mc.id];
+            }
+        }
+
+        // Source 2: Scan layers[] directly for raw canvas state (covers pre-fix templates
+        // where MC IDs may not match, and ensures layers[] gets overrides applied)
+        const dataAny = packToApply as any;
+        if (dataAny.layers && Array.isArray(dataAny.layers)) {
+            for (const layer of dataAny.layers) {
+                const sid = layer.slotId;
+                if (!sid || sid === "none") continue;
+
+                if ((layer.type === "text" || layer.type === "badge") && textValues[layer.id] !== undefined) {
+                    contentOverrides[sid] = textValues[layer.id];
+                    // Also mutate layer directly for raw canvas state path
+                    layer[layer.type === "text" ? "text" : "label"] = textValues[layer.id];
+                }
+                if (layer.type === "image" && imageValues[layer.id] !== undefined) {
+                    contentOverrides[sid] = imageValues[layer.id];
+                    layer.src = imageValues[layer.id];
+                }
+            }
+
+            // Also apply to all format snapshots in resizes
+            if (dataAny.resizes && Array.isArray(dataAny.resizes)) {
+                for (const resize of dataAny.resizes) {
+                    if (resize.layerSnapshot && Array.isArray(resize.layerSnapshot)) {
+                        for (const layer of resize.layerSnapshot) {
+                            const sid = layer.slotId;
+                            if (!sid || sid === "none" || !contentOverrides[sid]) continue;
+                            const val = contentOverrides[sid];
+                            if (layer.type === "text") layer.text = val;
+                            else if (layer.type === "image") layer.src = val;
+                            else if (layer.type === "badge") layer.label = val;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Also apply content by mc.id directly to masterComponents (for hydration path)
+        packToApply.masterComponents = packToApply.masterComponents.map(mc => {
+            if ((mc.type === "text" || mc.type === "badge") && textValues[mc.id] !== undefined) {
+                return { 
+                    ...mc, 
+                    props: { 
+                        ...mc.props, 
+                        [mc.type === "text" ? "text" : "label"]: textValues[mc.id] 
+                    } 
+                };
+            }
+            if (mc.type === "image" && imageValues[mc.id] !== undefined) {
+                return { ...mc, props: { ...mc.props, src: imageValues[mc.id] } };
+            }
+            return mc;
+        });
+
+        applyTemplatePack(packToApply, {
+            contentOverrides: Object.keys(contentOverrides).length > 0 ? contentOverrides : undefined,
+            onSuccess: () => {
+                if (templateMode === "manual") {
+                    onSwitchToStudio();
+                } else {
+                    setStep("review");
+                }
+            }
+        });
+    };

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
     Image as ImageIcon,
     Upload,
@@ -53,12 +53,14 @@ interface ImageContentBlockProps {
 
 export function ImageContentBlock({ id, name, props, value, onChange, businessUnit, productDescription, projectId }: ImageContentBlockProps) {
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const [isUploading, setIsUploading] = useState(false);
     const [isGenerating, setIsGenerating] = useState(false);
     const [genError, setGenError] = useState<string | null>(null);
     const [showEditor, setShowEditor] = useState(false);
     const [showGenPanel, setShowGenPanel] = useState(false);
     const [genPrompt, setGenPrompt] = useState("");
     const promptRef = useRef<RefAutocompleteTextareaHandle>(null);
+    const [previewState, setPreviewState] = useState<"empty" | "loading" | "ready" | "error">("empty");
 
     // Generation params
     const [selectedModel, setSelectedModel] = useState("flux-dev");
@@ -81,9 +83,15 @@ export function ImageContentBlock({ id, name, props, value, onChange, businessUn
     const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
         if (file) {
+            setIsUploading(true);
+            setGenError(null);
             import("@/utils/imageUpload").then(({ compressImageFile }) => {
                 compressImageFile(file).then((compressedBase64) => {
                     onChange(compressedBase64);
+                }).catch(() => {
+                    setGenError("Не удалось обработать изображение");
+                }).finally(() => {
+                    setIsUploading(false);
                 });
             });
         }
@@ -119,7 +127,7 @@ export function ImageContentBlock({ id, name, props, value, onChange, businessUn
                 }),
             });
             const data = await response.json();
-            if (data.error) throw new Error(data.error);
+            if (data.error) throw new Error(data.requestId ? `${data.error} [request: ${data.requestId}]` : data.error);
             if (data.content) onChange(data.content);
         } catch (e: unknown) {
             const err = e as Error;
@@ -130,6 +138,28 @@ export function ImageContentBlock({ id, name, props, value, onChange, businessUn
     };
 
     const currentImageSrc = value || props.src;
+
+    useEffect(() => {
+        if (!currentImageSrc) {
+            setPreviewState("empty");
+            return;
+        }
+
+        setPreviewState("loading");
+        let cancelled = false;
+        const img = new window.Image();
+        img.onload = () => {
+            if (!cancelled) setPreviewState("ready");
+        };
+        img.onerror = () => {
+            if (!cancelled) setPreviewState("error");
+        };
+        img.src = currentImageSrc;
+
+        return () => {
+            cancelled = true;
+        };
+    }, [currentImageSrc]);
 
     return (
         <>
@@ -146,7 +176,26 @@ export function ImageContentBlock({ id, name, props, value, onChange, businessUn
                     <div className="w-24 h-24 shrink-0 rounded-[var(--radius-md)] border border-border-primary overflow-hidden bg-bg-secondary flex items-center justify-center relative group">
                         {currentImageSrc ? (
                             <>
-                                <img src={currentImageSrc} alt={name} className="w-full h-full object-cover" />
+                                <img
+                                    src={currentImageSrc}
+                                    alt={name}
+                                    className={`w-full h-full object-cover transition-opacity ${previewState === "ready" ? "opacity-100" : "opacity-0"}`}
+                                />
+                                {previewState !== "ready" && (
+                                    <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 bg-bg-secondary px-2 text-center">
+                                        {previewState === "error" ? (
+                                            <>
+                                                <ImageIcon size={18} className="text-text-error" />
+                                                <span className="text-[10px] text-text-error leading-tight">Ошибка превью</span>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <Loader2 size={18} className="animate-spin text-text-secondary" />
+                                                <span className="text-[10px] text-text-secondary leading-tight">Загружаю превью</span>
+                                            </>
+                                        )}
+                                    </div>
+                                )}
                                 <button onClick={() => setShowEditor(true)} className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity cursor-pointer">
                                     <Pencil size={16} className="text-white" />
                                 </button>
@@ -161,7 +210,7 @@ export function ImageContentBlock({ id, name, props, value, onChange, businessUn
                         <input type="file" accept="image/*" className="hidden" ref={fileInputRef} onChange={handleFileUpload} />
 
                         <Button variant="secondary" className="w-full justify-start text-sm h-9" icon={<Upload size={16} />} onClick={() => fileInputRef.current?.click()}>
-                            Загрузить файл
+                            {isUploading ? "Подготавливаю файл..." : "Загрузить файл"}
                         </Button>
 
                         {currentImageSrc && (
@@ -283,6 +332,12 @@ export function ImageContentBlock({ id, name, props, value, onChange, businessUn
                         {/* Error */}
                         {genError && (
                             <p className="text-[12px] text-red-500">{genError}</p>
+                        )}
+
+                        {(isUploading || previewState === "loading") && (
+                            <p className="text-[12px] text-text-secondary">
+                                {isUploading ? "Подготавливаю изображение для вставки..." : "Превью изображения еще подгружается..."}
+                            </p>
                         )}
 
                         {/* Generate button */}

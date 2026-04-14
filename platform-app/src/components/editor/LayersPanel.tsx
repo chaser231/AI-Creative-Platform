@@ -31,6 +31,15 @@ const layerIcons: Record<string, React.ReactNode> = {
 /* ─── Drag-and-drop context ─────────────────────────── */
 let draggedLayerId: string | null = null;
 
+function findParentFrame(
+    layers: ReturnType<typeof useCanvasStore.getState>["layers"],
+    layerId: string
+): FrameLayer | null {
+    return (layers.find((candidate) =>
+        candidate.type === "frame" && (candidate as FrameLayer).childIds.includes(layerId)
+    ) as FrameLayer | undefined) ?? null;
+}
+
 function LayerRow({
     layer,
     depth = 0,
@@ -54,6 +63,7 @@ function LayerRow({
         updateLayer,
         moveLayerToFrame,
         removeLayerFromFrame,
+        reorderLayers,
         setHoveredLayerId,
     } = useCanvasStore(useShallow((s) => ({
         layers: s.layers, selectedLayerIds: s.selectedLayerIds,
@@ -64,11 +74,13 @@ function LayerRow({
         bringToFront: s.bringToFront, sendToBack: s.sendToBack,
         updateLayer: s.updateLayer, moveLayerToFrame: s.moveLayerToFrame,
         removeLayerFromFrame: s.removeLayerFromFrame,
+        reorderLayers: s.reorderLayers,
         setHoveredLayerId: s.setHoveredLayerId,
     })));
 
     const [expanded, setExpanded] = useState(true);
     const [isDragOver, setIsDragOver] = useState(false);
+    const [dragPlacement, setDragPlacement] = useState<"before" | "inside" | "after" | null>(null);
     const [isRenaming, setIsRenaming] = useState(false);
     const [renameName, setRenameName] = useState("");
     const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; multiIds?: string[] } | null>(null);
@@ -124,6 +136,21 @@ function LayerRow({
             if (frame.childIds.includes(draggedLayerId)) return;
         }
 
+        const rect = rowRef.current?.getBoundingClientRect();
+        if (rect) {
+            const relativeY = e.clientY - rect.top;
+            const topZone = rect.height * 0.3;
+            const bottomZone = rect.height * 0.7;
+
+            if (isFrame && relativeY > topZone && relativeY < bottomZone) {
+                setDragPlacement("inside");
+            } else if (relativeY <= topZone) {
+                setDragPlacement("before");
+            } else {
+                setDragPlacement("after");
+            }
+        }
+
         setIsDragOver(true);
         e.dataTransfer.dropEffect = "move";
     };
@@ -131,12 +158,15 @@ function LayerRow({
     const handleDragLeave = (e: React.DragEvent) => {
         e.stopPropagation();
         setIsDragOver(false);
+        setDragPlacement(null);
     };
 
     const handleDrop = (e: React.DragEvent) => {
         e.preventDefault();
         e.stopPropagation();
         setIsDragOver(false);
+        const placement = dragPlacement;
+        setDragPlacement(null);
 
         if (!draggedLayerId) return;
         // Don't drop into self
@@ -146,7 +176,7 @@ function LayerRow({
         const draggedLayer = layers.find((l) => l.id === draggedLayerId);
         if (draggedLayer?.type === "frame" && draggedLayer.id === layer.id) return; // Should be caught above
 
-        if (isFrame) {
+        if (placement === "inside" && isFrame) {
             // Drop onto a frame → nest inside it
             // Logic: if draggedLayerId is selected, move all selected.
             // Else move just draggedLayerId.
@@ -162,6 +192,36 @@ function LayerRow({
             });
 
             setExpanded(true);
+            draggedLayerId = null;
+            return;
+        }
+
+        if (selectedLayerIds.includes(draggedLayerId) && selectedLayerIds.length > 1) {
+            draggedLayerId = null;
+            return;
+        }
+
+        const movingId = draggedLayerId;
+        const currentParent = findParentFrame(layers, movingId);
+        const targetParent = findParentFrame(layers, layer.id);
+
+        if (targetParent) {
+            const targetIndex = targetParent.childIds.findIndex((childId) => childId === layer.id);
+            const insertIndex = placement === "before" ? targetIndex : targetIndex + 1;
+            moveLayerToFrame(movingId, targetParent.id, insertIndex);
+        } else {
+            if (currentParent) {
+                removeLayerFromFrame(movingId);
+            }
+
+            const sourceIndex = layers.findIndex((candidate) => candidate.id === movingId);
+            const targetIndex = layers.findIndex((candidate) => candidate.id === layer.id);
+
+            if (sourceIndex >= 0 && targetIndex >= 0) {
+                const adjustedTarget = placement === "before" ? targetIndex : targetIndex + 1;
+                const normalizedTarget = sourceIndex < adjustedTarget ? adjustedTarget - 1 : adjustedTarget;
+                reorderLayers(sourceIndex, normalizedTarget);
+            }
         }
 
         draggedLayerId = null;
@@ -204,7 +264,7 @@ function LayerRow({
                     }
                 }}
                 className={cn(
-                    "group flex items-center gap-1 py-1.5 mx-1 rounded-[var(--radius-sm)] cursor-pointer transition-colors",
+                    "group relative flex items-center gap-1 py-1.5 mx-1 rounded-[var(--radius-sm)] cursor-pointer transition-colors",
                     isSelected
                         ? "bg-bg-tertiary"
                         : "hover:bg-bg-secondary",
@@ -212,6 +272,12 @@ function LayerRow({
                 )}
                 style={{ paddingLeft: `${8 + depth * 16}px`, paddingRight: 8 }}
             >
+                {isDragOver && dragPlacement === "before" && (
+                    <div className="absolute left-2 right-2 top-0 h-0.5 rounded-full bg-accent-primary pointer-events-none" />
+                )}
+                {isDragOver && dragPlacement === "after" && (
+                    <div className="absolute left-2 right-2 bottom-0 h-0.5 rounded-full bg-accent-primary pointer-events-none" />
+                )}
                 {/* Drag handle */}
                 <span className="shrink-0 text-text-tertiary opacity-0 group-hover:opacity-40 cursor-grab">
                     <GripVertical size={10} />

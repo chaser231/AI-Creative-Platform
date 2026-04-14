@@ -222,6 +222,10 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
         if (msg.includes("Replicate error (429)")) {
             return "Слишком много запросов. Попробуйте через 10 секунд.";
         }
+        const requestId = msg.match(/\[request:\s*([^\]]+)\]/i)?.[1];
+        if (requestId) {
+            return `Ошибка AI. requestId: ${requestId}`;
+        }
         return `Ошибка: ${msg}`;
     };
 
@@ -411,7 +415,7 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                 }),
             });
             const data = await response.json();
-            if (data.error) throw new Error(data.error);
+            if (data.error) throw new Error(data.requestId ? `${data.error} [request: ${data.requestId}]` : data.error);
             if (data.content) {
                 // For outpaint: pass canvas-space padding (the original, un-scaled) for layer sizing
                 await applyEditedImageToLayer(data.content, action === "outpaint" ? {

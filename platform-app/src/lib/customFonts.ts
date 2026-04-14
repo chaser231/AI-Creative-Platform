@@ -9,11 +9,20 @@ export interface PreinstalledFont {
     name: string;
 }
 
+export interface WorkspaceFontAsset {
+    filename: string;
+    url: string;
+    metadata?: {
+        family?: string;
+    } | null;
+}
+
 // Pre-installed fonts available via public/fonts
 export const PREINSTALLED_FONTS: PreinstalledFont[] = PREINSTALLED_FONT_FAMILIES.map(name => ({ name }));
 
 const DB_NAME = "CreativePlatformDB";
 const STORE_NAME = "customFonts";
+const loadedFontNames = new Set<string>();
 
 // Very simple indexedDB wrapper
 function getDB(): Promise<IDBDatabase> {
@@ -63,24 +72,65 @@ export async function removeUserFont(name: string): Promise<void> {
     });
 }
 
+export function normalizeFontFamilyName(name: string): string {
+    return name
+        .replace(/\.[^/.]+$/, "")
+        .replace(/[_-]+/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+}
+
+async function registerFont(name: string, source: ArrayBuffer | string): Promise<string | null> {
+    if (typeof window === "undefined" || !("fonts" in document)) return null;
+
+    const family = normalizeFontFamilyName(name);
+    if (!family) return null;
+    if (loadedFontNames.has(family)) return family;
+
+    const fontFace = typeof source === "string"
+        ? new FontFace(family, `url("${source}")`)
+        : new FontFace(family, source);
+
+    const loadedFace = await fontFace.load();
+    document.fonts.add(loadedFace);
+    loadedFontNames.add(family);
+    return family;
+}
+
+export async function loadWorkspaceFonts(fontAssets: WorkspaceFontAsset[]): Promise<string[]> {
+    const loaded: string[] = [];
+
+    for (const asset of fontAssets) {
+        const family = asset.metadata?.family || normalizeFontFamilyName(asset.filename);
+        if (!family) continue;
+
+        try {
+            const loadedName = await registerFont(family, asset.url);
+            if (loadedName) loaded.push(loadedName);
+        } catch (e) {
+            console.error(`Failed to load workspace font ${family}:`, e);
+        }
+    }
+
+    return loaded;
+}
+
 // Load preinstalled and user fonts into document.fonts
-export async function loadAllCustomFonts(): Promise<string[]> {
+export async function loadAllCustomFonts(fontAssets: WorkspaceFontAsset[] = []): Promise<string[]> {
     if (typeof window === "undefined" || !("fonts" in document)) return [];
     
-    const loadedFontNames: string[] = [];
+    const availableFontNames: string[] = [];
 
     // 1. Pre-installed fonts are loaded automatically via src/app/fonts.css
-    loadedFontNames.push(...PREINSTALLED_FONTS.map(f => f.name));
+    availableFontNames.push(...PREINSTALLED_FONTS.map(f => f.name));
 
     // 2. Load User fonts from IndexedDB
     try {
         const userFonts = await getUserFonts();
         for (const font of userFonts) {
             try {
-                const f = new FontFace(font.name, font.buffer);
-                const loadedFace = await f.load();
-                document.fonts.add(loadedFace);
-                loadedFontNames.push(font.name);
+                const loadedName = await registerFont(font.name, font.buffer);
+                if (loadedName) availableFontNames.push(loadedName);
             } catch (e) {
                 console.error(`Failed to load user font ${font.name}:`, e);
             }
@@ -89,5 +139,8 @@ export async function loadAllCustomFonts(): Promise<string[]> {
         console.error("Failed to load user fonts from IndexedDB:", e);
     }
 
-    return loadedFontNames;
+    const workspaceFontNames = await loadWorkspaceFonts(fontAssets);
+    availableFontNames.push(...workspaceFontNames);
+
+    return Array.from(new Set(availableFontNames));
 }

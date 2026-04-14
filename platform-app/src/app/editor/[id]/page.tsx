@@ -35,6 +35,7 @@ import { hydrateTemplate } from "@/services/templateService";
 import { extractRequiredFonts, findMissingFonts, applyFontReplacements, getAvailableFontFamilies } from "@/utils/fontUtils";
 import type { RequiredFont } from "@/utils/fontUtils";
 import Konva from "konva";
+import { useWorkspace } from "@/providers/WorkspaceProvider";
 
 // Dynamic import for Canvas (Konva needs client-only, no SSR)
 const Canvas = dynamic(
@@ -48,6 +49,7 @@ interface EditorPageProps {
 
 export default function EditorPage({ params }: EditorPageProps) {
     const { id } = use(params);
+    const { currentWorkspace } = useWorkspace();
     const stageRef = useRef<Konva.Stage | null>(null);
     const searchParams = useSearchParams();
     const router = useRouter();
@@ -94,6 +96,10 @@ export default function EditorPage({ params }: EditorPageProps) {
         },
         onError: () => setTemplateSaveStatus("error"),
     });
+    const { data: workspaceFonts = [] } = trpc.asset.list.useQuery(
+        { workspaceId: currentWorkspace?.id ?? "", type: "FONT" },
+        { enabled: !!currentWorkspace?.id, refetchOnWindowFocus: false }
+    );
 
     // Load template data into canvas on first load
     useEffect(() => {
@@ -147,13 +153,16 @@ export default function EditorPage({ params }: EditorPageProps) {
         if (required.length === 0) return;
 
         (async () => {
+            await loadAllCustomFonts(workspaceFonts);
             const available = await getAvailableFontFamilies();
             const missing = findMissingFonts(required, available);
             if (missing.length > 0) {
                 setMissingFontsData({ missing, available });
+            } else {
+                setMissingFontsData(null);
             }
         })();
-    }, [isTemplateMode, templateQuery.data]);
+    }, [isTemplateMode, templateQuery.data, workspaceFonts]);
 
     // Manual save for template mode
     const handleTemplateSave = useCallback(() => {
@@ -238,11 +247,6 @@ export default function EditorPage({ params }: EditorPageProps) {
             setEditorMode(queryMode);
         }
     }, [searchParams, setEditorMode]);
-
-    // Load custom fonts once on app load
-    useEffect(() => {
-        loadAllCustomFonts();
-    }, []);
 
     const project = projects.find((p) => p.id === id);
 

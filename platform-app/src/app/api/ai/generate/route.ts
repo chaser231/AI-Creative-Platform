@@ -3,15 +3,17 @@ import { generateWithFallback } from "@/lib/ai-providers";
 import { auth } from "@/server/auth";
 import { prisma } from "@/server/db";
 import { getModelById } from "@/lib/ai-models";
+import { randomUUID } from "crypto";
 
 // Allow up to 5 minutes for AI generation (retry + fallback + model fallback)
 export const maxDuration = 300;
 
 export async function POST(req: NextRequest) {
+    const requestId = randomUUID();
     try {
         const session = await auth();
         if (!session?.user) {
-            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+            return NextResponse.json({ error: "Unauthorized", requestId }, { status: 401 });
         }
 
         const body = await req.json();
@@ -23,13 +25,26 @@ export async function POST(req: NextRequest) {
         } = body;
 
         if (!prompt) {
-            return NextResponse.json({ error: "Prompt is required" }, { status: 400 });
+            return NextResponse.json({ error: "Prompt is required", requestId }, { status: 400 });
         }
 
         // Debug: confirm referenceImages arrive at the route
         if (referenceImages && referenceImages.length > 0) {
             console.log(`[/api/ai/generate] referenceImages: ${referenceImages.length} image(s), first ~80 chars: ${String(referenceImages[0]).slice(0, 80)}`);
         }
+
+        console.log("[/api/ai/generate] request", {
+            requestId,
+            userId: session.user.id,
+            type: type || "image",
+            model,
+            projectId,
+            aspectRatio,
+            count,
+            seed,
+            scale,
+            hasReferenceImages: Array.isArray(referenceImages) && referenceImages.length > 0,
+        });
 
         const result = await generateWithFallback({
             prompt,
@@ -47,7 +62,8 @@ export async function POST(req: NextRequest) {
 
         // ── Track AI cost ──────────────────────────────────────────
         try {
-            const modelEntry = getModelById(model);
+            const resolvedModel = model || "nano-banana-2";
+            const modelEntry = getModelById(resolvedModel);
             const costPerRun = modelEntry?.costPerRun ?? 0;
             const userId = session.user.id;
 
@@ -83,7 +99,7 @@ export async function POST(req: NextRequest) {
                         role: "assistant",
                         content: typeof result.content === "string" ? result.content.slice(0, 200) : "image generated",
                         type: (type as string) || "image",
-                        model: model || "nano-banana-2",
+                        model: resolvedModel,
                         costUnits: costPerRun,
                     },
                 });
@@ -95,11 +111,11 @@ export async function POST(req: NextRequest) {
             // Non-blocking — don't fail the generation if tracking fails
         }
 
-        return NextResponse.json(result);
+        return NextResponse.json({ ...result, requestId });
 
     } catch (error: unknown) {
         const err = error as Error;
-        console.error("AI Generation API Error:", err);
-        return NextResponse.json({ error: err.message || "Internal Server Error" }, { status: 500 });
+        console.error("AI Generation API Error:", { requestId, error: err });
+        return NextResponse.json({ error: err.message || "Internal Server Error", requestId }, { status: 500 });
     }
 }

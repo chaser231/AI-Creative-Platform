@@ -1,0 +1,67 @@
+"use client";
+
+import { useState, useRef } from "react";
+import {
+    Image as ImageIcon,
+    Upload,
+    Sparkles,
+    Wand2,
+    Pencil,
+    Loader2,
+    Settings2,
+} from "lucide-react";
+import { Button } from "@/components/ui/Button";
+import { Select } from "@/components/ui/Select";
+import { ReferenceImageInput } from "@/components/ui/ReferenceImageInput";
+import { RefAutocompleteTextarea, type RefAutocompleteTextareaHandle } from "@/components/ui/RefAutocompleteTextarea";
+import { getModelById, getMaxRefs, getAspectRatios, getResolutions, resolveRefTags } from "@/lib/ai-models";
+import { getImagePresetPromptSuffix } from "@/lib/stylePresets";
+import { useStylePresets } from "@/hooks/useStylePresets";
+import type { ImageComponentProps, BusinessUnit } from "@/types";
+import { ImageEditorModal } from "./ImageEditorModal";
+
+const IMAGE_GEN_MODELS = [
+    { id: "nano-banana-2", label: "Nano Banana 2" },
+    { id: "nano-banana-pro", label: "Nano Banana Pro" },
+    { id: "nano-banana", label: "Nano Banana" },
+    { id: "flux-2-pro", label: "Flux 2 Pro" },
+    { id: "seedream", label: "Seedream 4.5" },
+    { id: "gpt-image", label: "GPT Image 1.5" },
+    { id: "qwen-image", label: "Qwen Image" },
+    { id: "flux-schnell", label: "Flux Schnell" },
+    { id: "flux-dev", label: "Flux Dev" },
+    { id: "flux-1.1-pro", label: "Flux 1.1 Pro" },
+    { id: "dall-e-3", label: "DALL-E 3" },
+];
+
+const SCALE_OPTIONS = ["1x", "2x", "4x"];
+
+interface ImageContentBlockProps {
+    id: string;
+    name: string;
+    props: ImageComponentProps;
+    value: string;
+    onChange: (value: string) => void;
+    businessUnit?: BusinessUnit;
+    productDescription?: string;
+    projectId?: string;
+}
+
+export function ImageContentBlock({ id, name, props, value, onChange, businessUnit, productDescription, projectId }: ImageContentBlockProps) {
+    const fileInputRef = useRef<HTMLInputElement>(null);
+    const [isGenerating, setIsGenerating] = useState(false);
+    const [genError, setGenError] = useState<string | null>(null);
+    const [showEditor, setShowEditor] = useState(false);
+    const [showGenPanel, setShowGenPanel] = useState(false);
+    const [genPrompt, setGenPrompt] = useState("");
+    const promptRef = useRef<RefAutocompleteTextareaHandle>(null);
+
+    const [selectedModel, setSelectedModel] = useState("flux-dev");
+    const [aspectRatio, setAspectRatio] = useState("1:1");
+    const [genCount, setGenCount] = useState(1);
+    const [seed, setSeed] = useState("");
+    const [scale, setScale] = useState("");
+    const [stylePreset, setStylePreset] = useState("none");
+    const [showAdvanced, setShowAdvanced] = useState(false);
+    const [additionalPhotos, setAdditionalPhotos] = useState<string[]>([]);
+}

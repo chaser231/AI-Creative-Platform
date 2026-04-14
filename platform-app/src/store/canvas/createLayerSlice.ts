@@ -19,10 +19,15 @@ import {
     syncDerivedLayoutToSource,
 } from "./helpers";
 import { pushSnapshot } from "./createHistorySlice";
+import { useBrandKitStore } from "@/store/brandKitStore";
 
 // Throttle timer for updateLayer history
 let _updateHistoryTimer: ReturnType<typeof setTimeout> | null = null;
 let _updateHistoryPushed = false;
+
+function getDefaultTextFontFamily() {
+    return useBrandKitStore.getState().brandKit.fonts[0]?.name || "Inter";
+}
 
 export type LayerSlice = Pick<CanvasStore,
     | "layers"
@@ -89,7 +94,7 @@ export const createLayerSlice: StateCreator<CanvasStore, [], [], LayerSlice> = (
             x: 100, y: 100, width: 300, height: 60,
             rotation: 0, visible: true, locked: false,
             text: "Type something",
-            fontSize: 48, fontFamily: "Inter", fontWeight: "600",
+            fontSize: 48, fontFamily: getDefaultTextFontFamily(), fontWeight: "600",
             fill: "#111827", align: "left",
             letterSpacing: 0, lineHeight: 1.2,
             textAdjust: "auto_width",
@@ -304,9 +309,23 @@ export const createLayerSlice: StateCreator<CanvasStore, [], [], LayerSlice> = (
 
             const newLayers = applyAllAutoLayouts(computeUpdatedLayers(state.layers, id, updates));
             const layer = newLayers.find((l) => l.id === id);
+            const fontSyncUpdates = Object.fromEntries(
+                Object.entries(updates).filter(([key]) => key === "fontFamily" || key === "fontWeight")
+            ) as Partial<Layer>;
+            const syncedResizes = Object.keys(fontSyncUpdates).length > 0
+                ? state.resizes.map((resize) => {
+                    if (resize.id === state.activeResizeId || !resize.layerSnapshot) return resize;
+                    const nextSnapshot = resize.layerSnapshot.map((snapshotLayer) =>
+                        snapshotLayer.id === id && snapshotLayer.type === "text"
+                            ? { ...snapshotLayer, ...fontSyncUpdates }
+                            : snapshotLayer
+                    );
+                    return { ...resize, layerSnapshot: nextSnapshot };
+                })
+                : state.resizes;
 
             if (!layer?.masterId) {
-                return { layers: newLayers };
+                return { layers: newLayers, resizes: syncedResizes };
             }
 
             if (state.activeResizeId === "master") {
@@ -348,6 +367,7 @@ export const createLayerSlice: StateCreator<CanvasStore, [], [], LayerSlice> = (
 
                 return {
                     layers: newLayers,
+                    resizes: syncedResizes,
                     masterComponents: derivedSync.masterComponents,
                     componentInstances: derivedSync.componentInstances,
                 };
@@ -368,6 +388,7 @@ export const createLayerSlice: StateCreator<CanvasStore, [], [], LayerSlice> = (
 
                 return {
                     layers: newLayers,
+                    resizes: syncedResizes,
                     masterComponents: derivedSync.masterComponents,
                     componentInstances: derivedSync.componentInstances,
                 };

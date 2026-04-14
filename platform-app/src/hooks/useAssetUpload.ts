@@ -10,6 +10,7 @@
 import { useState, useCallback } from "react";
 import { trpc } from "@/lib/trpc";
 import { cachedWorkspaceId } from "@/hooks/useProjectSync";
+import { useWorkspace } from "@/providers/WorkspaceProvider";
 
 type AssetType = "IMAGE" | "VIDEO" | "AUDIO" | "FONT" | "LOGO" | "OTHER";
 
@@ -33,7 +34,7 @@ export function useAssetUpload() {
   const uploadFile = useCallback(
     async (
       file: File,
-      options?: { type?: AssetType; workspaceId?: string }
+      options?: { type?: AssetType; workspaceId?: string; metadata?: Record<string, unknown> }
     ) => {
       const wsId = options?.workspaceId ?? cachedWorkspaceId;
       if (!wsId) {
@@ -54,6 +55,7 @@ export function useAssetUpload() {
           mimeType: file.type,
           sizeBytes: file.size,
           type,
+          metadata: options?.metadata,
         });
 
         setUploadState({ status: "uploading", progress: 30 });
@@ -98,12 +100,8 @@ export function useAssetUpload() {
  * Hook to list assets from the backend.
  */
 export function useAssetList(type?: AssetType) {
-  const workspaceQuery = trpc.workspace.list.useQuery(undefined, {
-    retry: 1,
-    refetchOnWindowFocus: false,
-  });
-
-  const workspaceId = workspaceQuery.data?.[0]?.id ?? cachedWorkspaceId ?? null;
+  const { currentWorkspace } = useWorkspace();
+  const workspaceId = currentWorkspace?.id ?? cachedWorkspaceId ?? null;
 
   const assetsQuery = trpc.asset.list.useQuery(
     { workspaceId: workspaceId!, type },
@@ -116,7 +114,7 @@ export function useAssetList(type?: AssetType) {
 
   return {
     assets: assetsQuery.data ?? [],
-    isLoading: workspaceQuery.isLoading || assetsQuery.isLoading,
+    isLoading: assetsQuery.isLoading,
     isError: assetsQuery.isError,
     refetch: assetsQuery.refetch,
   };

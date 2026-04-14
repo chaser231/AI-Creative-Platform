@@ -15,11 +15,13 @@ import {
 } from "lucide-react";
 import { Popover, PopoverButton } from "@/components/ui/Popover";
 import { Select } from "@/components/ui/Select";
-import { PREINSTALLED_FONTS, saveUserFont, getUserFonts } from "@/lib/customFonts";
+import { PREINSTALLED_FONTS, saveUserFont, getUserFonts, normalizeFontFamilyName } from "@/lib/customFonts";
 import { getAvailableFontFamiliesSync } from "@/utils/fontUtils";
 import type { TextLayer } from "@/types";
 import { ColorInput } from "./ColorInput";
 import { AlignButton } from "./AlignButton";
+import { useWorkspace } from "@/providers/WorkspaceProvider";
+import { useAssetList, useAssetUpload } from "@/hooks/useAssetUpload";
 
 const SYSTEM_FONTS = [
     "Inter", "Roboto", "Open Sans", "Montserrat",
@@ -37,13 +39,21 @@ export function TextPropsGrouped({
     const [availableFonts, setAvailableFonts] = useState<string[]>(SYSTEM_FONTS);
     const [isUploadingFont, setIsUploadingFont] = useState(false);
     const [availableWeights, setAvailableWeights] = useState<string[]>([]);
+    const { currentWorkspace } = useWorkspace();
+    const { assets: workspaceFontAssets } = useAssetList("FONT");
+    const { uploadFile } = useAssetUpload();
+    const workspaceFontNames = useMemo(() =>
+        workspaceFontAssets.map((asset: any) =>
+            String(asset.metadata?.family || normalizeFontFamilyName(asset.filename))
+        ),
+    [workspaceFontAssets]);
 
     // Check if current layer's font is available locally
     const isFontMissing = useMemo(() => {
         if (!layer.fontFamily) return false;
-        const available = getAvailableFontFamiliesSync();
+        const available = [...getAvailableFontFamiliesSync(), ...workspaceFontNames];
         return !available.some(f => f.toLowerCase() === layer.fontFamily.toLowerCase());
-    }, [layer.fontFamily]);
+    }, [layer.fontFamily, workspaceFontNames]);
 
     useEffect(() => {
         if (!activePopover) return;
@@ -80,15 +90,16 @@ export function TextPropsGrouped({
                 const fontNames = [
                     ...SYSTEM_FONTS,
                     ...PREINSTALLED_FONTS.map((f: { name: string }) => f.name),
-                    ...userFonts.map((f: { name: string }) => f.name)
+                    ...userFonts.map((f: { name: string }) => f.name),
+                    ...workspaceFontNames,
                 ];
-                setAvailableFonts(Array.from(new Set(fontNames)));
+                setAvailableFonts(Array.from(new Set(fontNames)).sort());
             } catch (err) {
                 console.error("Failed to load custom fonts:", err);
             }
         };
         loadFonts();
-    }, [activePopover]);
+    }, [activePopover, workspaceFontNames]);
 
     const togglePopover = (name: string) => {
         setActivePopover((prev) => (prev === name ? null : name));
@@ -145,30 +156,37 @@ export function TextPropsGrouped({
                                     onChange={async (e) => {
                                         const file = e.target.files?.[0];
                                         if (!file) return;
-                                        const fontName = file.name.replace(/\.[^/.]+$/, "").replace(/[^a-zA-Z0-9-]/g, "");
+                                        const fontName = normalizeFontFamilyName(file.name);
                                         if (!fontName) return alert("Неверное имя файла шрифта");
                                         
                                         setIsUploadingFont(true);
-                                        const reader = new FileReader();
-                                        reader.onload = async (ev) => {
-                                            try {
-                                                const buffer = ev.target?.result as ArrayBuffer;
-                                                if (!buffer) throw new Error("File read failed");
-                                                const f = new FontFace(fontName, buffer);
-                                                const loadedFace = await f.load();
-                                                document.fonts.add(loadedFace);
-                                                await saveUserFont(fontName, buffer);
-                                                setAvailableFonts(prev => Array.from(new Set([...prev, fontName])));
-                                                onChange({ fontFamily: fontName });
-                                            } catch (err) {
-                                                console.error("Failed to install font:", err);
-                                                alert("Ошибка при установке шрифта");
-                                            } finally {
-                                                setIsUploadingFont(false);
+                                        try {
+                                            const buffer = await file.arrayBuffer();
+                                            const f = new FontFace(fontName, buffer);
+                                            const loadedFace = await f.load();
+                                            document.fonts.add(loadedFace);
+                                            await saveUserFont(fontName, buffer);
+
+                                            if (currentWorkspace?.id) {
+                                                const uploaded = await uploadFile(file, {
+                                                    type: "FONT",
+                                                    workspaceId: currentWorkspace.id,
+                                                    metadata: { family: fontName },
+                                                });
+                                                if (!uploaded) {
+                                                    console.warn(`Font ${fontName} applied locally but failed to sync to workspace`);
+                                                }
                                             }
-                                        };
-                                        reader.onerror = () => setIsUploadingFont(false);
-                                        reader.readAsArrayBuffer(file);
+
+                                            setAvailableFonts(prev => Array.from(new Set([...prev, fontName])).sort());
+                                            onChange({ fontFamily: fontName });
+                                        } catch (err) {
+                                            console.error("Failed to install font:", err);
+                                            alert("Ошибка при установке шрифта");
+                                        } finally {
+                                            setIsUploadingFont(false);
+                                            e.target.value = "";
+                                        }
                                     }}
                                 />
                             </label>
