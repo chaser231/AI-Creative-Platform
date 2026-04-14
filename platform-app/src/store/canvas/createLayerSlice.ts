@@ -20,6 +20,7 @@ import {
 } from "./helpers";
 import { pushSnapshot } from "./createHistorySlice";
 import { useBrandKitStore } from "@/store/brandKitStore";
+import { applyCascade } from "./bindingCascade";
 
 // Throttle timer for updateLayer history
 let _updateHistoryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -77,6 +78,37 @@ function createLayerWithMasterAndInstances<T extends Layer>(
         master,
         instances,
     };
+}
+
+function syncSnapshotFormats(
+    resizes: CanvasStore["resizes"],
+    activeResizeId: string,
+    nextLayers: Layer[],
+): CanvasStore["resizes"] {
+    const activeResize = resizes.find((resize) => resize.id === activeResizeId);
+    if (!activeResize) return resizes;
+
+    let changed = false;
+
+    const nextResizes = resizes.map((resize) => {
+        if (resize.id === activeResizeId) {
+            if (resize.layerSnapshot === undefined) return resize;
+            changed = true;
+            return { ...resize, layerSnapshot: nextLayers };
+        }
+
+        if (!activeResize.isMaster || !resize.layerSnapshot || !resize.layerBindings?.length) {
+            return resize;
+        }
+
+        const cascadedSnapshot = applyCascade(resize.layerSnapshot, nextLayers, resize.layerBindings);
+        if (cascadedSnapshot === resize.layerSnapshot) return resize;
+
+        changed = true;
+        return { ...resize, layerSnapshot: cascadedSnapshot };
+    });
+
+    return changed ? nextResizes : resizes;
 }
 
 export const createLayerSlice: StateCreator<CanvasStore, [], [], LayerSlice> = (set, get) => ({
@@ -169,6 +201,8 @@ export const createLayerSlice: StateCreator<CanvasStore, [], [], LayerSlice> = (
             rotation: 0, visible: true, locked: false,
             src,
             objectFit: "cover",
+            focusX: 0.5,
+            focusY: 0.5,
         };
         const state = get();
         const { layer: finalLayer, master, instances } = createLayerWithMasterAndInstances(
@@ -178,6 +212,7 @@ export const createLayerSlice: StateCreator<CanvasStore, [], [], LayerSlice> = (
                 x: layer.x, y: layer.y, width: layer.width, height: layer.height,
                 rotation: layer.rotation, visible: layer.visible, locked: layer.locked,
                 src: layer.src, objectFit: "cover",
+                focusX: layer.focusX, focusY: layer.focusY,
             },
             layer.name, "image", layer.slotId, state,
         );
@@ -309,11 +344,12 @@ export const createLayerSlice: StateCreator<CanvasStore, [], [], LayerSlice> = (
 
             const newLayers = applyAllAutoLayouts(computeUpdatedLayers(state.layers, id, updates));
             const layer = newLayers.find((l) => l.id === id);
+            const snapshotAwareResizes = syncSnapshotFormats(state.resizes, state.activeResizeId, newLayers);
             const fontSyncUpdates = Object.fromEntries(
                 Object.entries(updates).filter(([key]) => key === "fontFamily" || key === "fontWeight")
             ) as Partial<Layer>;
             const syncedResizes = Object.keys(fontSyncUpdates).length > 0
-                ? state.resizes.map((resize) => {
+                ? snapshotAwareResizes.map((resize) => {
                     if (resize.id === state.activeResizeId || !resize.layerSnapshot) return resize;
                     const nextSnapshot = resize.layerSnapshot.map((snapshotLayer) =>
                         snapshotLayer.id === id && snapshotLayer.type === "text"
@@ -322,7 +358,7 @@ export const createLayerSlice: StateCreator<CanvasStore, [], [], LayerSlice> = (
                     );
                     return { ...resize, layerSnapshot: nextSnapshot };
                 })
-                : state.resizes;
+                : snapshotAwareResizes;
 
             if (!layer?.masterId) {
                 return { layers: newLayers, resizes: syncedResizes };
@@ -330,7 +366,7 @@ export const createLayerSlice: StateCreator<CanvasStore, [], [], LayerSlice> = (
 
             if (state.activeResizeId === "master") {
                 const master = state.masterComponents.find((m) => m.id === layer.masterId);
-                if (!master) return { layers: newLayers };
+                if (!master) return { layers: newLayers, resizes: syncedResizes };
 
                 const newMasters = state.masterComponents.map((m) =>
                     m.id === layer.masterId

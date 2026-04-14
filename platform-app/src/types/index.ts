@@ -187,7 +187,16 @@ export const IMAGE_FIT_MODE_LABELS: Record<ImageFitMode, string> = {
     crop: "Crop",
 };
 
-export interface ImageComponentProps extends BaseComponentProps {
+/**
+ * Normalized image viewing intent shared across formats.
+ * Values are in the 0..1 range and describe the preferred focal point.
+ */
+export interface ImageViewIntent {
+    focusX?: number;
+    focusY?: number;
+}
+
+export interface ImageComponentProps extends BaseComponentProps, ImageViewIntent {
     type: "image";
     src: string;
     objectFit: ImageFitMode;
@@ -243,7 +252,9 @@ export type ComponentProps = TextComponentProps | RectangleComponentProps | Imag
 /** Which properties cascade from master to instances as "content source" */
 export const CONTENT_SOURCE_KEYS: Record<ComponentType, string[]> = {
     text: ["text"],
-    image: ["src", "width", "height", "objectFit"],
+    // For images, formats keep their own frame geometry.
+    // We only cascade the shared asset plus viewing intent.
+    image: ["src", "objectFit", "focusX", "focusY"],
     badge: ["label"],
     rectangle: [],
     frame: [],
@@ -366,7 +377,7 @@ export interface RectangleLayer extends BaseLayer {
     cornerRadius: number;
 }
 
-export interface ImageLayer extends BaseLayer {
+export interface ImageLayer extends BaseLayer, ImageViewIntent {
     type: "image";
     src: string;
     objectFit?: ImageFitMode;

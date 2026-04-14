@@ -21,6 +21,16 @@ export interface ImageFitResult {
     drawY: number;
 }
 
+export interface ImageViewIntentLike {
+    focusX?: number;
+    focusY?: number;
+}
+
+function clampFocus(value: number | undefined): number {
+    if (typeof value !== "number" || Number.isNaN(value)) return 0.5;
+    return Math.min(1, Math.max(0, value));
+}
+
 /**
  * Compute Konva Image crop & draw props for a given objectFit mode.
  *
@@ -36,8 +46,11 @@ export function computeImageFitProps(
     naturalH: number,
     containerW: number,
     containerH: number,
+    viewIntent?: ImageViewIntentLike,
 ): ImageFitResult {
     const effectiveMode = mode || "cover";
+    const focusX = clampFocus(viewIntent?.focusX);
+    const focusY = clampFocus(viewIntent?.focusY);
 
     if (naturalW <= 0 || naturalH <= 0 || containerW <= 0 || containerH <= 0) {
         return {
@@ -64,8 +77,8 @@ export function computeImageFitProps(
                 cropW = naturalW;
                 cropH = naturalW / containerRatio;
             }
-            const cropX = (naturalW - cropW) / 2;
-            const cropY = (naturalH - cropH) / 2;
+            const cropX = (naturalW - cropW) * focusX;
+            const cropY = (naturalH - cropH) * focusY;
             return {
                 cropX, cropY, cropWidth: cropW, cropHeight: cropH,
                 drawWidth: containerW, drawHeight: containerH,
@@ -109,8 +122,8 @@ export function computeImageFitProps(
             // Show at natural 1:1 scale, centered, clip overflow
             const cropW = Math.min(naturalW, containerW);
             const cropH = Math.min(naturalH, containerH);
-            const cropX = (naturalW - cropW) / 2;
-            const cropY = (naturalH - cropH) / 2;
+            const cropX = (naturalW - cropW) * focusX;
+            const cropY = (naturalH - cropH) * focusY;
 
             // If image is smaller than container, center it
             const drawW = Math.min(naturalW, containerW);

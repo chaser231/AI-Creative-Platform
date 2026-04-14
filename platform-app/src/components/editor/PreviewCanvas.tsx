@@ -85,7 +85,10 @@ function PreviewLayer({ layer, loadedImages, imageStatuses }: PreviewLayerProps)
             const fitMode = layer.objectFit || "cover";
             const nw = img.naturalWidth || img.width;
             const nh = img.naturalHeight || img.height;
-            const fit = computeImageFitProps(fitMode, nw, nh, layer.width, layer.height);
+            const fit = computeImageFitProps(fitMode, nw, nh, layer.width, layer.height, {
+                focusX: layer.focusX,
+                focusY: layer.focusY,
+            });
 
             if (fitMode === "contain" || fitMode === "crop") {
                 return (
@@ -170,28 +173,14 @@ interface PreviewCanvasProps {
 export function PreviewCanvas({ layers, artboardWidth, artboardHeight, containerWidth, containerHeight }: PreviewCanvasProps) {
     const stageRef = useRef<Konva.Stage>(null);
     const [loadedImages, setLoadedImages] = useState<Map<string, HTMLImageElement>>(new Map());
-    const [imageStatuses, setImageStatuses] = useState<Record<string, ImageLoadStatus>>({});
+    const [failedImageSources, setFailedImageSources] = useState<Set<string>>(new Set());
     const imageSources = useMemo(
         () => Array.from(new Set(layers.filter((layer) => layer.type === "image" && layer.visible && layer.src).map((layer) => layer.src))),
         [layers]
     );
 
     useEffect(() => {
-        if (imageSources.length === 0) {
-            setLoadedImages(new Map());
-            setImageStatuses({});
-            return;
-        }
-
         let disposed = false;
-
-        setImageStatuses((prev) => {
-            const next: Record<string, ImageLoadStatus> = {};
-            imageSources.forEach((src) => {
-                next[src] = prev[src] === "loaded" ? "loaded" : "loading";
-            });
-            return next;
-        });
 
         imageSources.forEach((src) => {
             const img = new window.Image();
@@ -203,11 +192,21 @@ export function PreviewCanvas({ layers, artboardWidth, artboardHeight, container
                     next.set(src, img);
                     return next;
                 });
-                setImageStatuses((prev) => ({ ...prev, [src]: "loaded" }));
+                setFailedImageSources((prev) => {
+                    if (!prev.has(src)) return prev;
+                    const next = new Set(prev);
+                    next.delete(src);
+                    return next;
+                });
             };
             img.onerror = () => {
                 if (disposed) return;
-                setImageStatuses((prev) => ({ ...prev, [src]: "error" }));
+                setFailedImageSources((prev) => {
+                    if (prev.has(src)) return prev;
+                    const next = new Set(prev);
+                    next.add(src);
+                    return next;
+                });
             };
             img.src = src;
         });
@@ -216,6 +215,29 @@ export function PreviewCanvas({ layers, artboardWidth, artboardHeight, container
             disposed = true;
         };
     }, [imageSources]);
+
+    const activeLoadedImages = useMemo(() => {
+        const next = new Map<string, HTMLImageElement>();
+        imageSources.forEach((src) => {
+            const image = loadedImages.get(src);
+            if (image) next.set(src, image);
+        });
+        return next;
+    }, [imageSources, loadedImages]);
+
+    const activeImageStatuses = useMemo(() => {
+        const next: Record<string, ImageLoadStatus> = {};
+        imageSources.forEach((src) => {
+            if (activeLoadedImages.has(src)) {
+                next[src] = "loaded";
+            } else if (failedImageSources.has(src)) {
+                next[src] = "error";
+            } else {
+                next[src] = "loading";
+            }
+        });
+        return next;
+    }, [imageSources, activeLoadedImages, failedImageSources]);
 
     // Calculate scale to fit artboard within container (with 40px padding)
     const padding = 40;
@@ -232,8 +254,8 @@ export function PreviewCanvas({ layers, artboardWidth, artboardHeight, container
     const stageX = (containerWidth - artboardWidth * scale) / 2;
     const stageY = (containerHeight - artboardHeight * scale) / 2;
 
-    const pendingImages = imageSources.filter((src) => imageStatuses[src] === "loading").length;
-    const failedImages = imageSources.filter((src) => imageStatuses[src] === "error").length;
+    const pendingImages = imageSources.filter((src) => activeImageStatuses[src] === "loading").length;
+    const failedImages = imageSources.filter((src) => activeImageStatuses[src] === "error").length;
     const showPreviewStatus = pendingImages > 0 || failedImages > 0;
 
     return (
@@ -266,8 +288,8 @@ export function PreviewCanvas({ layers, artboardWidth, artboardHeight, container
                             <PreviewLayer
                                 key={layer.id}
                                 layer={layer}
-                                loadedImages={loadedImages}
-                                imageStatuses={imageStatuses}
+                                loadedImages={activeLoadedImages}
+                                imageStatuses={activeImageStatuses}
                             />
                         ))}
                     </Group>
