@@ -154,6 +154,9 @@ export interface CanvasStore {
     // Editor mode
     editorMode: EditorMode;
 
+    // Drawing mode preview
+    drawingBox: { startX: number; startY: number; currentX: number; currentY: number } | null;
+
     // Inline text editing
     isEditingText: boolean;
     editingLayerId: string | null;
@@ -194,6 +197,7 @@ export interface CanvasStore {
     moveLayerToFrame: (layerId: string, frameId: string, dropIndex?: number) => void;
     removeLayerFromFrame: (layerId: string) => void;
     pasteLayers: (layers: Layer[]) => void;
+    wrapInAutoLayoutFrame: () => void;
 
     // Undo / Redo actions
     undo: () => void;
@@ -246,6 +250,9 @@ export interface CanvasStore {
         baseHeight: number;
     }) => void;
     applySmartResize: (templatePack: TemplatePack, mappings: SlotMapping[]) => { unmappedSlotNames: string[] };
+
+    // Drawing mode
+    setDrawingBox: (box: { startX: number; startY: number; currentX: number; currentY: number } | null) => void;
 
     // Inline text editing
     startTextEditing: (layerId: string) => void;

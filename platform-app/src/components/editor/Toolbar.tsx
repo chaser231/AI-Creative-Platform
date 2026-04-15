@@ -37,19 +37,14 @@ export function Toolbar({ onOpenTemplates, onToggleAI, aiActive }: ToolbarProps)
     const {
         activeTool,
         setActiveTool,
-        addTextLayer,
-        addRectangleLayer,
         addImageLayer,
         addBadgeLayer,
-        addFrameLayer,
         snapConfig,
         updateSnapConfig,
     } = useCanvasStore(useShallow((s) => ({
         activeTool: s.activeTool, setActiveTool: s.setActiveTool,
-        addTextLayer: s.addTextLayer, addRectangleLayer: s.addRectangleLayer,
         addImageLayer: s.addImageLayer, addBadgeLayer: s.addBadgeLayer,
-        addFrameLayer: s.addFrameLayer, snapConfig: s.snapConfig,
-        updateSnapConfig: s.updateSnapConfig,
+        snapConfig: s.snapConfig, updateSnapConfig: s.updateSnapConfig,
     })));
     const fileRef = useRef<HTMLInputElement>(null);
     const [showSnapConfig, setShowSnapConfig] = useState(false);
@@ -59,20 +54,8 @@ export function Toolbar({ onOpenTemplates, onToggleAI, aiActive }: ToolbarProps)
             fileRef.current?.click();
             return;
         }
-        if (toolId === "text") {
-            addTextLayer();
-            return;
-        }
-        if (toolId === "rectangle") {
-            addRectangleLayer();
-            return;
-        }
         if (toolId === "badge") {
             addBadgeLayer();
-            return;
-        }
-        if (toolId === "frame") {
-            addFrameLayer();
             return;
         }
         setActiveTool(toolId);

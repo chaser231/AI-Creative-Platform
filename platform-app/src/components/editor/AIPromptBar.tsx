@@ -11,6 +11,7 @@ import { getModelById, getMaxRefs, getAspectRatios, getResolutions, resolveRefTa
 import { getImagePresetPromptSuffix, getTextPresetInstruction } from "@/lib/stylePresets";
 import { useStylePresets } from "@/hooks/useStylePresets";
 import { persistImageToS3 } from "@/utils/imageUpload";
+import { compositeExpandResult } from "@/utils/imageComposite";
 import type { ImageLayer } from "@/types";
 
 // Helper models lists
@@ -264,38 +265,10 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
             return;
         }
 
-        // ── Generic edit: scale proportionally based on pixel dimensions ──
-        try {
-            // Measure old and new dimensions to scale the layer proportionally
-            const oldImg = new window.Image();
-            await new Promise((resolve, reject) => {
-                oldImg.onload = resolve;
-                oldImg.onerror = reject;
-                oldImg.src = selectedImageLayer.src;
-            });
-
-            const newImg = new window.Image();
-            await new Promise((resolve, reject) => {
-                newImg.onload = resolve;
-                newImg.onerror = reject;
-                newImg.src = persistedSrc;
-            });
-
-            const scaleX = newImg.naturalWidth / oldImg.naturalWidth;
-            const scaleY = newImg.naturalHeight / oldImg.naturalHeight;
-
-            const newWidth = selectedImageLayer.width * scaleX;
-            const newHeight = selectedImageLayer.height * scaleY;
-
-            updateLayer(selectedImageLayer.id, {
-                src: persistedSrc,
-                width: newWidth,
-                height: newHeight,
-            } as any);
-        } catch (e) {
-            console.error("Failed to measure new image dimensions", e);
-            updateLayer(selectedImageLayer.id, { src: persistedSrc } as any);
-        }
+        // ── Generic edit: only replace src, preserve layer geometry ──
+        // The edited image fills the same canvas space via objectFit;
+        // changing width/height/x/y would break positioning and cascade.
+        updateLayer(selectedImageLayer.id, { src: persistedSrc } as any);
     }, [selectedImageLayer, projectId, updateLayer]);
 
     // ── Image edit API call (shared by all edit actions) ──
@@ -315,6 +288,10 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
 
             let finalImageBase64 = selectedImageLayer.src;
             let outpaintOriginalSize: [number, number] | undefined;
+            let outpaintDownscaleRatio = 1;
+            let outpaintOriginalSrc: string | null = null;
+            let outpaintOriginalPixelPadding: { top: number; right: number; bottom: number; left: number } | null = null;
+            let editDownscaleRatio = 1;
 
             try {
                 const img = new window.Image();
@@ -342,18 +319,28 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                     const finalW = realW + targetPadLeft + targetPadRight;
                     const finalH = realH + targetPadTop + targetPadBottom;
 
-                    const MAX_FINAL_DIMENSION = 3500; // Safe limit keeps area below 25M pixels
+                    const MAX_FINAL_DIMENSION = 3500;
+                    const PRESERVE_THRESHOLD = 0.85;
 
                     if (finalW > MAX_FINAL_DIMENSION || finalH > MAX_FINAL_DIMENSION) {
-                        const downscaleRatio = Math.min(MAX_FINAL_DIMENSION / finalW, MAX_FINAL_DIMENSION / finalH);
-                        
-                        realW = Math.round(realW * downscaleRatio);
-                        realH = Math.round(realH * downscaleRatio);
+                        outpaintDownscaleRatio = Math.min(MAX_FINAL_DIMENSION / finalW, MAX_FINAL_DIMENSION / finalH);
 
-                        targetPadTop *= downscaleRatio;
-                        targetPadRight *= downscaleRatio;
-                        targetPadBottom *= downscaleRatio;
-                        targetPadLeft *= downscaleRatio;
+                        if (outpaintDownscaleRatio < PRESERVE_THRESHOLD) {
+                            outpaintOriginalSrc = selectedImageLayer.src;
+                            outpaintOriginalPixelPadding = {
+                                top: targetPadTop, right: targetPadRight,
+                                bottom: targetPadBottom, left: targetPadLeft,
+                            };
+                            console.log(`[Outpaint] Preserve pipeline activated (ratio=${outpaintDownscaleRatio.toFixed(3)})`);
+                        }
+
+                        realW = Math.round(realW * outpaintDownscaleRatio);
+                        realH = Math.round(realH * outpaintDownscaleRatio);
+
+                        targetPadTop *= outpaintDownscaleRatio;
+                        targetPadRight *= outpaintDownscaleRatio;
+                        targetPadBottom *= outpaintDownscaleRatio;
+                        targetPadLeft *= outpaintDownscaleRatio;
 
                         const canvas = document.createElement("canvas");
                         canvas.width = realW;
@@ -362,7 +349,7 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                         if (ctx) {
                             ctx.drawImage(img, 0, 0, realW, realH);
                             finalImageBase64 = canvas.toDataURL("image/png");
-                            console.log(`[Outpaint] Downscaled base image to ${realW}×${realH} to prevent API limits`);
+                            console.log(`[Outpaint] Downscaled base image to ${realW}×${realH} (ratio=${outpaintDownscaleRatio.toFixed(3)})`);
                         }
                     }
 
@@ -375,11 +362,11 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
 
                     console.log(`[Outpaint] Final pixel-space padding: T=${currentExpandPadding.top} R=${currentExpandPadding.right} B=${currentExpandPadding.bottom} L=${currentExpandPadding.left}`);
                 } else {
-                    const MAX_DIMENSION = 2048; // Standard limit for inpaint/edit models
+                    const MAX_DIMENSION = 2048;
                     if (realW > MAX_DIMENSION || realH > MAX_DIMENSION) {
-                        const downscaleRatio = Math.min(MAX_DIMENSION / realW, MAX_DIMENSION / realH);
-                        realW = Math.round(realW * downscaleRatio);
-                        realH = Math.round(realH * downscaleRatio);
+                        editDownscaleRatio = Math.min(MAX_DIMENSION / realW, MAX_DIMENSION / realH);
+                        realW = Math.round(realW * editDownscaleRatio);
+                        realH = Math.round(realH * editDownscaleRatio);
                         
                         const canvas = document.createElement("canvas");
                         canvas.width = realW;
@@ -388,7 +375,7 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                         if (ctx) {
                             ctx.drawImage(img, 0, 0, realW, realH);
                             finalImageBase64 = canvas.toDataURL("image/png");
-                            console.log(`[Image Edit] Downscaled base image to ${realW}×${realH} to prevent API limits`);
+                            console.log(`[Image Edit] Downscaled base image to ${realW}×${realH} (ratio=${editDownscaleRatio.toFixed(3)})`);
                         }
                     }
                 }
@@ -417,17 +404,83 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
             const data = await response.json();
             if (data.error) throw new Error(data.requestId ? `${data.error} [request: ${data.requestId}]` : data.error);
             if (data.content) {
-                // For outpaint: pass canvas-space padding (the original, un-scaled) for layer sizing
-                await applyEditedImageToLayer(data.content, action === "outpaint" ? {
+                let finalContent = data.content;
+
+                // ── Preserve Original pipeline (outpaint) ──
+                // When the image was downscaled for expand, upscale the result
+                // back and composite the original hi-res image on top.
+                if (action === "outpaint" && outpaintOriginalSrc) {
+                    console.log(`[Outpaint/Preserve] Starting upscale of expand result...`);
+                    try {
+                        const upscaleScale = Math.ceil(1 / outpaintDownscaleRatio);
+                        const upscaleRes = await fetch("/api/ai/image-edit", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({
+                                action: "upscale",
+                                imageBase64: data.content,
+                                model: "esrgan",
+                                upscaleScale: Math.min(upscaleScale, 4),
+                                projectId,
+                            }),
+                        });
+                        const upscaleData = await upscaleRes.json();
+
+                        if (upscaleData.content && !upscaleData.error) {
+                            console.log(`[Outpaint/Preserve] Upscale complete, compositing original over result...`);
+                            finalContent = await compositeExpandResult({
+                                expandedSrc: upscaleData.content,
+                                originalSrc: outpaintOriginalSrc,
+                                pixelPadding: outpaintOriginalPixelPadding!,
+                            });
+                            console.log(`[Outpaint/Preserve] Composite complete — original quality preserved`);
+                        } else {
+                            console.warn(`[Outpaint/Preserve] Upscale failed, using raw expand result:`, upscaleData.error);
+                        }
+                    } catch (preserveErr) {
+                        console.warn(`[Outpaint/Preserve] Pipeline failed, falling back to raw expand result:`, preserveErr);
+                    }
+                }
+
+                // ── Restore resolution for edit/inpaint/text-edit ──
+                // When the image was downscaled to fit API limits, upscale the
+                // result back to approximately the original resolution.
+                if (action !== "outpaint" && editDownscaleRatio < 1) {
+                    console.log(`[Edit/Upscale] Image was downscaled (ratio=${editDownscaleRatio.toFixed(3)}), restoring resolution...`);
+                    try {
+                        const upscaleScale = Math.min(Math.ceil(1 / editDownscaleRatio), 4);
+                        const upscaleRes = await fetch("/api/ai/image-edit", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({
+                                action: "upscale",
+                                imageBase64: finalContent,
+                                model: "esrgan",
+                                upscaleScale,
+                                projectId,
+                            }),
+                        });
+                        const upscaleData = await upscaleRes.json();
+
+                        if (upscaleData.content && !upscaleData.error) {
+                            finalContent = upscaleData.content;
+                            console.log(`[Edit/Upscale] Resolution restored (scale=${upscaleScale}×)`);
+                        } else {
+                            console.warn(`[Edit/Upscale] Upscale failed, using lower-res result:`, upscaleData.error);
+                        }
+                    } catch (upscaleErr) {
+                        console.warn(`[Edit/Upscale] Upscale failed, using lower-res result:`, upscaleErr);
+                    }
+                }
+
+                await applyEditedImageToLayer(finalContent, action === "outpaint" ? {
                     action: "outpaint",
-                    padding: expandPadding, // canvas-space padding for layer resizing
+                    padding: expandPadding,
                 } : undefined);
-                // Reset expand mode after successful outpaint
                 if (action === "outpaint") resetExpandMode();
-                // Pass result to chat history
                 onResult({
                     type: "edit",
-                    content: data.content,
+                    content: finalContent,
                     prompt: rawPrompt || action,
                     model: data.model,
                 });

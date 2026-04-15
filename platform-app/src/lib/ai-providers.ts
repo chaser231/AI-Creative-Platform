@@ -20,7 +20,7 @@ import type { ModelEntry } from "./ai-models";
 
 export interface AIRequestParams {
     prompt: string;
-    type: "text" | "image" | "inpainting" | "outpainting" | "remove-bg" | "edit";
+    type: "text" | "image" | "inpainting" | "outpainting" | "remove-bg" | "edit" | "upscale";
     model?: string;
     context?: string;
     width?: number;
@@ -38,6 +38,8 @@ export interface AIRequestParams {
     originalLocation?: [number, number];
     /** Per-side pixel offsets for free-form outpainting */
     expandPadding?: { top: number; right: number; bottom: number; left: number };
+    /** Scale factor for upscale (e.g. 2.0 = double resolution) */
+    upscaleScale?: number;
 }
 
 export interface AIResponse {
@@ -270,6 +272,20 @@ class ReplicateProvider implements AIProviderImplementation {
             return { content: output as string, format: "url", model: entry.id, provider: "replicate" };
         }
 
+        // ── Upscale / Super-Resolution ─────────────────────────────
+        if (params.type === "upscale") {
+            if (!params.imageBase64) throw new Error("Image is required for upscaling");
+            const upscaleEntry = getModelById("esrgan") || entry;
+            const upscaleInput: Record<string, unknown> = {
+                image: params.imageBase64,
+            };
+            if (params.upscaleScale) upscaleInput.scale = params.upscaleScale;
+
+            const result = await this.callReplicate(upscaleEntry, upscaleInput, token);
+            const output = Array.isArray(result) ? result[0] : result;
+            return { content: output as string, format: "url", model: upscaleEntry.id, provider: "replicate" };
+        }
+
         // ── Standard text-to-image generation ───────────────────────
         input.prompt = params.prompt;
         if (params.aspectRatio) input.aspect_ratio = params.aspectRatio;
@@ -446,6 +462,7 @@ const FAL_MODEL_MAP: Record<string, string> = {
     "nano-banana-pro": "fal-ai/nano-banana-pro",
     "seedream":        "fal-ai/seedream-4.5",
     "bria-expand":     "fal-ai/bria/expand",
+    "esrgan":          "fal-ai/esrgan",
 };
 
 /** Model ID → fal.ai /edit endpoint (required for reference images) */
@@ -580,6 +597,78 @@ class FalProvider implements AIProviderImplementation {
                 model: modelId,
                 provider: "fal.ai",
             };
+        }
+
+        // ── Upscale (ESRGAN on fal.ai) ──────────────────────────────
+        if (params.type === "upscale") {
+            const falEndpoint = FAL_MODEL_MAP[modelId];
+            if (!falEndpoint) throw new Error(`Model ${modelId} is not available on fal.ai for upscale`);
+
+            const upscaleInput: Record<string, unknown> = {
+                image_url: params.imageBase64,
+            };
+            if (params.upscaleScale) upscaleInput.scale = params.upscaleScale;
+
+            console.log(`[fal.ai] Upscale via ${falEndpoint}, scale=${params.upscaleScale ?? "default"}`);
+
+            const submitRes = await fetch(`https://queue.fal.run/${falEndpoint}`, {
+                method: "POST",
+                headers: {
+                    "Authorization": `Key ${apiKey}`,
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify(upscaleInput),
+            });
+            if (!submitRes.ok) {
+                const errBody = await submitRes.text();
+                throw new Error(`fal.ai upscale submit failed (${submitRes.status}): ${errBody}`);
+            }
+            const submitData = await submitRes.json();
+            const requestId = submitData.request_id;
+
+            if (!requestId) {
+                const imageUrl = submitData.image?.url;
+                if (!imageUrl) throw new Error("fal.ai upscale returned no image (sync)");
+                return { content: imageUrl, format: "url" as const, model: modelId, provider: "fal.ai" };
+            }
+
+            const statusUrl = submitData.status_url
+                || `https://queue.fal.run/${falEndpoint}/requests/${requestId}/status`;
+            const responseUrl = submitData.response_url
+                || `https://queue.fal.run/${falEndpoint}/requests/${requestId}`;
+
+            console.log(`[fal.ai] Upscale queued: ${requestId}`);
+
+            for (let i = 0; i < 60; i++) {
+                await new Promise(r => setTimeout(r, 2000));
+                try {
+                    const statusRes = await fetch(statusUrl, {
+                        headers: { "Authorization": `Key ${apiKey}` },
+                    });
+                    if (!statusRes.ok) continue;
+                    const status = await statusRes.json() as { status: string };
+                    if (status.status === "COMPLETED") {
+                        console.log(`[fal.ai] Upscale completed after ${(i + 1) * 2}s`);
+                        break;
+                    }
+                    if (status.status === "FAILED") throw new Error("fal.ai upscale generation failed");
+                } catch (err: unknown) {
+                    const msg = err instanceof Error ? err.message : String(err);
+                    if (err instanceof TypeError && msg.includes("fetch")) continue;
+                    throw err;
+                }
+            }
+
+            const resultRes = await fetch(responseUrl, {
+                headers: { "Authorization": `Key ${apiKey}` },
+            });
+            if (!resultRes.ok) throw new Error(`fal.ai upscale result failed (${resultRes.status})`);
+            const result = await resultRes.json();
+
+            const imageUrl = result.image?.url;
+            if (!imageUrl) throw new Error(`fal.ai upscale returned no image. Response: ${JSON.stringify(result).slice(0, 300)}`);
+
+            return { content: imageUrl, format: "url", model: modelId, provider: "fal.ai" };
         }
 
         // ── Determine endpoint ─────────────────────────────────────
@@ -751,6 +840,7 @@ const FAL_PRIMARY_MODELS = new Set([
     "nano-banana",
     "nano-banana-pro",
     "bria-expand",
+    "esrgan",
 ]);
 
 

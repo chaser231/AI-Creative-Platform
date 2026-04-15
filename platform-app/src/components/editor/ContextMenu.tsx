@@ -17,6 +17,7 @@ import {
     ClipboardPaste,
     Image,
     Scissors,
+    LayoutList,
 } from "lucide-react";
 
 export interface ContextMenuItem {
@@ -166,6 +167,7 @@ export function buildLayerContextMenuItems(
         cutLayers?: () => void;
         pasteLayers?: () => void;
         copyAsPng?: () => void;
+        wrapInAutoLayout?: () => void;
     }
 ): ContextMenuEntry[] {
     const items: ContextMenuEntry[] = [];
@@ -261,6 +263,19 @@ export function buildLayerContextMenuItems(
         );
     }
 
+    // Auto-layout wrap
+    if (actions.wrapInAutoLayout) {
+        items.push(
+            { separator: true },
+            {
+                label: "Обернуть в авто-лейаут",
+                icon: <LayoutList size={13} />,
+                shortcut: "⇧A",
+                onClick: actions.wrapInAutoLayout,
+            }
+        );
+    }
+
     items.push(
         { separator: true },
         {
@@ -287,6 +302,7 @@ export function buildMultiSelectionContextMenuItems(
         copyLayers?: () => void;
         cutLayers?: () => void;
         pasteLayers?: () => void;
+        wrapInAutoLayout?: () => void;
     }
 ): ContextMenuEntry[] {
     const items: ContextMenuEntry[] = [];
@@ -327,6 +343,21 @@ export function buildMultiSelectionContextMenuItems(
             shortcut: "⌘D",
             onClick: actions.duplicateAll,
         },
+    );
+
+    if (actions.wrapInAutoLayout) {
+        items.push(
+            { separator: true },
+            {
+                label: "Обернуть в авто-лейаут",
+                icon: <LayoutList size={13} />,
+                shortcut: "⇧A",
+                onClick: actions.wrapInAutoLayout,
+            },
+        );
+    }
+
+    items.push(
         { separator: true },
         {
             label: `Экспортировать (${count}) как PNG`,

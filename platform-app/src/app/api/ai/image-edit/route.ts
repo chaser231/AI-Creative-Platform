@@ -17,7 +17,7 @@ export async function POST(req: NextRequest) {
         }
 
         const body = await req.json();
-        const { action, prompt, imageBase64, maskBase64, model, aspectRatio, canvasSize, originalSize, originalLocation, referenceImages, projectId, expandPadding } = body;
+        const { action, prompt, imageBase64, maskBase64, model, aspectRatio, canvasSize, originalSize, originalLocation, referenceImages, projectId, expandPadding, upscaleScale } = body;
 
         if (!action) {
             return NextResponse.json(
@@ -118,6 +118,20 @@ export async function POST(req: NextRequest) {
                     originalSize,
                     originalLocation,
                     expandPadding,
+                });
+                if (result.model) usedModel = result.model;
+                break;
+            }
+
+            case "upscale": {
+                const upscaleModel = model || "esrgan";
+                usedModel = upscaleModel;
+                result = await generateWithFallback({
+                    prompt: "",
+                    type: "upscale",
+                    model: upscaleModel,
+                    imageBase64,
+                    upscaleScale: upscaleScale ?? 2,
                 });
                 if (result.model) usedModel = result.model;
                 break;
