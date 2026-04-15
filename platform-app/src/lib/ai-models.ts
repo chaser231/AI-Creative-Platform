@@ -9,7 +9,7 @@
 
 // ─── Model Registry ─────────────────────────────────────────────────────────
 
-export type ModelCap = "generate" | "edit" | "remove-bg" | "inpaint" | "outpaint" | "text" | "vision";
+export type ModelCap = "generate" | "edit" | "remove-bg" | "inpaint" | "outpaint" | "upscale" | "text" | "vision";
 
 export interface ResolutionOption {
     id: string;   // value sent to API (e.g. "1024px", "1", "high")
@@ -229,6 +229,16 @@ export const MODEL_REGISTRY: ModelEntry[] = [
         caps: ["remove-bg"],
         costPerRun: 0.002,
         version: "fb8af171cfa1616ddcf1242c093f9c46bcada5ad4cf6f2fbe8b81b330ec5c003",
+    },
+
+    // ── Upscale / Super-Resolution ──────────────────────────────────────
+    {
+        id: "esrgan",
+        label: "Real-ESRGAN",
+        slug: "nightmareai/real-esrgan",
+        provider: "replicate",
+        caps: ["upscale"],
+        costPerRun: 0.004,
     },
 
     // ── Text LLMs ───────────────────────────────────────────────────────

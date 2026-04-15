@@ -40,6 +40,7 @@ export type LayerSlice = Pick<CanvasStore,
     | "bringToFront" | "sendToBack"
     | "moveLayerToFrame" | "removeLayerFromFrame"
     | "pasteLayers"
+    | "wrapInAutoLayoutFrame"
 >;
 
 // ─── Helper: create layer + master + instances for all add* actions ──
@@ -290,7 +291,7 @@ export const createLayerSlice: StateCreator<CanvasStore, [], [], LayerSlice> = (
                 rotation: layer.rotation, visible: layer.visible, locked: layer.locked,
                 fill: layer.fill, stroke: layer.stroke,
                 strokeWidth: layer.strokeWidth, cornerRadius: layer.cornerRadius,
-                clipContent: layer.clipContent, childIds: [],
+                clipContent: layer.clipContent, childIds: layer.childIds,
             },
             layer.name, "frame", layer.slotId, state,
         );
@@ -299,7 +300,7 @@ export const createLayerSlice: StateCreator<CanvasStore, [], [], LayerSlice> = (
             masterComponents: [...s.masterComponents, master],
             componentInstances: [...s.componentInstances, ...instances],
             selectedLayerIds: [id],
-            activeTool: "select",
+            activeTool: "select" as const,
         }));
     },
 
@@ -937,6 +938,121 @@ export const createLayerSlice: StateCreator<CanvasStore, [], [], LayerSlice> = (
             masterComponents: [...s.masterComponents, ...newMasters],
             componentInstances: [...s.componentInstances, ...newInstances],
             selectedLayerIds: newSelectedIds,
+        }));
+    },
+
+    wrapInAutoLayoutFrame: () => {
+        const state = get();
+        const { selectedLayerIds, layers } = state;
+        if (selectedLayerIds.length === 0) return;
+
+        const selected = selectedLayerIds
+            .map(id => layers.find(l => l.id === id))
+            .filter((l): l is Layer => !!l);
+        if (selected.length === 0) return;
+
+        pushSnapshot(set as (p: Partial<CanvasStore>) => void, get);
+
+        // 1. Bounding box of selected layers
+        const minX = Math.min(...selected.map(l => l.x));
+        const minY = Math.min(...selected.map(l => l.y));
+        const maxX = Math.max(...selected.map(l => l.x + l.width));
+        const maxY = Math.max(...selected.map(l => l.y + l.height));
+        const spanX = maxX - minX;
+        const spanY = maxY - minY;
+
+        // 2. Determine direction (Figma heuristic: compare center-point spread, not bbox)
+        const centers = selected.map(l => ({ cx: l.x + l.width / 2, cy: l.y + l.height / 2 }));
+        const spreadX = Math.max(...centers.map(c => c.cx)) - Math.min(...centers.map(c => c.cx));
+        const spreadY = Math.max(...centers.map(c => c.cy)) - Math.min(...centers.map(c => c.cy));
+        const layoutMode: "horizontal" | "vertical" = spreadX >= spreadY ? "horizontal" : "vertical";
+
+        // 3. Sort by primary axis and compute spacing (median gap)
+        const sorted = [...selected].sort((a, b) =>
+            layoutMode === "horizontal" ? a.x - b.x : a.y - b.y
+        );
+        const gaps: number[] = [];
+        for (let i = 1; i < sorted.length; i++) {
+            const prev = sorted[i - 1];
+            const curr = sorted[i];
+            const gap = layoutMode === "horizontal"
+                ? curr.x - (prev.x + prev.width)
+                : curr.y - (prev.y + prev.height);
+            gaps.push(Math.max(0, Math.round(gap)));
+        }
+        const spacing = gaps.length > 0
+            ? gaps.sort((a, b) => a - b)[Math.floor(gaps.length / 2)]
+            : 0;
+
+        // 4. Remove selected layers from any parent frames
+        const childIdsInOrder = sorted.map(l => l.id);
+        let updatedLayers = [...layers];
+        updatedLayers = updatedLayers.map(l => {
+            if (l.type !== "frame") return l;
+            const frame = l as FrameLayer;
+            const filtered = frame.childIds.filter(id => !childIdsInOrder.includes(id));
+            if (filtered.length === frame.childIds.length) return l;
+            return { ...frame, childIds: filtered } as Layer;
+        });
+
+        // 5. Create the wrapping frame
+        const frameId = uuid();
+        const frameLayer: FrameLayer = {
+            id: frameId,
+            type: "frame",
+            name: "Auto Layout",
+            x: minX,
+            y: minY,
+            width: spanX,
+            height: spanY,
+            rotation: 0,
+            visible: true,
+            locked: false,
+            fill: "transparent",
+            fillEnabled: false,
+            stroke: "",
+            strokeEnabled: false,
+            strokeWidth: 0,
+            cornerRadius: 0,
+            clipContent: false,
+            childIds: childIdsInOrder,
+            layoutMode,
+            paddingTop: 0,
+            paddingRight: 0,
+            paddingBottom: 0,
+            paddingLeft: 0,
+            spacing,
+            primaryAxisAlignItems: "flex-start",
+            counterAxisAlignItems: "flex-start",
+            primaryAxisSizingMode: "auto",
+            counterAxisSizingMode: "auto",
+        };
+
+        // 6. Create master + instances for the frame
+        const { layer: finalFrame, master, instances } = createLayerWithMasterAndInstances(
+            frameLayer,
+            {
+                type: "frame", slotId: undefined,
+                x: frameLayer.x, y: frameLayer.y, width: frameLayer.width, height: frameLayer.height,
+                rotation: 0, visible: true, locked: false,
+                fill: frameLayer.fill, stroke: frameLayer.stroke,
+                strokeWidth: 0, cornerRadius: 0,
+                clipContent: false, childIds: childIdsInOrder,
+            },
+            "Auto Layout", "frame", undefined, state,
+        );
+
+        updatedLayers.push(finalFrame);
+
+        // 7. Apply auto-layout to position children correctly
+        updatedLayers = applyAllAutoLayouts(updatedLayers);
+
+        set((s) => ({
+            layers: updatedLayers,
+            masterComponents: [...s.masterComponents, master],
+            componentInstances: [...s.componentInstances, ...instances],
+            selectedLayerIds: [frameId],
+            activeTool: "select" as const,
         }));
     },
 });

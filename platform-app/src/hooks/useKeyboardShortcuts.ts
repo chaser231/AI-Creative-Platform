@@ -20,6 +20,8 @@ export function useKeyboardShortcuts() {
         selectedLayerIds,
         layers,
         isEditingText,
+        activeTool,
+        setActiveTool,
         deleteSelectedLayers,
         duplicateSelectedLayers,
         updateLayer,
@@ -29,25 +31,48 @@ export function useKeyboardShortcuts() {
         reorderLayer,
         pasteLayers,
         stageRef,
+        wrapInAutoLayoutFrame,
+        setDrawingBox,
     } = useCanvasStore(useShallow((s) => ({
         selectedLayerIds: s.selectedLayerIds, layers: s.layers,
-        isEditingText: s.isEditingText, deleteSelectedLayers: s.deleteSelectedLayers,
+        isEditingText: s.isEditingText, activeTool: s.activeTool,
+        setActiveTool: s.setActiveTool,
+        deleteSelectedLayers: s.deleteSelectedLayers,
         duplicateSelectedLayers: s.duplicateSelectedLayers, updateLayer: s.updateLayer,
         undo: s.undo, redo: s.redo, selectLayer: s.selectLayer, reorderLayer: s.reorderLayer,
         pasteLayers: s.pasteLayers, stageRef: s.stageRef,
+        wrapInAutoLayoutFrame: s.wrapInAutoLayoutFrame,
+        setDrawingBox: s.setDrawingBox,
     })));
 
     // clipboard state lives in a ref so it persists across renders
     // but doesn't trigger re-renders
     const handleKeyDown = useCallback(
         (e: KeyboardEvent) => {
+            const isMeta = e.metaKey || e.ctrlKey;
+
+            // ─── Shift+A: Wrap in Auto-Layout (works from canvas, like Figma) ──
+            if (e.shiftKey && !isMeta && e.key.toLowerCase() === "a") {
+                if (isEditingText) return;
+                const active = document.activeElement as HTMLElement | null;
+                const isInTextInput = active && (
+                    active.tagName === "INPUT" ||
+                    active.tagName === "TEXTAREA" ||
+                    active.isContentEditable
+                );
+                if (isInTextInput) return;
+                if (selectedLayerIds.length > 0) {
+                    e.preventDefault();
+                    wrapInAutoLayoutFrame();
+                }
+                return;
+            }
+
             // Skip if inside input, textarea, or contentEditable
             if (isFocusedOnInput(e)) return;
 
             // Skip if inline text editing is active
             if (isEditingText) return;
-
-            const isMeta = e.metaKey || e.ctrlKey;
 
             // ─── Copy: Cmd+C ────────────────────────────
             if (isMeta && !e.shiftKey && e.key === "c") {
@@ -121,8 +146,13 @@ export function useKeyboardShortcuts() {
                 return;
             }
 
-            // ─── Escape: deselect ────────────────────────
+            // ─── Escape: cancel drawing mode or deselect ──
             if (e.key === "Escape") {
+                if (activeTool !== "select") {
+                    setActiveTool("select");
+                    setDrawingBox(null);
+                    return;
+                }
                 selectLayer(null);
                 return;
             }
@@ -190,7 +220,7 @@ export function useKeyboardShortcuts() {
                 if (didMove) return;
             }
         },
-        [selectedLayerIds, layers, isEditingText, deleteSelectedLayers, duplicateSelectedLayers, updateLayer, undo, redo, selectLayer, reorderLayer, pasteLayers, stageRef]
+        [selectedLayerIds, layers, isEditingText, deleteSelectedLayers, duplicateSelectedLayers, updateLayer, undo, redo, selectLayer, reorderLayer, pasteLayers, stageRef, activeTool, setActiveTool, wrapInAutoLayoutFrame, setDrawingBox]
     );
 
     useEffect(() => {

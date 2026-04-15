@@ -556,6 +556,9 @@ export function Canvas({ stageRef }: CanvasProps) {
     // Track start positions for multi-drag
     const dragStartLocs = useRef<Record<string, { x: number; y: number }>>({});
 
+    // Drawing mode refs
+    const drawingStartPoint = useRef<{ x: number; y: number } | null>(null);
+
     const {
         layers,
         selectedLayerIds,
@@ -564,6 +567,9 @@ export function Canvas({ stageRef }: CanvasProps) {
         addToSelection,
         updateLayer,
         addImageLayer,
+        addTextLayer,
+        addRectangleLayer,
+        addFrameLayer,
         removeLayer,
         duplicateLayer,
         bringToFront,
@@ -578,6 +584,10 @@ export function Canvas({ stageRef }: CanvasProps) {
         canvasWidth,
         canvasHeight,
         activeResizeId,
+        activeTool,
+        setActiveTool,
+        drawingBox,
+        setDrawingBox,
         isEditingText,
         editingLayerId,
         startTextEditing,
@@ -589,6 +599,7 @@ export function Canvas({ stageRef }: CanvasProps) {
         getFrameAtPoint,
         moveLayerToFrame,
         removeLayerFromFrame,
+        wrapInAutoLayoutFrame,
     } = useCanvasStore(useShallow((s) => ({
         layers: s.layers,
         selectedLayerIds: s.selectedLayerIds,
@@ -597,6 +608,9 @@ export function Canvas({ stageRef }: CanvasProps) {
         addToSelection: s.addToSelection,
         updateLayer: s.updateLayer,
         addImageLayer: s.addImageLayer,
+        addTextLayer: s.addTextLayer,
+        addRectangleLayer: s.addRectangleLayer,
+        addFrameLayer: s.addFrameLayer,
         removeLayer: s.removeLayer,
         duplicateLayer: s.duplicateLayer,
         bringToFront: s.bringToFront,
@@ -611,6 +625,10 @@ export function Canvas({ stageRef }: CanvasProps) {
         canvasWidth: s.canvasWidth,
         canvasHeight: s.canvasHeight,
         activeResizeId: s.activeResizeId,
+        activeTool: s.activeTool,
+        setActiveTool: s.setActiveTool,
+        drawingBox: s.drawingBox,
+        setDrawingBox: s.setDrawingBox,
         isEditingText: s.isEditingText,
         editingLayerId: s.editingLayerId,
         startTextEditing: s.startTextEditing,
@@ -622,11 +640,27 @@ export function Canvas({ stageRef }: CanvasProps) {
         getFrameAtPoint: s.getFrameAtPoint,
         moveLayerToFrame: s.moveLayerToFrame,
         removeLayerFromFrame: s.removeLayerFromFrame,
+        wrapInAutoLayoutFrame: s.wrapInAutoLayoutFrame,
     })));
 
     // Expand mode state
     const expandMode = useCanvasStore((s) => s.expandMode);
     const expandTargetLayerId = useCanvasStore((s) => s.expandTargetLayerId);
+
+    const isDrawingTool = activeTool === "text" || activeTool === "rectangle" || activeTool === "frame";
+
+    // Reset drawingStartPoint when leaving drawing mode (e.g. via Escape)
+    useEffect(() => {
+        if (!isDrawingTool) {
+            drawingStartPoint.current = null;
+        }
+    }, [isDrawingTool]);
+
+    useEffect(() => {
+        if (activeTool !== "rectangle" && activeTool !== "frame") {
+            drawingStartPoint.current = null;
+        }
+    }, [activeTool]);
 
     // Register stageRef in store (for Copy as PNG from keyboard shortcuts)
     const setStageRef = useCanvasStore((s) => s.setStageRef);
@@ -1265,6 +1299,34 @@ export function Canvas({ stageRef }: CanvasProps) {
             return;
         }
 
+        // ── Drawing tool interception ──
+        if (activeTool === "text" || activeTool === "rectangle" || activeTool === "frame") {
+            const stage = e.target.getStage();
+            if (!stage) return;
+            const pointer = stage.getPointerPosition();
+            if (!pointer) return;
+            const sceneX = (pointer.x - stage.x()) / stage.scaleX();
+            const sceneY = (pointer.y - stage.y()) / stage.scaleY();
+
+            if (activeTool === "text") {
+                addTextLayer({ x: sceneX, y: sceneY });
+                const newTextId = useCanvasStore.getState().selectedLayerIds[0];
+                if (newTextId) {
+                    setTimeout(() => startTextEditing(newTextId), 50);
+                }
+                return;
+            }
+
+            // rectangle or frame: start drag-drawing
+            drawingStartPoint.current = { x: sceneX, y: sceneY };
+            setDrawingBox({ startX: sceneX, startY: sceneY, currentX: sceneX, currentY: sceneY });
+            setStageDraggable(false);
+            selectLayer(null);
+            setContextMenu(null);
+            if (isEditingText) stopTextEditing();
+            return;
+        }
+
         // ── Clip-bounds interception ──
         // If the click targets a shape (not the stage background), check whether
         // the pointer falls outside the clip bounds of any clipped parent.
@@ -1415,7 +1477,7 @@ export function Canvas({ stageRef }: CanvasProps) {
                 stopTextEditing();
             }
         }
-    }, [selectLayer, isEditingText, stopTextEditing, isPanning, artboardProps.clipContent, canvasWidth, canvasHeight, layers, selectedLayerIds]);
+    }, [selectLayer, isEditingText, stopTextEditing, isPanning, artboardProps.clipContent, canvasWidth, canvasHeight, layers, selectedLayerIds, activeTool, addTextLayer, setActiveTool, setDrawingBox, startTextEditing]);
 
     const handleStageMouseMove = useCallback((e: Konva.KonvaEventObject<MouseEvent>) => {
         const stage = e.target.getStage();
@@ -1478,6 +1540,25 @@ export function Canvas({ stageRef }: CanvasProps) {
             return;
         }
 
+        // Drawing box rubber-banding (rectangle/frame drawing mode)
+        if (drawingStartPoint.current && (activeTool === "rectangle" || activeTool === "frame")) {
+            const start = drawingStartPoint.current;
+            let drawX = currentSceneX;
+            let drawY = currentSceneY;
+
+            // Shift constraint: square
+            if (e.evt.shiftKey) {
+                const dx = currentSceneX - start.x;
+                const dy = currentSceneY - start.y;
+                const size = Math.max(Math.abs(dx), Math.abs(dy));
+                drawX = start.x + size * Math.sign(dx || 1);
+                drawY = start.y + size * Math.sign(dy || 1);
+            }
+
+            setDrawingBox({ startX: start.x, startY: start.y, currentX: drawX, currentY: drawY });
+            return;
+        }
+
         // Selection box rubber-banding
         if (!selectionBox) return;
 
@@ -1491,11 +1572,74 @@ export function Canvas({ stageRef }: CanvasProps) {
                 height: Math.abs(currentSceneY - prev.startY),
             };
         });
-    }, [selectionBox, selectedLayerIds, layers, canvasWidth, canvasHeight]);
+    }, [selectionBox, selectedLayerIds, layers, canvasWidth, canvasHeight, setDrawingBox, activeTool]);
 
     const handleStageMouseUp = useCallback((e: Konva.KonvaEventObject<MouseEvent>) => {
         if (isPanning) {
             if (containerRef.current) containerRef.current.style.cursor = "grab";
+            setStageDraggable(true);
+            return;
+        }
+
+        // ── Drawing tool completion ──
+        if (drawingStartPoint.current && (activeTool === "rectangle" || activeTool === "frame")) {
+            const start = drawingStartPoint.current;
+            const stage = e.target.getStage();
+            if (stage) {
+                const pointer = stage.getPointerPosition();
+                if (pointer) {
+                    let endX = (pointer.x - stage.x()) / stage.scaleX();
+                    let endY = (pointer.y - stage.y()) / stage.scaleY();
+
+                    if (e.evt.shiftKey) {
+                        const dx = endX - start.x;
+                        const dy = endY - start.y;
+                        const size = Math.max(Math.abs(dx), Math.abs(dy));
+                        endX = start.x + size * Math.sign(dx || 1);
+                        endY = start.y + size * Math.sign(dy || 1);
+                    }
+
+                    const x = Math.min(start.x, endX);
+                    const y = Math.min(start.y, endY);
+                    const w = Math.abs(endX - start.x);
+                    const h = Math.abs(endY - start.y);
+
+                    const MIN_DRAG_SIZE = 3;
+                    if (w < MIN_DRAG_SIZE && h < MIN_DRAG_SIZE) {
+                        // Click without drag — create with default size at click point
+                        if (activeTool === "rectangle") {
+                            addRectangleLayer({ x: start.x, y: start.y });
+                        } else {
+                            addFrameLayer({ x: start.x, y: start.y });
+                        }
+                    } else {
+                        if (activeTool === "rectangle") {
+                            addRectangleLayer({ x, y, width: w, height: h });
+                        } else {
+                            // Frame: auto-parent layers that are fully contained
+                            const containedChildIds = layers
+                                .filter(l => {
+                                    if (!l.visible || l.locked) return false;
+                                    // Only top-level layers (not already in a frame)
+                                    const isChild = layers.some(
+                                        p => p.type === "frame" && (p as FrameLayer).childIds.includes(l.id)
+                                    );
+                                    if (isChild) return false;
+                                    return (
+                                        l.x >= x && l.y >= y &&
+                                        l.x + l.width <= x + w &&
+                                        l.y + l.height <= y + h
+                                    );
+                                })
+                                .map(l => l.id);
+                            addFrameLayer({ x, y, width: w, height: h, childIds: containedChildIds });
+                        }
+                    }
+                }
+            }
+            drawingStartPoint.current = null;
+            setDrawingBox(null);
+            setActiveTool("select");
             setStageDraggable(true);
             return;
         }
@@ -1554,7 +1698,7 @@ export function Canvas({ stageRef }: CanvasProps) {
             }
             setSelectionBox(null);
         }
-    }, [selectionBox, layers, addToSelection, isPanning, artboardProps.clipContent, canvasWidth, canvasHeight]);
+    }, [selectionBox, layers, addToSelection, isPanning, artboardProps.clipContent, canvasWidth, canvasHeight, activeTool, addRectangleLayer, addFrameLayer, setDrawingBox, setActiveTool]);
 
     const handleContextMenu = useCallback(
         (e: Konva.KonvaEventObject<MouseEvent>) => {
@@ -1846,6 +1990,7 @@ export function Canvas({ stageRef }: CanvasProps) {
                     "radial-gradient(circle, var(--border-primary) 1px, transparent 1px)",
                 backgroundSize: `${20 * zoom}px ${20 * zoom}px`,
                 backgroundPosition: `${stageX}px ${stageY}px`,
+                cursor: isDrawingTool ? "crosshair" : undefined,
             }}
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
@@ -1962,6 +2107,8 @@ export function Canvas({ stageRef }: CanvasProps) {
                         distanceMeasurements={distanceMeasurements}
                         spacingGuides={spacingGuides}
                         selectionBox={selectionBox}
+                        drawingBox={drawingBox}
+                        activeTool={activeTool}
                     />
 
                     {/* Hover Outline (Figma-like) */}
@@ -2099,6 +2246,7 @@ export function Canvas({ stageRef }: CanvasProps) {
                                     removeAll: () => menuLayerIds.forEach(id => removeLayer(id)),
                                     exportAll: () => exportLayers(menuLayerIds),
                                     ...clipboardActions,
+                                    wrapInAutoLayout: () => wrapInAutoLayoutFrame(),
                                 }
                             )}
                         />
@@ -2133,6 +2281,7 @@ export function Canvas({ stageRef }: CanvasProps) {
                                         });
                                     }
                                 },
+                                wrapInAutoLayout: () => wrapInAutoLayoutFrame(),
                             }
                         )}
                     />

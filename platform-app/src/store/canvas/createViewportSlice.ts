@@ -14,6 +14,7 @@ export type ViewportSlice = Pick<CanvasStore,
     | "highlightedFrameId" | "hoveredLayerId" | "editorMode"
     | "isEditingText" | "editingLayerId"
     | "expandMode" | "expandPadding" | "expandTargetLayerId"
+    | "drawingBox" | "setDrawingBox"
     | "setZoom" | "setStagePosition"
     | "updateArtboardProps" | "updateSnapConfig"
     | "setHighlightedFrameId" | "setHoveredLayerId" | "getFrameAtPoint"
@@ -41,6 +42,7 @@ export const createViewportSlice: StateCreator<CanvasStore, [], [], ViewportSlic
 
     highlightedFrameId: null,
     hoveredLayerId: null,
+    drawingBox: null,
     editorMode: "studio",
     isEditingText: false,
     editingLayerId: null,
@@ -57,7 +59,11 @@ export const createViewportSlice: StateCreator<CanvasStore, [], [], ViewportSlic
     },
 
     setActiveTool: (tool) => {
-        set({ activeTool: tool, selectedLayerIds: [] });
+        set({ activeTool: tool, drawingBox: null });
+    },
+
+    setDrawingBox: (box) => {
+        set({ drawingBox: box });
     },
 
     setZoom: (zoom) => {

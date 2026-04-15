@@ -3,15 +3,18 @@
 import { Fragment } from "react";
 import { Line, Rect, Text } from "react-konva";
 import type { SnapResult, DistanceMeasurement, SpacingGuide } from "@/services/snapService";
+import type { ToolType } from "@/types";
 
 interface SnapGuidesProps {
     snapLines: SnapResult["guides"];
     distanceMeasurements: DistanceMeasurement[];
     spacingGuides: SpacingGuide[];
     selectionBox: { x: number; y: number; width: number; height: number } | null;
+    drawingBox?: { startX: number; startY: number; currentX: number; currentY: number } | null;
+    activeTool?: ToolType;
 }
 
-export function SnapGuides({ snapLines, distanceMeasurements, spacingGuides, selectionBox }: SnapGuidesProps) {
+export function SnapGuides({ snapLines, distanceMeasurements, spacingGuides, selectionBox, drawingBox, activeTool }: SnapGuidesProps) {
     return (
         <>
             {/* Snap Guides */}
@@ -145,6 +148,51 @@ export function SnapGuides({ snapLines, distanceMeasurements, spacingGuides, sel
                     listening={false}
                 />
             )}
+
+            {/* Drawing Preview */}
+            {drawingBox && (() => {
+                const x = Math.min(drawingBox.startX, drawingBox.currentX);
+                const y = Math.min(drawingBox.startY, drawingBox.currentY);
+                const w = Math.abs(drawingBox.currentX - drawingBox.startX);
+                const h = Math.abs(drawingBox.currentY - drawingBox.startY);
+                if (w < 1 && h < 1) return null;
+                const isFrame = activeTool === "frame";
+                return (
+                    <Fragment>
+                        <Rect
+                            x={x}
+                            y={y}
+                            width={w}
+                            height={h}
+                            fill={isFrame ? "rgba(99, 102, 241, 0.06)" : "rgba(229, 231, 235, 0.5)"}
+                            stroke={isFrame ? "#6366F1" : "#9CA3AF"}
+                            strokeWidth={1}
+                            dash={isFrame ? [6, 3] : undefined}
+                            listening={false}
+                        />
+                        <Rect
+                            x={x + w / 2 - 24}
+                            y={y + h + 6}
+                            width={48}
+                            height={18}
+                            fill={isFrame ? "#6366F1" : "#6B7280"}
+                            cornerRadius={4}
+                            listening={false}
+                        />
+                        <Text
+                            x={x + w / 2 - 24}
+                            y={y + h + 8}
+                            width={48}
+                            text={`${Math.round(w)}×${Math.round(h)}`}
+                            fontSize={10}
+                            fontFamily="Inter, sans-serif"
+                            fill="#fff"
+                            align="center"
+                            listening={false}
+                        />
+                    </Fragment>
+                );
+            })()}
         </>
     );
 }
