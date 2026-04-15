@@ -30,7 +30,7 @@ import { useCanvasAutoSave, useLoadCanvasState } from "@/hooks/useProjectSync";
 import { useAISessionSync } from "@/hooks/useAISessionSync";
 import { getModelById } from "@/lib/ai-models";
 import { trpc } from "@/lib/trpc";
-import { loadAllCustomFonts } from "@/lib/customFonts";
+import { loadAllCustomFonts, type WorkspaceFontAsset } from "@/lib/customFonts";
 import { hydrateTemplate } from "@/services/templateService";
 import { extractRequiredFonts, findMissingFonts, applyFontReplacements, getAvailableFontFamilies } from "@/utils/fontUtils";
 import type { RequiredFont } from "@/utils/fontUtils";
@@ -153,7 +153,7 @@ export default function EditorPage({ params }: EditorPageProps) {
         if (required.length === 0) return;
 
         (async () => {
-            await loadAllCustomFonts(workspaceFonts);
+            await loadAllCustomFonts(workspaceFonts as WorkspaceFontAsset[]);
             const available = await getAvailableFontFamilies();
             const missing = findMissingFonts(required, available);
             if (missing.length > 0) {
