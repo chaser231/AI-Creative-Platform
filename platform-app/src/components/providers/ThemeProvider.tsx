@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 import { useThemeStore } from "@/store/themeStore";
-import { loadAllCustomFonts } from "@/lib/customFonts";
+import { loadAllCustomFonts, type WorkspaceFontAsset } from "@/lib/customFonts";
 import { trpc } from "@/lib/trpc";
 import { useWorkspace } from "@/providers/WorkspaceProvider";
 
@@ -16,7 +16,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
 
     useEffect(() => {
         // Load custom fonts entirely on the client side once on mount
-        loadAllCustomFonts(workspaceFonts).catch(err => console.error("Failed to inject custom fonts on load", err));
+        loadAllCustomFonts(workspaceFonts as WorkspaceFontAsset[]).catch(err => console.error("Failed to inject custom fonts on load", err));
 
         const root = document.documentElement;
 
