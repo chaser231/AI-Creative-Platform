@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Stage, Layer, Rect, Text, Image as KonvaImage, Group } from "react-konva";
-import type { Layer as LayerType } from "@/types";
+import type { Layer as LayerType, ImageLayer } from "@/types";
 import { computeImageFitProps } from "@/utils/imageFitUtils";
 import Konva from "konva";
 
@@ -175,7 +175,7 @@ export function PreviewCanvas({ layers, artboardWidth, artboardHeight, container
     const [loadedImages, setLoadedImages] = useState<Map<string, HTMLImageElement>>(new Map());
     const [failedImageSources, setFailedImageSources] = useState<Set<string>>(new Set());
     const imageSources = useMemo(
-        () => Array.from(new Set(layers.filter((layer) => layer.type === "image" && layer.visible && layer.src).map((layer) => layer.src))),
+        () => Array.from(new Set(layers.filter((layer): layer is ImageLayer => layer.type === "image" && layer.visible && !!layer.src).map((layer) => layer.src))),
         [layers]
     );
 
