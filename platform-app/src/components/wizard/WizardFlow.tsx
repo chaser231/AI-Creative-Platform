@@ -22,7 +22,7 @@ import { PreviewCanvas } from "@/components/editor/PreviewCanvas";
 import type { FrameComponentProps } from "@/types";
 
 interface WizardFlowProps {
-    projectId: string;
+    projectId?: string;
     onSwitchToStudio: () => void;
     initialTemplateId?: string | null;
 }
