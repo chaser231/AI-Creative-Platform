@@ -26,6 +26,14 @@ export interface Project {
 /** @deprecated Legacy sync mode — use individual sync flags instead */
 export type SyncMode = 'all' | 'content_and_style' | 'content_only' | 'none';
 
+/**
+ * How image geometry syncs from master to instance:
+ * - "content"       — only src/objectFit/focus, instance keeps its own frame
+ * - "relative_size" — image coverage (% of artboard) syncs, position grows from instance center
+ * - "relative_full" — full proportional mapping of both size and position
+ */
+export type ImageSyncMode = "content" | "relative_size" | "relative_full";
+
 export interface LayerBinding {
     masterLayerId: string;     // ID слоя в мастер-формате
     targetLayerId: string;     // ID слоя в этом формате
@@ -36,6 +44,12 @@ export interface LayerBinding {
     syncSize: boolean;         // width, height
     syncPosition: boolean;     // x, y, rotation
 
+    /** Image-specific geometry sync mode */
+    imageSyncMode?: ImageSyncMode;
+
+    /** @deprecated Use imageSyncMode instead */
+    syncImageProportional?: boolean;
+
     /** @deprecated Legacy field — auto-migrated to flags on read */
     syncMode?: SyncMode;
 }
@@ -44,8 +58,16 @@ export interface LayerBinding {
  * Migrate a legacy LayerBinding (syncMode enum) to flag-based format.
  * Safe to call on already-migrated bindings — flags take precedence.
  */
+export function resolveImageSyncMode(binding: Partial<LayerBinding>): ImageSyncMode | undefined {
+    if (binding.imageSyncMode) return binding.imageSyncMode;
+    if (binding.syncImageProportional === true) return "relative_full";
+    if (binding.syncImageProportional === false) return "content";
+    return undefined;
+}
+
 export function migrateLegacyBinding(binding: Partial<LayerBinding> & { masterLayerId: string; targetLayerId: string }): LayerBinding {
-    // If flags are already set (even if all false), skip migration
+    const imageSyncMode = resolveImageSyncMode(binding);
+
     if (binding.syncContent !== undefined) {
         return {
             masterLayerId: binding.masterLayerId,
@@ -54,10 +76,10 @@ export function migrateLegacyBinding(binding: Partial<LayerBinding> & { masterLa
             syncStyle: binding.syncStyle ?? false,
             syncSize: binding.syncSize ?? false,
             syncPosition: binding.syncPosition ?? false,
+            imageSyncMode,
         };
     }
 
-    // Migrate from legacy syncMode
     const mode = binding.syncMode ?? 'content_only';
     return {
         masterLayerId: binding.masterLayerId,
@@ -66,6 +88,7 @@ export function migrateLegacyBinding(binding: Partial<LayerBinding> & { masterLa
         syncStyle: mode === 'content_and_style' || mode === 'all',
         syncSize: mode === 'all',
         syncPosition: mode === 'all',
+        imageSyncMode,
     };
 }
 

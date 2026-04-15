@@ -14,7 +14,7 @@ import { applyLayout, applyAllAutoLayouts } from "@/utils/layoutEngine";
 import { applyConstraints } from "@/utils/resizeUtil";
 import { getContentSourceUpdates } from "./helpers";
 import { cloneLayerTree } from "@/utils/cloneLayerTree";
-import { applyCascade } from "./bindingCascade";
+import { applyCascade, type CascadeContext } from "./bindingCascade";
 
 export type ResizeSlice = Pick<CanvasStore,
     | "resizes" | "activeResizeId" | "canvasWidth" | "canvasHeight"
@@ -230,11 +230,15 @@ export const createResizeSlice: StateCreator<CanvasStore, [], [], ResizeSlice> =
                 // OR from updatedResizes if master was the format we just left.
                 const resolvedMasterLayers = updatedResizes.find(r => r.id === masterFormat.id)?.layerSnapshot ?? masterLayers;
 
-                // Apply cascade
+                const context: CascadeContext = {
+                    masterArtboard: { width: masterFormat.width, height: masterFormat.height },
+                    targetArtboard: { width: targetResize.width, height: targetResize.height },
+                };
                 const cascadedLayers = applyCascade(
-                    currentState.layers,  // target format's loaded snapshot
-                    resolvedMasterLayers, // master's layers
-                    targetResize.layerBindings
+                    currentState.layers,
+                    resolvedMasterLayers,
+                    targetResize.layerBindings,
+                    context,
                 );
 
                 if (cascadedLayers !== currentState.layers) {
@@ -361,11 +365,45 @@ export const createResizeSlice: StateCreator<CanvasStore, [], [], ResizeSlice> =
     },
 
     setFormatBindings: (formatId, bindings) => {
-        set((state) => ({
-            resizes: state.resizes.map((r) =>
-                r.id === formatId ? { ...r, layerBindings: bindings } : r
-            ),
-        }));
+        set((state) => {
+            const nextResizes = state.resizes.map((resize) =>
+                resize.id === formatId ? { ...resize, layerBindings: bindings } : resize
+            );
+
+            const targetResize = nextResizes.find((resize) => resize.id === formatId);
+            const masterFormat = nextResizes.find((resize) => resize.isMaster);
+
+            if (!targetResize?.layerSnapshot || !masterFormat) {
+                return { resizes: nextResizes };
+            }
+
+            const masterLayers = masterFormat.id === state.activeResizeId
+                ? state.layers
+                : (masterFormat.layerSnapshot ?? []);
+            const targetLayers = formatId === state.activeResizeId
+                ? state.layers
+                : targetResize.layerSnapshot;
+            const context: CascadeContext = {
+                masterArtboard: { width: masterFormat.width, height: masterFormat.height },
+                targetArtboard: { width: targetResize.width, height: targetResize.height },
+            };
+            const cascadedLayers = applyCascade(targetLayers, masterLayers, bindings, context);
+
+            const finalResizes = nextResizes.map((resize) =>
+                resize.id === formatId
+                    ? { ...resize, layerSnapshot: cascadedLayers }
+                    : resize
+            );
+
+            if (formatId === state.activeResizeId) {
+                return {
+                    resizes: finalResizes,
+                    layers: cascadedLayers,
+                };
+            }
+
+            return { resizes: finalResizes };
+        });
     },
 
     unbindFormat: (formatId) => {

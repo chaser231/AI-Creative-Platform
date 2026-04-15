@@ -18,6 +18,7 @@ import type {
     ComponentProps,
     ResizeFormat,
     LayerBinding,
+    ImageSyncMode,
     EditorMode,
     LayerConstraints,
 } from "@/types";
@@ -40,6 +41,7 @@ export type {
     ComponentProps,
     ResizeFormat,
     LayerBinding,
+    ImageSyncMode,
     EditorMode,
     LayerConstraints,
     SnapConfig,

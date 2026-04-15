@@ -4,11 +4,6 @@ import { useRef } from "react";
 import type { ImageLayer, ImageFitMode } from "@/types";
 import { IMAGE_FIT_MODE_LABELS } from "@/types";
 
-function clampFocus(value: number) {
-    if (Number.isNaN(value)) return 0.5;
-    return Math.max(0, Math.min(1, value));
-}
-
 export function ImagePropsInline({
     layer,
     onChange,
@@ -18,8 +13,6 @@ export function ImagePropsInline({
 }) {
     const fileRef = useRef<HTMLInputElement>(null);
     const currentFit: ImageFitMode = layer.objectFit || "cover";
-    const focusX = layer.focusX ?? 0.5;
-    const focusY = layer.focusY ?? 0.5;
 
     const handleReplace = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
@@ -35,7 +28,7 @@ export function ImagePropsInline({
     const FIT_MODES: ImageFitMode[] = ["cover", "contain", "fill", "crop"];
 
     return (
-        <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex items-center gap-2">
             <span className="text-[10px] text-text-tertiary font-light shrink-0">Изображение</span>
             <button
                 onClick={() => fileRef.current?.click()}
@@ -67,36 +60,6 @@ export function ImagePropsInline({
                         {IMAGE_FIT_MODE_LABELS[mode]}
                     </button>
                 ))}
-            </div>
-            <div className="w-px h-5 bg-border-primary shrink-0" />
-            <span className="text-[10px] text-text-tertiary font-light shrink-0">Фокус</span>
-            <div className="flex items-center gap-2 rounded-[var(--radius-md)] border border-border-primary px-2 py-1.5 bg-bg-secondary/60">
-                <label className="flex items-center gap-1 text-[10px] text-text-tertiary">
-                    X
-                    <input
-                        type="range"
-                        min={0}
-                        max={1}
-                        step={0.01}
-                        value={focusX}
-                        onChange={(e) => onChange({ focusX: clampFocus(Number(e.target.value)) })}
-                        className="w-16 accent-[var(--color-accent-primary)]"
-                    />
-                    <span className="w-8 text-right text-text-secondary">{Math.round(focusX * 100)}%</span>
-                </label>
-                <label className="flex items-center gap-1 text-[10px] text-text-tertiary">
-                    Y
-                    <input
-                        type="range"
-                        min={0}
-                        max={1}
-                        step={0.01}
-                        value={focusY}
-                        onChange={(e) => onChange({ focusY: clampFocus(Number(e.target.value)) })}
-                        className="w-16 accent-[var(--color-accent-primary)]"
-                    />
-                    <span className="w-8 text-right text-text-secondary">{Math.round(focusY * 100)}%</span>
-                </label>
             </div>
         </div>
     );

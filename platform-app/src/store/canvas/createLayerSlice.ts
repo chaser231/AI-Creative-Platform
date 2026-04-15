@@ -20,7 +20,7 @@ import {
 } from "./helpers";
 import { pushSnapshot } from "./createHistorySlice";
 import { useBrandKitStore } from "@/store/brandKitStore";
-import { applyCascade } from "./bindingCascade";
+import { applyCascade, type CascadeContext } from "./bindingCascade";
 
 // Throttle timer for updateLayer history
 let _updateHistoryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -84,9 +84,12 @@ function syncSnapshotFormats(
     resizes: CanvasStore["resizes"],
     activeResizeId: string,
     nextLayers: Layer[],
+    prevLayers?: Layer[],
 ): CanvasStore["resizes"] {
     const activeResize = resizes.find((resize) => resize.id === activeResizeId);
     if (!activeResize) return resizes;
+
+    const masterArtboard = { width: activeResize.width, height: activeResize.height };
 
     let changed = false;
 
@@ -101,7 +104,13 @@ function syncSnapshotFormats(
             return resize;
         }
 
-        const cascadedSnapshot = applyCascade(resize.layerSnapshot, nextLayers, resize.layerBindings);
+        const context: CascadeContext = {
+            masterArtboard,
+            targetArtboard: { width: resize.width, height: resize.height },
+        };
+        const cascadedSnapshot = applyCascade(
+            resize.layerSnapshot, nextLayers, resize.layerBindings, context, prevLayers,
+        );
         if (cascadedSnapshot === resize.layerSnapshot) return resize;
 
         changed = true;
@@ -344,7 +353,7 @@ export const createLayerSlice: StateCreator<CanvasStore, [], [], LayerSlice> = (
 
             const newLayers = applyAllAutoLayouts(computeUpdatedLayers(state.layers, id, updates));
             const layer = newLayers.find((l) => l.id === id);
-            const snapshotAwareResizes = syncSnapshotFormats(state.resizes, state.activeResizeId, newLayers);
+            const snapshotAwareResizes = syncSnapshotFormats(state.resizes, state.activeResizeId, newLayers, state.layers);
             const fontSyncUpdates = Object.fromEntries(
                 Object.entries(updates).filter(([key]) => key === "fontFamily" || key === "fontWeight")
             ) as Partial<Layer>;

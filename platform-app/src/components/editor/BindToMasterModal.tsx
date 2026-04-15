@@ -7,7 +7,7 @@ import { Select } from "@/components/ui/Select";
 import { Button } from "@/components/ui/Button";
 import { useCanvasStore } from "@/store/canvasStore";
 import { useShallow } from "zustand/react/shallow";
-import type { LayerBinding, Layer } from "@/types";
+import type { LayerBinding, Layer, ImageSyncMode } from "@/types";
 import { migrateLegacyBinding } from "@/types";
 
 interface BindToMasterModalProps {
@@ -32,13 +32,6 @@ const SYNC_FLAGS: SyncFlag[] = [
     { key: "syncPosition", label: "Позиция",    shortLabel: "Позиция", icon: <Move size={10} />,     description: "X, Y, поворот" },
 ];
 
-const IMAGE_SYNC_FLAGS: SyncFlag[] = [
-    { key: "syncContent",  label: "Ассет", shortLabel: "Ассет", icon: <Type size={10} />, description: "Файл изображения (`src`)" },
-    { key: "syncStyle",    label: "Кадр",  shortLabel: "Кадр",  icon: <Palette size={10} />, description: "Режим fit и фокус (`objectFit`, `focusX`, `focusY`)" },
-    { key: "syncSize",     label: "Размер", shortLabel: "Размер", icon: <Maximize2 size={10} />, description: "Ширина и высота рамки" },
-    { key: "syncPosition", label: "Позиция", shortLabel: "Позиция", icon: <Move size={10} />, description: "X, Y, поворот" },
-];
-
 /* ─── Quick Presets ────────────────────────────────────── */
 
 interface SyncPreset {
@@ -53,13 +46,6 @@ const PRESETS: SyncPreset[] = [
     { label: "Содержимое",         syncContent: true,  syncStyle: false, syncSize: false, syncPosition: false },
     { label: "Содержимое + размер",syncContent: true,  syncStyle: false, syncSize: true,  syncPosition: false },
     { label: "Полная синхронизация",syncContent: true,  syncStyle: true,  syncSize: true,  syncPosition: true },
-];
-
-const IMAGE_PRESETS: SyncPreset[] = [
-    { label: "Только ассет", syncContent: true, syncStyle: false, syncSize: false, syncPosition: false },
-    { label: "Ассет + кадр", syncContent: true, syncStyle: true, syncSize: false, syncPosition: false },
-    { label: "Ассет + кадр + размер", syncContent: true, syncStyle: true, syncSize: true, syncPosition: false },
-    { label: "Полная синхронизация", syncContent: true, syncStyle: true, syncSize: true, syncPosition: true },
 ];
 
 /* ─── Toggle Chip ──────────────────────────────────────── */
@@ -130,11 +116,6 @@ export function BindToMasterModal({ formatId, onClose }: BindToMasterModalProps)
         return targetFormat.layerSnapshot ?? [];
     }, [targetFormat, activeResizeId, currentLayers]);
 
-    const targetLayerMap = useMemo(
-        () => new Map(targetLayers.map((layer) => [layer.id, layer])),
-        [targetLayers]
-    );
-
     // Initialize bindings from existing or auto-map by name
     const initialBindings = useMemo(() => {
         if (targetFormat?.layerBindings && targetFormat.layerBindings.length > 0) {
@@ -148,12 +129,13 @@ export function BindToMasterModal({ formatId, onClose }: BindToMasterModalProps)
     interface BindingRow {
         masterLayerId: string;
         masterLayerName: string;
-        masterLayerType: Layer["type"];
+        masterLayerType: string;
         targetLayerId: string;
         syncContent: boolean;
         syncStyle: boolean;
         syncSize: boolean;
         syncPosition: boolean;
+        imageSyncMode?: ImageSyncMode;
         enabled: boolean;
     }
 
@@ -169,6 +151,9 @@ export function BindToMasterModal({ formatId, onClose }: BindToMasterModalProps)
                 syncStyle: existing?.syncStyle ?? false,
                 syncSize: existing?.syncSize ?? false,
                 syncPosition: existing?.syncPosition ?? false,
+                imageSyncMode: existing?.imageSyncMode
+                    ?? (existing?.syncImageProportional === true ? "relative_full" : undefined)
+                    ?? (ml.type === "image" ? "relative_size" : undefined),
                 enabled: !!existing?.targetLayerId,
             };
         })
@@ -198,9 +183,9 @@ export function BindToMasterModal({ formatId, onClose }: BindToMasterModalProps)
         ));
     }, []);
 
-    const handleApplyPreset = useCallback((preset: SyncPreset, scope: "all" | "image" = "all") => {
+    const handleApplyPreset = useCallback((preset: SyncPreset) => {
         setBindings(prev => prev.map(b =>
-            b.enabled && b.targetLayerId && (scope === "all" || b.masterLayerType === "image")
+            b.enabled && b.targetLayerId
                 ? {
                     ...b,
                     syncContent: preset.syncContent,
@@ -212,11 +197,11 @@ export function BindToMasterModal({ formatId, onClose }: BindToMasterModalProps)
         ));
     }, []);
 
-    const isImageRow = useCallback((row: BindingRow) => {
-        if (row.masterLayerType !== "image") return false;
-        if (!row.targetLayerId) return true;
-        return targetLayerMap.get(row.targetLayerId)?.type === "image";
-    }, [targetLayerMap]);
+    const handleImageSyncModeChange = useCallback((masterLayerId: string, mode: ImageSyncMode) => {
+        setBindings(prev => prev.map(b =>
+            b.masterLayerId === masterLayerId ? { ...b, imageSyncMode: mode } : b
+        ));
+    }, []);
 
     const handleApply = () => {
         const activeBindings: LayerBinding[] = bindings
@@ -228,6 +213,7 @@ export function BindToMasterModal({ formatId, onClose }: BindToMasterModalProps)
                 syncStyle: b.syncStyle,
                 syncSize: b.syncSize,
                 syncPosition: b.syncPosition,
+                imageSyncMode: b.imageSyncMode,
             }));
 
         if (activeBindings.length > 0) {
@@ -249,7 +235,6 @@ export function BindToMasterModal({ formatId, onClose }: BindToMasterModalProps)
     }
 
     const enabledCount = bindings.filter(b => b.enabled && b.targetLayerId).length;
-    const hasImageRows = bindings.some((row) => row.masterLayerType === "image");
 
     return createPortal(
         <div
@@ -276,37 +261,19 @@ export function BindToMasterModal({ formatId, onClose }: BindToMasterModalProps)
                 </div>
 
                 {/* Quick presets */}
-                <div className="px-5 py-2.5 border-b border-border-primary bg-bg-secondary/50 space-y-2">
-                    <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-[10px] text-text-tertiary font-medium mr-1">Общие пресеты:</span>
-                        {PRESETS.map(preset => (
-                            <Button
-                                key={preset.label}
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => handleApplyPreset(preset)}
-                                className="!h-6 !px-2.5 !text-[10px] !rounded-[var(--radius-md)]"
-                            >
-                                {preset.label}
-                            </Button>
-                        ))}
-                    </div>
-                    {hasImageRows && (
-                        <div className="flex items-center gap-2 flex-wrap">
-                            <span className="text-[10px] text-text-tertiary font-medium mr-1">Для изображений:</span>
-                            {IMAGE_PRESETS.map(preset => (
-                                <Button
-                                    key={preset.label}
-                                    variant="ghost"
-                                    size="sm"
-                                    onClick={() => handleApplyPreset(preset, "image")}
-                                    className="!h-6 !px-2.5 !text-[10px] !rounded-[var(--radius-md)]"
-                                >
-                                    {preset.label}
-                                </Button>
-                            ))}
-                        </div>
-                    )}
+                <div className="flex items-center gap-2 px-5 py-2.5 border-b border-border-primary bg-bg-secondary/50">
+                    <span className="text-[10px] text-text-tertiary font-medium mr-1">Пресеты:</span>
+                    {PRESETS.map(preset => (
+                        <Button
+                            key={preset.label}
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleApplyPreset(preset)}
+                            className="!h-6 !px-2.5 !text-[10px] !rounded-[var(--radius-md)]"
+                        >
+                            {preset.label}
+                        </Button>
+                    ))}
                 </div>
 
                 {/* Bindings list */}
@@ -321,11 +288,7 @@ export function BindToMasterModal({ formatId, onClose }: BindToMasterModalProps)
                     </div>
 
                     <div className="space-y-1">
-                        {bindings.map((row) => {
-                            const imageRow = isImageRow(row);
-                            const syncFlags = imageRow ? IMAGE_SYNC_FLAGS : SYNC_FLAGS;
-
-                            return (
+                        {bindings.map((row) => (
                             <div
                                 key={row.masterLayerId}
                                 className={`flex items-center gap-3 px-2 py-2 rounded-[var(--radius-md)] transition-colors ${
@@ -379,7 +342,7 @@ export function BindToMasterModal({ formatId, onClose }: BindToMasterModalProps)
 
                                 {/* Sync flag chips */}
                                 <div className="w-[180px] flex items-center gap-1 justify-end flex-wrap">
-                                    {syncFlags.map(flag => (
+                                    {SYNC_FLAGS.map(flag => (
                                         <SyncChip
                                             key={flag.key}
                                             flag={flag}
@@ -388,14 +351,21 @@ export function BindToMasterModal({ formatId, onClose }: BindToMasterModalProps)
                                             onToggle={() => handleFlagToggle(row.masterLayerId, flag.key)}
                                         />
                                     ))}
+                                    {row.masterLayerType === "image" && row.enabled && row.targetLayerId && (
+                                        <Select
+                                            size="xs"
+                                            value={row.imageSyncMode ?? "relative_size"}
+                                            onChange={(val) => handleImageSyncModeChange(row.masterLayerId, val as ImageSyncMode)}
+                                            options={[
+                                                { value: "content", label: "Содержимое" },
+                                                { value: "relative_size", label: "Размер %" },
+                                                { value: "relative_full", label: "Полная %" },
+                                            ]}
+                                        />
+                                    )}
                                 </div>
-                                {imageRow && row.enabled && row.targetLayerId && (
-                                    <div className="basis-full pl-8 pr-1 pt-1 text-[10px] text-text-tertiary">
-                                        Рекомендуемо для пакета форматов: синхронизировать `Ассет + Кадр`, а размер рамки оставлять локальным.
-                                    </div>
-                                )}
                             </div>
-                        )})}
+                        ))}
                     </div>
 
                     {masterLayers.length === 0 && (
@@ -439,37 +409,30 @@ function autoMapByName(masterLayers: Layer[], targetLayers: Layer[]): LayerBindi
     const usedTargets = new Set<string>();
 
     for (const ml of masterLayers) {
-        // Try exact name match first
+        const baseBinding = {
+            syncContent: true,
+            syncStyle: false,
+            syncSize: false,
+            syncPosition: false,
+            imageSyncMode: (ml.type === "image" ? "relative_size" : undefined) as ImageSyncMode | undefined,
+        };
+
         const exactMatch = targetLayers.find(tl =>
             tl.name === ml.name && tl.type === ml.type && !usedTargets.has(tl.id)
         );
         if (exactMatch) {
-            bindings.push({
-                masterLayerId: ml.id,
-                targetLayerId: exactMatch.id,
-                syncContent: true,
-                syncStyle: false,
-                syncSize: false,
-                syncPosition: false,
-            });
+            bindings.push({ masterLayerId: ml.id, targetLayerId: exactMatch.id, ...baseBinding });
             usedTargets.add(exactMatch.id);
             continue;
         }
-        // Try partial name match (case-insensitive)
+
         const partialMatch = targetLayers.find(tl =>
             tl.type === ml.type &&
             !usedTargets.has(tl.id) &&
             tl.name.toLowerCase().includes(ml.name.toLowerCase())
         );
         if (partialMatch) {
-            bindings.push({
-                masterLayerId: ml.id,
-                targetLayerId: partialMatch.id,
-                syncContent: true,
-                syncStyle: false,
-                syncSize: false,
-                syncPosition: false,
-            });
+            bindings.push({ masterLayerId: ml.id, targetLayerId: partialMatch.id, ...baseBinding });
             usedTargets.add(partialMatch.id);
         }
     }
