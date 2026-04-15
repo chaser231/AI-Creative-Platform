@@ -23,6 +23,7 @@ export function InlineTextEditor({
     stageY,
     onCommit,
     onUpdate,
+    onDimensionsChange,
 }: {
     layer: TextLayer;
     stageRef: React.RefObject<Konva.Stage | null>;
@@ -33,11 +34,14 @@ export function InlineTextEditor({
     onCommit: (text: string) => void;
     /** Called on every keystroke for real-time canvas sync */
     onUpdate?: (text: string) => void;
+    /** Called when textarea dimensions change (unscaled layer coordinates) */
+    onDimensionsChange?: (dims: { width?: number; height?: number }) => void;
 }) {
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const [value, setValue] = useState(layer.text);
     const originalText = useRef(layer.text);
     const isCommitted = useRef(false);
+    const lastReportedDims = useRef<{ w: number; h: number }>({ w: 0, h: 0 });
 
     // Calculate the screen position — layer.x/y comes from store (absolute)
     const screenX = layer.x * zoom + stageX;
@@ -57,23 +61,40 @@ export function InlineTextEditor({
     const screenW = Math.max(layer.width * zoom, 20);
     const screenH = Math.max(layer.height * zoom, fontSizeScaled * layer.lineHeight);
 
-    // Auto-resize textarea height to match content
+    // Auto-resize textarea height to match content and report dimensions back
     const autoResize = useCallback(() => {
         const ta = textareaRef.current;
         if (!ta) return;
 
         if (isAutoWidth) {
-            // For auto_width: measure text width via hidden span
             ta.style.width = "0";
             ta.style.width = Math.max(ta.scrollWidth, 20) + "px";
         }
 
         if (isAutoHeight || isAutoWidth) {
-            // Auto-grow height to match content
             ta.style.height = "0";
             ta.style.height = Math.max(ta.scrollHeight, fontSizeScaled * layer.lineHeight) + "px";
         }
-    }, [isAutoWidth, isAutoHeight, fontSizeScaled, layer.lineHeight]);
+
+        // Report the CSS-measured dimensions back as unscaled layer coordinates,
+        // but only when they actually changed (avoids a redundant updateLayer call).
+        if (onDimensionsChange && zoom > 0) {
+            const dims: { width?: number; height?: number } = {};
+            const newW = isAutoWidth ? Math.max(ta.scrollWidth, 20) / zoom : 0;
+            const newH = (isAutoHeight || isAutoWidth) ? Math.max(ta.scrollHeight, fontSizeScaled * layer.lineHeight) / zoom : 0;
+
+            if (isAutoWidth && Math.abs(newW - lastReportedDims.current.w) > 0.5) {
+                dims.width = newW;
+            }
+            if ((isAutoHeight || isAutoWidth) && Math.abs(newH - lastReportedDims.current.h) > 0.5) {
+                dims.height = newH;
+            }
+            if (dims.width !== undefined || dims.height !== undefined) {
+                lastReportedDims.current = { w: newW || lastReportedDims.current.w, h: newH || lastReportedDims.current.h };
+                onDimensionsChange(dims);
+            }
+        }
+    }, [isAutoWidth, isAutoHeight, fontSizeScaled, layer.lineHeight, zoom, onDimensionsChange]);
 
     // Auto-focus, select all text, and initial resize on mount
     useEffect(() => {
