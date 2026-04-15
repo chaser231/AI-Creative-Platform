@@ -117,7 +117,7 @@ export const assetRouter = createTRPCRouter({
           url: publicUrl,
           mimeType: input.mimeType,
           sizeBytes: input.sizeBytes,
-          metadata: input.metadata,
+          metadata: input.metadata as Record<string, string> | undefined,
           workspaceId: input.workspaceId,
           uploadedById: ctx.user.id,
         },

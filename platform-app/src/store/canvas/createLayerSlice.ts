@@ -364,7 +364,7 @@ export const createLayerSlice: StateCreator<CanvasStore, [], [], LayerSlice> = (
                         snapshotLayer.id === id && snapshotLayer.type === "text"
                             ? { ...snapshotLayer, ...fontSyncUpdates }
                             : snapshotLayer
-                    );
+                    ) as Layer[];
                     return { ...resize, layerSnapshot: nextSnapshot };
                 })
                 : snapshotAwareResizes;
