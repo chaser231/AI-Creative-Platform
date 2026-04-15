@@ -114,7 +114,7 @@ function syncSnapshotFormats(
         if (cascadedSnapshot === resize.layerSnapshot) return resize;
 
         changed = true;
-        return { ...resize, layerSnapshot: cascadedSnapshot };
+        return { ...resize, layerSnapshot: applyAllAutoLayouts(cascadedSnapshot) };
     });
 
     return changed ? nextResizes : resizes;
