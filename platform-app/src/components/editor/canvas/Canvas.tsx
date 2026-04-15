@@ -169,12 +169,6 @@ function CanvasLayer({
     );
 }
 
-// ... (renderers remain similar but need no changes if they use commonProps implicitly or we skip them in this block)
-// Skipping Renderer definitions to save tokens - they are matched by context if I start higher?
-// Actually I need to be careful with range.
-// CanvasLayerProps is at line 67.
-// I will just replace the CanvasLayerProps and CanvasLayer function definition up to line 180.
-
 function ImageLayerRenderer({
     shapeRef,
     layer,
@@ -190,7 +184,10 @@ function ImageLayerRenderer({
     const fitMode = (layer as ImageLayer).objectFit || "cover";
     const naturalW = image.naturalWidth || image.width;
     const naturalH = image.naturalHeight || image.height;
-    const fit = computeImageFitProps(fitMode, naturalW, naturalH, layer.width, layer.height);
+    const fit = computeImageFitProps(fitMode, naturalW, naturalH, layer.width, layer.height, {
+        focusX: layer.focusX,
+        focusY: layer.focusY,
+    });
 
     // For contain/crop the image may be smaller than container, so we draw within a clipped Group
     if (fitMode === "contain" || fitMode === "crop") {

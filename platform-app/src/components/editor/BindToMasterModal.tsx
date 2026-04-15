@@ -7,7 +7,7 @@ import { Select } from "@/components/ui/Select";
 import { Button } from "@/components/ui/Button";
 import { useCanvasStore } from "@/store/canvasStore";
 import { useShallow } from "zustand/react/shallow";
-import type { LayerBinding, Layer } from "@/types";
+import type { LayerBinding, Layer, ImageSyncMode } from "@/types";
 import { migrateLegacyBinding } from "@/types";
 
 interface BindToMasterModalProps {
@@ -135,6 +135,7 @@ export function BindToMasterModal({ formatId, onClose }: BindToMasterModalProps)
         syncStyle: boolean;
         syncSize: boolean;
         syncPosition: boolean;
+        imageSyncMode?: ImageSyncMode;
         enabled: boolean;
     }
 
@@ -150,6 +151,9 @@ export function BindToMasterModal({ formatId, onClose }: BindToMasterModalProps)
                 syncStyle: existing?.syncStyle ?? false,
                 syncSize: existing?.syncSize ?? false,
                 syncPosition: existing?.syncPosition ?? false,
+                imageSyncMode: existing?.imageSyncMode
+                    ?? (existing?.syncImageProportional === true ? "relative_full" : undefined)
+                    ?? (ml.type === "image" ? "relative_size" : undefined),
                 enabled: !!existing?.targetLayerId,
             };
         })
@@ -193,6 +197,12 @@ export function BindToMasterModal({ formatId, onClose }: BindToMasterModalProps)
         ));
     }, []);
 
+    const handleImageSyncModeChange = useCallback((masterLayerId: string, mode: ImageSyncMode) => {
+        setBindings(prev => prev.map(b =>
+            b.masterLayerId === masterLayerId ? { ...b, imageSyncMode: mode } : b
+        ));
+    }, []);
+
     const handleApply = () => {
         const activeBindings: LayerBinding[] = bindings
             .filter(b => b.enabled && b.targetLayerId)
@@ -203,6 +213,7 @@ export function BindToMasterModal({ formatId, onClose }: BindToMasterModalProps)
                 syncStyle: b.syncStyle,
                 syncSize: b.syncSize,
                 syncPosition: b.syncPosition,
+                imageSyncMode: b.imageSyncMode,
             }));
 
         if (activeBindings.length > 0) {
@@ -340,6 +351,18 @@ export function BindToMasterModal({ formatId, onClose }: BindToMasterModalProps)
                                             onToggle={() => handleFlagToggle(row.masterLayerId, flag.key)}
                                         />
                                     ))}
+                                    {row.masterLayerType === "image" && row.enabled && row.targetLayerId && (
+                                        <Select
+                                            size="xs"
+                                            value={row.imageSyncMode ?? "relative_size"}
+                                            onChange={(val) => handleImageSyncModeChange(row.masterLayerId, val as ImageSyncMode)}
+                                            options={[
+                                                { value: "content", label: "Содержимое" },
+                                                { value: "relative_size", label: "Размер %" },
+                                                { value: "relative_full", label: "Полная %" },
+                                            ]}
+                                        />
+                                    )}
                                 </div>
                             </div>
                         ))}
@@ -386,37 +409,30 @@ function autoMapByName(masterLayers: Layer[], targetLayers: Layer[]): LayerBindi
     const usedTargets = new Set<string>();
 
     for (const ml of masterLayers) {
-        // Try exact name match first
+        const baseBinding = {
+            syncContent: true,
+            syncStyle: false,
+            syncSize: false,
+            syncPosition: false,
+            imageSyncMode: (ml.type === "image" ? "relative_size" : undefined) as ImageSyncMode | undefined,
+        };
+
         const exactMatch = targetLayers.find(tl =>
             tl.name === ml.name && tl.type === ml.type && !usedTargets.has(tl.id)
         );
         if (exactMatch) {
-            bindings.push({
-                masterLayerId: ml.id,
-                targetLayerId: exactMatch.id,
-                syncContent: true,
-                syncStyle: false,
-                syncSize: false,
-                syncPosition: false,
-            });
+            bindings.push({ masterLayerId: ml.id, targetLayerId: exactMatch.id, ...baseBinding });
             usedTargets.add(exactMatch.id);
             continue;
         }
-        // Try partial name match (case-insensitive)
+
         const partialMatch = targetLayers.find(tl =>
             tl.type === ml.type &&
             !usedTargets.has(tl.id) &&
             tl.name.toLowerCase().includes(ml.name.toLowerCase())
         );
         if (partialMatch) {
-            bindings.push({
-                masterLayerId: ml.id,
-                targetLayerId: partialMatch.id,
-                syncContent: true,
-                syncStyle: false,
-                syncSize: false,
-                syncPosition: false,
-            });
+            bindings.push({ masterLayerId: ml.id, targetLayerId: partialMatch.id, ...baseBinding });
             usedTargets.add(partialMatch.id);
         }
     }
