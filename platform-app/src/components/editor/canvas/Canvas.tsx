@@ -1662,6 +1662,18 @@ export function Canvas({ stageRef }: CanvasProps) {
         [editingLayerId, updateLayer]
     );
 
+    // Sync CSS-measured dimensions from InlineTextEditor back to the layer.
+    // This ensures auto-layout uses the actual visual height during editing,
+    // bridging the CSS/Canvas text measurement gap at line-wrap boundaries.
+    const handleTextEditDimensionsChange = useCallback(
+        (dims: { width?: number; height?: number }) => {
+            if (editingLayerId) {
+                updateLayer(editingLayerId, dims);
+            }
+        },
+        [editingLayerId, updateLayer]
+    );
+
     /* ─── File Drag & Drop ────────────────────────────── */
     const handleDragOver = useCallback((e: React.DragEvent) => {
         e.preventDefault();
@@ -2015,6 +2027,7 @@ export function Canvas({ stageRef }: CanvasProps) {
                     stageY={stageY}
                     onCommit={handleTextEditCommit}
                     onUpdate={handleTextEditUpdate}
+                    onDimensionsChange={handleTextEditDimensionsChange}
                 />
             )}
 

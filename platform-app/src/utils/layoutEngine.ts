@@ -43,23 +43,22 @@ function estimateTextSize(
         return { width: text.width, height: text.height };
     }
 
+    // Apply textTransform to match rendering (Canvas.tsx applies it on the Konva.Text node)
+    let displayText = text.text;
+    if (text.textTransform === "uppercase") displayText = displayText.toUpperCase();
+    else if (text.textTransform === "lowercase") displayText = displayText.toLowerCase();
+
     // ── Primary path: Konva.Text measurement (pixel-perfect) ──
     const Konva = getKonva();
     if (Konva) {
-        const fontStyle = text.fontWeight === "700" || text.fontWeight === "bold"
-            ? "bold"
-            : text.fontWeight === "600"
-                ? "600"
-                : "normal";
-
         const isAutoWidth = textAdjust === "auto_width";
         const measureW = isAutoWidth ? undefined : (containerWidth ?? text.width);
 
         const node = new Konva.Text({
-            text: text.text,
+            text: displayText,
             fontSize: text.fontSize,
             fontFamily: text.fontFamily,
-            fontStyle: fontStyle,
+            fontStyle: text.fontWeight || "normal",
             letterSpacing: text.letterSpacing || 0,
             lineHeight: text.lineHeight || 1.2,
             width: measureW,
@@ -69,7 +68,6 @@ function estimateTextSize(
         const w = isAutoWidth ? node.width() : (measureW ?? text.width);
         const h = node.height();
 
-        // Destroy to prevent memory leaks (not attached to stage, but good practice)
         node.destroy();
 
         return {
@@ -79,27 +77,22 @@ function estimateTextSize(
     }
 
     // ── Fallback: OffscreenCanvas / rough estimate (SSR only) ──
-    const fontStyle = text.fontWeight === "700" || text.fontWeight === "bold"
-        ? "bold"
-        : text.fontWeight === "600"
-            ? "600"
-            : "normal";
-
+    const fontStyle = text.fontWeight || "normal";
     const fontSpec = `${fontStyle} ${text.fontSize}px ${text.fontFamily}`;
     const singleLineHeight = text.fontSize * (text.lineHeight || 1.2);
 
     const canvas = getMeasureCanvas();
     if (!canvas) {
         const avgCharWidth = text.fontSize * 0.6;
-        const totalLetterSpacing = Math.max(0, text.text.length - 1) * (text.letterSpacing || 0);
+        const totalLetterSpacing = Math.max(0, displayText.length - 1) * (text.letterSpacing || 0);
 
         if (textAdjust === "auto_width") {
-            const w = text.text.length * avgCharWidth + totalLetterSpacing;
+            const w = displayText.length * avgCharWidth + totalLetterSpacing;
             return { width: Math.max(1, w), height: Math.max(1, singleLineHeight) };
         }
         const fixedW = containerWidth ?? text.width;
         const charsPerLine = Math.max(1, Math.floor(fixedW / (avgCharWidth + (text.letterSpacing || 0))));
-        const lineCount = Math.max(1, Math.ceil(text.text.length / charsPerLine));
+        const lineCount = Math.max(1, Math.ceil(displayText.length / charsPerLine));
         return { width: fixedW, height: Math.max(1, lineCount * singleLineHeight) };
     }
 
@@ -110,8 +103,8 @@ function estimateTextSize(
     ctx.font = fontSpec;
 
     if (textAdjust === "auto_width") {
-        const metrics = ctx.measureText(text.text);
-        const totalLetterSpacing = Math.max(0, text.text.length - 1) * (text.letterSpacing || 0);
+        const metrics = ctx.measureText(displayText);
+        const totalLetterSpacing = Math.max(0, displayText.length - 1) * (text.letterSpacing || 0);
         const measuredWidth = metrics.width + totalLetterSpacing;
         return {
             width: Math.max(1, measuredWidth),
@@ -120,7 +113,7 @@ function estimateTextSize(
     }
 
     const fixedW = containerWidth ?? text.width;
-    const lineCount = countWrappedLines(ctx, text.text, fixedW, text.letterSpacing || 0);
+    const lineCount = countWrappedLines(ctx, displayText, fixedW, text.letterSpacing || 0);
     return {
         width: fixedW,
         height: Math.max(1, lineCount * singleLineHeight),
