@@ -250,10 +250,10 @@ export default function EditorPage({ params }: EditorPageProps) {
 
     const project = projects.find((p) => p.id === id);
 
-    // Fetch project from backend (always, to stay in sync)
+    // Fetch project from backend (only if not in template mode)
     const projectQuery = trpc.project.getById.useQuery(
         { id },
-        { retry: false, refetchOnWindowFocus: false }
+        { enabled: !isTemplateMode, retry: false, refetchOnWindowFocus: false }
     );
     const projectName = isTemplateMode
         ? (templateQuery.data?.name || "Шаблон")
@@ -505,7 +505,7 @@ export default function EditorPage({ params }: EditorPageProps) {
             {/* Content — Wizard or Studio */}
             {editorMode === "wizard" ? (
                 <WizardFlow
-                    projectId={id}
+                    projectId={isTemplateMode ? undefined : id}
                     onSwitchToStudio={() => setEditorMode("studio")}
                     initialTemplateId={searchParams.get("templateId") || null}
                 />

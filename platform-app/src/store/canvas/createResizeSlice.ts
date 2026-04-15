@@ -234,14 +234,15 @@ export const createResizeSlice: StateCreator<CanvasStore, [], [], ResizeSlice> =
                     masterArtboard: { width: masterFormat.width, height: masterFormat.height },
                     targetArtboard: { width: targetResize.width, height: targetResize.height },
                 };
-                const cascadedLayers = applyCascade(
+                const rawCascadedLayers = applyCascade(
                     currentState.layers,
                     resolvedMasterLayers,
                     targetResize.layerBindings,
                     context,
                 );
 
-                if (cascadedLayers !== currentState.layers) {
+                if (rawCascadedLayers !== currentState.layers) {
+                    const cascadedLayers = applyAllAutoLayouts(rawCascadedLayers);
                     set({
                         layers: cascadedLayers,
                         resizes: currentState.resizes.map((resize) =>
@@ -387,7 +388,9 @@ export const createResizeSlice: StateCreator<CanvasStore, [], [], ResizeSlice> =
                 masterArtboard: { width: masterFormat.width, height: masterFormat.height },
                 targetArtboard: { width: targetResize.width, height: targetResize.height },
             };
-            const cascadedLayers = applyCascade(targetLayers, masterLayers, bindings, context);
+            const cascadedLayers = applyAllAutoLayouts(
+                applyCascade(targetLayers, masterLayers, bindings, context)
+            );
 
             const finalResizes = nextResizes.map((resize) =>
                 resize.id === formatId
