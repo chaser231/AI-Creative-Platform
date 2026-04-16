@@ -7,6 +7,7 @@
 
 import type {
     Layer,
+    LayerUpdate,
     TextLayer,
     RectangleLayer,
     ImageLayer,
@@ -30,6 +31,7 @@ import type { TemplatePack } from "@/services/templateService";
 // ─── Re-export layer types for slice convenience ────────
 export type {
     Layer,
+    LayerUpdate,
     TextLayer,
     RectangleLayer,
     ImageLayer,
@@ -177,7 +179,7 @@ export interface CanvasStore {
     addImageLayer: (src: string, width: number, height: number) => void;
     addBadgeLayer: (overrides?: Partial<BadgeLayer>) => void;
     addFrameLayer: (overrides?: Partial<FrameLayer>) => void;
-    updateLayer: (id: string, updates: Partial<Layer>) => void;
+    updateLayer: (id: string, updates: LayerUpdate) => void;
     removeLayer: (id: string) => void;
     selectLayer: (id: string | string[] | null) => void;
     toggleSelection: (id: string) => void;

@@ -29,7 +29,7 @@ export interface AgentPlan {
 export interface AgentResponse {
   plan: AgentPlan;
   textResponse: string;
-  provider: "openai" | "replicate";
+  provider: "openai" | "replicate" | "direct";
   /** All canvas instructions from all steps, aggregated for client execution */
   canvasActions: CanvasInstruction[];
 }

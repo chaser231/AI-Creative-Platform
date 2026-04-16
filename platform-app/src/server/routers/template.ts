@@ -10,6 +10,7 @@ import { TRPCError } from "@trpc/server";
 import {
   collectS3KeysFromTemplate,
   deleteS3Objects,
+  extractS3KeyFromUrl,
 } from "../utils/s3-cleanup";
 
 export const templateRouter = createTRPCRouter({
@@ -308,7 +309,6 @@ export const templateRouter = createTRPCRouter({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      // Check edit permission
       const existing = await ctx.prisma.template.findUnique({ where: { id: input.id } });
       if (!existing) throw new TRPCError({ code: "NOT_FOUND" });
 
@@ -329,6 +329,70 @@ export const templateRouter = createTRPCRouter({
         data: updateData,
       });
 
+      // Sync fixed assets: collect image URLs from layers marked isFixedAsset,
+      // then reconcile with existing template Asset records.
+      try {
+        const dataObj = input.data as any;
+        const fixedUrls = new Set<string>();
+
+        const collectFixed = (layers: any[]) => {
+          for (const l of layers) {
+            if (l.isFixedAsset && l.type === "image" && l.src) {
+              fixedUrls.add(l.src);
+            }
+          }
+        };
+
+        if (Array.isArray(dataObj?.layers)) collectFixed(dataObj.layers);
+        if (Array.isArray(dataObj?.resizes)) {
+          for (const r of dataObj.resizes) {
+            if (Array.isArray(r.layerSnapshot)) collectFixed(r.layerSnapshot);
+          }
+        }
+
+        const existingAssets = await ctx.prisma.asset.findMany({
+          where: { templateId: input.id },
+        });
+        const existingUrls = new Set(existingAssets.map((a: { url: string }) => a.url));
+
+        // Create new asset records for newly fixed images
+        const toCreate = [...fixedUrls].filter(url => !existingUrls.has(url));
+        if (toCreate.length > 0) {
+          const extToMime: Record<string, string> = {
+            png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg",
+            webp: "image/webp", svg: "image/svg+xml", gif: "image/gif",
+          };
+          await ctx.prisma.asset.createMany({
+            data: toCreate.map(url => {
+              const filename = url.split("/").pop()?.split("?")[0] || "fixed-asset";
+              const ext = filename.split(".").pop()?.toLowerCase() || "";
+              return {
+                type: "IMAGE" as const,
+                filename,
+                url,
+                mimeType: extToMime[ext] || "image/png",
+                sizeBytes: 0,
+                workspaceId: existing.workspaceId,
+                uploadedById: ctx.user.id,
+                templateId: input.id,
+              };
+            }),
+          });
+        }
+
+        // Remove asset records for images no longer marked as fixed
+        const toRemoveIds = existingAssets
+          .filter((a: { url: string }) => !fixedUrls.has(a.url))
+          .map((a: { id: string }) => a.id);
+        if (toRemoveIds.length > 0) {
+          await ctx.prisma.asset.deleteMany({
+            where: { id: { in: toRemoveIds } },
+          });
+        }
+      } catch (syncErr) {
+        console.error("[template.saveState] Fixed asset sync failed:", syncErr);
+      }
+
       return { success: true, updatedAt: template.updatedAt };
     }),
 
@@ -346,9 +410,19 @@ export const templateRouter = createTRPCRouter({
         throw new TRPCError({ code: "NOT_FOUND" });
       }
 
-      // ── S3 cleanup ──
+      // ── S3 cleanup: template data + linked Asset records ──
       try {
         const s3Keys = collectS3KeysFromTemplate(template.data, template.thumbnailUrl);
+
+        const templateAssets = await ctx.prisma.asset.findMany({
+          where: { templateId: input.id },
+          select: { url: true },
+        });
+        for (const a of templateAssets) {
+          const key = extractS3KeyFromUrl(a.url);
+          if (key) s3Keys.push(key);
+        }
+
         if (s3Keys.length > 0) {
           await deleteS3Objects(s3Keys);
         }

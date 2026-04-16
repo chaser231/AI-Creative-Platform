@@ -18,6 +18,8 @@ import {
     Image,
     Scissors,
     LayoutList,
+    Pin,
+    PinOff,
 } from "lucide-react";
 
 export interface ContextMenuItem {
@@ -168,6 +170,12 @@ export function buildLayerContextMenuItems(
         pasteLayers?: () => void;
         copyAsPng?: () => void;
         wrapInAutoLayout?: () => void;
+        toggleFixedAsset?: () => void;
+    },
+    options?: {
+        isImageLayer?: boolean;
+        isFixedAsset?: boolean;
+        isTemplateMode?: boolean;
     }
 ): ContextMenuEntry[] {
     const items: ContextMenuEntry[] = [];
@@ -272,6 +280,22 @@ export function buildLayerContextMenuItems(
                 icon: <LayoutList size={13} />,
                 shortcut: "⇧A",
                 onClick: actions.wrapInAutoLayout,
+            }
+        );
+    }
+
+    // Fixed template asset toggle (only for image layers in template editing mode)
+    if (options?.isTemplateMode && options?.isImageLayer && actions.toggleFixedAsset) {
+        items.push(
+            { separator: true },
+            {
+                label: options.isFixedAsset
+                    ? "Открепить ассет шаблона"
+                    : "Закрепить как ассет шаблона",
+                icon: options.isFixedAsset
+                    ? <PinOff size={13} />
+                    : <Pin size={13} />,
+                onClick: actions.toggleFixedAsset,
             }
         );
     }

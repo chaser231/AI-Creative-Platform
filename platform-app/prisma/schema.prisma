@@ -276,6 +276,9 @@ model Template {
   // Phase 2: shared visibility
   sharedWith  TemplateShare[]
 
+  // Fixed assets that ship with this template
+  assets      Asset[]
+
   @@index([workspaceId])
   @@index([visibility])
 }
@@ -314,8 +317,12 @@ model Asset {
   project    Project?  @relation(fields: [projectId], references: [id], onDelete: Cascade)
   projectId  String?
 
+  template   Template? @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  templateId String?
+
   @@index([workspaceId, type])
   @@index([projectId])
+  @@index([templateId])
 }
 
 enum AssetType {

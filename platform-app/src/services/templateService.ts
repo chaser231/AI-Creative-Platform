@@ -269,6 +269,7 @@ function applyContentOverridesToLayers(
     overrides: Record<string, string>
 ): void {
     for (const layer of layers) {
+        if (layer.isFixedAsset) continue;
         const sid = layer.slotId as string | undefined;
         if (!sid || !overrides[sid]) continue;
 
@@ -362,6 +363,7 @@ export async function applyTemplatePack(
             // Also apply overrides to masterComponents (for instance generation path)
             if (overrides && Object.keys(overrides).length > 0) {
                 for (const mc of hydrated.masterComponents) {
+                    if ((mc.props as any).isFixedAsset) continue;
                     const sid = mc.slotId || (mc.props as any).slotId;
                     if (!sid || !overrides[sid]) continue;
                     const value = overrides[sid];
