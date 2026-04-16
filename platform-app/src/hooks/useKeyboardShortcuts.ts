@@ -106,10 +106,14 @@ export function useKeyboardShortcuts() {
             // ─── Cut: Cmd+X ─────────────────────────────
             if (isMeta && e.key === "x") {
                 if (selectedLayerIds.length > 0) {
-                    e.preventDefault();
-                    copyLayersToClipboard(selectedLayerIds, layers).then(() => {
-                        deleteSelectedLayers();
-                    });
+                    // Only cut unlocked layers
+                    const unlocked = selectedLayerIds.filter((id) => !layers.find((l) => l.id === id)?.locked);
+                    if (unlocked.length > 0) {
+                        e.preventDefault();
+                        copyLayersToClipboard(unlocked, layers).then(() => {
+                            deleteSelectedLayers();
+                        });
+                    }
                 }
                 return;
             }
@@ -139,7 +143,9 @@ export function useKeyboardShortcuts() {
 
             // ─── Delete / Backspace ──────────────────────
             if (e.key === "Delete" || e.key === "Backspace") {
-                if (selectedLayerIds.length > 0) {
+                // Only delete unlocked layers
+                const unlocked = selectedLayerIds.filter((id) => !layers.find((l) => l.id === id)?.locked);
+                if (unlocked.length > 0) {
                     e.preventDefault();
                     deleteSelectedLayers();
                 }
@@ -165,7 +171,7 @@ export function useKeyboardShortcuts() {
                     e.preventDefault();
                     selectedLayerIds.forEach((id) => {
                         const layer = layers.find((l) => l.id === id);
-                        if (!layer) return;
+                        if (!layer || layer.locked) return;
                         const parentFrame = layers.find(l => l.type === "frame" && (l as FrameLayer).childIds.includes(id)) as FrameLayer | undefined;
                         if (parentFrame && parentFrame.layoutMode && parentFrame.layoutMode !== "none" && !layer.isAbsolutePositioned) {
                             if (parentFrame.layoutMode === "vertical") reorderLayer(id, "down");
@@ -179,7 +185,7 @@ export function useKeyboardShortcuts() {
                     e.preventDefault();
                     selectedLayerIds.forEach((id) => {
                         const layer = layers.find((l) => l.id === id);
-                        if (!layer) return;
+                        if (!layer || layer.locked) return;
                         const parentFrame = layers.find(l => l.type === "frame" && (l as FrameLayer).childIds.includes(id)) as FrameLayer | undefined;
                         if (parentFrame && parentFrame.layoutMode && parentFrame.layoutMode !== "none" && !layer.isAbsolutePositioned) {
                             if (parentFrame.layoutMode === "vertical") reorderLayer(id, "up");
@@ -193,7 +199,7 @@ export function useKeyboardShortcuts() {
                     e.preventDefault();
                     selectedLayerIds.forEach((id) => {
                         const layer = layers.find((l) => l.id === id);
-                        if (!layer) return;
+                        if (!layer || layer.locked) return;
                         const parentFrame = layers.find(l => l.type === "frame" && (l as FrameLayer).childIds.includes(id)) as FrameLayer | undefined;
                         if (parentFrame && parentFrame.layoutMode && parentFrame.layoutMode !== "none" && !layer.isAbsolutePositioned) {
                             if (parentFrame.layoutMode === "horizontal") reorderLayer(id, "down");
@@ -207,7 +213,7 @@ export function useKeyboardShortcuts() {
                     e.preventDefault();
                     selectedLayerIds.forEach((id) => {
                         const layer = layers.find((l) => l.id === id);
-                        if (!layer) return;
+                        if (!layer || layer.locked) return;
                         const parentFrame = layers.find(l => l.type === "frame" && (l as FrameLayer).childIds.includes(id)) as FrameLayer | undefined;
                         if (parentFrame && parentFrame.layoutMode && parentFrame.layoutMode !== "none" && !layer.isAbsolutePositioned) {
                             if (parentFrame.layoutMode === "horizontal") reorderLayer(id, "up");
