@@ -7,11 +7,70 @@
 import { z } from "zod";
 import { createTRPCRouter, protectedProcedure } from "../trpc";
 import { TRPCError } from "@trpc/server";
+import type { PrismaClient } from "@prisma/client";
 import {
   collectS3KeysFromTemplate,
   deleteS3Objects,
   extractS3KeyFromUrl,
 } from "../utils/s3-cleanup";
+
+/**
+ * Extract only resize metadata (id, name, width, height) from template data
+ * using a raw SQL query with json_array_elements. This avoids fetching
+ * the full multi-MB data blob just to read the resizes array.
+ *
+ * Uses LEFT JOIN LATERAL so templates whose `data->'resizes'` is null,
+ * missing, or not a JSON array are still included (with zero resizes)
+ * instead of crashing the entire query.
+ */
+async function getResizesMetaByIds(
+  prisma: PrismaClient,
+  ids: string[]
+): Promise<Map<string, Array<{ id: string; name: string; width: number; height: number }>>> {
+  if (ids.length === 0) return new Map();
+
+  try {
+    const rows = await prisma.$queryRawUnsafe<
+      Array<{ template_id: string; resize_id: string | null; name: string | null; width: number | null; height: number | null }>
+    >(
+      `SELECT t.id AS template_id,
+              r->>'id' AS resize_id,
+              r->>'name' AS name,
+              (r->>'width')::int AS width,
+              (r->>'height')::int AS height
+       FROM "Template" t
+       LEFT JOIN LATERAL json_array_elements(
+         CASE
+           WHEN jsonb_typeof(t.data::jsonb->'resizes') = 'array'
+           THEN (t.data::json->'resizes')
+           ELSE '[]'::json
+         END
+       ) AS r ON true
+       WHERE t.id = ANY($1)`,
+      ids
+    );
+
+    const map = new Map<string, Array<{ id: string; name: string; width: number; height: number }>>();
+    for (const row of rows) {
+      if (!row.resize_id) continue;
+      let arr = map.get(row.template_id);
+      if (!arr) {
+        arr = [];
+        map.set(row.template_id, arr);
+      }
+      arr.push({
+        id: row.resize_id,
+        name: row.name ?? "Untitled",
+        width: row.width ?? 0,
+        height: row.height ?? 0,
+      });
+    }
+    return map;
+  } catch (err) {
+    console.error("[getResizesMetaByIds] Raw query failed, falling back to empty:", (err as Error)?.message);
+    return new Map();
+  }
+}
 
 export const templateRouter = createTRPCRouter({
   /** Recently used templates for the current user's workspace */
@@ -44,20 +103,19 @@ export const templateRouter = createTRPCRouter({
           thumbnailUrl: true,
           popularity: true,
           updatedAt: true,
-          data: true,
         },
         orderBy: [{ updatedAt: "desc" }],
         take: input.limit,
       });
 
-      return templates.map((t: any) => {
-        const { data, ...rest } = t;
-        const dataObj = data as any;
-        return {
-          ...rest,
-          resizes: dataObj?.resizes || [],
-        };
-      });
+      // Extract resizes from data via lightweight raw query (avoids fetching multi-MB data blobs)
+      const ids = templates.map(t => t.id);
+      const resizesMap = await getResizesMetaByIds(ctx.prisma, ids);
+
+      return templates.map(t => ({
+        ...t,
+        resizes: resizesMap.get(t.id) ?? [],
+      }));
     }),
 
   /** List templates with optional filtering */
@@ -134,20 +192,18 @@ export const templateRouter = createTRPCRouter({
           updatedAt: true,
           author: true,
           workspaceId: true,
-          data: true, // Fetch data to extract resizes
         },
         orderBy: [{ isOfficial: "desc" }, { popularity: "desc" }],
       });
 
-      // Extract resizes from data JSON, then remove heavy masterComponents
-      return templates.map((t: any) => {
-        const { data, ...rest } = t;
-        const dataObj = data as any;
-        return {
-          ...rest,
-          resizes: dataObj?.resizes || [],
-        };
-      });
+      // Extract resizes metadata via lightweight raw query (avoids fetching multi-MB data blobs)
+      const ids = templates.map(t => t.id);
+      const resizesMap = await getResizesMetaByIds(ctx.prisma, ids);
+
+      return templates.map(t => ({
+        ...t,
+        resizes: resizesMap.get(t.id) ?? [],
+      }));
     }),
 
   /** Get full template with data */

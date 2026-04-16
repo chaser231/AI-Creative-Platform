@@ -10,7 +10,7 @@ import { RemoteTextProvider, RemoteImageProvider } from "@/services/aiService";
 import { getModelById, getMaxRefs, getAspectRatios, getResolutions, resolveRefTags } from "@/lib/ai-models";
 import { getImagePresetPromptSuffix, getTextPresetInstruction } from "@/lib/stylePresets";
 import { useStylePresets } from "@/hooks/useStylePresets";
-import { persistImageToS3 } from "@/utils/imageUpload";
+import { persistImageToS3, uploadForAI, uploadManyForAI } from "@/utils/imageUpload";
 import { compositeExpandResult } from "@/utils/imageComposite";
 import type { ImageLayer } from "@/types";
 
@@ -386,16 +386,21 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                 }
             }
 
+            // Pre-upload images to S3 to avoid sending multi-MB base64 through the server
+            const [imageUrl, refUrls] = await Promise.all([
+                uploadForAI(finalImageBase64, projectId),
+                referenceImages.length > 0 ? uploadManyForAI(referenceImages, projectId) : Promise.resolve(undefined),
+            ]);
+
             const response = await fetch("/api/ai/image-edit", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     action,
                     prompt: resolvedPrompt,
-                    imageBase64: finalImageBase64,
+                    imageBase64: imageUrl,
                     model: action === "remove-bg" ? "rembg" : (action === "outpaint" ? "bria-expand" : selectedModel),
-                    referenceImages: referenceImages.length > 0 ? referenceImages : undefined,
-                    // For outpaint: send pixel-space expandPadding + real image pixel size
+                    referenceImages: refUrls,
                     expandPadding: action === "outpaint" ? currentExpandPadding : undefined,
                     originalSize: action === "outpaint" ? outpaintOriginalSize : undefined,
                     projectId,
@@ -413,12 +418,13 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                     console.log(`[Outpaint/Preserve] Starting upscale of expand result...`);
                     try {
                         const upscaleScale = Math.ceil(1 / outpaintDownscaleRatio);
+                        const upscaleImageUrl = await uploadForAI(data.content, projectId);
                         const upscaleRes = await fetch("/api/ai/image-edit", {
                             method: "POST",
                             headers: { "Content-Type": "application/json" },
                             body: JSON.stringify({
                                 action: "upscale",
-                                imageBase64: data.content,
+                                imageBase64: upscaleImageUrl,
                                 model: "esrgan",
                                 upscaleScale: Math.min(upscaleScale, 4),
                                 projectId,
@@ -449,12 +455,13 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                     console.log(`[Edit/Upscale] Image was downscaled (ratio=${editDownscaleRatio.toFixed(3)}), restoring resolution...`);
                     try {
                         const upscaleScale = Math.min(Math.ceil(1 / editDownscaleRatio), 4);
+                        const editUpscaleUrl = await uploadForAI(finalContent, projectId);
                         const upscaleRes = await fetch("/api/ai/image-edit", {
                             method: "POST",
                             headers: { "Content-Type": "application/json" },
                             body: JSON.stringify({
                                 action: "upscale",
-                                imageBase64: finalContent,
+                                imageBase64: editUpscaleUrl,
                                 model: "esrgan",
                                 upscaleScale,
                                 projectId,

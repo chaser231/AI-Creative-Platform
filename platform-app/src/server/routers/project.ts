@@ -74,13 +74,22 @@ export const projectRouter = createTRPCRouter({
       return projects;
     }),
 
-  /** Get project by ID */
+  /** Get project by ID (metadata only — canvasState is loaded separately via loadState) */
   getById: protectedProcedure
     .input(z.object({ id: z.string() }))
     .query(async ({ ctx, input }) => {
       const project = await ctx.prisma.project.findUnique({
         where: { id: input.id },
-        include: {
+        select: {
+          id: true,
+          name: true,
+          status: true,
+          goal: true,
+          thumbnail: true,
+          createdAt: true,
+          updatedAt: true,
+          workspaceId: true,
+          createdById: true,
           createdBy: {
             select: { id: true, name: true, avatarUrl: true },
           },
@@ -209,11 +218,19 @@ export const projectRouter = createTRPCRouter({
       })
     )
     .mutation(async ({ ctx, input }) => {
+      // Drop inline base64 thumbnails that would bloat the DB row and may
+      // have already exceeded the 3.5 MB Serverless Container request limit.
+      let thumbnail = input.thumbnail;
+      if (thumbnail && thumbnail.startsWith("data:") && thumbnail.length > 200_000) {
+        console.warn(`[saveState] project ${input.id}: dropping oversized base64 thumbnail (${(thumbnail.length / 1024).toFixed(0)} KB)`);
+        thumbnail = null;
+      }
+
       const project = await ctx.prisma.project.update({
         where: { id: input.id },
         data: {
           canvasState: input.canvasState,
-          ...(input.thumbnail !== undefined && { thumbnail: input.thumbnail }),
+          ...(thumbnail !== undefined && { thumbnail }),
           status: "IN_PROGRESS",
         },
       });
@@ -232,6 +249,34 @@ export const projectRouter = createTRPCRouter({
 
       if (!project) {
         throw new TRPCError({ code: "NOT_FOUND" });
+      }
+
+      // Yandex Cloud Serverless Containers has a 3.5 MB response limit.
+      // Strip inline base64 image sources that inflated the payload
+      // (they should have been migrated to S3; this is a safety net).
+      const MAX_RESPONSE_BYTES = 3_200_000; // leave 300 KB headroom for tRPC envelope
+      const state = project.canvasState as Record<string, unknown> | null;
+      if (state) {
+        const raw = JSON.stringify(state);
+        if (raw.length > MAX_RESPONSE_BYTES) {
+          console.warn(`[loadState] project ${input.id}: canvasState is ${(raw.length / 1024 / 1024).toFixed(2)} MB — stripping inline base64`);
+          const stripBase64 = (layers: any[]) =>
+            layers.map((l: any) => {
+              if (l.type === "image" && typeof l.src === "string" && l.src.startsWith("data:")) {
+                return { ...l, src: "" };
+              }
+              return l;
+            });
+          if (Array.isArray(state.layers)) {
+            state.layers = stripBase64(state.layers as any[]);
+          }
+          if (Array.isArray(state.resizes)) {
+            state.resizes = (state.resizes as any[]).map((r: any) => ({
+              ...r,
+              layerSnapshot: Array.isArray(r.layerSnapshot) ? stripBase64(r.layerSnapshot) : r.layerSnapshot,
+            }));
+          }
+        }
       }
 
       return project.canvasState;

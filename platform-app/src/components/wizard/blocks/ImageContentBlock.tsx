@@ -17,6 +17,7 @@ import { RefAutocompleteTextarea, type RefAutocompleteTextareaHandle } from "@/c
 import { getModelById, getMaxRefs, getAspectRatios, getResolutions, resolveRefTags } from "@/lib/ai-models";
 import { getImagePresetPromptSuffix } from "@/lib/stylePresets";
 import { useStylePresets } from "@/hooks/useStylePresets";
+import { uploadManyForAI } from "@/utils/imageUpload";
 import type { ImageComponentProps, BusinessUnit } from "@/types";
 import { ImageEditorModal } from "./ImageEditorModal";
 
@@ -111,6 +112,10 @@ export function ImageContentBlock({ id, name, props, value, onChange, businessUn
             const styleContext = styleSuffix ? `. Style: ${styleSuffix}` : "";
             const finalPrompt = `${basePrompt}${styleContext}`;
 
+            const refUrls = additionalPhotos.length > 0
+                ? await uploadManyForAI(additionalPhotos, projectId || "ai-tmp")
+                : undefined;
+
             const response = await fetch("/api/ai/generate", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
@@ -122,7 +127,7 @@ export function ImageContentBlock({ id, name, props, value, onChange, businessUn
                     count: genCount,
                     seed: seed ? Number(seed) : undefined,
                     scale: scale || undefined,
-                    referenceImages: additionalPhotos.length > 0 ? additionalPhotos : undefined,
+                    referenceImages: refUrls,
                     projectId,
                 }),
             });

@@ -225,12 +225,25 @@ export function useCanvasAutoSave(
     if (serialized === lastSavedRef.current) return;
     lastSavedRef.current = serialized;
 
-    // Capture thumbnail every 3rd save to reduce overhead
+    // Capture thumbnail every 3rd save, upload to S3 to avoid large base64 in tRPC payload
     saveCountRef.current += 1;
-    const thumbnail = (saveCountRef.current % 3 === 1) ? captureThumbnail() : undefined;
+    let thumbnailUrl: string | undefined;
+    if (saveCountRef.current % 3 === 1) {
+      const thumbBase64 = captureThumbnail();
+      if (thumbBase64) {
+        try {
+          const { uploadForAI } = await import("@/utils/imageUpload");
+          const url = await uploadForAI(thumbBase64, projectId);
+          if (url && url !== thumbBase64) thumbnailUrl = url;
+          else thumbnailUrl = thumbBase64;
+        } catch {
+          thumbnailUrl = thumbBase64;
+        }
+      }
+    }
 
     saveStateMutation.mutate(
-      { id: projectId, canvasState, thumbnail: thumbnail ?? undefined },
+      { id: projectId, canvasState, thumbnail: thumbnailUrl },
       {
       onError: (err: { message: string }) => {
           console.error("Auto-save failed:", err.message);

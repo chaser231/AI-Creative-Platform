@@ -9,6 +9,7 @@
 
 
 import type { BusinessUnit } from "@/types";
+import { uploadForAI, uploadManyForAI } from "@/utils/imageUpload";
 
 // ─── Types ──────────────────────────────────────────────
 
@@ -43,15 +44,25 @@ export interface AIPipeline {
 // ─── Remote Provider ─────────────────────────────────────
 
 async function callAIApi(prompt: string, type: string, model: string, params: Record<string, unknown> = {}): Promise<AIResult> {
-    // 5-minute timeout to match server-side provider polling timeouts
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 5 * 60 * 1000);
 
     try {
+        // Pre-upload images to S3 so only URLs go through the server
+        const projectId = (params.projectId as string) || "ai-tmp";
+        const uploadedParams = { ...params };
+
+        if (uploadedParams.referenceImages && Array.isArray(uploadedParams.referenceImages) && uploadedParams.referenceImages.length > 0) {
+            uploadedParams.referenceImages = await uploadManyForAI(uploadedParams.referenceImages as string[], projectId);
+        }
+        if (uploadedParams.imageBase64 && typeof uploadedParams.imageBase64 === "string") {
+            uploadedParams.imageBase64 = await uploadForAI(uploadedParams.imageBase64 as string, projectId);
+        }
+
         const response = await fetch("/api/ai/generate", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ prompt, type, model, ...params }),
+            body: JSON.stringify({ prompt, type, model, ...uploadedParams }),
             signal: controller.signal,
         });
 

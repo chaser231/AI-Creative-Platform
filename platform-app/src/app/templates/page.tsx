@@ -224,8 +224,9 @@ export default function TemplateCatalogPage() {
 
     const hasFilters = selectedBUs.length > 0 || selectedCategories.length > 0 || selectedContentType !== null || search !== "";
 
-    // Use backend templates only — strictly filtering for packs 
-    const allPacks = backendTemplates.filter(p => p.resizes && p.resizes.length > 0);
+    // Show all backend templates; those without explicit resizes still
+    // work — the editor derives canvas dimensions from the data on load.
+    const allPacks = backendTemplates;
 
     // Search results
     const results = useMemo(() => {
