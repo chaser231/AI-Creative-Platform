@@ -1,0 +1,94 @@
+name: Deploy to Yandex Cloud
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "platform-app/**"
+      - ".github/workflows/deploy.yml"
+
+  workflow_dispatch:
+
+env:
+  REGISTRY_ID: crp4vrv0ddefai181riu
+  IMAGE_NAME: acp-platform
+  CONTAINER_ID: bbauroacejldutvjmm3g
+  SA_ID: aje84cq0tggi5jep2nfs
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Yandex Cloud CLI
+        run: |
+          curl -sSL https://storage.yandexcloud.net/yandexcloud-yc/install.sh | bash -s -- -i /opt/yc -n
+          echo "/opt/yc/bin" >> $GITHUB_PATH
+
+      - name: Authenticate in Yandex Cloud
+        run: |
+          echo '${{ secrets.YC_SA_KEY }}' > /tmp/sa-key.json
+          yc config set service-account-key /tmp/sa-key.json
+          yc config set folder-id ${{ secrets.YC_FOLDER_ID }}
+          rm /tmp/sa-key.json
+
+      - name: Login to Container Registry
+        run: |
+          yc container registry configure-docker
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./platform-app
+          push: true
+          tags: cr.yandex/${{ env.REGISTRY_ID }}/${{ env.IMAGE_NAME }}:${{ github.sha }},cr.yandex/${{ env.REGISTRY_ID }}/${{ env.IMAGE_NAME }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64
+
+      - name: Deploy new container revision
+        run: |
+          yc serverless container revision deploy \
+            --container-id ${{ env.CONTAINER_ID }} \
+            --image cr.yandex/${{ env.REGISTRY_ID }}/${{ env.IMAGE_NAME }}:${{ github.sha }} \
+            --memory 1GB \
+            --cores 1 \
+            --core-fraction 100 \
+            --execution-timeout 300s \
+            --concurrency 4 \
+            --service-account-id ${{ env.SA_ID }} \
+            --environment "NODE_ENV=production" \
+            --environment "HOSTNAME=0.0.0.0" \
+            --environment "NEXTAUTH_URL=${{ secrets.NEXTAUTH_URL }}" \
+            --environment "NEXTAUTH_SECRET=${{ secrets.NEXTAUTH_SECRET }}" \
+            --environment "DATABASE_URL=${{ secrets.DATABASE_URL }}" \
+            --environment "S3_ACCESS_KEY_ID=${{ secrets.S3_ACCESS_KEY_ID }}" \
+            --environment "S3_SECRET_ACCESS_KEY=${{ secrets.S3_SECRET_ACCESS_KEY }}" \
+            --environment "S3_BUCKET=${{ secrets.S3_BUCKET }}" \
+            --environment "S3_ENDPOINT=${{ secrets.S3_ENDPOINT }}" \
+            --environment "YANDEX_CLIENT_ID=${{ secrets.YANDEX_CLIENT_ID }}" \
+            --environment "YANDEX_CLIENT_SECRET=${{ secrets.YANDEX_CLIENT_SECRET }}" \
+            --environment "FAL_KEY=${{ secrets.FAL_KEY }}" \
+            --environment "REPLICATE_API_TOKEN=${{ secrets.REPLICATE_API_TOKEN }}"
+
+      - name: Verify deployment
+        run: |
+          CONTAINER_URL=$(yc serverless container get --id ${{ env.CONTAINER_ID }} --format json | python3 -c "import sys,json; print(json.load(sys.stdin).get('url',''))")
+          echo "Container URL: $CONTAINER_URL"
+          for i in 1 2 3 4 5; do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$CONTAINER_URL/auth/signin" || true)
+            if [ "$STATUS" = "200" ]; then
+              echo "Deployment verified: HTTP $STATUS"
+              exit 0
+            fi
+            echo "Attempt $i: HTTP $STATUS, waiting 10s..."
+            sleep 10
+          done
+          echo "Warning: could not verify deployment (may need cold start time)"

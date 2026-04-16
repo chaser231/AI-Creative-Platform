@@ -27,6 +27,7 @@ import { Modal } from "@/components/ui/Modal";
 import { Select } from "@/components/ui/Select";
 import { Input } from "@/components/ui/Input";
 import { cn } from "@/lib/cn";
+import { trpc } from "@/lib/trpc";
 import { useTemplateListSync } from "@/hooks/useTemplateSync";
 import { useCreateProjectSync } from "@/hooks/useProjectSync";
 import { useProjectStore } from "@/store/projectStore";
@@ -186,6 +187,7 @@ export default function TemplateCatalogPage() {
     const router = useRouter();
     const { backendTemplates, isLoading: isLoadingBackend, workspaceId } = useTemplateListSync();
     const { createProject: createOnBackend } = useCreateProjectSync();
+    const copyTemplateAssets = trpc.asset.copyTemplateAssetsToProject.useMutation();
     const addProject = useProjectStore((s) => s.addProject);
     const [search, setSearch] = useState("");
     const [selectedBUs, setSelectedBUs] = useState<BusinessUnit[]>([]);
@@ -222,8 +224,9 @@ export default function TemplateCatalogPage() {
 
     const hasFilters = selectedBUs.length > 0 || selectedCategories.length > 0 || selectedContentType !== null || search !== "";
 
-    // Use backend templates only — strictly filtering for packs 
-    const allPacks = backendTemplates.filter(p => p.resizes && p.resizes.length > 0);
+    // Show all backend templates; those without explicit resizes still
+    // work — the editor derives canvas dimensions from the data on load.
+    const allPacks = backendTemplates;
 
     // Search results
     const results = useMemo(() => {
@@ -316,6 +319,16 @@ export default function TemplateCatalogPage() {
                             });
                         } catch {
                             console.warn("Failed to pre-save canvas state for template");
+                        }
+
+                        // Copy fixed template assets to the new project
+                        try {
+                            await copyTemplateAssets.mutateAsync({
+                                templateId: pack.id,
+                                projectId: backendProject.id,
+                            });
+                        } catch {
+                            console.warn("Failed to copy template assets to project");
                         }
 
                         router.push(`/editor/${backendProject.id}?mode=${selectedMode}&templateId=${pack.id}`);

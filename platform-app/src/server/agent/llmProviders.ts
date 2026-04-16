@@ -9,12 +9,36 @@ export function getActiveProvider(): "openai" | "replicate" {
   throw new Error("Ни OPENAI_API_KEY, ни REPLICATE_API_TOKEN не настроены.");
 }
 
+// ─── Prompt Size Safety ──────────────────────────────────
+
+const MAX_PROMPT_CHARS = 60_000;
+
+function truncateHistory(messages: ChatMessage[], maxChars: number): ChatMessage[] {
+  const system = messages.filter(m => m.role === "system");
+  const rest = messages.filter(m => m.role !== "system");
+
+  let budget = maxChars;
+  for (const s of system) budget -= s.content.length;
+
+  const kept: ChatMessage[] = [];
+  for (let i = rest.length - 1; i >= 0 && budget > 0; i--) {
+    if (rest[i].content.length <= budget) {
+      kept.unshift(rest[i]);
+      budget -= rest[i].content.length;
+    } else {
+      kept.unshift({ ...rest[i], content: rest[i].content.slice(0, budget) });
+      budget = 0;
+    }
+  }
+  return [...system, ...kept];
+}
+
 // ─── Unified LLM call ────────────────────────────────────
 
 export async function callLLM(messages: ChatMessage[]): Promise<string> {
   const provider = getActiveProvider();
   if (provider === "openai") return callOpenAI(messages);
-  return callReplicateLlama(messages);
+  return callReplicateText(messages);
 }
 
 // ─── OpenAI ──────────────────────────────────────────────
@@ -86,21 +110,25 @@ export async function callOpenAIWithTools(messages: ChatMessage[]): Promise<{
   };
 }
 
-// ─── Replicate Llama ─────────────────────────────────────
+// ─── Replicate Text LLM ──────────────────────────────────
 
-const REPLICATE_LLAMA_MODEL = "meta/meta-llama-3-70b-instruct";
+const REPLICATE_TEXT_MODEL = "deepseek-ai/deepseek-v3";
 
-async function callReplicateLlama(messages: ChatMessage[]): Promise<string> {
+async function callReplicateText(messages: ChatMessage[]): Promise<string> {
   const token = process.env.REPLICATE_API_TOKEN!;
+  const safe = truncateHistory(messages, MAX_PROMPT_CHARS);
 
-  const systemMsg = messages.find((m) => m.role === "system")?.content || "";
-  const convMessages = messages.filter((m) => m.role !== "system");
+  const systemMsg = safe.find((m) => m.role === "system")?.content || "";
+  const convMessages = safe.filter((m) => m.role !== "system");
   const prompt = convMessages
     .map((m) => (m.role === "user" ? `User: ${m.content}` : `Assistant: ${m.content}`))
     .join("\n\n") + "\n\nAssistant:";
 
+  const totalLen = systemMsg.length + prompt.length;
+  console.log(`[LLM] Calling ${REPLICATE_TEXT_MODEL} — system: ${systemMsg.length}, prompt: ${prompt.length}, total: ${totalLen} chars`);
+
   const createRes = await fetch(
-    `https://api.replicate.com/v1/models/${REPLICATE_LLAMA_MODEL}/predictions`,
+    `https://api.replicate.com/v1/models/${REPLICATE_TEXT_MODEL}/predictions`,
     {
       method: "POST",
       headers: {
@@ -121,7 +149,7 @@ async function callReplicateLlama(messages: ChatMessage[]): Promise<string> {
 
   if (!createRes.ok) {
     const err = await createRes.text();
-    throw new Error(`Replicate API error: ${createRes.status} — ${err}`);
+    throw new Error(`Replicate API error (${REPLICATE_TEXT_MODEL}): ${createRes.status} — ${err}`);
   }
 
   const prediction = await createRes.json();
@@ -136,7 +164,7 @@ async function callReplicateLlama(messages: ChatMessage[]): Promise<string> {
   }
 
   if (result.status === "failed") {
-    throw new Error(`Replicate prediction failed: ${result.error || "unknown"}`);
+    throw new Error(`Replicate prediction failed (${REPLICATE_TEXT_MODEL}): ${result.error || "unknown"}`);
   }
 
   const output = Array.isArray(result.output) ? result.output.join("") : String(result.output || "");
@@ -186,7 +214,7 @@ ${actionsList}
     return m;
   });
 
-  const rawResponse = await callReplicateLlama(augmentedMessages);
+  const rawResponse = await callReplicateText(augmentedMessages);
 
   try {
     let jsonStr = rawResponse.trim();

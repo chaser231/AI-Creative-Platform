@@ -12,12 +12,14 @@ import {
     ChevronRight,
     ChevronDown,
     GripVertical,
+    Pin,
 } from "lucide-react";
 import { useCanvasStore } from "@/store/canvasStore";
 import { useShallow } from "zustand/react/shallow";
 import type { FrameLayer } from "@/types";
 import { cn } from "@/lib/cn";
 import { useState, useRef } from "react";
+import { useSearchParams } from "next/navigation";
 import { ContextMenu, buildLayerContextMenuItems, buildMultiSelectionContextMenuItems } from "./ContextMenu";
 
 const layerIcons: Record<string, React.ReactNode> = {
@@ -43,9 +45,11 @@ function findParentFrame(
 function LayerRow({
     layer,
     depth = 0,
+    isTemplateMode = false,
 }: {
     layer: ReturnType<typeof useCanvasStore.getState>["layers"][number];
     depth?: number;
+    isTemplateMode?: boolean;
 }) {
     const {
         layers,
@@ -340,6 +344,13 @@ function LayerRow({
                     </span>
                 )}
 
+                {/* Fixed asset pin indicator (template mode only) */}
+                {layer.isFixedAsset && (
+                    <span className="shrink-0 text-amber-500" title="Фиксированный ассет шаблона">
+                        <Pin size={11} />
+                    </span>
+                )}
+
                 {/* Actions */}
                 <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
                     <button
@@ -373,7 +384,7 @@ function LayerRow({
 
             {/* Nested children for frames */}
             {isFrame && expanded && childLayers.map((child) => (
-                <LayerRow key={child.id} layer={child} depth={depth + 1} />
+                <LayerRow key={child.id} layer={child} depth={depth + 1} isTemplateMode={isTemplateMode} />
             ))}
 
             {/* Context menu for this layer */}
@@ -415,6 +426,14 @@ function LayerRow({
                                 setRenameName(layer.name);
                                 setIsRenaming(true);
                             },
+                            toggleFixedAsset: isTemplateMode && layer.type === "image"
+                                ? () => updateLayer(layer.id, { isFixedAsset: !layer.isFixedAsset })
+                                : undefined,
+                        },
+                        {
+                            isImageLayer: layer.type === "image",
+                            isFixedAsset: !!layer.isFixedAsset,
+                            isTemplateMode,
                         }
                     )}
                 />
@@ -427,6 +446,8 @@ export function LayersPanel() {
     const { layers, selectedLayerIds, removeLayerFromFrame } = useCanvasStore(useShallow((s) => ({
         layers: s.layers, selectedLayerIds: s.selectedLayerIds, removeLayerFromFrame: s.removeLayerFromFrame,
     })));
+    const searchParams = useSearchParams();
+    const isTemplateMode = searchParams.get("source") === "template";
     const [isDragOverRoot, setIsDragOverRoot] = useState(false);
 
     // Build set of all child IDs to exclude from top-level
@@ -502,7 +523,7 @@ export function LayersPanel() {
                     </div>
                 ) : (
                     topLevelLayers.map((layer) => (
-                        <LayerRow key={layer.id} layer={layer} />
+                        <LayerRow key={layer.id} layer={layer} isTemplateMode={isTemplateMode} />
                     ))
                 )}
             </div>

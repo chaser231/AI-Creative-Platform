@@ -3,9 +3,9 @@ import { getProvider, getModelById, generateWithFallback } from "@/lib/ai-provid
 import { getModelById as getModelEntryById } from "@/lib/ai-models";
 import { auth } from "@/server/auth";
 import { prisma } from "@/server/db";
+import { checkRateLimit } from "@/lib/rateLimit";
 import { randomUUID } from "crypto";
 
-// Allow up to 5 minutes for AI generation (retry + fallback + model fallback)
 export const maxDuration = 300;
 
 export async function POST(req: NextRequest) {
@@ -14,6 +14,15 @@ export async function POST(req: NextRequest) {
         const session = await auth();
         if (!session?.user) {
             return NextResponse.json({ error: "Unauthorized", requestId }, { status: 401 });
+        }
+
+        const userId = session.user.id ?? "anon";
+        const rl = checkRateLimit(`ai-edit:${userId}`, { limit: 20, windowSeconds: 60 });
+        if (!rl.allowed) {
+            return NextResponse.json(
+                { error: "Слишком много запросов. Подождите минуту.", requestId, retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000) },
+                { status: 429 },
+            );
         }
 
         const body = await req.json();

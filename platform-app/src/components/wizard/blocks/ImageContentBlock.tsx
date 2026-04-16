@@ -17,6 +17,7 @@ import { RefAutocompleteTextarea, type RefAutocompleteTextareaHandle } from "@/c
 import { getModelById, getMaxRefs, getAspectRatios, getResolutions, resolveRefTags } from "@/lib/ai-models";
 import { getImagePresetPromptSuffix } from "@/lib/stylePresets";
 import { useStylePresets } from "@/hooks/useStylePresets";
+import { uploadManyForAI } from "@/utils/imageUpload";
 import type { ImageComponentProps, BusinessUnit } from "@/types";
 import { ImageEditorModal } from "./ImageEditorModal";
 
@@ -111,6 +112,10 @@ export function ImageContentBlock({ id, name, props, value, onChange, businessUn
             const styleContext = styleSuffix ? `. Style: ${styleSuffix}` : "";
             const finalPrompt = `${basePrompt}${styleContext}`;
 
+            const refUrls = additionalPhotos.length > 0
+                ? await uploadManyForAI(additionalPhotos, projectId || "ai-tmp")
+                : undefined;
+
             const response = await fetch("/api/ai/generate", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
@@ -122,7 +127,7 @@ export function ImageContentBlock({ id, name, props, value, onChange, businessUn
                     count: genCount,
                     seed: seed ? Number(seed) : undefined,
                     scale: scale || undefined,
-                    referenceImages: additionalPhotos.length > 0 ? additionalPhotos : undefined,
+                    referenceImages: refUrls,
                     projectId,
                 }),
             });
@@ -222,7 +227,7 @@ export function ImageContentBlock({ id, name, props, value, onChange, businessUn
 
                         <button
                             onClick={() => setShowGenPanel(!showGenPanel)}
-                            className={`w-full flex items-center gap-2 justify-start text-sm h-9 px-3 rounded-[var(--radius-md)] border transition-all cursor-pointer ${showGenPanel ? "bg-accent-lime text-text-inverse border-accent-lime-hover font-medium" : "bg-bg-secondary text-text-primary border-border-primary hover:bg-bg-tertiary"}`}
+                            className={`w-full flex items-center gap-2 justify-start text-sm h-9 px-3 rounded-[var(--radius-md)] border transition-all cursor-pointer ${showGenPanel ? "bg-accent-lime text-accent-lime-text border-accent-lime-hover font-medium" : "bg-bg-secondary text-text-primary border-border-primary hover:bg-bg-tertiary"}`}
                         >
                             <Wand2 size={16} /> Сгенерировать с нуля
                         </button>
@@ -344,7 +349,7 @@ export function ImageContentBlock({ id, name, props, value, onChange, businessUn
                         <button
                             onClick={handleGenerate}
                             disabled={isGenerating}
-                            className="w-full h-10 flex items-center justify-center gap-2 rounded-[var(--radius-md)] bg-accent-lime text-text-inverse font-semibold text-sm hover:bg-accent-lime-hover disabled:opacity-50 transition-all cursor-pointer disabled:cursor-default"
+                            className="w-full h-10 flex items-center justify-center gap-2 rounded-[var(--radius-md)] bg-accent-lime text-accent-lime-text font-semibold text-sm hover:bg-accent-lime-hover disabled:opacity-50 transition-all cursor-pointer disabled:cursor-default"
                         >
                             {isGenerating ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
                             {isGenerating ? "Создаю..." : "Сгенерировать"}

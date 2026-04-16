@@ -20,6 +20,7 @@ import { ImageStylePresetPicker } from "@/components/ui/StylePresetPicker";
 import { getMaxRefs, resolveRefTags } from "@/lib/ai-models";
 import { getImagePresetPromptSuffix } from "@/lib/stylePresets";
 import { useStylePresets } from "@/hooks/useStylePresets";
+import { uploadForAI, uploadManyForAI } from "@/utils/imageUpload";
 import type { BusinessUnit } from "@/types";
 
 type EditorTool = "remove-bg" | "inpaint" | "text-edit" | "outpaint";
@@ -119,18 +120,24 @@ export function ImageEditorModal({ imageSrc, onApply, onClose }: ImageEditorModa
         setIsProcessing(true);
         setErrorMsg(null);
         try {
+            const [imageUrl, maskUrl, refUrls] = await Promise.all([
+                uploadForAI(currentImage, "ai-edit"),
+                maskB64 ? uploadForAI(maskB64, "ai-edit") : Promise.resolve(undefined),
+                action === "text-edit" && referenceImages.length > 0
+                    ? uploadManyForAI(referenceImages, "ai-edit")
+                    : Promise.resolve(undefined),
+            ]);
+
             const response = await fetch("/api/ai/image-edit", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     action,
                     prompt: resolveRefTags(prompt || "", selectedModel),
-                    imageBase64: currentImage,
-                    maskBase64: maskB64 || undefined,
+                    imageBase64: imageUrl,
+                    maskBase64: maskUrl,
                     model: selectedModel,
-                    referenceImages: action === "text-edit" && referenceImages.length > 0
-                        ? referenceImages
-                        : undefined,
+                    referenceImages: refUrls,
                 }),
             });
             const data = await response.json();
@@ -208,13 +215,18 @@ export function ImageEditorModal({ imageSrc, onApply, onClose }: ImageEditorModa
                 mCtx.fillRect(padL, padT, img.naturalWidth, img.naturalHeight);
                 const maskBase64 = maskCanvas.toDataURL("image/png");
 
+                const [paddedUrl, maskUrl] = await Promise.all([
+                    uploadForAI(paddedBase64, "ai-outpaint"),
+                    uploadForAI(maskBase64, "ai-outpaint"),
+                ]);
+
                 const response = await fetch("/api/ai/image-edit", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({
                         action: "inpaint",
-                        imageBase64: paddedBase64,
-                        maskBase64: maskBase64,
+                        imageBase64: paddedUrl,
+                        maskBase64: maskUrl,
                         model: "flux-fill",
                         prompt: editPrompt || "Fill seamlessly"
                     }),
@@ -228,12 +240,13 @@ export function ImageEditorModal({ imageSrc, onApply, onClose }: ImageEditorModa
             }
 
             // Normal format-based outpaint
+            const outpaintImageUrl = await uploadForAI(currentImage, "ai-outpaint");
             const response = await fetch("/api/ai/image-edit", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     action: "outpaint",
-                    imageBase64: currentImage,
+                    imageBase64: outpaintImageUrl,
                     model: selectedModel,
                     aspectRatio: outpaintRatio,
                     prompt: editPrompt
@@ -404,7 +417,7 @@ export function ImageEditorModal({ imageSrc, onApply, onClose }: ImageEditorModa
                                     <button
                                         onClick={handleRemoveBg}
                                         disabled={isProcessing}
-                                        className="w-full h-10 flex items-center justify-center gap-2 rounded-[var(--radius-md)] bg-accent-lime text-text-inverse font-semibold text-sm hover:bg-accent-lime-hover disabled:opacity-50 transition-all cursor-pointer disabled:cursor-default"
+                                        className="w-full h-10 flex items-center justify-center gap-2 rounded-[var(--radius-md)] bg-accent-lime text-accent-lime-text font-semibold text-sm hover:bg-accent-lime-hover disabled:opacity-50 transition-all cursor-pointer disabled:cursor-default"
                                     >
                                         {isProcessing ? <Loader2 size={16} className="animate-spin" /> : <Eraser size={16} />}
                                         {isProcessing ? "Удаляю фон..." : "Удалить фон"}
@@ -440,7 +453,7 @@ export function ImageEditorModal({ imageSrc, onApply, onClose }: ImageEditorModa
                                     <button
                                         onClick={handleInpaint}
                                         disabled={isProcessing || !editPrompt.trim()}
-                                        className="w-full h-10 flex items-center justify-center gap-2 rounded-[var(--radius-md)] bg-accent-lime text-text-inverse font-semibold text-sm hover:bg-accent-lime-hover disabled:opacity-50 transition-all cursor-pointer disabled:cursor-default"
+                                        className="w-full h-10 flex items-center justify-center gap-2 rounded-[var(--radius-md)] bg-accent-lime text-accent-lime-text font-semibold text-sm hover:bg-accent-lime-hover disabled:opacity-50 transition-all cursor-pointer disabled:cursor-default"
                                     >
                                         {isProcessing ? <Loader2 size={16} className="animate-spin" /> : <Paintbrush size={16} />}
                                         {isProcessing ? "Рисую..." : "Применить Inpaint"}
@@ -484,7 +497,7 @@ export function ImageEditorModal({ imageSrc, onApply, onClose }: ImageEditorModa
                                     <button
                                         onClick={handleTextEdit}
                                         disabled={isProcessing || !editPrompt.trim()}
-                                        className="w-full h-10 flex items-center justify-center gap-2 rounded-[var(--radius-md)] bg-accent-lime text-text-inverse font-semibold text-sm hover:bg-accent-lime-hover disabled:opacity-50 transition-all cursor-pointer disabled:cursor-default"
+                                        className="w-full h-10 flex items-center justify-center gap-2 rounded-[var(--radius-md)] bg-accent-lime text-accent-lime-text font-semibold text-sm hover:bg-accent-lime-hover disabled:opacity-50 transition-all cursor-pointer disabled:cursor-default"
                                     >
                                         {isProcessing ? <Loader2 size={16} className="animate-spin" /> : <Type size={16} />}
                                         {isProcessing ? "Редактирую..." : "Применить"}
@@ -519,7 +532,7 @@ export function ImageEditorModal({ imageSrc, onApply, onClose }: ImageEditorModa
                                                         onClick={() => setOutpaintRatio(r.id)}
                                                         className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all cursor-pointer ${
                                                             outpaintRatio === r.id
-                                                                ? "bg-accent-lime text-text-inverse"
+                                                                ? "bg-accent-lime text-accent-lime-text"
                                                                 : "bg-bg-primary border border-border-primary text-text-secondary hover:bg-bg-tertiary"
                                                         }`}
                                                     >
@@ -561,7 +574,7 @@ export function ImageEditorModal({ imageSrc, onApply, onClose }: ImageEditorModa
                                     <button
                                         onClick={handleOutpaint}
                                         disabled={isProcessing || (outpaintMode === "padding" && Object.values(outpaintPadding).every(v => v === 0))}
-                                        className="w-full h-10 flex items-center justify-center gap-2 rounded-[var(--radius-md)] bg-accent-lime text-text-inverse font-semibold text-sm hover:bg-accent-lime-hover disabled:opacity-50 transition-all cursor-pointer disabled:cursor-default"
+                                        className="w-full h-10 flex items-center justify-center gap-2 rounded-[var(--radius-md)] bg-accent-lime text-accent-lime-text font-semibold text-sm hover:bg-accent-lime-hover disabled:opacity-50 transition-all cursor-pointer disabled:cursor-default"
                                     >
                                         {isProcessing ? <Loader2 size={16} className="animate-spin" /> : <Expand size={16} />}
                                         {isProcessing ? "Расширяю..." : (outpaintMode === "ratio" ? `Расширить до ${outpaintRatio}` : "Сгенерировать области")}

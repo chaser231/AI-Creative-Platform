@@ -172,6 +172,8 @@ export interface BaseComponentProps {
     layoutSizingHeight?: "fixed" | "fill" | "hug";
     isAbsolutePositioned?: boolean;
     detachedSizeSync?: boolean;
+    /** When true, this layer's content (e.g. image src) is locked by the template and cannot be overridden */
+    isFixedAsset?: boolean;
 }
 
 export interface TextComponentProps extends BaseComponentProps {
@@ -371,6 +373,8 @@ export interface BaseLayer {
     layoutSizingHeight?: "fixed" | "fill" | "hug";
     isAbsolutePositioned?: boolean;
     detachedSizeSync?: boolean;
+    /** When true, this layer's content (e.g. image src) is locked by the template and cannot be overridden */
+    isFixedAsset?: boolean;
 }
 
 export interface TextLayer extends BaseLayer {
@@ -441,6 +445,13 @@ export interface FrameLayer extends BaseLayer {
 }
 
 export type Layer = TextLayer | RectangleLayer | ImageLayer | BadgeLayer | FrameLayer;
+
+/** Accepts any subset of layer properties without requiring the `type` discriminant */
+export type LayerUpdate = Partial<BaseLayer> & Partial<Omit<TextLayer, keyof BaseLayer>>
+    & Partial<Omit<RectangleLayer, keyof BaseLayer>>
+    & Partial<Omit<ImageLayer, keyof BaseLayer>>
+    & Partial<Omit<BadgeLayer, keyof BaseLayer>>
+    & Partial<Omit<FrameLayer, keyof BaseLayer>>;
 
 // ─── Template Catalogization ────────────────────────────
 

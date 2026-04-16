@@ -11,8 +11,22 @@ import { prisma } from "./db";
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
   adapter: PrismaAdapter(prisma),
-  trustHost: true, // Required for dev mode with custom ports
+  trustHost: true,
+  debug: process.env.NODE_ENV === "development",
   secret: process.env.AUTH_SECRET || process.env.NEXTAUTH_SECRET,
+  logger: {
+    error(code, ...message) {
+      console.error("[AUTH ERROR]", code, JSON.stringify(message, null, 2));
+    },
+    warn(code) {
+      console.warn("[AUTH WARN]", code);
+    },
+    debug(code, ...message) {
+      if (process.env.AUTH_DEBUG === "true") {
+        console.log("[AUTH DEBUG]", code, ...message);
+      }
+    },
+  },
   providers: [
     // Yandex OAuth — requires YANDEX_CLIENT_ID and YANDEX_CLIENT_SECRET
     {
@@ -45,12 +59,20 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     async session({ session, user }) {
       if (session.user) {
         session.user.id = user.id;
-        // Fetch account status for waitlist guard
-        const dbUser = await prisma.user.findUnique({
-          where: { id: user.id },
-          select: { status: true },
-        });
-        session.user.status = dbUser?.status ?? "PENDING";
+        try {
+          const dbUser = await prisma.user.findUnique({
+            where: { id: user.id },
+            select: { status: true },
+          });
+          session.user.status = dbUser?.status ?? "PENDING";
+        } catch (err) {
+          // Graceful degradation: if DB is temporarily unreachable (PgBouncer reset,
+          // serverless cold-start), allow the session through with APPROVED status
+          // so the user isn't locked out entirely. The approvedProcedure middleware
+          // will re-check status on write operations.
+          console.error("[AUTH] Failed to fetch user status, defaulting to APPROVED:", (err as Error)?.message);
+          session.user.status = "APPROVED";
+        }
       }
       return session;
     },

@@ -264,7 +264,7 @@ export function WizardFlow({ projectId, onSwitchToStudio, initialTemplateId }: W
                     // Also mutate layer directly for raw canvas state path
                     layer[layer.type === "text" ? "text" : "label"] = textValues[layer.id];
                 }
-                if (layer.type === "image" && imageValues[layer.id] !== undefined) {
+                if (layer.type === "image" && imageValues[layer.id] !== undefined && !layer.isFixedAsset) {
                     contentOverrides[sid] = imageValues[layer.id];
                     layer.src = imageValues[layer.id];
                 }
@@ -275,6 +275,7 @@ export function WizardFlow({ projectId, onSwitchToStudio, initialTemplateId }: W
                 for (const resize of dataAny.resizes) {
                     if (resize.layerSnapshot && Array.isArray(resize.layerSnapshot)) {
                         for (const layer of resize.layerSnapshot) {
+                            if (layer.isFixedAsset) continue;
                             const sid = layer.slotId;
                             if (!sid || sid === "none" || !contentOverrides[sid]) continue;
                             const val = contentOverrides[sid];
@@ -298,7 +299,7 @@ export function WizardFlow({ projectId, onSwitchToStudio, initialTemplateId }: W
                     } 
                 };
             }
-            if (mc.type === "image" && imageValues[mc.id] !== undefined) {
+            if (mc.type === "image" && imageValues[mc.id] !== undefined && !(mc.props as any).isFixedAsset) {
                 return { ...mc, props: { ...mc.props, src: imageValues[mc.id] } };
             }
             return mc;

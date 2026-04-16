@@ -25,8 +25,13 @@ export function TRPCProvider({ children }: { children: React.ReactNode }) {
       new QueryClient({
         defaultOptions: {
           queries: {
-            staleTime: 30 * 1000, // 30 seconds
+            staleTime: 30 * 1000,
             refetchOnWindowFocus: false,
+            retry: 2,
+            retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 5000),
+          },
+          mutations: {
+            retry: 1,
           },
         },
       })

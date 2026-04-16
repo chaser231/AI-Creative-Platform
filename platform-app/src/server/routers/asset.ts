@@ -85,6 +85,75 @@ export const assetRouter = createTRPCRouter({
       return assets;
     }),
 
+  /** List assets for a specific template (with visibility check) */
+  listByTemplate: protectedProcedure
+    .input(z.object({ templateId: z.string() }))
+    .query(async ({ ctx, input }) => {
+      const template = await ctx.prisma.template.findUnique({
+        where: { id: input.templateId },
+        select: { author: true, visibility: true, isOfficial: true, workspaceId: true },
+      });
+      if (!template) throw new TRPCError({ code: "NOT_FOUND" });
+
+      const canView = template.author === ctx.user.id
+        || template.visibility === "PUBLIC"
+        || template.visibility === "WORKSPACE"
+        || template.isOfficial;
+      if (!canView) throw new TRPCError({ code: "FORBIDDEN" });
+
+      return ctx.prisma.asset.findMany({
+        where: { templateId: input.templateId },
+        include: {
+          uploadedBy: { select: { id: true, name: true } },
+        },
+        orderBy: { createdAt: "desc" },
+      });
+    }),
+
+  /** Copy all template assets to a project (used when creating a project from template) */
+  copyTemplateAssetsToProject: protectedProcedure
+    .input(z.object({ templateId: z.string(), projectId: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      const template = await ctx.prisma.template.findUnique({
+        where: { id: input.templateId },
+        select: { author: true, visibility: true, isOfficial: true },
+      });
+      if (!template) throw new TRPCError({ code: "NOT_FOUND", message: "Template not found" });
+
+      const canView = template.author === ctx.user.id
+        || template.visibility === "PUBLIC"
+        || template.visibility === "WORKSPACE"
+        || template.isOfficial;
+      if (!canView) throw new TRPCError({ code: "FORBIDDEN" });
+
+      const project = await ctx.prisma.project.findUnique({
+        where: { id: input.projectId },
+        select: { workspaceId: true },
+      });
+      if (!project) throw new TRPCError({ code: "NOT_FOUND", message: "Project not found" });
+
+      const templateAssets = await ctx.prisma.asset.findMany({
+        where: { templateId: input.templateId },
+      });
+      if (templateAssets.length === 0) return { copied: 0 };
+
+      const created = await ctx.prisma.asset.createMany({
+        data: templateAssets.map((a) => ({
+          type: a.type,
+          filename: a.filename,
+          url: a.url,
+          mimeType: a.mimeType,
+          sizeBytes: a.sizeBytes,
+          metadata: a.metadata ?? undefined,
+          workspaceId: project.workspaceId,
+          uploadedById: ctx.user.id,
+          projectId: input.projectId,
+        })),
+      });
+
+      return { copied: created.count };
+    }),
+
   /** Get a presigned upload URL */
   getUploadUrl: protectedProcedure
     .input(
@@ -95,6 +164,7 @@ export const assetRouter = createTRPCRouter({
         sizeBytes: z.number(),
         type: z.enum(["IMAGE", "VIDEO", "AUDIO", "FONT", "LOGO", "OTHER"]),
         metadata: z.record(z.string(), z.unknown()).optional(),
+        templateId: z.string().optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -109,7 +179,6 @@ export const assetRouter = createTRPCRouter({
       const uploadUrl = await getSignedUrl(s3, command, { expiresIn: 3600 });
       const publicUrl = `${process.env.S3_ENDPOINT || "https://storage.yandexcloud.net"}/${BUCKET}/${key}`;
 
-      // Create asset record in DB
       const asset = await ctx.prisma.asset.create({
         data: {
           type: input.type,
@@ -120,6 +189,7 @@ export const assetRouter = createTRPCRouter({
           metadata: input.metadata as Record<string, string> | undefined,
           workspaceId: input.workspaceId,
           uploadedById: ctx.user.id,
+          ...(input.templateId && { templateId: input.templateId }),
         },
       });
 
