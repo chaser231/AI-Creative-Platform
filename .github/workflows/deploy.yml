@@ -13,6 +13,7 @@ env:
   REGISTRY_ID: crp4vrv0ddefai181riu
   IMAGE_NAME: acp-platform
   CONTAINER_ID: bbauroacejldutvjmm3g
+  GATEWAY_ID: d5dm6vhrvfhbmvfggnu0
   SA_ID: aje84cq0tggi5jep2nfs
 
 jobs:
@@ -78,12 +79,18 @@ jobs:
             --environment "FAL_KEY=${{ secrets.FAL_KEY }}" \
             --environment "REPLICATE_API_TOKEN=${{ secrets.REPLICATE_API_TOKEN }}"
 
+      - name: Update API Gateway spec
+        run: |
+          yc serverless api-gateway update \
+            --id ${{ env.GATEWAY_ID }} \
+            --spec ./platform-app/infra/apigw-spec.yaml
+
       - name: Verify deployment
         run: |
-          CONTAINER_URL=$(yc serverless container get --id ${{ env.CONTAINER_ID }} --format json | python3 -c "import sys,json; print(json.load(sys.stdin).get('url',''))")
-          echo "Container URL: $CONTAINER_URL"
+          GW_URL=$(yc serverless api-gateway get --id ${{ env.GATEWAY_ID }} --format json | python3 -c "import sys,json; print(json.load(sys.stdin).get('domain',''))")
+          echo "Gateway URL: https://$GW_URL"
           for i in 1 2 3 4 5; do
-            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$CONTAINER_URL/auth/signin" || true)
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "https://$GW_URL/auth/signin" || true)
             if [ "$STATUS" = "200" ]; then
               echo "Deployment verified: HTTP $STATUS"
               exit 0

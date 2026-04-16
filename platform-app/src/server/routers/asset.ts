@@ -110,6 +110,30 @@ export const assetRouter = createTRPCRouter({
       });
     }),
 
+  /** List all font assets from official/public templates (globally available) */
+  listTemplateFonts: protectedProcedure
+    .query(async ({ ctx }) => {
+      return ctx.prisma.asset.findMany({
+        where: {
+          type: "FONT",
+          template: {
+            OR: [
+              { isOfficial: true },
+              { visibility: "PUBLIC" },
+            ],
+          },
+        },
+        select: {
+          id: true,
+          filename: true,
+          url: true,
+          metadata: true,
+          templateId: true,
+        },
+        orderBy: { createdAt: "desc" },
+      });
+    }),
+
   /** Copy all template assets to a project (used when creating a project from template) */
   copyTemplateAssetsToProject: protectedProcedure
     .input(z.object({ templateId: z.string(), projectId: z.string() }))

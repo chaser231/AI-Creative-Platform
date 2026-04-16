@@ -1,0 +1,25 @@
+openapi: 3.0.0
+info:
+  title: ACP Platform Gateway
+  version: "1.0"
+
+paths:
+  /{proxy+}:
+    x-yc-apigateway-any-method:
+      x-yc-apigateway-integration:
+        type: serverless_containers
+        container_id: bbauroacejldutvjmm3g
+        service_account_id: aje84cq0tggi5jep2nfs
+      parameters:
+        - name: proxy
+          in: path
+          required: false
+          schema:
+            type: string
+
+  /:
+    x-yc-apigateway-any-method:
+      x-yc-apigateway-integration:
+        type: serverless_containers
+        container_id: bbauroacejldutvjmm3g
+        service_account_id: aje84cq0tggi5jep2nfs

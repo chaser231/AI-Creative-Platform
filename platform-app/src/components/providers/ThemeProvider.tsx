@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import { useThemeStore } from "@/store/themeStore";
 import { loadAllCustomFonts, type WorkspaceFontAsset } from "@/lib/customFonts";
 import { trpc } from "@/lib/trpc";
@@ -13,10 +13,25 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
         { workspaceId: currentWorkspace?.id ?? "", type: "FONT" },
         { enabled: !!currentWorkspace?.id, refetchOnWindowFocus: false }
     );
+    const { data: templateFonts = [] } = trpc.asset.listTemplateFonts.useQuery(
+        undefined,
+        { refetchOnWindowFocus: false, staleTime: 5 * 60 * 1000 }
+    );
+
+    const allFontAssets = useMemo(() => {
+        const seen = new Set<string>();
+        const merged: WorkspaceFontAsset[] = [];
+        for (const f of [...(workspaceFonts as WorkspaceFontAsset[]), ...(templateFonts as WorkspaceFontAsset[])]) {
+            if (!seen.has(f.url)) {
+                seen.add(f.url);
+                merged.push(f);
+            }
+        }
+        return merged;
+    }, [workspaceFonts, templateFonts]);
 
     useEffect(() => {
-        // Load custom fonts entirely on the client side once on mount
-        loadAllCustomFonts(workspaceFonts as WorkspaceFontAsset[]).catch(err => console.error("Failed to inject custom fonts on load", err));
+        loadAllCustomFonts(allFontAssets).catch(err => console.error("Failed to inject custom fonts on load", err));
 
         const root = document.documentElement;
 
@@ -41,7 +56,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
             mq.addEventListener("change", handler);
             return () => mq.removeEventListener("change", handler);
         }
-    }, [theme, workspaceFonts]);
+    }, [theme, allFontAssets]);
 
     return <>{children}</>;
 }

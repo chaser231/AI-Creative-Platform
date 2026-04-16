@@ -80,7 +80,8 @@ export function extractRequiredFonts(layers: Layer[]): RequiredFont[] {
 
 /**
  * Returns list of all font families available in the current browser context:
- * preinstalled (from public/fonts), system, and user-uploaded (from IndexedDB).
+ * preinstalled (from public/fonts), system, user-uploaded (from IndexedDB),
+ * and any fonts loaded at runtime (workspace/template fonts from S3).
  */
 export async function getAvailableFontFamilies(): Promise<string[]> {
     const families = new Set<string>([
@@ -88,7 +89,6 @@ export async function getAvailableFontFamilies(): Promise<string[]> {
         ...PREINSTALLED_FONT_FAMILIES,
     ]);
 
-    // Add user-uploaded fonts from IndexedDB
     try {
         const userFonts = await getUserFonts();
         for (const f of userFonts) {
@@ -98,7 +98,7 @@ export async function getAvailableFontFamilies(): Promise<string[]> {
         console.warn("Failed to load user fonts for availability check:", e);
     }
 
-    // Also scan document.fonts for any runtime-loaded fonts
+    // Scan document.fonts for any runtime-loaded fonts (workspace + template fonts from S3)
     if (typeof document !== "undefined" && "fonts" in document) {
         document.fonts.forEach((font) => {
             const name = font.family.replace(/['"]/g, "");

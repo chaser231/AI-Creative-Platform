@@ -50,6 +50,7 @@ export function WizardFlow({ projectId, onSwitchToStudio, initialTemplateId }: W
     const [templateMode, setTemplateMode] = useState<"single" | "pack" | "manual">("single");
     const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(initialTemplateId || null);
     const [fullSelectedTemplate, setFullSelectedTemplate] = useState<TemplatePackV2 | null>(null);
+    const [templateLoadError, setTemplateLoadError] = useState<string | null>(null);
     const [manualSizes, setManualSizes] = useState<{width: number; height: number; id: string}[]>([]);
     const [manualW, setManualW] = useState("1080");
     const [manualH, setManualH] = useState("1080");
@@ -134,19 +135,28 @@ export function WizardFlow({ projectId, onSwitchToStudio, initialTemplateId }: W
 
         // Fetch full data from backend REST endpoint
         let cancelled = false;
+        setTemplateLoadError(null);
         (async () => {
             try {
                 const res = await fetch(`/api/template/${fetchId}`);
-                if (res.ok && !cancelled) {
-                    const template = await res.json();
-                    if (template?.data) {
-                        setFullSelectedTemplate(applyExtract(template.data as TemplatePackV2));
-                        return;
-                    }
+                if (cancelled) return;
+                if (!res.ok) {
+                    console.warn(`[Wizard] Template fetch failed: HTTP ${res.status}`);
+                    setTemplateLoadError(`Не удалось загрузить шаблон (HTTP ${res.status}). Попробуйте другой шаблон или обновите страницу.`);
+                    const listingPack = allPacksRef.current.find(p => p.id === fetchId);
+                    if (listingPack) setFullSelectedTemplate(applyExtract(listingPack));
+                    return;
                 }
-            } catch {
-                // Fallback: use listing data (no masterComponents)
+                const template = await res.json();
+                if (template?.data) {
+                    setFullSelectedTemplate(applyExtract(template.data as TemplatePackV2));
+                    return;
+                }
+                setTemplateLoadError("Шаблон не содержит данных. Попробуйте другой шаблон.");
+            } catch (err) {
                 if (!cancelled) {
+                    console.warn("[Wizard] Template fetch error:", err);
+                    setTemplateLoadError("Ошибка загрузки шаблона. Возможно, он слишком большой.");
                     const listingPack = allPacksRef.current.find(p => p.id === fetchId);
                     if (listingPack) setFullSelectedTemplate(applyExtract(listingPack));
                 }
@@ -612,6 +622,11 @@ export function WizardFlow({ projectId, onSwitchToStudio, initialTemplateId }: W
                                     Добавьте тексты и изображения для «{selectedTemplate.name}».
                                 </p>
                             </div>
+                            {templateLoadError && (
+                                <div className="p-3 rounded-lg bg-yellow-500/10 border border-yellow-500/30 text-yellow-200 text-sm">
+                                    {templateLoadError}
+                                </div>
+                            )}
                             <div className="space-y-3">
                                 {(() => {
                                     // ── Resolve master format layers ──
@@ -624,8 +639,12 @@ export function WizardFlow({ projectId, onSwitchToStudio, initialTemplateId }: W
                                             if (masterResize?.layerSnapshot && Array.isArray(masterResize.layerSnapshot)) {
                                                 return masterResize.layerSnapshot as Layer[];
                                             }
+                                            // Fallback: first resize with layerSnapshot
+                                            const anyResize = dataAny.resizes.find((r: any) => Array.isArray(r.layerSnapshot) && r.layerSnapshot.length > 0);
+                                            if (anyResize) {
+                                                return anyResize.layerSnapshot as Layer[];
+                                            }
                                         }
-                                        // Fallback: top-level layers (assuming they are master's)
                                         if (dataAny.layers && Array.isArray(dataAny.layers)) {
                                             return dataAny.layers as Layer[];
                                         }
