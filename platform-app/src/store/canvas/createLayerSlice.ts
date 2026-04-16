@@ -486,6 +486,13 @@ export const createLayerSlice: StateCreator<CanvasStore, [], [], LayerSlice> = (
         const { selectedLayerIds } = state;
         if (selectedLayerIds.length === 0) return;
 
+        // Filter out locked layers — they cannot be deleted
+        const deletableIds = selectedLayerIds.filter((id) => {
+            const layer = state.layers.find((l) => l.id === id);
+            return layer && !layer.locked;
+        });
+        if (deletableIds.length === 0) return;
+
         pushSnapshot(set as (p: Partial<CanvasStore>) => void, get);
 
         set((state) => {
@@ -501,7 +508,7 @@ export const createLayerSlice: StateCreator<CanvasStore, [], [], LayerSlice> = (
                 }
             };
 
-            selectedLayerIds.forEach(collect);
+            deletableIds.forEach(collect);
 
             const newLayers = state.layers
                 .filter((l) => !idsToRemove.has(l.id))

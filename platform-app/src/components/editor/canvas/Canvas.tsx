@@ -8,6 +8,7 @@ import { useShallow } from "zustand/react/shallow";
 import type { Layer as LayerType, TextLayer, BadgeLayer, FrameLayer, ImageLayer } from "@/types";
 import { computeImageFitProps } from "@/utils/imageFitUtils";
 import { ContextMenu, buildLayerContextMenuItems, buildMultiSelectionContextMenuItems } from "../ContextMenu";
+import { useSearchParams } from "next/navigation";
 import { computeSnap, computeHoverDistances, computeResizeSnap, SnapResult, DistanceMeasurement, SpacingGuide } from "@/services/snapService";
 import type { ActiveEdge, NodeBounds } from "@/services/snapService";
 import { isFocusedOnInput } from "@/utils/keyboard";
@@ -451,8 +452,8 @@ function FrameLayerRenderer({
                 clipWidth={layer.clipContent ? layer.width : undefined}
                 clipHeight={layer.clipContent ? layer.height : undefined}
             >
-               <Group
-                   clipFunc={(layer.clipContent && layer.cornerRadius > 0) ? (ctx) => {
+                <Group
+                    clipFunc={(layer.clipContent && layer.cornerRadius > 0) ? (ctx) => {
                         const r = layer.cornerRadius;
                         const w = layer.width;
                         const h = layer.height;
@@ -464,40 +465,40 @@ function FrameLayerRenderer({
                         ctx.arcTo(0, 0, w, 0, r);
                         ctx.closePath();
                     } : undefined}
-               >
-                <Rect
-                    id={layer.id}
-                    width={layer.width}
-                    height={layer.height}
-                    fill={layer.fillEnabled === false ? undefined : (layer.fill || undefined)}
-                    stroke={isHighlighted ? FRAME_HIGHLIGHT_STROKE : (layer.strokeEnabled === false ? undefined : (layer.stroke || undefined))}
-                    strokeWidth={isHighlighted ? FRAME_HIGHLIGHT_WIDTH : (layer.strokeEnabled === false ? 0 : layer.strokeWidth)}
-                    cornerRadius={layer.cornerRadius}
-                />
-                {childLayers.map((child) => {
-                    // Use STORE's absolute position for the frame, not the prop
-                    // (prop may be relative for nested frames).
-                    const storeFrame = layers.find(l => l.id === layer.id);
-                    const frameAbsX = storeFrame?.x ?? layer.x;
-                    const frameAbsY = storeFrame?.y ?? layer.y;
-                    return (
-                    <CanvasLayer
-                        key={child.id}
-                        layer={{ ...child, x: child.x - frameAbsX, y: child.y - frameAbsY }}
-                        isSelected={selectedLayerIds.includes(child.id)}
-                        onSelect={onSelect}
-                        onDragStart={onDragStart}
-                        onDragMove={onDragMove}
-                        onDragEnd={onDragEnd}
-                        onTransformEnd={handleChildTransformEnd}
-                        onDblClickText={onDblClickText}
-                        isEditing={isEditingText && editingLayerId === child.id}
-                        isAutoLayoutChild={layer.layoutMode !== undefined && layer.layoutMode !== "none" && !child.isAbsolutePositioned}
-                        onHover={onHover}
+                >
+                    <Rect
+                        id={layer.id}
+                        width={layer.width}
+                        height={layer.height}
+                        fill={layer.fillEnabled === false ? undefined : (layer.fill || undefined)}
+                        stroke={isHighlighted ? FRAME_HIGHLIGHT_STROKE : (layer.strokeEnabled === false ? undefined : (layer.stroke || undefined))}
+                        strokeWidth={isHighlighted ? FRAME_HIGHLIGHT_WIDTH : (layer.strokeEnabled === false ? 0 : layer.strokeWidth)}
+                        cornerRadius={layer.cornerRadius}
                     />
-                    );
-                })}
-               </Group>
+                    {childLayers.map((child) => {
+                        // Use STORE's absolute position for the frame, not the prop
+                        // (prop may be relative for nested frames).
+                        const storeFrame = layers.find(l => l.id === layer.id);
+                        const frameAbsX = storeFrame?.x ?? layer.x;
+                        const frameAbsY = storeFrame?.y ?? layer.y;
+                        return (
+                            <CanvasLayer
+                                key={child.id}
+                                layer={{ ...child, x: child.x - frameAbsX, y: child.y - frameAbsY }}
+                                isSelected={selectedLayerIds.includes(child.id)}
+                                onSelect={onSelect}
+                                onDragStart={onDragStart}
+                                onDragMove={onDragMove}
+                                onDragEnd={onDragEnd}
+                                onTransformEnd={handleChildTransformEnd}
+                                onDblClickText={onDblClickText}
+                                isEditing={isEditingText && editingLayerId === child.id}
+                                isAutoLayoutChild={layer.layoutMode !== undefined && layer.layoutMode !== "none" && !child.isAbsolutePositioned}
+                                onHover={onHover}
+                            />
+                        );
+                    })}
+                </Group>
             </Group>
             {/* Inner Transformer for selected children — operates in frame-local coords */}
             {selectedChildIds.length > 0 && (
@@ -519,6 +520,8 @@ interface CanvasProps {
 export function Canvas({ stageRef }: CanvasProps) {
     const containerRef = useRef<HTMLDivElement>(null);
     const [containerDimensions, setContainerDimensions] = useState({ width: 0, height: 0 });
+    const searchParams = useSearchParams();
+    const isTemplateMode = searchParams.get("source") === "template";
 
     useEffect(() => {
         if (!containerRef.current) return;
@@ -1101,20 +1104,24 @@ export function Canvas({ stageRef }: CanvasProps) {
         setSnapLines([]);
         setDistanceMeasurements([]);
         setSpacingGuides([]);
-        // Start handling multi-transform logic? 
-        // Konva Transformer updates the nodes directly.
-        // We just need to read their new props and update store.
-        // The transformer usually fires 'transformend' on the transformer?
-        // Or on the nodes? 
-        // Actually, if we use Konva Transformer, it updates the nodes.
-        // We need to iterate selected nodes and sync their generic props.
-
-        // But we passed onTransformEnd to CanvasLayer.
-        // Does CanvasLayer fire it?
-        // 'onTransformEnd' prop on Node fires when that node is transformed.
 
         const node = e.target;
         const id = node.id();
+
+        // Block transform commit for locked layers
+        const lockedLayer = layers.find(l => l.id === id);
+        if (lockedLayer?.locked) {
+            // Reset Konva node to store values
+            node.x(lockedLayer.x);
+            node.y(lockedLayer.y);
+            node.width(lockedLayer.width);
+            node.height(lockedLayer.height);
+            node.scaleX(1);
+            node.scaleY(1);
+            node.rotation(lockedLayer.rotation);
+            return;
+        }
+
         const stage = node.getStage();
 
         const scaleX = node.scaleX();
@@ -1139,13 +1146,13 @@ export function Canvas({ stageRef }: CanvasProps) {
             if (hasSizedX || hasSizedY) {
                 if (hasSizedX && (layer.layoutSizingWidth === "fill" || layer.layoutSizingWidth === "hug")) extraProps.layoutSizingWidth = "fixed";
                 if (hasSizedY && (layer.layoutSizingHeight === "fill" || layer.layoutSizingHeight === "hug")) extraProps.layoutSizingHeight = "fixed";
-                
+
                 if (layer.type === "text") {
                     const txt = layer as TextLayer;
                     if (txt.textAdjust === "auto_width") {
-                         extraProps.textAdjust = "fixed";
+                        extraProps.textAdjust = "fixed";
                     } else if (txt.textAdjust === "auto_height") {
-                         if (hasSizedY) extraProps.textAdjust = "fixed";
+                        if (hasSizedY) extraProps.textAdjust = "fixed";
                     }
                 }
             }
@@ -1197,6 +1204,10 @@ export function Canvas({ stageRef }: CanvasProps) {
         const id = node.id();
         const stage = node.getStage();
         if (!stage) return;
+
+        // Block live transform for locked layers
+        const lockedCheck = layers.find(l => l.id === id);
+        if (lockedCheck?.locked) return;
 
         // For TEXT nodes: reset scale immediately and apply width/height.
         // This prevents the visual "stretching" effect — text re-wraps in real-time.
@@ -2030,44 +2041,44 @@ export function Canvas({ stageRef }: CanvasProps) {
                         >
                             <Group
                                 clipFunc={artboardProps.cornerRadius > 0 ? (ctx) => {
-                                const r = artboardProps.cornerRadius;
-                                const w = canvasWidth;
-                                const h = canvasHeight;
-                                ctx.beginPath();
-                                ctx.moveTo(r, 0);
-                                ctx.arcTo(w, 0, w, h, r);
-                                ctx.arcTo(w, h, 0, h, r);
-                                ctx.arcTo(0, h, 0, 0, r);
-                                ctx.arcTo(0, 0, w, 0, r);
-                                ctx.closePath();
-                            } : undefined}
+                                    const r = artboardProps.cornerRadius;
+                                    const w = canvasWidth;
+                                    const h = canvasHeight;
+                                    ctx.beginPath();
+                                    ctx.moveTo(r, 0);
+                                    ctx.arcTo(w, 0, w, h, r);
+                                    ctx.arcTo(w, h, 0, h, r);
+                                    ctx.arcTo(0, h, 0, 0, r);
+                                    ctx.arcTo(0, 0, w, 0, r);
+                                    ctx.closePath();
+                                } : undefined}
                             >
-                            <Rect
-                                x={0} y={0} width={canvasWidth} height={canvasHeight}
-                                fill={artboardProps.fill}
-                                stroke={artboardProps.stroke || undefined}
-                                strokeWidth={artboardProps.strokeWidth}
-                                cornerRadius={artboardProps.cornerRadius}
-                                shadowColor="rgba(0,0,0,0.1)"
-                                shadowBlur={20}
-                                listening={false}
-                            />
-                            {topLevelLayers.map(layer => (
-                                <CanvasLayer
-                                    key={layer.id}
-                                    layer={layer}
-                                    isSelected={selectedLayerIds.includes(layer.id)}
-                                    onSelect={handleLayerSelect}
-                                    onDragStart={handleLayerDragStart}
-                                    onDragMove={handleLayerDragMove}
-                                    onDragEnd={handleLayerDragEnd}
-                                    onTransformEnd={handleTransformEnd}
-                                    onTransform={handleTransform}
-                                    onDblClickText={handleDblClickText}
-                                    isEditing={isEditingText && editingLayerId === layer.id}
-                                    onHover={setHoveredLayerId}
+                                <Rect
+                                    x={0} y={0} width={canvasWidth} height={canvasHeight}
+                                    fill={artboardProps.fill}
+                                    stroke={artboardProps.stroke || undefined}
+                                    strokeWidth={artboardProps.strokeWidth}
+                                    cornerRadius={artboardProps.cornerRadius}
+                                    shadowColor="rgba(0,0,0,0.1)"
+                                    shadowBlur={20}
+                                    listening={false}
                                 />
-                            ))}
+                                {topLevelLayers.map(layer => (
+                                    <CanvasLayer
+                                        key={layer.id}
+                                        layer={layer}
+                                        isSelected={selectedLayerIds.includes(layer.id)}
+                                        onSelect={handleLayerSelect}
+                                        onDragStart={handleLayerDragStart}
+                                        onDragMove={handleLayerDragMove}
+                                        onDragEnd={handleLayerDragEnd}
+                                        onTransformEnd={handleTransformEnd}
+                                        onTransform={handleTransform}
+                                        onDblClickText={handleDblClickText}
+                                        isEditing={isEditingText && editingLayerId === layer.id}
+                                        onHover={setHoveredLayerId}
+                                    />
+                                ))}
                             </Group>
                         </Group>
                     ) : (
@@ -2282,6 +2293,14 @@ export function Canvas({ stageRef }: CanvasProps) {
                                     }
                                 },
                                 wrapInAutoLayout: () => wrapInAutoLayoutFrame(),
+                                toggleFixedAsset: isTemplateMode && layer.type === "image"
+                                    ? () => updateLayer(layer.id, { isFixedAsset: !layer.isFixedAsset })
+                                    : undefined,
+                            },
+                            {
+                                isImageLayer: layer.type === "image",
+                                isFixedAsset: !!layer.isFixedAsset,
+                                isTemplateMode,
                             }
                         )}
                     />

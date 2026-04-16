@@ -16,14 +16,17 @@ interface SelectionTransformerProps {
 export function SelectionTransformer({ selectedLayerIds, stageRef, excludeIds }: SelectionTransformerProps) {
     const trRef = useRef<Konva.Transformer>(null);
     const editingLayerId = useCanvasStore((s) => s.editingLayerId);
+    const layers = useCanvasStore((s) => s.layers);
 
     useEffect(() => {
         if (!trRef.current || !stageRef.current) return;
 
-        // Find all selected nodes, excluding frame children AND the currently editing text layer
+        // Find all selected nodes, excluding frame children, locked layers, AND the currently editing text layer
         const filteredIds = selectedLayerIds.filter((id) => {
             if (excludeIds?.has(id)) return false;
             if (editingLayerId && id === editingLayerId) return false;
+            const layer = layers.find((l) => l.id === id);
+            if (layer?.locked) return false;
             return true;
         });
         const nodes = filteredIds
@@ -32,7 +35,7 @@ export function SelectionTransformer({ selectedLayerIds, stageRef, excludeIds }:
 
         trRef.current.nodes(nodes);
         trRef.current.getLayer()?.batchDraw();
-    }, [selectedLayerIds, stageRef, excludeIds, editingLayerId]);
+    }, [selectedLayerIds, stageRef, excludeIds, editingLayerId, layers]);
 
     return (
         <Transformer
@@ -64,10 +67,13 @@ export function FrameChildTransformer({ selectedChildIds, containerRef }: FrameC
     useEffect(() => {
         if (!trRef.current || !containerRef.current) return;
 
-        // Exclude the currently editing text layer from the transformer
-        const filteredIds = editingLayerId
-            ? selectedChildIds.filter((id) => id !== editingLayerId)
-            : selectedChildIds;
+        // Exclude the currently editing text layer and locked layers from the transformer
+        const filteredIds = selectedChildIds.filter((id) => {
+            if (editingLayerId && id === editingLayerId) return false;
+            const layer = layers.find((l) => l.id === id);
+            if (layer?.locked) return false;
+            return true;
+        });
 
         const nodes = filteredIds
             .map((id) => containerRef.current?.findOne("#" + id))
@@ -75,7 +81,7 @@ export function FrameChildTransformer({ selectedChildIds, containerRef }: FrameC
 
         trRef.current.nodes(nodes);
         trRef.current.getLayer()?.batchDraw();
-    }, [selectedChildIds, containerRef, editingLayerId]);
+    }, [selectedChildIds, containerRef, editingLayerId, layers]);
 
     // Live transform handler: reset text scale to prevent visual stretching
     const handleTransform = () => {
