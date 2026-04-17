@@ -63,14 +63,15 @@ export function WorkspaceOnboarding() {
   };
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-bg-primary/95 backdrop-blur-sm">
-      <div className="max-w-2xl w-full mx-4">
+    <div className="fixed inset-0 z-[100] overflow-y-auto bg-bg-primary/95 backdrop-blur-sm overscroll-contain">
+      <div className="min-h-full flex items-center justify-center py-8 px-4">
+        <div className="max-w-2xl w-full">
         {/* Header */}
-        <div className="text-center mb-8">
-          <div className="flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-orange-400 via-red-400 to-yellow-400 mx-auto mb-4">
-            <span className="text-3xl">🔥</span>
+        <div className="text-center mb-6 sm:mb-8">
+          <div className="flex items-center justify-center w-14 h-14 sm:w-16 sm:h-16 rounded-2xl bg-gradient-to-br from-orange-400 via-red-400 to-yellow-400 mx-auto mb-4">
+            <span className="text-2xl sm:text-3xl">🔥</span>
           </div>
-          <h1 className="text-2xl font-bold text-text-primary mb-2">
+          <h1 className="text-xl sm:text-2xl font-bold text-text-primary mb-2">
             Добро пожаловать в AI Creative!
           </h1>
           <p className="text-sm text-text-tertiary max-w-md mx-auto">
@@ -80,7 +81,7 @@ export function WorkspaceOnboarding() {
         </div>
 
         {/* Team cards */}
-        <div className="grid grid-cols-2 gap-4 mb-8">
+        <div className="grid grid-cols-2 gap-3 sm:gap-4 mb-6 sm:mb-8">
           {allWorkspaces.isLoading ? (
             <div className="col-span-2 flex items-center justify-center py-12">
               <Loader2 size={24} className="animate-spin text-text-tertiary" />
@@ -96,7 +97,7 @@ export function WorkspaceOnboarding() {
                 <button
                   key={ws.id}
                   onClick={() => setSelectedId(ws.id)}
-                  className={`relative flex flex-col items-center gap-3 p-6 rounded-[var(--radius-2xl)] border-2 transition-all duration-200 cursor-pointer bg-gradient-to-br ${gradient} ${
+                  className={`relative flex flex-col items-center gap-2 sm:gap-3 p-4 sm:p-6 rounded-[var(--radius-2xl)] border-2 transition-all duration-200 cursor-pointer bg-gradient-to-br ${gradient} ${
                     isSelected
                       ? `${accent} ring-2`
                       : "border-border-primary hover:border-border-secondary"
@@ -107,7 +108,7 @@ export function WorkspaceOnboarding() {
                       <Check size={18} className="text-accent-primary" />
                     </div>
                   )}
-                  <div className="flex items-center justify-center w-14 h-14 rounded-[var(--radius-xl)] bg-bg-surface/60 text-text-primary">
+                  <div className="flex items-center justify-center w-12 h-12 sm:w-14 sm:h-14 rounded-[var(--radius-xl)] bg-bg-surface/60 text-text-primary">
                     {icon}
                   </div>
                   <div className="text-center">
@@ -147,6 +148,7 @@ export function WorkspaceOnboarding() {
             <LogOut size={14} />
             Выйти из аккаунта
           </button>
+        </div>
         </div>
       </div>
     </div>
