@@ -15,6 +15,7 @@ import { aiRouter } from "./ai";
 import { workflowRouter } from "./workflow";
 import { adminRouter } from "./admin";
 import { adminTemplateRouter } from "./adminTemplate";
+import { figmaRouter } from "./figma";
 
 export const appRouter = createTRPCRouter({
   auth: authRouter,
@@ -26,6 +27,7 @@ export const appRouter = createTRPCRouter({
   workflow: workflowRouter,
   admin: adminRouter,
   adminTemplate: adminTemplateRouter,
+  figma: figmaRouter,
 });
 
 export type AppRouter = typeof appRouter;

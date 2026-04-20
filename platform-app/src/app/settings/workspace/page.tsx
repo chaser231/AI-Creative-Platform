@@ -29,6 +29,7 @@ import {
 } from "lucide-react";
 import { Select } from "@/components/ui/Select";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -110,6 +111,7 @@ export default function WorkspaceSettingsPage() {
   const [roleDropdownId, setRoleDropdownId] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [removeMemberTarget, setRemoveMemberTarget] = useState<{ id: string; name: string } | null>(null);
 
   // ─── Load current values ───────────────────────────────
   useEffect(() => {
@@ -297,11 +299,18 @@ export default function WorkspaceSettingsPage() {
 
   const handleRemoveMember = (memberId: string, memberName: string) => {
     if (!currentWorkspace) return;
-    if (!confirm(`Удалить ${memberName} из команды?`)) return;
-    removeMemberMutation.mutate({
-      workspaceId: currentWorkspace.id,
-      memberId,
-    });
+    setRemoveMemberTarget({ id: memberId, name: memberName });
+  };
+
+  const confirmRemoveMember = () => {
+    if (!currentWorkspace || !removeMemberTarget) return;
+    removeMemberMutation.mutate(
+      {
+        workspaceId: currentWorkspace.id,
+        memberId: removeMemberTarget.id,
+      },
+      { onSettled: () => setRemoveMemberTarget(null) }
+    );
   };
 
   // Check if current user is the only admin (for leave logic)
@@ -783,6 +792,20 @@ export default function WorkspaceSettingsPage() {
           {toast}
         </div>
       )}
+
+      <ConfirmDialog
+        open={!!removeMemberTarget}
+        title="Удалить участника?"
+        description={removeMemberTarget ? (
+          <>
+            <span className="text-text-secondary">{removeMemberTarget.name}</span> потеряет доступ к воркспейсу и всем его проектам.
+          </>
+        ) : undefined}
+        confirmLabel="Удалить"
+        busy={removeMemberMutation.isPending}
+        onConfirm={confirmRemoveMember}
+        onClose={() => setRemoveMemberTarget(null)}
+      />
     </AppShell>
   );
 }

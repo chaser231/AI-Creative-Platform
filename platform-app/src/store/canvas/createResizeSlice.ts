@@ -175,6 +175,20 @@ export const createResizeSlice: StateCreator<CanvasStore, [], [], ResizeSlice> =
         if (!targetResize) return;
         if (resizeId === state.activeResizeId) return;
 
+        // Diagnostic: trace what image src is carried where during format switches.
+        const imgSrcOf = (layers: Layer[] | undefined) =>
+            (layers ?? []).filter(l => l.type === "image").map(l => ({
+                id: l.id,
+                src: ((l as { src?: string }).src ?? "").slice(-80),
+            }));
+        console.log("[cascade] setActiveResize", {
+            from: state.activeResizeId,
+            to: resizeId,
+            fromLayers: imgSrcOf(state.layers),
+            targetSnapshot: imgSrcOf(targetResize.layerSnapshot),
+            targetBindings: targetResize.layerBindings?.length ?? 0,
+        });
+
         // Always save current layers as the active format's snapshot.
         // This ensures we don't lose edits when switching formats.
         const updatedResizes = state.resizes.map(r =>
@@ -243,6 +257,12 @@ export const createResizeSlice: StateCreator<CanvasStore, [], [], ResizeSlice> =
 
                 if (rawCascadedLayers !== currentState.layers) {
                     const cascadedLayers = applyAllAutoLayouts(rawCascadedLayers);
+                    console.log("[cascade] phase-2 applyCascade on switch", {
+                        target: resizeId,
+                        bindings: targetResize.layerBindings?.length ?? 0,
+                        beforeFirstImage: imgSrcOf(currentState.layers)[0],
+                        afterFirstImage: imgSrcOf(cascadedLayers)[0],
+                    });
                     set({
                         layers: cascadedLayers,
                         resizes: currentState.resizes.map((resize) =>
@@ -250,6 +270,10 @@ export const createResizeSlice: StateCreator<CanvasStore, [], [], ResizeSlice> =
                                 ? { ...resize, layerSnapshot: cascadedLayers }
                                 : resize
                         ),
+                    });
+                } else {
+                    console.log("[cascade] phase-2 applyCascade produced no change on switch", {
+                        target: resizeId,
                     });
                 }
             }

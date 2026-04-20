@@ -463,6 +463,8 @@ const FAL_MODEL_MAP: Record<string, string> = {
     "seedream":        "fal-ai/seedream-4.5",
     "bria-expand":     "fal-ai/bria/expand",
     "esrgan":          "fal-ai/esrgan",
+    "seedvr":          "fal-ai/seedvr/upscale/image",
+    "sima-upscaler":   "simalabs/sima-upscaler",
 };
 
 /** Model ID → fal.ai /edit endpoint (required for reference images) */
@@ -599,7 +601,7 @@ class FalProvider implements AIProviderImplementation {
             };
         }
 
-        // ── Upscale (ESRGAN on fal.ai) ──────────────────────────────
+        // ── Upscale (ESRGAN / SeedVR2 / Sima on fal.ai) ─────────────
         if (params.type === "upscale") {
             const falEndpoint = FAL_MODEL_MAP[modelId];
             if (!falEndpoint) throw new Error(`Model ${modelId} is not available on fal.ai for upscale`);
@@ -607,7 +609,29 @@ class FalProvider implements AIProviderImplementation {
             const upscaleInput: Record<string, unknown> = {
                 image_url: params.imageBase64,
             };
-            if (params.upscaleScale) upscaleInput.scale = params.upscaleScale;
+
+            // Model-specific parameter shapes
+            if (modelId === "seedvr") {
+                // SeedVR2: upscale_factor (float, 1..10), noise_scale (0..1), output_format
+                // Clamp to SeedVR's supported range (1..10); keep conservative ceiling of 4×
+                // to match our downscale-restore use case.
+                if (params.upscaleScale) {
+                    upscaleInput.upscale_factor = Math.min(Math.max(params.upscaleScale, 1), 10);
+                    upscaleInput.upscale_mode = "factor";
+                }
+                // Lossless output: we composite the original over this result, so we
+                // avoid JPEG re-encoding that would soften the seam.
+                upscaleInput.output_format = "png";
+                // Default noise_scale (0.1) is generally good, leave at provider default.
+            } else if (modelId === "sima-upscaler") {
+                // Sima: scale is integer, supports only 2 or 4
+                const raw = params.upscaleScale ?? 2;
+                const scale = raw <= 2 ? 2 : 4;
+                upscaleInput.scale = scale;
+            } else {
+                // ESRGAN (and any other) — legacy `scale` param
+                if (params.upscaleScale) upscaleInput.scale = params.upscaleScale;
+            }
 
             console.log(`[fal.ai] Upscale via ${falEndpoint}, scale=${params.upscaleScale ?? "default"}`);
 
@@ -841,6 +865,8 @@ const FAL_PRIMARY_MODELS = new Set([
     "nano-banana-pro",
     "bria-expand",
     "esrgan",
+    "seedvr",
+    "sima-upscaler",
 ]);
 
 
@@ -855,6 +881,9 @@ const MODEL_FALLBACK_CHAIN: Record<string, string[]> = {
     "nano-banana-pro": ["nano-banana-2", "nano-banana"],
     "bria-expand":     ["outpainter"],
     "outpainter":      ["bria-expand"],
+    "seedvr":          ["esrgan", "sima-upscaler"],
+    "sima-upscaler":   ["seedvr", "esrgan"],
+    "esrgan":          ["seedvr"],
 };
 
 /**

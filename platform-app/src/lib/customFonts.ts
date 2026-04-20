@@ -108,7 +108,12 @@ export async function loadWorkspaceFonts(fontAssets: WorkspaceFontAsset[]): Prom
             const loadedName = await registerFont(family, asset.url);
             if (loadedName) loaded.push(loadedName);
         } catch (e) {
-            console.error(`Failed to load workspace font ${family}:`, e);
+            // Non-critical: the asset row may point to a file that no longer exists
+            // in S3 (deleted manually / failed upload). Log as a warning so it
+            // doesn't surface as a red Next.js dev-overlay issue.
+            console.warn(
+                `[customFonts] Skipped workspace font "${family}" (${asset.url}): ${(e as Error)?.message || e}`,
+            );
         }
     }
 
@@ -132,11 +137,11 @@ export async function loadAllCustomFonts(fontAssets: WorkspaceFontAsset[] = []):
                 const loadedName = await registerFont(font.name, font.buffer);
                 if (loadedName) availableFontNames.push(loadedName);
             } catch (e) {
-                console.error(`Failed to load user font ${font.name}:`, e);
+                console.warn(`[customFonts] Skipped user font "${font.name}":`, e);
             }
         }
     } catch (e) {
-        console.error("Failed to load user fonts from IndexedDB:", e);
+        console.warn("[customFonts] Failed to load user fonts from IndexedDB:", e);
     }
 
     const workspaceFontNames = await loadWorkspaceFonts(fontAssets);

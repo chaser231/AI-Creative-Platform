@@ -233,6 +233,22 @@ export const MODEL_REGISTRY: ModelEntry[] = [
 
     // ── Upscale / Super-Resolution ──────────────────────────────────────
     {
+        id: "seedvr",
+        label: "SeedVR2 Upscaler",
+        slug: "fal-ai/seedvr/upscale/image",
+        provider: "replicate",
+        caps: ["upscale"],
+        costPerRun: 0.001,
+    },
+    {
+        id: "sima-upscaler",
+        label: "Sima Upscaler",
+        slug: "simalabs/sima-upscaler",
+        provider: "replicate",
+        caps: ["upscale"],
+        costPerRun: 0.0005,
+    },
+    {
         id: "esrgan",
         label: "Real-ESRGAN",
         slug: "nightmareai/real-esrgan",

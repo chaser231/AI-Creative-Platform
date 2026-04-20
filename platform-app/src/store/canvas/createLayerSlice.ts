@@ -92,6 +92,27 @@ function syncSnapshotFormats(
 
     const masterArtboard = { width: activeResize.width, height: activeResize.height };
 
+    // Diagnostic: flag when an image src mutation happens on master — helps
+    // track down cascade regressions in Generative Expand.
+    const srcChanged = (() => {
+        if (!prevLayers) return false;
+        const prevMap = new Map(prevLayers.map(l => [l.id, l]));
+        return nextLayers.some(l => {
+            if (l.type !== "image") return false;
+            const prev = prevMap.get(l.id);
+            return prev?.type === "image" && (prev as { src?: string }).src !== (l as { src?: string }).src;
+        });
+    })();
+    if (srcChanged) {
+        console.log("[cascade] syncSnapshotFormats: image src changed", {
+            activeResizeId,
+            activeIsMaster: activeResize.isMaster ?? false,
+            boundFormats: resizes
+                .filter(r => r.id !== activeResizeId && r.layerSnapshot && r.layerBindings?.length)
+                .map(r => ({ id: r.id, bindings: r.layerBindings?.length ?? 0 })),
+        });
+    }
+
     let changed = false;
 
     const nextResizes = resizes.map((resize) => {
@@ -102,6 +123,13 @@ function syncSnapshotFormats(
         }
 
         if (!activeResize.isMaster || !resize.layerSnapshot || !resize.layerBindings?.length) {
+            if (srcChanged) {
+                console.log("[cascade] skip format", resize.id, {
+                    activeIsMaster: activeResize.isMaster ?? false,
+                    hasSnapshot: !!resize.layerSnapshot,
+                    bindings: resize.layerBindings?.length ?? 0,
+                });
+            }
             return resize;
         }
 
@@ -112,7 +140,12 @@ function syncSnapshotFormats(
         const cascadedSnapshot = applyCascade(
             resize.layerSnapshot, nextLayers, resize.layerBindings, context, prevLayers,
         );
-        if (cascadedSnapshot === resize.layerSnapshot) return resize;
+        if (cascadedSnapshot === resize.layerSnapshot) {
+            if (srcChanged) console.log("[cascade] applyCascade produced no change for", resize.id);
+            return resize;
+        }
+
+        if (srcChanged) console.log("[cascade] applyCascade updated snapshot for", resize.id);
 
         changed = true;
         return { ...resize, layerSnapshot: applyAllAutoLayouts(cascadedSnapshot) };

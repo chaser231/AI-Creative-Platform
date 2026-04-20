@@ -7,13 +7,14 @@
  */
 
 import { useState, useMemo, useCallback } from "react";
-import { Plus, Search, Loader2 } from "lucide-react";
+import { Plus, Search, Loader2, FigmaIcon } from "lucide-react";
 import { AppShell } from "@/components/layout/AppShell";
 import { TopBar } from "@/components/layout/TopBar";
 import { Button } from "@/components/ui/Button";
 import { ProjectCard } from "@/components/dashboard/ProjectCard";
 import { EmptyState } from "@/components/dashboard/EmptyState";
 import { NewProjectModal } from "@/components/dashboard/NewProjectModal";
+import { FigmaImportModal } from "@/components/dashboard/FigmaImportModal";
 import { useProjectListSync } from "@/hooks/useProjectSync";
 import { trpc } from "@/lib/trpc";
 import { useWorkspace } from "@/providers/WorkspaceProvider";
@@ -21,6 +22,7 @@ import { WorkspaceOnboarding } from "@/components/workspace/WorkspaceOnboarding"
 
 export default function AllProjectsPage() {
   const [modalOpen, setModalOpen] = useState(false);
+  const [figmaModalOpen, setFigmaModalOpen] = useState(false);
   const { projects: backendProjects, isLoading, workspaceId, refetch } = useProjectListSync();
   const { currentWorkspace, needsOnboarding } = useWorkspace();
 
@@ -45,7 +47,7 @@ export default function AllProjectsPage() {
       id: bp.id,
       name: bp.name,
       status: bp.status.toLowerCase() as "draft" | "in-progress" | "review" | "published",
-      goal: (bp.goal || "banner") as "banner" | "text" | "video",
+      goal: (bp.goal || "banner") as "banner" | "text" | "video" | "photo",
       businessUnit: "yandex-market" as const,
       createdAt: new Date(bp.createdAt),
       updatedAt: new Date(bp.updatedAt),
@@ -73,6 +75,14 @@ export default function AllProjectsPage() {
                 <Search size={14} />
                 <span className="text-[13px] font-light">Найти проект...</span>
               </div>
+              <Button
+                onClick={() => setFigmaModalOpen(true)}
+                icon={<FigmaIcon size={16} />}
+                size="lg"
+                variant="secondary"
+              >
+                Импорт из Figma
+              </Button>
               <Button
                 onClick={() => setModalOpen(true)}
                 icon={<Plus size={16} />}
@@ -105,6 +115,14 @@ export default function AllProjectsPage() {
       </div>
 
       <NewProjectModal open={modalOpen} onClose={() => setModalOpen(false)} workspaceId={workspaceId} />
+      <FigmaImportModal
+        open={figmaModalOpen}
+        onClose={() => {
+          setFigmaModalOpen(false);
+          refetch();
+        }}
+        workspaceId={workspaceId}
+      />
       {needsOnboarding && <WorkspaceOnboarding />}
     </AppShell>
   );

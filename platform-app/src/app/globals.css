@@ -23,6 +23,15 @@
   /* Slate 400 */
   --text-inverse: #FFFFFF;
 
+  /* Theme-independent contrast tokens.
+   * MUST be used whenever the background is fixed across themes
+   * (e.g. bg-accent-lime, bg-white). Do NOT redefine these in .dark — that
+   * would re-introduce the light-on-light bug we just fixed. */
+  --text-on-light: #0F172A;
+  /* Slate 900 — always readable on light surfaces */
+  --text-on-dark: #F1F5F9;
+  /* Slate 100 — always readable on dark surfaces */
+
   /* Borders — cool/neutral */
   --border-primary: #E2E8F0;
   /* Slate 200 */
@@ -117,6 +126,10 @@
   --color-text-secondary: var(--text-secondary);
   --color-text-tertiary: var(--text-tertiary);
   --color-text-inverse: var(--text-inverse);
+  /* Exposed without the "text-" prefix so Tailwind generates the classes
+     `text-on-light` / `text-on-dark` (and not `text-text-on-light`). */
+  --color-on-light: var(--text-on-light);
+  --color-on-dark: var(--text-on-dark);
   --color-border-primary: var(--border-primary);
   --color-border-secondary: var(--border-secondary);
   --color-border-focus: var(--border-focus);
@@ -150,6 +163,23 @@ body {
   /* Reduced tracking globally */
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+/* ─────────────────────────────────────────────────────────────
+ * Contrast safety net for solid "always-light" surfaces.
+ * Because lime / white backgrounds don't invert in dark mode,
+ * descendants that would normally inherit theme-aware text colors
+ * (white in dark) become invisible on these surfaces. These rules
+ * give them a dark-on-light default that still yields to any
+ * explicit Tailwind text-* utility (utilities live in a higher
+ * cascade layer than these base styles).
+ * ───────────────────────────────────────────────────────────── */
+@layer base {
+  .bg-accent-lime,
+  .bg-accent-lime-hover,
+  .bg-white {
+    color: var(--text-on-light);
+  }
 }
 
 /* Typography hierarchy - lighter weights */

@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/Badge";
 import { ProjectContextMenu } from "./ProjectContextMenu";
 import type { ProjectStatus } from "./ProjectContextMenu";
 import type { Project } from "@/types";
-import { FolderKanban, MoreHorizontal, AlertTriangle } from "lucide-react";
+import { FolderKanban, MoreHorizontal, AlertTriangle, Image as ImageIcon, Type, Video, Camera } from "lucide-react";
 
 interface ProjectCardProps {
     project: Project;
@@ -16,11 +16,21 @@ interface ProjectCardProps {
     isFavorite?: boolean;
 }
 
-const goalLabels: Record<string, string> = {
-    banner: "Баннеры",
-    text: "Копирайтинг",
-    video: "Видеореклама",
+// Neutral "eyebrow" label for project type. Rendered above the name, not on
+// the thumbnail — the thumbnail shows status (a stronger colour signal) and
+// project type is metadata, so we keep it quiet on purpose.
+const goalMeta: Record<string, { label: string; icon: React.ReactNode }> = {
+    banner: { label: "Баннер", icon: <ImageIcon size={10} /> },
+    photo: { label: "Фото", icon: <Camera size={10} /> },
+    video: { label: "Видео", icon: <Video size={10} /> },
+    text: { label: "Текст", icon: <Type size={10} /> },
 };
+
+/** Route to the appropriate workspace based on a project's goal. */
+function getProjectHref(project: { id: string; goal?: string }): string {
+    if (project.goal === "photo") return `/photo/${project.id}`;
+    return `/editor/${project.id}`;
+}
 
 function timeAgo(date: Date): string {
     const seconds = Math.floor((Date.now() - date.getTime()) / 1000);
@@ -67,9 +77,9 @@ export function ProjectCard({ project, onUpdate, onDelete, onFavorite, isFavorit
                 role="button"
                 tabIndex={0}
                 onClick={() => {
-                    if (!isRenaming && !showDeleteConfirm) router.push(`/editor/${project.id}`);
+                    if (!isRenaming && !showDeleteConfirm) router.push(getProjectHref(project));
                 }}
-                onKeyDown={(e) => { if (e.key === "Enter" && !isRenaming) router.push(`/editor/${project.id}`); }}
+                onKeyDown={(e) => { if (e.key === "Enter" && !isRenaming) router.push(getProjectHref(project)); }}
                 className="group relative flex flex-col bg-bg-surface border border-border-primary rounded-[var(--radius-xl)] hover:shadow-[var(--shadow-lg)] hover:border-border-secondary transition-all duration-[var(--transition-base)] cursor-pointer text-left"
             >
                 {/* Thumbnail */}
@@ -95,6 +105,14 @@ export function ProjectCard({ project, onUpdate, onDelete, onFavorite, isFavorit
                 {/* Info */}
                 <div className="flex items-start justify-between p-3.5 gap-2">
                     <div className="min-w-0 flex-1">
+                        {project.goal && goalMeta[project.goal] && (
+                            <div className="flex items-center gap-1 text-text-tertiary mb-0.5">
+                                <span className="opacity-70">{goalMeta[project.goal].icon}</span>
+                                <span className="text-[10px] font-medium uppercase tracking-[0.06em]">
+                                    {goalMeta[project.goal].label}
+                                </span>
+                            </div>
+                        )}
                         {isRenaming ? (
                             <input
                                 ref={inputRef}

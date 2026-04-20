@@ -4,10 +4,13 @@ import { useState, useMemo, useCallback } from "react";
 import {
     X, Search, Trash2, Download, Plus, CheckSquare, Square,
     SortAsc, SortDesc, Image as ImageIcon, Loader2, FolderOpen,
+    Replace,
 } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { Input } from "@/components/ui/Input";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { useCanvasStore } from "@/store/canvasStore";
+import type { ImageLayer } from "@/store/canvas/types";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -19,6 +22,7 @@ interface AssetLibraryModalProps {
 
 type SortBy = "createdAt" | "filename" | "sizeBytes";
 type SortOrder = "asc" | "desc";
+type Scope = "project" | "workspace";
 
 // ─── Component ──────────────────────────────────────────────────────────────
 
@@ -27,14 +31,74 @@ export function AssetLibraryModal({ projectId, open, onClose }: AssetLibraryModa
     const [sortBy, setSortBy] = useState<SortBy>("createdAt");
     const [sortOrder, setSortOrder] = useState<SortOrder>("desc");
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+    const [scope, setScope] = useState<Scope>("project");
+    const [deleteOpen, setDeleteOpen] = useState(false);
 
     const addImageLayer = useCanvasStore((s) => s.addImageLayer);
+    const updateLayer = useCanvasStore((s) => s.updateLayer);
+    const selectedLayerIds = useCanvasStore((s) => s.selectedLayerIds);
+    const layers = useCanvasStore((s) => s.layers);
+
+    /**
+     * First selected image layer on the canvas (if any).
+     * Only image layers can receive a "replace src" action — text/rect/etc.
+     * are ignored. When multiple layers are selected, the first is used.
+     */
+    const selectedImageLayer = useMemo<ImageLayer | undefined>(() => {
+        for (const id of selectedLayerIds) {
+            const l = layers.find((x) => x.id === id);
+            if (l && l.type === "image") return l as ImageLayer;
+        }
+        return undefined;
+    }, [selectedLayerIds, layers]);
+
+    // ── Workspace context (for Whole-Library tab) ───────────────────
+    const projectQuery = trpc.project.getById.useQuery(
+        { id: projectId },
+        { enabled: open, refetchOnWindowFocus: false }
+    );
+    const workspaceId = (projectQuery.data as { workspaceId?: string } | undefined)?.workspaceId ?? "";
 
     // ── Data fetching ───────────────────────────────────────────────
-    const { data: assets, isLoading, refetch } = trpc.asset.listByProject.useQuery(
+    const projectAssetsQuery = trpc.asset.listByProject.useQuery(
         { projectId, search: search || undefined, sortBy, sortOrder },
-        { enabled: open }
+        { enabled: open && scope === "project" }
     );
+    const workspaceAssetsQuery = trpc.asset.listByWorkspace.useQuery(
+        { workspaceId, type: "IMAGE", limit: 200 },
+        { enabled: open && scope === "workspace" && !!workspaceId }
+    );
+
+    type AssetRow = {
+        id: string;
+        url: string;
+        filename: string;
+        sizeBytes: number;
+        createdAt: Date;
+    };
+
+    // Workspace assets — client-side search + sort (server doesn't accept those on this endpoint)
+    const assets = useMemo<AssetRow[]>(() => {
+        const rawAssets = (scope === "project"
+            ? projectAssetsQuery.data ?? []
+            : workspaceAssetsQuery.data ?? []) as AssetRow[];
+        if (scope === "project") return rawAssets;
+        const q = search.trim().toLowerCase();
+        let list = rawAssets;
+        if (q) list = list.filter((a) => a.filename.toLowerCase().includes(q));
+        list = [...list].sort((a, b) => {
+            let cmp = 0;
+            if (sortBy === "filename") cmp = a.filename.localeCompare(b.filename);
+            else if (sortBy === "sizeBytes") cmp = a.sizeBytes - b.sizeBytes;
+            else cmp = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+            return sortOrder === "asc" ? cmp : -cmp;
+        });
+        return list;
+    }, [scope, search, sortBy, sortOrder, projectAssetsQuery.data, workspaceAssetsQuery.data]);
+
+    const isLoading =
+        scope === "project" ? projectAssetsQuery.isLoading : workspaceAssetsQuery.isLoading;
+    const refetch = scope === "project" ? projectAssetsQuery.refetch : workspaceAssetsQuery.refetch;
 
     const deleteMutation = trpc.asset.deleteMany.useMutation({
         onSuccess: () => {
@@ -75,6 +139,19 @@ export function AssetLibraryModal({ projectId, open, onClose }: AssetLibraryModa
         setSelectedIds(new Set());
     }, [selectedAssets, addImageLayer]);
 
+    /**
+     * Replace the src of the currently-selected image layer with the first
+     * selected asset's url. Useful for swapping a placeholder image in a
+     * template with a different asset without adding a new layer / reflowing.
+     */
+    const handleApplyToSelection = useCallback(() => {
+        if (!selectedImageLayer || selectedAssets.length === 0) return;
+        const asset = selectedAssets[0];
+        updateLayer(selectedImageLayer.id, { src: asset.url });
+        setSelectedIds(new Set());
+        onClose();
+    }, [selectedImageLayer, selectedAssets, updateLayer, onClose]);
+
     const handleExport = useCallback(async () => {
         for (const asset of selectedAssets) {
             try {
@@ -94,8 +171,18 @@ export function AssetLibraryModal({ projectId, open, onClose }: AssetLibraryModa
 
     const handleDelete = useCallback(() => {
         if (selectedIds.size === 0) return;
-        if (!confirm(`Удалить ${selectedIds.size} ассет(ов)? Это действие нельзя отменить.`)) return;
-        deleteMutation.mutate({ ids: [...selectedIds] });
+        setDeleteOpen(true);
+    }, [selectedIds]);
+
+    const confirmDelete = useCallback(() => {
+        if (selectedIds.size === 0) {
+            setDeleteOpen(false);
+            return;
+        }
+        deleteMutation.mutate(
+            { ids: [...selectedIds] },
+            { onSettled: () => setDeleteOpen(false) }
+        );
     }, [selectedIds, deleteMutation]);
 
     const toggleSort = useCallback((field: SortBy) => {
@@ -130,16 +217,37 @@ export function AssetLibraryModal({ projectId, open, onClose }: AssetLibraryModa
                 <div className="flex items-center justify-between px-6 py-4 border-b border-border-primary">
                     <div className="flex items-center gap-3">
                         <FolderOpen size={20} className="text-accent-primary" />
-                        <h2 className="text-lg font-semibold text-text-primary">Ассеты проекта</h2>
+                        <h2 className="text-lg font-semibold text-text-primary">Библиотека ассетов</h2>
                         {assets && (
                             <span className="text-xs text-text-tertiary bg-bg-tertiary px-2 py-0.5 rounded-full">
                                 {assets.length}
                             </span>
                         )}
                     </div>
-                    <button onClick={onClose} className="p-2 text-text-tertiary hover:text-text-primary hover:bg-bg-tertiary rounded-lg transition-colors cursor-pointer">
-                        <X size={18} />
-                    </button>
+                    <div className="flex items-center gap-2">
+                        {/* Scope tabs */}
+                        <div className="flex items-center gap-1 p-1 rounded-lg bg-bg-tertiary">
+                            <button
+                                onClick={() => { setScope("project"); setSelectedIds(new Set()); }}
+                                className={`px-3 h-7 text-xs font-medium rounded-md transition-colors cursor-pointer ${
+                                    scope === "project" ? "bg-bg-surface text-text-primary shadow-sm" : "text-text-tertiary hover:text-text-primary"
+                                }`}
+                            >
+                                Этот проект
+                            </button>
+                            <button
+                                onClick={() => { setScope("workspace"); setSelectedIds(new Set()); }}
+                                className={`px-3 h-7 text-xs font-medium rounded-md transition-colors cursor-pointer ${
+                                    scope === "workspace" ? "bg-bg-surface text-text-primary shadow-sm" : "text-text-tertiary hover:text-text-primary"
+                                }`}
+                            >
+                                Вся библиотека
+                            </button>
+                        </div>
+                        <button onClick={onClose} className="p-2 text-text-tertiary hover:text-text-primary hover:bg-bg-tertiary rounded-lg transition-colors cursor-pointer">
+                            <X size={18} />
+                        </button>
+                    </div>
                 </div>
 
                 {/* ── Toolbar ─────────────────────────────────────────── */}
@@ -272,6 +380,24 @@ export function AssetLibraryModal({ projectId, open, onClose }: AssetLibraryModa
                             >
                                 <Plus size={14} /> На холст
                             </button>
+                            {/* Replace src of the selected image layer on the canvas.
+                                Enabled only when exactly one image layer is selected on
+                                the canvas and at least one asset is selected here.
+                                Handy for swapping placeholder images in a template. */}
+                            <button
+                                onClick={handleApplyToSelection}
+                                disabled={!selectedImageLayer || selectedAssets.length === 0}
+                                title={
+                                    !selectedImageLayer
+                                        ? "Сначала выделите картинку на холсте"
+                                        : selectedAssets.length > 1
+                                            ? "Применится первый выбранный ассет"
+                                            : "Заменить выделенную картинку"
+                                }
+                                className="flex items-center gap-1.5 px-4 h-9 text-xs font-medium rounded-lg bg-accent-lime-hover text-accent-lime-text hover:bg-accent-lime transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-bg-primary disabled:text-text-tertiary"
+                            >
+                                <Replace size={14} /> Применить к выделению
+                            </button>
                             <button
                                 onClick={handleExport}
                                 className="flex items-center gap-1.5 px-4 h-9 text-xs font-medium rounded-lg bg-bg-primary text-text-primary border border-border-primary hover:bg-bg-tertiary transition-colors cursor-pointer"
@@ -289,6 +415,15 @@ export function AssetLibraryModal({ projectId, open, onClose }: AssetLibraryModa
                     </div>
                 )}
             </div>
+
+            <ConfirmDialog
+                open={deleteOpen}
+                title={`Удалить ${selectedIds.size} ассет(ов)?`}
+                description="Это действие нельзя отменить."
+                busy={deleteMutation.isPending}
+                onConfirm={confirmDelete}
+                onClose={() => setDeleteOpen(false)}
+            />
         </div>
     );
 }

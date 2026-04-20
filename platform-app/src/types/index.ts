@@ -1,6 +1,6 @@
 // ─── Project ────────────────────────────────────────────
 export type ProjectStatus = "draft" | "in-progress" | "review" | "published";
-export type ProjectGoal = "banner" | "text" | "video";
+export type ProjectGoal = "banner" | "text" | "video" | "photo";
 export type BusinessUnit = "yandex-market" | "yandex-go" | "yandex-food" | "other";
 
 export interface Project {
@@ -354,6 +354,23 @@ export interface LayerConstraints {
 
 export const DEFAULT_CONSTRAINTS: LayerConstraints = { horizontal: "left", vertical: "top" };
 
+/**
+ * Auxiliary metadata attached to a layer.
+ * Currently used for Figma round-trip: preserving the original Figma node ID
+ * and the source `imageRef` so we can match layers when re-importing or exporting.
+ * Never consumed by renderers — treated as opaque by the canvas.
+ */
+export interface LayerMetadata {
+    /** Figma node id (e.g. "1:23") — preserved for future round-trip export/import */
+    figmaNodeId?: string;
+    /** Figma image reference hash for IMAGE fills — lets us reuse the same asset on re-import */
+    figmaImageRef?: string;
+    /** Original Figma node type if the layer is a lossy/rasterized conversion (e.g. "VECTOR", "BOOLEAN_OPERATION") */
+    figmaOriginalType?: string;
+    /** Non-fatal notes emitted during import (e.g. "mixed text styles collapsed") */
+    figmaImportNotes?: string[];
+}
+
 export interface BaseLayer {
     id: string;
     type: LayerType;
@@ -375,6 +392,8 @@ export interface BaseLayer {
     detachedSizeSync?: boolean;
     /** When true, this layer's content (e.g. image src) is locked by the template and cannot be overridden */
     isFixedAsset?: boolean;
+    /** Opaque integration metadata (Figma, future Sketch/XD, etc.) */
+    metadata?: LayerMetadata;
 }
 
 export interface TextLayer extends BaseLayer {

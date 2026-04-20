@@ -260,6 +260,132 @@ export default function EditorPage({ params }: EditorPageProps) {
         : (project?.name || projectQuery.data?.name || "Без названия");
     const projectStatus = (projectQuery.data?.status || project?.status || "DRAFT").toUpperCase();
 
+    // Photo projects live under /photo/[id] — redirect if someone lands on the editor with a photo project.
+    useEffect(() => {
+        if (isTemplateMode) return;
+        const goal = (projectQuery.data as { goal?: string } | undefined)?.goal;
+        if (goal === "photo") {
+            router.replace(`/photo/${id}`);
+        }
+    }, [isTemplateMode, projectQuery.data, id, router]);
+
+    // ─── Seed canvas from query params ──────────────────────────────────────
+    // Used by the "В баннер" action in the photo workspace / asset library.
+    // Three modes supported, mutually-exclusive in practice:
+    //   1. ?assetId / ?imageUrl alone  — drop the image as a new layer on the empty canvas.
+    //   2. ?applyTemplate (+ ?applySlot) with ?assetId / ?imageUrl
+    //                                  — apply the given template and inject the image into
+    //                                    the specified image slot via contentOverrides.
+    //   3. ?openTemplates=1            — legacy: just open the TemplatePanel after seeding
+    //                                    the image as a layer. Kept for back-compat.
+    const assetIdParam = searchParams.get("assetId");
+    const imageUrlParam = searchParams.get("imageUrl");
+    const openTemplatesParam = searchParams.get("openTemplates") === "1";
+    const applyTemplateParam = searchParams.get("applyTemplate");
+    const applySlotParam = searchParams.get("applySlot");
+    const assetByIdQuery = trpc.asset.getById.useQuery(
+        { id: assetIdParam ?? "" },
+        {
+            enabled: !isTemplateMode && !!assetIdParam,
+            retry: false,
+            refetchOnWindowFocus: false,
+        },
+    );
+    const templateByIdQuery = trpc.template.getById.useQuery(
+        { id: applyTemplateParam ?? "" },
+        {
+            enabled: !isTemplateMode && !!applyTemplateParam,
+            retry: false,
+            refetchOnWindowFocus: false,
+        },
+    );
+    const didSeedFromQueryRef = useRef(false);
+    useEffect(() => {
+        if (isTemplateMode) return;
+        if (!canvasLoaded) return;
+        if (didSeedFromQueryRef.current) return;
+
+        // Wait for dependent queries before acting — otherwise we'd race and
+        // either apply an empty template or drop the wrong src.
+        if (assetIdParam && assetByIdQuery.isLoading) return;
+        if (applyTemplateParam && templateByIdQuery.isLoading) return;
+
+        const src =
+            assetIdParam && assetByIdQuery.data?.url
+                ? assetByIdQuery.data.url
+                : imageUrlParam ?? null;
+
+        const run = async () => {
+            let consumedAny = false;
+
+            // ── (2) Apply template with the image going into a specific slot ──
+            if (applyTemplateParam && templateByIdQuery.data) {
+                const template = templateByIdQuery.data;
+                const { applyTemplatePack } = await import("@/services/templateService");
+                const overrides: Record<string, string> = {};
+                if (src && applySlotParam) overrides[applySlotParam] = src;
+
+                await new Promise<void>((resolve) => {
+                    applyTemplatePack(
+                        template.data as never,
+                        {
+                            contentOverrides: Object.keys(overrides).length > 0 ? overrides : undefined,
+                            onSuccess: () => resolve(),
+                            onError: () => resolve(),
+                        },
+                    );
+                });
+
+                // Fallback: if the template had no matching slot but we still have
+                // an image to seed, drop it as a new layer so it isn't lost.
+                if (src && !applySlotParam) {
+                    useCanvasStore.getState().addImageLayer(src, 400, 400);
+                }
+                consumedAny = true;
+            }
+            // ── (1) Just seed the image as a new layer on the empty canvas ──
+            else if (src) {
+                useCanvasStore.getState().addImageLayer(src, 400, 400);
+                consumedAny = true;
+            }
+
+            // ── (3) Legacy path — open template picker after seeding ──
+            if (openTemplatesParam) {
+                setTemplatesOpen(true);
+                consumedAny = true;
+            }
+
+            if (consumedAny) {
+                didSeedFromQueryRef.current = true;
+                // Strip the seed params so a refresh/navigation doesn't re-apply them.
+                const next = new URLSearchParams(searchParams.toString());
+                next.delete("assetId");
+                next.delete("imageUrl");
+                next.delete("openTemplates");
+                next.delete("applyTemplate");
+                next.delete("applySlot");
+                const qs = next.toString();
+                router.replace(qs ? `/editor/${id}?${qs}` : `/editor/${id}`);
+            }
+        };
+        void run();
+    }, [
+        canvasLoaded,
+        isTemplateMode,
+        assetIdParam,
+        imageUrlParam,
+        openTemplatesParam,
+        applyTemplateParam,
+        applySlotParam,
+        assetByIdQuery.data,
+        assetByIdQuery.isLoading,
+        templateByIdQuery.data,
+        templateByIdQuery.isLoading,
+        id,
+        router,
+        searchParams,
+    ]);
+
     // Inline rename state
     const [isRenaming, setIsRenaming] = useState(false);
     const [editName, setEditName] = useState(projectName);
