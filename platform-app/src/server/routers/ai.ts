@@ -7,18 +7,57 @@
 import { z } from "zod";
 import { createTRPCRouter, protectedProcedure } from "../trpc";
 import { TRPCError } from "@trpc/server";
+import type { PrismaClient } from "@prisma/client";
+
+/**
+ * Ensure the caller has access to the given project (is a member of its workspace).
+ * Throws NOT_FOUND for unknown projects and FORBIDDEN for outsiders.
+ */
+async function assertProjectAccess(
+  prisma: PrismaClient,
+  projectId: string,
+  userId: string
+): Promise<void> {
+  const project = await prisma.project.findUnique({
+    where: { id: projectId },
+    select: { workspaceId: true },
+  });
+  if (!project) throw new TRPCError({ code: "NOT_FOUND", message: "Проект не найден" });
+  const membership = await prisma.workspaceMember.findUnique({
+    where: { userId_workspaceId: { userId, workspaceId: project.workspaceId } },
+    select: { role: true },
+  });
+  if (!membership) throw new TRPCError({ code: "FORBIDDEN" });
+}
+
+/** Ensure the caller has access to the session's project. Returns the session (with projectId). */
+async function assertSessionAccess(
+  prisma: PrismaClient,
+  sessionId: string,
+  userId: string
+): Promise<{ projectId: string; userId: string }> {
+  const session = await prisma.aISession.findUnique({
+    where: { id: sessionId },
+    select: { projectId: true, userId: true },
+  });
+  if (!session) throw new TRPCError({ code: "NOT_FOUND", message: "Сессия не найдена" });
+  await assertProjectAccess(prisma, session.projectId, userId);
+  return session;
+}
 
 export const aiRouter = createTRPCRouter({
   // ─── Sessions ────────────────────────────────────────────
 
   /** Create a new AI session for a project */
   createSession: protectedProcedure
-    .input(z.object({ projectId: z.string() }))
+    .input(z.object({ projectId: z.string(), name: z.string().max(120).optional() }))
     .mutation(async ({ ctx, input }) => {
+      await assertProjectAccess(ctx.prisma, input.projectId, ctx.user.id);
       const session = await ctx.prisma.aISession.create({
         data: {
           projectId: input.projectId,
           userId: ctx.user.id,
+          ...(input.name && { name: input.name }),
         },
       });
 
@@ -29,6 +68,7 @@ export const aiRouter = createTRPCRouter({
   listSessions: protectedProcedure
     .input(z.object({ projectId: z.string() }))
     .query(async ({ ctx, input }) => {
+      await assertProjectAccess(ctx.prisma, input.projectId, ctx.user.id);
       const sessions = await ctx.prisma.aISession.findMany({
         where: { projectId: input.projectId },
         include: {
@@ -39,6 +79,43 @@ export const aiRouter = createTRPCRouter({
       });
 
       return sessions;
+    }),
+
+  /** Rename an AI session (owner-only) */
+  renameSession: protectedProcedure
+    .input(z.object({ id: z.string(), name: z.string().min(1).max(120) }))
+    .mutation(async ({ ctx, input }) => {
+      const session = await ctx.prisma.aISession.findUnique({
+        where: { id: input.id },
+        select: { userId: true },
+      });
+      if (!session) throw new TRPCError({ code: "NOT_FOUND" });
+      if (session.userId !== ctx.user.id) {
+        throw new TRPCError({ code: "FORBIDDEN" });
+      }
+
+      const updated = await ctx.prisma.aISession.update({
+        where: { id: input.id },
+        data: { name: input.name },
+      });
+      return updated;
+    }),
+
+  /** Delete an AI session (owner-only) — cascades messages */
+  deleteSession: protectedProcedure
+    .input(z.object({ id: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      const session = await ctx.prisma.aISession.findUnique({
+        where: { id: input.id },
+        select: { userId: true },
+      });
+      if (!session) throw new TRPCError({ code: "NOT_FOUND" });
+      if (session.userId !== ctx.user.id) {
+        throw new TRPCError({ code: "FORBIDDEN" });
+      }
+
+      await ctx.prisma.aISession.delete({ where: { id: input.id } });
+      return { success: true };
     }),
 
   // ─── Messages ────────────────────────────────────────────
@@ -57,6 +134,7 @@ export const aiRouter = createTRPCRouter({
       })
     )
     .mutation(async ({ ctx, input }) => {
+      await assertSessionAccess(ctx.prisma, input.sessionId, ctx.user.id);
       const message = await ctx.prisma.aIMessage.create({
         data: input,
       });
@@ -80,6 +158,7 @@ export const aiRouter = createTRPCRouter({
       })
     )
     .query(async ({ ctx, input }) => {
+      await assertSessionAccess(ctx.prisma, input.sessionId, ctx.user.id);
       const messages = await ctx.prisma.aIMessage.findMany({
         where: { sessionId: input.sessionId },
         take: input.limit + 1,

@@ -7,12 +7,28 @@
  * AI-produced and the center retains pixel-perfect original quality.
  */
 
+const IMAGE_LOAD_TIMEOUT_MS = 30_000;
+
 function loadImage(src: string): Promise<HTMLImageElement> {
     return new Promise((resolve, reject) => {
         const img = new Image();
         img.crossOrigin = "anonymous";
-        img.onload = () => resolve(img);
-        img.onerror = () => reject(new Error(`Failed to load image: ${src.slice(0, 80)}...`));
+
+        const timer = setTimeout(() => {
+            // Third-party CDNs sometimes stall the request without firing
+            // onload or onerror (e.g. missing CORS headers on cached responses).
+            // Without this timeout, the expand pipeline would hang forever.
+            reject(new Error(`Image load timed out after ${IMAGE_LOAD_TIMEOUT_MS}ms: ${src.slice(0, 80)}...`));
+        }, IMAGE_LOAD_TIMEOUT_MS);
+
+        img.onload = () => {
+            clearTimeout(timer);
+            resolve(img);
+        };
+        img.onerror = () => {
+            clearTimeout(timer);
+            reject(new Error(`Failed to load image: ${src.slice(0, 80)}...`));
+        };
         img.src = src;
     });
 }

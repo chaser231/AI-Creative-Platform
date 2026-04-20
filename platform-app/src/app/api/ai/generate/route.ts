@@ -31,6 +31,10 @@ export async function POST(req: NextRequest) {
             aspectRatio, count, seed, scale,
             referenceImages, systemPrompt,
             imageBase64, projectId,
+            // When the client persists the result itself (e.g. photo workspace saves
+            // the S3-backed URL into AIMessage on its own), it sets `recordMessage: false`
+            // to avoid duplicating the assistant message.
+            recordMessage = true,
         } = body;
 
         if (!prompt) {
@@ -70,7 +74,12 @@ export async function POST(req: NextRequest) {
 
 
         // ── Track AI cost ──────────────────────────────────────────
+        // Skipped when caller opts out via `recordMessage: false`
+        // (e.g. /photo workspace writes the AIMessage itself with the persisted S3 URL).
         try {
+            if (!recordMessage) {
+                return NextResponse.json({ ...result, requestId });
+            }
             const resolvedModel = model || "nano-banana-2";
             const modelEntry = getModelById(resolvedModel);
             const costPerRun = modelEntry?.costPerRun ?? 0;

@@ -37,6 +37,7 @@ model User {
   joinRequests JoinRequest[]
   sharedTemplates TemplateShare[]
   aiPresets    AIPreset[]  @relation("PresetCreator")
+  figmaImports FigmaImport[]
 }
 
 model Account {
@@ -115,6 +116,7 @@ model Workspace {
   aiPresets     AIPreset[]
   aiWorkflows   AIWorkflow[]
   joinRequests  JoinRequest[]
+  figmaImports  FigmaImport[]
 }
 
 enum WorkspaceVisibility {
@@ -170,7 +172,7 @@ model Project {
   id     String        @id @default(cuid())
   name   String
   status ProjectStatus @default(DRAFT)
-  goal   String // "banner", "text", "video"
+  goal   String // "banner", "text", "video", "photo"
 
   // Canvas state — full JSON blob (MVP approach)
   canvasState Json?
@@ -185,10 +187,11 @@ model Project {
   createdBy   User      @relation("ProjectCreator", fields: [createdById], references: [id])
   createdById String
 
-  versions   ProjectVersion[]
-  aiSessions AISession[]
-  favorites  FavoriteProject[]
-  assets     Asset[]
+  versions     ProjectVersion[]
+  aiSessions   AISession[]
+  favorites    FavoriteProject[]
+  assets       Asset[]
+  figmaImports FigmaImport[]
 
   @@index([workspaceId, updatedAt])
 }
@@ -380,7 +383,8 @@ model AIPreset {
 }
 
 model AISession {
-  id String @id @default(cuid())
+  id   String  @id @default(cuid())
+  name String? // optional user-defined session title (used in photo Krea-like sidebar)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -444,4 +448,41 @@ model PlatformEvent {
   @@index([type, createdAt])
   @@index([userId])
   @@index([workspaceId])
+}
+
+// ─── FIGMA IMPORTS (Phase 1) ─────────────────────────────
+// Tracks asynchronous Figma file imports so the UI can poll progress and show
+// a report of lossy conversions / skipped nodes to the user.
+model FigmaImport {
+  id          String   @id @default(cuid())
+  userId      String
+  workspaceId String
+  projectId   String?  // set once the Project has been created
+
+  fileKey     String
+  fileName    String   @default("")
+  pageId      String?
+  sourceUrl   String?
+
+  status      String   @default("PENDING") // PENDING | FETCHING | MAPPING | DOWNLOADING_ASSETS | CREATING_PROJECT | COMPLETED | FAILED
+  progress    Int      @default(0)          // 0..100
+  error       String?
+
+  // ImportReport (see src/lib/figma/types.ts) and options (preserveVectorsAsImages etc.)
+  options     Json?
+  report      Json?
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Cascade from User/Workspace so deleting an account doesn't leak import
+  // history. SetNull on projectId preserves the FigmaImport row as an audit
+  // trail even if the resulting Project is later deleted.
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  project   Project?  @relation(fields: [projectId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+  @@index([workspaceId])
+  @@index([projectId])
 }

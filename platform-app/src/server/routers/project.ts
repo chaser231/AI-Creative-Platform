@@ -40,6 +40,7 @@ export const projectRouter = createTRPCRouter({
         status: z
           .enum(["DRAFT", "IN_PROGRESS", "REVIEW", "PUBLISHED", "ARCHIVED"])
           .optional(),
+        goal: z.enum(["banner", "text", "video", "photo"]).optional(),
         search: z.string().optional(),
       })
     )
@@ -52,6 +53,7 @@ export const projectRouter = createTRPCRouter({
           workspaceId: input.workspaceId,
           ...(input.onlyMine && { createdById: ctx.user.id }),
           ...(input.status && { status: input.status }),
+          ...(input.goal && { goal: input.goal }),
           ...(input.search && {
             name: { contains: input.search, mode: "insensitive" as const },
           }),
@@ -70,6 +72,40 @@ export const projectRouter = createTRPCRouter({
         },
         orderBy: { updatedAt: "desc" },
       });
+
+      // Photo-generation projects don't render on a canvas, so they never
+      // populate `thumbnail` via the canvas auto-save path. Back-fill the
+      // preview from the most recent generated asset so dashboard cards
+      // show an image instead of a placeholder icon.
+      const photoProjectIds = projects
+        .filter((p) => p.goal === "photo" && !p.thumbnail)
+        .map((p) => p.id);
+
+      if (photoProjectIds.length > 0) {
+        const recentAssets = await ctx.prisma.asset.findMany({
+          where: {
+            projectId: { in: photoProjectIds },
+            type: "IMAGE",
+          },
+          select: { projectId: true, url: true, createdAt: true },
+          orderBy: { createdAt: "desc" },
+        });
+
+        const thumbnailByProject = new Map<string, string>();
+        for (const a of recentAssets) {
+          if (a.projectId && !thumbnailByProject.has(a.projectId)) {
+            thumbnailByProject.set(a.projectId, a.url);
+          }
+        }
+
+        return projects.map((p) => {
+          if (p.goal === "photo" && !p.thumbnail) {
+            const url = thumbnailByProject.get(p.id);
+            if (url) return { ...p, thumbnail: url };
+          }
+          return p;
+        });
+      }
 
       return projects;
     }),
@@ -109,7 +145,7 @@ export const projectRouter = createTRPCRouter({
       z.object({
         name: z.string().min(1).max(200),
         workspaceId: z.string(),
-        goal: z.string(),
+        goal: z.enum(["banner", "text", "video", "photo"]),
       })
     )
     .mutation(async ({ ctx, input }) => {

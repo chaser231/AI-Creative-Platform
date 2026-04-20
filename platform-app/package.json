@@ -10,6 +10,8 @@
     "lint:fix": "eslint src/ --fix",
     "db:push": "prisma db push",
     "db:seed": "prisma db seed",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "postinstall": "prisma generate"
   },
   "prisma": {
@@ -19,6 +21,7 @@
     "@auth/prisma-adapter": "^2.11.1",
     "@aws-sdk/client-s3": "^3.1014.0",
     "@aws-sdk/s3-request-presigner": "^3.1014.0",
+    "@figma/rest-api-spec": "^0.37.0",
     "@prisma/client": "^6.19.2",
     "@radix-ui/react-dialog": "^1.1.15",
     "@radix-ui/react-select": "^2.2.6",
@@ -57,11 +60,13 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@types/uuid": "^10.0.0",
+    "@vitest/coverage-v8": "^4.1.4",
     "eslint": "^9",
     "eslint-config-next": "16.1.6",
     "prisma": "^6.19.2",
     "tailwindcss": "^4",
     "tsx": "^4.21.0",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^4.1.4"
   }
 }

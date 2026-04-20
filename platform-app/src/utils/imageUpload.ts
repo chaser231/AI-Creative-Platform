@@ -18,6 +18,26 @@ const S3_HOST = "storage.yandexcloud.net";
 // Cache to avoid re-uploading the same image multiple times
 const uploadCache = new Map<string, string>();
 
+// Session-wide flag: set to true after the first presigned PUT fails with a
+// network/CORS error. Subsequent uploads skip the presign attempt and go
+// straight to the server-proxied legacy path. Prevents re-triggering CORS
+// errors and wasted preflight round-trips for the rest of the session.
+let presignDisabled = false;
+
+/**
+ * Heuristic: if we observed a direct-to-S3 PUT fail with a CORS/network error
+ * once, we flip the kill switch so we don't keep retrying presigned uploads.
+ */
+function markPresignUnavailable(reason: string): void {
+  if (presignDisabled) return;
+  presignDisabled = true;
+  console.error(
+    `[imageUpload] Direct-to-S3 upload disabled for this session (${reason}). ` +
+    `All uploads will go via /api/upload. ` +
+    `Fix: configure CORS on the S3 bucket to allow PUT from this origin.`,
+  );
+}
+
 /**
  * Convert a base64 data URI or raw base64 string to a Blob.
  */
@@ -72,6 +92,12 @@ export async function uploadImageToS3(
   const cached = uploadCache.get(cacheKey);
   if (cached) return cached;
 
+  // Presign path is disabled for this session (CORS / network issue detected).
+  // Skip straight to the server-proxied legacy upload.
+  if (presignDisabled) {
+    return await uploadImageToS3Legacy(base64, projectId, mimeType);
+  }
+
   try {
     const presigned = await getPresignedUrl(mimeType, projectId);
     if (!presigned) return await uploadImageToS3Legacy(base64, projectId, mimeType);
@@ -84,11 +110,21 @@ export async function uploadImageToS3(
       headers: { "Content-Type": mimeType },
     });
 
-    if (!putRes.ok) return await uploadImageToS3Legacy(base64, projectId, mimeType);
+    if (!putRes.ok) {
+      // A 403 from S3 usually means signature mismatch — not a transient issue,
+      // but not a CORS problem either. Don't permanently disable presign in that
+      // case; just fall back for this call.
+      return await uploadImageToS3Legacy(base64, projectId, mimeType);
+    }
 
     uploadCache.set(cacheKey, presigned.publicUrl);
     return presigned.publicUrl;
-  } catch {
+  } catch (err) {
+    // A thrown fetch error from a cross-origin PUT almost always means CORS
+    // preflight failed (or the network dropped). Flip the kill switch so we
+    // don't keep paying the preflight cost for the rest of the session.
+    const msg = err instanceof Error ? err.message : String(err);
+    markPresignUnavailable(msg || "fetch threw");
     return await uploadImageToS3Legacy(base64, projectId, mimeType);
   }
 }
@@ -106,7 +142,11 @@ async function uploadImageToS3Legacy(
     const res = await fetch("/api/upload", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ base64, mimeType, projectId }),
+      // skipAssetRecord: the upload pipeline just persists bytes to S3.
+      // Library/asset DB records are created explicitly by feature code
+      // (e.g. asset.saveGeneratedImage) with proper metadata. Registering
+      // here would produce duplicate library entries.
+      body: JSON.stringify({ base64, mimeType, projectId, skipAssetRecord: true }),
     });
     if (!res.ok) return null;
     const { url } = await res.json();
@@ -134,7 +174,9 @@ export async function uploadExternalUrlToS3(
     const res = await fetch("/api/upload", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url: externalUrl, projectId }),
+      // See note above: callers register Asset records themselves when
+      // library visibility is desired. Prevents duplicate entries.
+      body: JSON.stringify({ url: externalUrl, projectId, skipAssetRecord: true }),
     });
     if (!res.ok) return null;
     const { url } = await res.json();

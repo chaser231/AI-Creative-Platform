@@ -426,12 +426,27 @@ export function useLoadCanvasState(projectId: string) {
       const state = canvasQuery.data as Record<string, unknown>;
 
       if (state.layers && Array.isArray(state.layers)) {
-        // Restore canvas state from DB — always overwrite
+        type Resizes = ReturnType<typeof useCanvasStore.getState>["resizes"];
+        const resizes = (state.resizes ?? useCanvasStore.getState().resizes) as Resizes;
+
+        // Always open a project on the master format — this is the user-facing
+        // "safe default" so generative actions (expand / edit / inpaint) always
+        // land on a real, selected format instead of writing into a phantom
+        // activeResizeId that no format in the current project matches.
+        // Fallbacks: if there's no master, use the first format; as a last
+        // resort, fall back to the literal "master" string (matches DEFAULT_RESIZE.id).
+        const activeResizeId =
+          resizes.find((r) => r.isMaster)?.id
+          ?? resizes.find((r) => r.id === "master")?.id
+          ?? resizes[0]?.id
+          ?? "master";
+
         useCanvasStore.setState({
           layers: state.layers as ReturnType<typeof useCanvasStore.getState>["layers"],
           masterComponents: (state.masterComponents ?? []) as ReturnType<typeof useCanvasStore.getState>["masterComponents"],
           componentInstances: (state.componentInstances ?? []) as ReturnType<typeof useCanvasStore.getState>["componentInstances"],
-          resizes: (state.resizes ?? useCanvasStore.getState().resizes) as ReturnType<typeof useCanvasStore.getState>["resizes"],
+          resizes,
+          activeResizeId,
           artboardProps: (state.artboardProps ?? useCanvasStore.getState().artboardProps) as ReturnType<typeof useCanvasStore.getState>["artboardProps"],
           canvasWidth: (state.canvasWidth ?? useCanvasStore.getState().canvasWidth) as number,
           canvasHeight: (state.canvasHeight ?? useCanvasStore.getState().canvasHeight) as number,
@@ -468,7 +483,7 @@ export function useCreateProjectSync() {
         const project = await createMutation.mutateAsync({
           name: data.name,
           workspaceId: wsId,
-          goal: data.goal,
+          goal: data.goal as "banner" | "text" | "video" | "photo",
         });
         return project;
       } catch (err) {

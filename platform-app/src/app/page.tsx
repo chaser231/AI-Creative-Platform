@@ -3,13 +3,14 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Plus, ImageIcon, Type, Camera, Video, Search, HelpCircle, LayoutTemplate, ArrowRight, Star, Loader2, X } from "lucide-react";
+import { Plus, ImageIcon, Type, Camera, Video, Search, HelpCircle, LayoutTemplate, ArrowRight, Star, Loader2, X, FolderKanban, Image as ImageLibIcon } from "lucide-react";
 import { AppShell } from "@/components/layout/AppShell";
 import { TopBar } from "@/components/layout/TopBar";
 import { Button } from "@/components/ui/Button";
 import { ProjectCard } from "@/components/dashboard/ProjectCard";
 import { EmptyState } from "@/components/dashboard/EmptyState";
 import { NewProjectModal } from "@/components/dashboard/NewProjectModal";
+import { WorkspaceAssetGrid } from "@/components/dashboard/WorkspaceAssetGrid";
 import { useProjectStore } from "@/store/projectStore";
 import { useProjectListSync } from "@/hooks/useProjectSync";
 import { trpc } from "@/lib/trpc";
@@ -103,12 +104,15 @@ const generationTypes = [
   },
 ];
 
+type ProjectTab = "all" | "banner" | "photo" | "video" | "assets";
+
 export default function DashboardPage() {
   const router = useRouter();
   const [modalOpen, setModalOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState<ProjectTab>("all");
   const searchInputRef = useRef<HTMLInputElement>(null);
   const localProjects = useProjectStore((s) => s.projects);
   const { projects: backendProjects, isLoading, workspaceId, refetch } = useProjectListSync(true);
@@ -150,10 +154,15 @@ export default function DashboardPage() {
     }
   }, [favoriteIds, favoriteMutation, unfavoriteMutation]);
 
-  // Create project for photo shortcut
+  // Create project — routes to the right workspace based on goal
   const createProjectMutation = trpc.project.create.useMutation({
     onSuccess: (data) => {
-      router.push(`/editor/${data.id}?panel=ai&tab=image`);
+      const goal = (data as { goal?: string }).goal;
+      if (goal === "photo") {
+        router.push(`/photo/${data.id}`);
+      } else {
+        router.push(`/editor/${data.id}`);
+      }
     },
   });
 
@@ -171,7 +180,7 @@ export default function DashboardPage() {
         if (workspaceId) {
           createProjectMutation.mutate({
             name: "Генерация фото",
-            goal: "banner",
+            goal: "photo",
             workspaceId,
           });
         }
@@ -196,7 +205,7 @@ export default function DashboardPage() {
       id: bp.id,
       name: bp.name,
       status: bp.status.toLowerCase() as "draft" | "in-progress" | "review" | "published",
-      goal: (bp.goal || "banner") as "banner" | "text" | "video",
+      goal: (bp.goal || "banner") as "banner" | "text" | "video" | "photo",
       businessUnit: "yandex-market" as const,
       createdAt: new Date(bp.createdAt),
       updatedAt: new Date(bp.updatedAt),
@@ -208,12 +217,15 @@ export default function DashboardPage() {
     return [...localProjects, ...backendOnly];
   }, [localProjects, backendProjects]);
 
-  // Client-side search filter (instant, no debounce)
+  // Client-side search + tab filter (instant, no debounce)
   const filteredProjects = useMemo(() => {
-    if (!searchQuery.trim()) return projects;
-    const q = searchQuery.toLowerCase();
-    return projects.filter(p => p.name.toLowerCase().includes(q));
-  }, [projects, searchQuery]);
+    const q = searchQuery.trim().toLowerCase();
+    return projects.filter((p) => {
+      if (activeTab !== "all" && activeTab !== "assets" && p.goal !== activeTab) return false;
+      if (q && !p.name.toLowerCase().includes(q)) return false;
+      return true;
+    });
+  }, [projects, searchQuery, activeTab]);
 
   return (
     <AppShell>
@@ -269,7 +281,7 @@ export default function DashboardPage() {
 
         {/* Projects section */}
         <div className="px-6 pt-8">
-          <div className="flex items-center justify-between mb-5">
+          <div className="flex items-center justify-between mb-4">
             <h1 className="text-3xl text-text-primary">Мои проекты</h1>
             <div className="flex items-center gap-3">
               {/* Search */}
@@ -318,7 +330,28 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          {isLoading ? (
+          {/* Project type tabs */}
+          <div className="flex items-center gap-1 mb-5 border-b border-border-primary">
+            <ProjectTabBtn active={activeTab === "all"} onClick={() => setActiveTab("all")} icon={<FolderKanban size={13} />}>
+              Все
+            </ProjectTabBtn>
+            <ProjectTabBtn active={activeTab === "banner"} onClick={() => setActiveTab("banner")} icon={<ImageIcon size={13} />}>
+              Баннеры
+            </ProjectTabBtn>
+            <ProjectTabBtn active={activeTab === "photo"} onClick={() => setActiveTab("photo")} icon={<Camera size={13} />}>
+              Фото
+            </ProjectTabBtn>
+            <ProjectTabBtn active={activeTab === "video"} onClick={() => setActiveTab("video")} icon={<Video size={13} />}>
+              Видео
+            </ProjectTabBtn>
+            <ProjectTabBtn active={activeTab === "assets"} onClick={() => setActiveTab("assets")} icon={<ImageLibIcon size={13} />}>
+              Ассеты
+            </ProjectTabBtn>
+          </div>
+
+          {activeTab === "assets" ? (
+            <WorkspaceAssetGrid workspaceId={workspaceId} />
+          ) : isLoading ? (
             <div className="flex items-center justify-center py-20">
               <Loader2 size={24} className="animate-spin text-text-tertiary" />
             </div>
@@ -332,6 +365,17 @@ export default function DashboardPage() {
                   className="mt-2 text-xs text-accent-primary hover:underline cursor-pointer"
                 >
                   Сбросить поиск
+                </button>
+              </div>
+            ) : activeTab !== "all" ? (
+              <div className="flex flex-col items-center justify-center py-20 text-text-tertiary">
+                <FolderKanban size={32} className="mb-3 opacity-40" />
+                <p className="text-sm">В этой категории проектов пока нет</p>
+                <button
+                  onClick={() => setActiveTab("all")}
+                  className="mt-2 text-xs text-accent-primary hover:underline cursor-pointer"
+                >
+                  Показать все
                 </button>
               </div>
             ) : (
@@ -364,5 +408,31 @@ export default function DashboardPage() {
         </div>
       )}
     </AppShell>
+  );
+}
+
+function ProjectTabBtn({
+  active,
+  onClick,
+  icon,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  icon: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`flex items-center gap-1.5 px-3 py-2 text-[13px] font-medium transition-colors cursor-pointer border-b-2 -mb-px ${
+        active
+          ? "text-text-primary border-accent-primary"
+          : "text-text-tertiary hover:text-text-primary border-transparent"
+      }`}
+    >
+      {icon}
+      {children}
+    </button>
   );
 }

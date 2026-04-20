@@ -36,7 +36,13 @@ export async function POST(req: Request) {
     }
 
     const body = await req.json();
-    const { base64, url, mimeType, projectId } = body;
+    const { base64, url, mimeType, projectId, skipAssetRecord } = body as {
+      base64?: string;
+      url?: string;
+      mimeType?: string;
+      projectId?: string;
+      skipAssetRecord?: boolean;
+    };
 
     let buffer: Buffer;
     let contentType: string = mimeType || "image/png";
@@ -60,6 +66,15 @@ export async function POST(req: Request) {
 
       if (buffer.length === 0) {
         return NextResponse.json({ error: "Fetched URL returned empty body" }, { status: 502 });
+      }
+
+      // Guard: Replicate/fal temp links can return HTML error pages with 200
+      // when expired. Never write that into the asset bucket.
+      if (!contentType.startsWith("image/") && !contentType.startsWith("video/")) {
+        return NextResponse.json(
+          { error: `Fetched URL returned non-image content-type: ${contentType}` },
+          { status: 502 }
+        );
       }
     } else if (base64 && typeof base64 === "string") {
       // ── Mode 1: Decode base64 and upload ──
@@ -85,7 +100,10 @@ export async function POST(req: Request) {
     const publicUrl = `${process.env.S3_ENDPOINT || "https://storage.yandexcloud.net"}/${BUCKET}/${key}`;
 
     // ── Register asset in DB for the Asset Library ──
-    if (projectId) {
+    // Callers that will create their own Asset record with richer metadata
+    // (e.g. the photo-generation flow calling asset.saveGeneratedImage) pass
+    // skipAssetRecord: true to avoid duplicate library entries.
+    if (projectId && !skipAssetRecord) {
       try {
         const project = await prisma.project.findUnique({
           where: { id: projectId },

@@ -12,6 +12,7 @@ import { getImagePresetPromptSuffix, getTextPresetInstruction } from "@/lib/styl
 import { useStylePresets } from "@/hooks/useStylePresets";
 import { persistImageToS3, uploadForAI, uploadManyForAI } from "@/utils/imageUpload";
 import { compositeExpandResult } from "@/utils/imageComposite";
+import { trpc } from "@/lib/trpc";
 import type { ImageLayer } from "@/types";
 
 // Helper models lists
@@ -162,6 +163,10 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
     const [editAction, setEditAction] = useState<"prompt" | "remove-bg" | "inpaint" | "expand" | null>(null);
     const [editError, setEditError] = useState<string | null>(null);
     const [outpaintRatio, setOutpaintRatio] = useState("16:9");
+
+    // Persist edit/expand results as a project asset so they appear in the library
+    const trpcUtils = trpc.useUtils();
+    const saveGeneratedAssetMutation = trpc.asset.saveGeneratedImage.useMutation();
 
     // Workspace-aware presets (system + custom from DB)
     const { imagePresets, textPresets } = useStylePresets();
@@ -425,7 +430,7 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                             body: JSON.stringify({
                                 action: "upscale",
                                 imageBase64: upscaleImageUrl,
-                                model: "esrgan",
+                                model: "seedvr",
                                 upscaleScale: Math.min(upscaleScale, 4),
                                 projectId,
                             }),
@@ -433,9 +438,28 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                         const upscaleData = await upscaleRes.json();
 
                         if (upscaleData.content && !upscaleData.error) {
-                            console.log(`[Outpaint/Preserve] Upscale complete, compositing original over result...`);
+                            console.log(`[Outpaint/Preserve] Upscale complete, persisting to S3 before compositing...`);
+                            // Rehost the upscaled result on our S3 before loading it into a canvas.
+                            // Third-party CDNs (fal.ai media hosts) occasionally stall the request
+                            // or omit CORS headers, which causes <img crossOrigin="anonymous"> to
+                            // hang indefinitely. Going through our bucket guarantees reliable
+                            // cross-origin loading and deterministic pipeline latency.
+                            let expandedSrcForComposite = upscaleData.content as string;
+                            try {
+                                expandedSrcForComposite = await persistImageToS3(
+                                    upscaleData.content as string,
+                                    projectId ?? "ai-tmp",
+                                );
+                            } catch (persistErr) {
+                                console.warn(
+                                    `[Outpaint/Preserve] Could not rehost upscale result, falling back to source URL:`,
+                                    persistErr,
+                                );
+                            }
+
+                            console.log(`[Outpaint/Preserve] Compositing original over result...`);
                             finalContent = await compositeExpandResult({
-                                expandedSrc: upscaleData.content,
+                                expandedSrc: expandedSrcForComposite,
                                 originalSrc: outpaintOriginalSrc,
                                 pixelPadding: outpaintOriginalPixelPadding!,
                             });
@@ -462,7 +486,7 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                             body: JSON.stringify({
                                 action: "upscale",
                                 imageBase64: editUpscaleUrl,
-                                model: "esrgan",
+                                model: "seedvr",
                                 upscaleScale,
                                 projectId,
                             }),
@@ -485,6 +509,41 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                     padding: expandPadding,
                 } : undefined);
                 if (action === "outpaint") resetExpandMode();
+
+                // ── Persist as workspace asset so the result shows up in the library ──
+                // applyEditedImageToLayer already uploaded the content to S3 and called
+                // updateLayer with the permanent URL. We pull it from the fresh store
+                // state to avoid a race with the in-flight S3 upload.
+                if (projectId) {
+                    try {
+                        const storeLayer = useCanvasStore
+                            .getState()
+                            .layers.find((l) => l.id === selectedImageLayer.id) as ImageLayer | undefined;
+                        let persistedUrl = storeLayer?.src ?? finalContent;
+                        if (!persistedUrl.startsWith("https://storage.yandexcloud.net")) {
+                            persistedUrl = await persistImageToS3(persistedUrl, projectId);
+                        }
+                        const sourceTag =
+                            action === "outpaint" ? "banner-edit-expand"
+                            : action === "inpaint" ? "banner-edit-inpaint"
+                            : action === "remove-bg" ? "banner-edit-removebg"
+                            : "banner-edit-textedit";
+                        await saveGeneratedAssetMutation.mutateAsync({
+                            projectId,
+                            url: persistedUrl,
+                            prompt: rawPrompt || action,
+                            model: data.model ?? (action === "outpaint" ? "bria-expand" : selectedModel),
+                            source: sourceTag,
+                        });
+                        await Promise.all([
+                            trpcUtils.asset.listByProject.invalidate({ projectId }),
+                            trpcUtils.asset.listByWorkspace.invalidate().catch(() => undefined),
+                        ]);
+                    } catch (saveErr) {
+                        console.warn("[AIPromptBar] Asset save failed:", saveErr);
+                    }
+                }
+
                 onResult({
                     type: "edit",
                     content: finalContent,
@@ -501,7 +560,7 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
         } finally {
             setIsGenerating(false);
         }
-    }, [selectedImageLayer, selectedModel, imageStyleId, imagePresets, referenceImages, expandPadding, projectId, applyEditedImageToLayer, onResult, resetExpandMode]);
+    }, [selectedImageLayer, selectedModel, imageStyleId, imagePresets, referenceImages, expandPadding, projectId, applyEditedImageToLayer, onResult, resetExpandMode, saveGeneratedAssetMutation, trpcUtils]);
 
     // ── Edit tab handlers ──
     const handleRemoveBg = () => callImageEdit("remove-bg");
@@ -939,7 +998,7 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                             className={`
                                 flex items-center justify-center w-10 h-10 rounded-full
                                 transition-all duration-200 cursor-pointer
-                                bg-accent-lime-hover hover:bg-accent-lime text-accent-primary
+                                bg-accent-lime-hover hover:bg-accent-lime text-accent-lime-text
                                 hover:scale-105 active:scale-95
                                 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100
                                 shadow-sm hover:shadow-md

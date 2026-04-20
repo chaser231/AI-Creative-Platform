@@ -26,7 +26,7 @@ export async function POST(req: NextRequest) {
         }
 
         const body = await req.json();
-        const { action, prompt, imageBase64, maskBase64, model, aspectRatio, canvasSize, originalSize, originalLocation, referenceImages, projectId, expandPadding, upscaleScale } = body;
+        const { action, prompt, imageBase64, maskBase64, model, aspectRatio, canvasSize, originalSize, originalLocation, referenceImages, projectId, expandPadding, upscaleScale, recordMessage = true } = body;
 
         if (!action) {
             return NextResponse.json(
@@ -133,7 +133,7 @@ export async function POST(req: NextRequest) {
             }
 
             case "upscale": {
-                const upscaleModel = model || "esrgan";
+                const upscaleModel = model || "seedvr";
                 usedModel = upscaleModel;
                 result = await generateWithFallback({
                     prompt: "",
@@ -164,7 +164,19 @@ export async function POST(req: NextRequest) {
         }
 
         // ── Track AI cost ──────────────────────────────────────────
+        // Skipped when caller opts out via `recordMessage: false`
+        // (e.g. /photo workspace writes the AIMessage itself with the persisted S3 URL).
         try {
+            if (!recordMessage) {
+                return NextResponse.json({
+                    content: result.content,
+                    format: result.format,
+                    action,
+                    model: result.model,
+                    provider: result.provider,
+                    requestId,
+                });
+            }
             const modelEntry = getModelEntryById(usedModel);
             const costPerRun = modelEntry?.costPerRun ?? 0;
             const userId = session.user.id;
