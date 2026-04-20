@@ -49,6 +49,7 @@ function getCanvasStateForSave(store: ReturnType<typeof useCanvasStore.getState>
         artboardProps: store.artboardProps,
         canvasWidth: store.canvasWidth,
         canvasHeight: store.canvasHeight,
+        palette: store.palette,
     };
 }
 
@@ -409,6 +410,7 @@ export function useLoadCanvasState(projectId: string) {
       activeResizeId: "master",
       canvasWidth: DEFAULT_RESIZE.width,
       canvasHeight: DEFAULT_RESIZE.height,
+      palette: { colors: [], backgrounds: [] },
     });
   }, [projectId]);
 
@@ -450,6 +452,7 @@ export function useLoadCanvasState(projectId: string) {
           artboardProps: (state.artboardProps ?? useCanvasStore.getState().artboardProps) as ReturnType<typeof useCanvasStore.getState>["artboardProps"],
           canvasWidth: (state.canvasWidth ?? useCanvasStore.getState().canvasWidth) as number,
           canvasHeight: (state.canvasHeight ?? useCanvasStore.getState().canvasHeight) as number,
+          palette: (state.palette ?? { colors: [], backgrounds: [] }) as ReturnType<typeof useCanvasStore.getState>["palette"],
         });
       }
     }

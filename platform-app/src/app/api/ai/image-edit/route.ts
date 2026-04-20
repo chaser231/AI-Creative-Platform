@@ -54,15 +54,16 @@ export async function POST(req: NextRequest) {
 
         switch (action) {
             case "remove-bg": {
-                // Always use rembg via Replicate, regardless of selected model
-                usedModel = "rembg";
-                const provider = getProvider("rembg");
-                result = await provider.generate({
+                // Use bria-rmbg via fal.ai (with fallback to rembg via Replicate)
+                const rmbgModel = model || "bria-rmbg";
+                usedModel = rmbgModel;
+                result = await generateWithFallback({
                     prompt: "",
                     type: "remove-bg",
-                    model: "rembg",
+                    model: rmbgModel,
                     imageBase64,
                 });
+                if (result.model) usedModel = result.model;
                 break;
             }
 

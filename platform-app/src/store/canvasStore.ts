@@ -23,6 +23,7 @@ import { createSelectionSlice } from "./canvas/createSelectionSlice";
 import { createComponentSlice } from "./canvas/createComponentSlice";
 import { createResizeSlice } from "./canvas/createResizeSlice";
 import { createTemplateSlice } from "./canvas/createTemplateSlice";
+import { createPaletteSlice } from "./canvas/createPaletteSlice";
 
 // ─── Re-exports for backwards compatibility ─────────────
 export { computeConstrainedPosition } from "./canvas/helpers";
@@ -37,4 +38,5 @@ export const useCanvasStore = create<CanvasStore>((...args) => ({
     ...createComponentSlice(...args),
     ...createResizeSlice(...args),
     ...createTemplateSlice(...args),
+    ...createPaletteSlice(...args),
 }));

@@ -66,6 +66,10 @@ export const createSelectionSlice: StateCreator<CanvasStore, [], [], SelectionSl
                 masterComponents: state.masterComponents,
                 componentInstances: state.componentInstances,
                 selectedLayerIds: state.selectedLayerIds,
+                palette: state.palette,
+                artboardProps: state.artboardProps,
+                resizes: state.resizes,
+                activeResizeId: state.activeResizeId,
             };
 
             const updates: { id: string; changes: Partial<Layer> }[] = [];
@@ -170,6 +174,10 @@ export const createSelectionSlice: StateCreator<CanvasStore, [], [], SelectionSl
                 masterComponents: state.masterComponents,
                 componentInstances: state.componentInstances,
                 selectedLayerIds: state.selectedLayerIds,
+                palette: state.palette,
+                artboardProps: state.artboardProps,
+                resizes: state.resizes,
+                activeResizeId: state.activeResizeId,
             };
 
             let currentLayers = state.layers;

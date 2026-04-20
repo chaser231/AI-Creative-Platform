@@ -347,6 +347,30 @@ export const createLayerSlice: StateCreator<CanvasStore, [], [], LayerSlice> = (
         if (_updateHistoryTimer) clearTimeout(_updateHistoryTimer);
         _updateHistoryTimer = setTimeout(() => { _updateHistoryPushed = false; }, 300);
 
+        // Swatch-override guard: a user typing a new `fill`/`stroke` into the
+        // UI should break the swatch link so the next swatch edit doesn't
+        // silently overwrite their manual color. If `swatchRefs` is included
+        // in the updates explicitly, trust the caller.
+        const hasExplicitSwatchRefs = Object.prototype.hasOwnProperty.call(updates, "swatchRefs");
+        const hasFill = Object.prototype.hasOwnProperty.call(updates, "fill");
+        const hasStroke = Object.prototype.hasOwnProperty.call(updates, "stroke");
+        const hasSrc = Object.prototype.hasOwnProperty.call(updates, "src");
+        if (!hasExplicitSwatchRefs && (hasFill || hasStroke || hasSrc)) {
+            const existing = get().layers.find((l) => l.id === id);
+            if (existing?.swatchRefs) {
+                const next = { ...existing.swatchRefs };
+                if (hasFill) {
+                    delete next.fill;
+                    // text layers use `fill` for their color — detach text ref too
+                    delete next.text;
+                }
+                if (hasStroke) delete next.stroke;
+                if (hasSrc) delete next.src;
+                const cleaned = Object.keys(next).length === 0 ? undefined : next;
+                (updates as { swatchRefs?: Layer["swatchRefs"] }).swatchRefs = cleaned;
+            }
+        }
+
         set((state) => {
             const computeUpdatedLayers = (currentLayers: Layer[], targetId: string, layerUpdates: Partial<Layer>): Layer[] => {
                 const targetLayer = currentLayers.find(l => l.id === targetId);

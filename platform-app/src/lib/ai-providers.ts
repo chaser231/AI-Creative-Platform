@@ -171,7 +171,7 @@ class ReplicateProvider implements AIProviderImplementation {
         // ── Remove BG ───────────────────────────────────────────────
         if (params.type === "remove-bg") {
             if (!params.imageBase64) throw new Error("Image is required for background removal");
-            // Use rembg regardless of selected model
+            // Always use rembg on Replicate (since bria-rmbg is fal.ai only)
             const rembgEntry = getModelById("rembg")!;
             const result = await this.callReplicate(rembgEntry, { image: params.imageBase64 }, token);
             const output = Array.isArray(result) ? result[0] : result;
@@ -462,6 +462,7 @@ const FAL_MODEL_MAP: Record<string, string> = {
     "nano-banana-pro": "fal-ai/nano-banana-pro",
     "seedream":        "fal-ai/seedream-4.5",
     "bria-expand":     "fal-ai/bria/expand",
+    "bria-rmbg":       "fal-ai/bria/background/remove",
     "esrgan":          "fal-ai/esrgan",
     "seedvr":          "fal-ai/seedvr/upscale/image",
     "sima-upscaler":   "simalabs/sima-upscaler",
@@ -491,6 +492,77 @@ class FalProvider implements AIProviderImplementation {
         // Text models not supported on fal.ai in this implementation
         if (entry.caps.includes("text")) {
             throw new Error(`Text models not supported on fal.ai fallback`);
+        }
+
+        // ── Remove BG (Bria on fal.ai) ────────────────────
+        if (params.type === "remove-bg") {
+            const falEndpoint = FAL_MODEL_MAP[modelId];
+            if (!falEndpoint) throw new Error(`Model ${modelId} is not available on fal.ai for remove-bg`);
+
+            const rmbgInput: Record<string, unknown> = {
+                image_url: params.imageBase64,
+            };
+
+            console.log(`[fal.ai] Remove BG via ${falEndpoint}`);
+
+            const submitRes = await fetch(`https://queue.fal.run/${falEndpoint}`, {
+                method: "POST",
+                headers: {
+                    "Authorization": `Key ${apiKey}`,
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify(rmbgInput),
+            });
+            if (!submitRes.ok) {
+                const errBody = await submitRes.text();
+                throw new Error(`fal.ai remove-bg submit failed (${submitRes.status}): ${errBody}`);
+            }
+            const submitData = await submitRes.json();
+            const requestId = submitData.request_id;
+
+            if (!requestId) {
+                const imageUrl = submitData.image?.url;
+                if (!imageUrl) throw new Error("fal.ai remove-bg returned no image (sync)");
+                return { content: imageUrl, format: "url" as const, model: modelId, provider: "fal.ai" };
+            }
+
+            const statusUrl = submitData.status_url
+                || `https://queue.fal.run/${falEndpoint}/requests/${requestId}/status`;
+            const responseUrl = submitData.response_url
+                || `https://queue.fal.run/${falEndpoint}/requests/${requestId}`;
+
+            console.log(`[fal.ai] Remove BG queued: ${requestId}`);
+
+            for (let i = 0; i < 60; i++) {
+                await new Promise(r => setTimeout(r, 2000));
+                try {
+                    const statusRes = await fetch(statusUrl, {
+                        headers: { "Authorization": `Key ${apiKey}` },
+                    });
+                    if (!statusRes.ok) continue;
+                    const status = await statusRes.json() as { status: string };
+                    if (status.status === "COMPLETED") {
+                        console.log(`[fal.ai] Remove BG completed after ${(i + 1) * 2}s`);
+                        break;
+                    }
+                    if (status.status === "FAILED") throw new Error("fal.ai remove-bg generation failed");
+                } catch (err: unknown) {
+                    const msg = err instanceof Error ? err.message : String(err);
+                    if (err instanceof TypeError && msg.includes("fetch")) continue;
+                    throw err;
+                }
+            }
+
+            const resultRes = await fetch(responseUrl, {
+                headers: { "Authorization": `Key ${apiKey}` },
+            });
+            if (!resultRes.ok) throw new Error(`fal.ai remove-bg result failed (${resultRes.status})`);
+            const result = await resultRes.json();
+
+            const imageUrl = result.image?.url;
+            if (!imageUrl) throw new Error(`fal.ai remove-bg returned no image. Response: ${JSON.stringify(result).slice(0, 300)}`);
+
+            return { content: imageUrl, format: "url", model: modelId, provider: "fal.ai" };
         }
 
         // ── Outpainting (bria-expand on fal.ai) ────────────────────
@@ -864,6 +936,7 @@ const FAL_PRIMARY_MODELS = new Set([
     "nano-banana",
     "nano-banana-pro",
     "bria-expand",
+    "bria-rmbg",
     "esrgan",
     "seedvr",
     "sima-upscaler",
@@ -881,6 +954,8 @@ const MODEL_FALLBACK_CHAIN: Record<string, string[]> = {
     "nano-banana-pro": ["nano-banana-2", "nano-banana"],
     "bria-expand":     ["outpainter"],
     "outpainter":      ["bria-expand"],
+    "bria-rmbg":       ["rembg"],
+    "rembg":           ["bria-rmbg"],
     "seedvr":          ["esrgan", "sima-upscaler"],
     "sima-upscaler":   ["seedvr", "esrgan"],
     "esrgan":          ["seedvr"],

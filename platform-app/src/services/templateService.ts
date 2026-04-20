@@ -15,6 +15,7 @@ import type {
     TemplateVisibility,
     TemplateEditPermission,
 } from "@/types";
+import { DEFAULT_PALETTE } from "@/types";
 import type { RequiredFont } from "@/utils/fontUtils";
 
 /* ─── Template Pack (v1 — backward compat) ──────────────── */
@@ -349,6 +350,7 @@ export async function applyTemplatePack(
                 canvasWidth: masterResize?.width ?? dataAny.canvasWidth ?? 1080,
                 canvasHeight: masterResize?.height ?? dataAny.canvasHeight ?? 1080,
                 artboardProps: dataAny.artboardProps ?? useCanvasStore.getState().artboardProps,
+                palette: dataAny.palette ?? DEFAULT_PALETTE,
             });
         } else {
             // Legacy TemplatePack format — hydrate with ID regeneration
@@ -378,6 +380,16 @@ export async function applyTemplatePack(
             }
 
             useCanvasStore.getState().loadTemplatePack(hydrated);
+
+            // Hydrate template-level extras that `loadTemplatePack` doesn't touch.
+            // Always overwrite palette so previous template's palette doesn't leak when loading
+            // a legacy pack without `palette` field.
+            const dataAnyLegacy = data as any;
+            const extras: Partial<ReturnType<typeof useCanvasStore.getState>> = {
+                palette: dataAnyLegacy.palette ?? DEFAULT_PALETTE,
+            };
+            if (dataAnyLegacy.artboardProps) extras.artboardProps = dataAnyLegacy.artboardProps;
+            useCanvasStore.setState(extras);
         }
 
         options?.onSuccess?.();

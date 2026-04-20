@@ -14,6 +14,7 @@ import { PropertiesPanel } from "@/components/editor/properties";
 import { Toolbar } from "@/components/editor/Toolbar";
 import { ExportModal } from "@/components/editor/ExportModal";
 import { ResizePanel } from "@/components/editor/ResizePanel";
+import { SwatchesPanel } from "@/components/editor/swatches/SwatchesPanel";
 import { TemplatePanel } from "@/components/editor/TemplatePanel";
 import { AIPromptBar } from "@/components/editor/AIPromptBar";
 import { AIChatPanel } from "@/components/editor/ai-chat";
@@ -125,6 +126,7 @@ export default function EditorPage({ params }: EditorPageProps) {
                 artboardProps: data.artboardProps ?? useCanvasStore.getState().artboardProps,
                 canvasWidth: activeResize?.width ?? data.canvasWidth ?? 1080,
                 canvasHeight: activeResize?.height ?? data.canvasHeight ?? 1080,
+                palette: data.palette ?? { colors: [], backgrounds: [] },
             });
         } else {
             // It's a TemplatePack format — hydrate it
@@ -137,6 +139,8 @@ export default function EditorPage({ params }: EditorPageProps) {
                     resizes: hydrated.resizes.length > 0 ? hydrated.resizes : useCanvasStore.getState().resizes,
                     canvasWidth: hydrated.baseWidth || useCanvasStore.getState().canvasWidth,
                     canvasHeight: hydrated.baseHeight || useCanvasStore.getState().canvasHeight,
+                    artboardProps: data.artboardProps ?? useCanvasStore.getState().artboardProps,
+                    palette: data.palette ?? { colors: [], backgrounds: [] },
                 });
             } catch (err) {
                 console.error("Failed to hydrate template:", err);
@@ -213,6 +217,7 @@ export default function EditorPage({ params }: EditorPageProps) {
             artboardProps: store.artboardProps,
             canvasWidth: masterFormat?.width ?? store.canvasWidth,
             canvasHeight: masterFormat?.height ?? store.canvasHeight,
+            palette: store.palette,
             // v1.2+: embed font metadata for missing-font detection
             requiredFonts: extractRequiredFonts(masterLayers as any[]),
         };
@@ -695,10 +700,10 @@ export default function EditorPage({ params }: EditorPageProps) {
                         projectId={id}
                     />
 
-                    {/* Floating Resize Panel — right */}
+                    {/* Floating Formats / Palette Panel — right */}
                     <div className="absolute top-3 right-3 bottom-3 z-10 flex gap-3 pointer-events-none">
                         <div className="pointer-events-auto">
-                            <ResizePanel />
+                            <RightTabs isTemplateMode={isTemplateMode} />
                         </div>
                     </div>
 
@@ -976,6 +981,49 @@ export default function EditorPage({ params }: EditorPageProps) {
                     </div>
                 </div>
             </Modal>
+        </div>
+    );
+}
+
+// ─── Right Tabs (Formats / Palette) ─────────────────────────────────────
+
+function RightTabs({ isTemplateMode }: { isTemplateMode: boolean }) {
+    const paletteSize = useCanvasStore(
+        (s) => s.palette.colors.length + s.palette.backgrounds.length,
+    );
+    const showPaletteTab = isTemplateMode || paletteSize > 0;
+    const [tabRaw, setTab] = useState<"formats" | "palette">("formats");
+    // If the palette tab becomes unavailable (e.g. palette emptied outside
+    // template mode), fall back to formats without a setState-in-effect.
+    const tab: "formats" | "palette" = showPaletteTab ? tabRaw : "formats";
+
+    return (
+        <div className="flex flex-col gap-2 h-full">
+            {showPaletteTab && (
+                <div className="flex items-center gap-1 p-1 rounded-[var(--radius-full)] border border-border-primary bg-bg-surface/85 backdrop-blur-xl shadow-[var(--shadow-sm)]">
+                    <button
+                        onClick={() => setTab("formats")}
+                        className={`flex-1 h-7 px-3 rounded-[var(--radius-full)] text-[11px] font-medium transition-colors cursor-pointer ${tab === "formats"
+                            ? "bg-accent-primary text-text-inverse"
+                            : "text-text-tertiary hover:text-text-primary"
+                            }`}
+                    >
+                        Форматы
+                    </button>
+                    <button
+                        onClick={() => setTab("palette")}
+                        className={`flex-1 h-7 px-3 rounded-[var(--radius-full)] text-[11px] font-medium transition-colors cursor-pointer ${tab === "palette"
+                            ? "bg-accent-primary text-text-inverse"
+                            : "text-text-tertiary hover:text-text-primary"
+                            }`}
+                    >
+                        Палитра
+                    </button>
+                </div>
+            )}
+            <div className="flex-1 min-h-0">
+                {tab === "formats" ? <ResizePanel /> : <SwatchesPanel />}
+            </div>
         </div>
     );
 }

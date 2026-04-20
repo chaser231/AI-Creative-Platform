@@ -20,6 +20,7 @@ import {
     LayoutList,
     Pin,
     PinOff,
+    Palette,
 } from "lucide-react";
 
 export interface ContextMenuItem {
@@ -171,6 +172,7 @@ export function buildLayerContextMenuItems(
         copyAsPng?: () => void;
         wrapInAutoLayout?: () => void;
         toggleFixedAsset?: () => void;
+        createSwatchFromFill?: () => void;
     },
     options?: {
         isImageLayer?: boolean;
@@ -280,6 +282,18 @@ export function buildLayerContextMenuItems(
                 icon: <LayoutList size={13} />,
                 shortcut: "⇧A",
                 onClick: actions.wrapInAutoLayout,
+            }
+        );
+    }
+
+    // Swatch actions (template editing tooling)
+    if (actions.createSwatchFromFill) {
+        items.push(
+            { separator: true },
+            {
+                label: "Создать swatch из заливки",
+                icon: <Palette size={13} />,
+                onClick: actions.createSwatchFromFill,
             }
         );
     }

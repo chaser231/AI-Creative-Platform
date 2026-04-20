@@ -222,6 +222,14 @@ export const MODEL_REGISTRY: ModelEntry[] = [
         costPerRun: 0.05,
     },
     {
+        id: "bria-rmbg",
+        label: "Bria Remove BG",
+        slug: "fal-ai/bria/background/remove",
+        provider: "replicate",
+        caps: ["remove-bg"],
+        costPerRun: 0.002,
+    },
+    {
         id: "rembg",
         label: "RemBG",
         slug: "cjwbw/rembg",

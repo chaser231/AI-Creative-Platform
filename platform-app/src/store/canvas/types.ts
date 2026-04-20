@@ -22,6 +22,10 @@ import type {
     ImageSyncMode,
     EditorMode,
     LayerConstraints,
+    ArtboardBackgroundImage,
+    TemplatePalette,
+    Swatch,
+    SwatchType,
 } from "@/types";
 import type { SnapConfig } from "@/services/snapService";
 import type { SlotMapping } from "@/services/slotMappingService";
@@ -49,6 +53,10 @@ export type {
     SnapConfig,
     SlotMapping,
     TemplatePack,
+    ArtboardBackgroundImage,
+    TemplatePalette,
+    Swatch,
+    SwatchType,
 };
 
 // ─── ArtboardProps (single source of truth) ─────────────
@@ -59,6 +67,11 @@ export interface ArtboardProps {
     clipContent: boolean;
     stroke: string;
     strokeWidth: number;
+    /**
+     * Optional background image, shared across all resize formats (MVP).
+     * Rendered between the solid `fill` and the user layers.
+     */
+    backgroundImage?: ArtboardBackgroundImage;
 }
 
 // ─── Expand Padding (Generative Expand) ─────────────
@@ -85,6 +98,9 @@ export const DEFAULT_ARTBOARD_PROPS: ArtboardProps = {
     strokeWidth: 0,
 };
 
+// Re-export canonical default palette for slice convenience
+export { DEFAULT_PALETTE } from "@/types";
+
 // ─── Frame Resize Delta ─────────────────────────────────
 
 export interface FrameResizeDelta {
@@ -107,6 +123,11 @@ export interface HistorySnapshot {
     masterComponents: MasterComponent[];
     componentInstances: ComponentInstance[];
     selectedLayerIds: string[];
+    palette: TemplatePalette;
+    artboardProps: ArtboardProps;
+    /** Snapshots per resize-format — needed because palette cascade mutates layerSnapshot of inactive formats */
+    resizes: ResizeFormat[];
+    activeResizeId: string;
 }
 
 // ─── Default Resize ─────────────────────────────────────
@@ -168,6 +189,9 @@ export interface CanvasStore {
     expandPadding: ExpandPadding;
     expandTargetLayerId: string | null;
 
+    // Palette (swatches)
+    palette: TemplatePalette;
+
     // Undo / Redo
     history: HistorySnapshot[];
     historyIndex: number;
@@ -208,6 +232,18 @@ export interface CanvasStore {
     // Artboard actions
     updateArtboardProps: (updates: Partial<ArtboardProps>) => void;
     updateSnapConfig: (updates: Partial<SnapConfig>) => void;
+
+    // Palette actions
+    addSwatch: (swatch: Omit<Swatch, "id">) => string;
+    updateSwatch: (id: string, updates: Partial<Omit<Swatch, "id">>) => void;
+    removeSwatch: (id: string, mode: "detach" | "replace", replaceWithId?: string) => void;
+    reorderSwatches: (type: SwatchType, ids: string[]) => void;
+    applyColorSwatchToLayer: (layerId: string, swatchId: string, target?: "fill" | "stroke") => void;
+    applyBackgroundSwatchToArtboard: (swatchId: string) => void;
+    /** Apply an image background swatch to an image layer (writes `src` + `swatchRefs.src`). */
+    applyBackgroundSwatchToImageLayer: (layerId: string, swatchId: string) => void;
+    createSwatchFromLayerFill: (layerId: string, name?: string) => string | null;
+    createSwatchFromArtboardBackground: (name?: string) => string | null;
 
     // Drag-to-frame actions
     setHighlightedFrameId: (id: string | null) => void;
