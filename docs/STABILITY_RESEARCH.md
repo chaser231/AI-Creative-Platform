@@ -42,8 +42,8 @@ _Last updated: 2026-04-21 — scope: agent, data, layout, security, frontend —
 | A8 | med  | agent | Provider fallback retry без backoff | platform-app/src/server/agent/orchestrator.ts:202 | exp backoff + классификация retriable | open |
 | A9 | low  | agent | Нет кап на кол-во tool-call в плане | platform-app/src/server/agent/orchestrator.ts:60 | лимит `steps.length` | open |
 | A10| low  | agent | `chatResponse` экспортирован, но не вызывается | platform-app/src/server/agent/orchestrator.ts:217 | wire или удалить dead API | open |
-| D1 | crit | sec/data | IDOR: доступ к canvas по id без проверки членства workspace | platform-app/src/server/routers/project.ts:265 | checkRole по project перед update/load | open |
-| D2 | crit | sec/data | Beacon-сейв обходит проверки — тот же IDOR | platform-app/src/app/api/canvas/save/route.ts:29 | Те же проверки, что в saveState | open |
+| D1 | crit | sec/data | IDOR: доступ к canvas по id без проверки членства workspace | platform-app/src/server/routers/project.ts:265 | checkRole по project перед update/load | fixed (MF-1) |
+| D2 | crit | sec/data | Beacon-сейв обходит проверки — тот же IDOR | platform-app/src/app/api/canvas/save/route.ts:29 | Те же проверки, что в saveState | fixed (MF-1) |
 | D3 | high | data | Параллельные saveState перезаписывают JSON без версии | platform-app/src/server/routers/project.ts:265 | optimistic locking (version/updatedAt) | open |
 | D4 | high | data | Template: update + S3 + createMany/deleteMany без транзакции | platform-app/src/server/routers/template.ts:383 | `$transaction` + согласованный откат/outbox | open |
 | D5 | med  | perf | admin: выборка ВСЕХ assistant-сообщений для статы | platform-app/src/server/routers/admin.ts:207 | агрегация в SQL, лимиты | open |
@@ -55,15 +55,15 @@ _Last updated: 2026-04-21 — scope: agent, data, layout, security, frontend —
 | D11| low  | data | `saveState`: `z.any()` в canvas — слабая валидация | platform-app/src/server/routers/project.ts:244 | сузить zod-схему | open |
 | D12| low  | ops  | Нет каталога `prisma/migrations` в репо | platform-app/prisma/schema.prisma:1 | версионировать миграции | open |
 | D13| low  | data | `project.delete`: S3 затем DB — возможны осиротевшие ключи | platform-app/src/server/routers/project.ts:224 | очередь очистки/outbox | open |
-| S1 | high | sec | `workflow.*`: процедуры по id/workspaceId без проверки членства | platform-app/src/server/routers/workflow.ts:68 | общий `assertProjectAccess`/`requireRole` | open |
-| S2 | high | sec | `project.getById/loadState/versions/favorite` без проверки доступа | platform-app/src/server/routers/project.ts:114 | `assertProjectAccess` как в `ai` | open |
-| S3 | high | sec | `template.recent/getById/create/delete` без членства/видимости | platform-app/src/server/routers/template.ts:77 | `requireRole` + правила видимости | open |
-| S4 | high | sec | `asset.getUploadUrl/getDownloadUrl/delete*` без проверки workspace | platform-app/src/server/routers/asset.ts:319 | проверка member по workspaceId объекта | open |
-| S5 | high | sec | `asset.copyTemplateAssetsToProject` без проверки projectId | platform-app/src/server/routers/asset.ts:275 | проверить членство в проекте/workspace | open |
-| S6 | high | sec | POST `/api/upload` — серверный fetch произвольного URL (SSRF) | platform-app/src/app/api/upload/route.ts:52 | allowlist хостов или отключить режим `url` | open |
-| S7 | med  | sec | `/api/upload/presign`: projectId в S3 key без авторизации | platform-app/src/app/api/upload/presign/route.ts:59 | связать ключ с проверенным проектом | open |
+| S1 | high | sec | `workflow.*`: процедуры по id/workspaceId без проверки членства | platform-app/src/server/routers/workflow.ts:68 | общий `assertProjectAccess`/`requireRole` | fixed (MF-1) |
+| S2 | high | sec | `project.getById/loadState/versions/favorite` без проверки доступа | platform-app/src/server/routers/project.ts:114 | `assertProjectAccess` как в `ai` | fixed (MF-1) |
+| S3 | high | sec | `template.recent/getById/create/delete` без членства/видимости | platform-app/src/server/routers/template.ts:77 | `requireRole` + правила видимости | fixed (MF-1) |
+| S4 | high | sec | `asset.getUploadUrl/getDownloadUrl/delete*` без проверки workspace | platform-app/src/server/routers/asset.ts:319 | проверка member по workspaceId объекта | fixed (MF-1) |
+| S5 | high | sec | `asset.copyTemplateAssetsToProject` без проверки projectId | platform-app/src/server/routers/asset.ts:275 | проверить членство в проекте/workspace | fixed (MF-1) |
+| S6 | high | sec | POST `/api/upload` — серверный fetch произвольного URL (SSRF) | platform-app/src/app/api/upload/route.ts:52 | allowlist хостов или отключить режим `url` | partial (authz added; MF-2 нужен allowlist) |
+| S7 | med  | sec | `/api/upload/presign`: projectId в S3 key без авторизации | platform-app/src/app/api/upload/presign/route.ts:59 | связать ключ с проверенным проектом | fixed (MF-1) |
 | S8 | med  | sec | `/api/setup-cors`: любой залогиненный меняет CORS бакета на `*` | platform-app/src/app/api/setup-cors/route.ts:37 | только super-admin, ограничить origins | open |
-| S9 | med  | sec | `/api/template/[id]`: полный шаблон без проверки видимости | platform-app/src/app/api/template/[id]/route.ts:53 | те же проверки, что в `template.loadState` | open |
+| S9 | med  | sec | `/api/template/[id]`: полный шаблон без проверки видимости | platform-app/src/app/api/template/[id]/route.ts:53 | те же проверки, что в `template.loadState` | fixed (MF-1) |
 | S10| med  | sec | Доменные мутации на `protectedProcedure`, а не `approvedProcedure` | platform-app/src/server/trpc.ts:102 | критичные роуты — на одобренных | open |
 | S11| med  | data | Широкие `z.any` в templates/AI/workflow/workspace brand | platform-app/src/server/routers/template.ts:241 | ужесточить Zod-схемы | open |
 | S12| low  | sec | Dev: авто-SUPER_ADMIN + join всех workspaces | platform-app/src/server/trpc.ts:33 | строгий guard на `NODE_ENV`, отключить вне localhost | open |
@@ -130,3 +130,4 @@ _Last updated: 2026-04-21 — scope: agent, data, layout, security, frontend —
 
 - 2026-04-21 — скоуп: agent, data, layout, security, frontend; глубина: triage; артефакт: этот документ; субагенты: serial; старт: LayoutEngine.
 - 2026-04-21 — триаж завершён по всем 5 зонам; 61 находка, из них 2 crit + 14 high. Top-10 и quickfix-кандидаты ожидают апрува.
+- 2026-04-21 — **MF-1 applied**: `src/server/authz/guards.ts` + guards во всех доменных роутерах (project, template, asset, workspace, workflow) и в 4 route handlers (canvas/save, template/[id], upload/presign, upload). Закрыто: D1, D2, S1–S5, S7, S9. Partial: S6 (authz добавлен; SSRF-allowlist — MF-2). Ревьюер (Opus) нашёл 2 blocker (template.create, template.recent/list перечисляли WORKSPACE-шаблоны чужих) — исправлены. Orphaned `requireRole` в workspace.ts удалён. `tsc` clean, lints clean. Остался non-blocker: `template.loadState` теперь возвращает полный объект вместо узкого select (не критично, фронт проглотит).

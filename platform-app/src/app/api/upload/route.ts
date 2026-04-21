@@ -11,11 +11,26 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/server/auth";
 import { prisma } from "@/server/db";
+import { requireSessionAndProjectAccess } from "@/server/authz/guards";
+import { TRPCError } from "@trpc/server";
 import {
   S3Client,
   PutObjectCommand,
 } from "@aws-sdk/client-s3";
 import { randomUUID } from "crypto";
+
+function trpcErrorResponse(e: unknown) {
+  if (e instanceof TRPCError) {
+    if (e.code === "FORBIDDEN") {
+      return NextResponse.json({ error: e.message }, { status: 403 });
+    }
+    if (e.code === "NOT_FOUND") {
+      return NextResponse.json({ error: e.message }, { status: 404 });
+    }
+    return NextResponse.json({ error: e.message ?? "Internal error" }, { status: 500 });
+  }
+  return null;
+}
 
 const s3 = new S3Client({
   region: "ru-central1",
@@ -43,6 +58,16 @@ export async function POST(req: Request) {
       projectId?: string;
       skipAssetRecord?: boolean;
     };
+
+    if (projectId && projectId !== "tmp") {
+      try {
+        await requireSessionAndProjectAccess(session.user.id, projectId, "write");
+      } catch (e) {
+        const res = trpcErrorResponse(e);
+        if (res) return res;
+        throw e;
+      }
+    }
 
     let buffer: Buffer;
     let contentType: string = mimeType || "image/png";

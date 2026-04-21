@@ -8,52 +8,8 @@
 import { z } from "zod";
 import { createTRPCRouter, protectedProcedure, publicProcedure } from "../trpc";
 import { TRPCError } from "@trpc/server";
-import type { PrismaClient } from "@prisma/client";
 import { getModelById } from "@/lib/ai-models";
-
-// ─── RBAC HELPERS ────────────────────────────────────────
-
-/** Role hierarchy: higher index = higher privilege */
-const ROLE_HIERARCHY = ["VIEWER", "USER", "CREATOR", "ADMIN"] as const;
-type Role = (typeof ROLE_HIERARCHY)[number];
-
-function roleIndex(role: string): number {
-  return ROLE_HIERARCHY.indexOf(role as Role);
-}
-
-/**
- * Check that the current user has at least `minRole` in the given workspace.
- * Returns the membership record.
- * Throws FORBIDDEN if insufficient role or NOT a member.
- */
-async function requireRole(
-  prisma: PrismaClient,
-  userId: string,
-  workspaceId: string,
-  minRole: Role
-) {
-  const membership = await prisma.workspaceMember.findUnique({
-    where: {
-      userId_workspaceId: { userId, workspaceId },
-    },
-  });
-
-  if (!membership) {
-    throw new TRPCError({
-      code: "FORBIDDEN",
-      message: "Вы не являетесь участником этого воркспейса",
-    });
-  }
-
-  if (roleIndex(membership.role) < roleIndex(minRole)) {
-    throw new TRPCError({
-      code: "FORBIDDEN",
-      message: `Требуется роль ${minRole} или выше`,
-    });
-  }
-
-  return membership;
-}
+import { assertWorkspaceAccess } from "@/server/authz/guards";
 
 // ─── ROUTER ──────────────────────────────────────────────
 
@@ -252,7 +208,7 @@ export const workspaceRouter = createTRPCRouter({
   listJoinRequests: protectedProcedure
     .input(z.object({ workspaceId: z.string() }))
     .query(async ({ ctx, input }) => {
-      await requireRole(ctx.prisma, ctx.user.id, input.workspaceId, "ADMIN");
+      await assertWorkspaceAccess(ctx, input.workspaceId, "ADMIN");
 
       const requests = await ctx.prisma.joinRequest.findMany({
         where: { workspaceId: input.workspaceId, status: "PENDING" },
@@ -281,7 +237,7 @@ export const workspaceRouter = createTRPCRouter({
         throw new TRPCError({ code: "NOT_FOUND" });
       }
 
-      await requireRole(ctx.prisma, ctx.user.id, request.workspaceId, "ADMIN");
+      await assertWorkspaceAccess(ctx, request.workspaceId, "ADMIN");
 
       if (input.action === "approve") {
         // Add as member
@@ -371,24 +327,19 @@ export const workspaceRouter = createTRPCRouter({
   getById: protectedProcedure
     .input(z.object({ id: z.string() }))
     .query(async ({ ctx, input }) => {
-      const membership = await ctx.prisma.workspaceMember.findUnique({
-        where: {
-          userId_workspaceId: {
-            userId: ctx.user.id,
-            workspaceId: input.id,
-          },
-        },
-        include: { workspace: true },
+      const membership = await assertWorkspaceAccess(ctx, input.id);
+      const workspace = await ctx.prisma.workspace.findUnique({
+        where: { id: input.id },
       });
 
-      if (!membership) {
+      if (!workspace) {
         throw new TRPCError({
           code: "NOT_FOUND",
           message: "Workspace not found or access denied",
         });
       }
 
-      return { ...membership.workspace, role: membership.role };
+      return { ...workspace, role: membership.role };
     }),
 
   /** Get workspace by slug */
@@ -403,19 +354,7 @@ export const workspaceRouter = createTRPCRouter({
         throw new TRPCError({ code: "NOT_FOUND" });
       }
 
-      // Check membership
-      const membership = await ctx.prisma.workspaceMember.findUnique({
-        where: {
-          userId_workspaceId: {
-            userId: ctx.user.id,
-            workspaceId: workspace.id,
-          },
-        },
-      });
-
-      if (!membership) {
-        throw new TRPCError({ code: "FORBIDDEN" });
-      }
+      const membership = await assertWorkspaceAccess(ctx, workspace.id);
 
       return { ...workspace, role: membership.role };
     }),
@@ -464,7 +403,7 @@ export const workspaceRouter = createTRPCRouter({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      await requireRole(ctx.prisma, ctx.user.id, input.workspaceId, "ADMIN");
+      await assertWorkspaceAccess(ctx, input.workspaceId, "ADMIN");
 
       const { workspaceId, ...data } = input;
 
@@ -493,7 +432,7 @@ export const workspaceRouter = createTRPCRouter({
   delete: protectedProcedure
     .input(z.object({ workspaceId: z.string() }))
     .mutation(async ({ ctx, input }) => {
-      await requireRole(ctx.prisma, ctx.user.id, input.workspaceId, "ADMIN");
+      await assertWorkspaceAccess(ctx, input.workspaceId, "ADMIN");
 
       await ctx.prisma.workspace.delete({
         where: { id: input.workspaceId },
@@ -514,7 +453,7 @@ export const workspaceRouter = createTRPCRouter({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      await requireRole(ctx.prisma, ctx.user.id, input.workspaceId, "ADMIN");
+      await assertWorkspaceAccess(ctx, input.workspaceId, "ADMIN");
 
       const { workspaceId, ...data } = input;
       const workspace = await ctx.prisma.workspace.update({
@@ -529,8 +468,7 @@ export const workspaceRouter = createTRPCRouter({
   listMembers: protectedProcedure
     .input(z.object({ workspaceId: z.string() }))
     .query(async ({ ctx, input }) => {
-      // Any member can view the team
-      await requireRole(ctx.prisma, ctx.user.id, input.workspaceId, "VIEWER");
+      await assertWorkspaceAccess(ctx, input.workspaceId);
 
       const members = await ctx.prisma.workspaceMember.findMany({
         where: { workspaceId: input.workspaceId },
@@ -568,7 +506,7 @@ export const workspaceRouter = createTRPCRouter({
       const isSuperAdmin = globalUser?.role === "SUPER_ADMIN";
 
       if (!isSuperAdmin) {
-        await requireRole(ctx.prisma, ctx.user.id, input.workspaceId, "ADMIN");
+        await assertWorkspaceAccess(ctx, input.workspaceId, "ADMIN");
       }
 
       // Prevent self-demotion (so there's always at least one admin)
@@ -604,7 +542,7 @@ export const workspaceRouter = createTRPCRouter({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      await requireRole(ctx.prisma, ctx.user.id, input.workspaceId, "ADMIN");
+      await assertWorkspaceAccess(ctx, input.workspaceId, "ADMIN");
 
       const target = await ctx.prisma.workspaceMember.findUnique({
         where: { id: input.memberId },
@@ -658,7 +596,7 @@ export const workspaceRouter = createTRPCRouter({
   stats: protectedProcedure
     .input(z.object({ workspaceId: z.string() }))
     .query(async ({ ctx, input }) => {
-      await requireRole(ctx.prisma, ctx.user.id, input.workspaceId, "VIEWER");
+      await assertWorkspaceAccess(ctx, input.workspaceId);
 
       const [projectCount, memberCount, templateCount, trackedMessages] = await Promise.all([
         ctx.prisma.project.count({ where: { workspaceId: input.workspaceId } }),
