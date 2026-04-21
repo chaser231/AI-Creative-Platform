@@ -14,6 +14,11 @@ import { prisma } from "@/server/db";
 import { requireSessionAndProjectAccess } from "@/server/authz/guards";
 import { TRPCError } from "@trpc/server";
 import {
+  safeFetch,
+  uploadImagePolicy,
+  SsrfBlockedError,
+} from "@/server/security/ssrfGuard";
+import {
   S3Client,
   PutObjectCommand,
 } from "@aws-sdk/client-s3";
@@ -74,9 +79,25 @@ export async function POST(req: Request) {
 
     if (url && typeof url === "string") {
       // ── Mode 2: Fetch external URL and re-upload to S3 ──
-      const response = await fetch(url, {
-        signal: AbortSignal.timeout(30_000),
-      });
+      // SSRF guard: validates scheme/port/host/IP (blocks private / loopback /
+      // link-local / cloud-metadata), pins DNS before fetch, enforces MIME and
+      // size via HEAD. Never pass a raw user-supplied URL to `fetch`.
+      let response: Response;
+      try {
+        response = await safeFetch(
+          url,
+          { signal: AbortSignal.timeout(30_000) },
+          uploadImagePolicy(),
+        );
+      } catch (e) {
+        if (e instanceof SsrfBlockedError) {
+          return NextResponse.json(
+            { error: `URL rejected: ${e.reason}`, code: e.code },
+            { status: 400 },
+          );
+        }
+        throw e;
+      }
 
       if (!response.ok) {
         return NextResponse.json(
@@ -95,6 +116,8 @@ export async function POST(req: Request) {
 
       // Guard: Replicate/fal temp links can return HTML error pages with 200
       // when expired. Never write that into the asset bucket.
+      // (uploadImagePolicy already enforces image/* via HEAD, but some servers
+      // mis-report on HEAD — keep this belt-and-suspenders check.)
       if (!contentType.startsWith("image/") && !contentType.startsWith("video/")) {
         return NextResponse.json(
           { error: `Fetched URL returned non-image content-type: ${contentType}` },

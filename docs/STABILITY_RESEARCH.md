@@ -1,6 +1,6 @@
 # Stability Research
 
-_Last updated: 2026-04-21 — scope: agent, data, layout, security, frontend — depth: triage + MF-1 + QF-pack — execution: research + safe quickfixes_
+_Last updated: 2026-04-21 — scope: agent, data, layout, security, frontend — depth: triage + MF-1 + QF-pack + MF-2 — execution: research + safe quickfixes_
 
 ## How to read
 
@@ -38,7 +38,7 @@ _Last updated: 2026-04-21 — scope: agent, data, layout, security, frontend —
 | A4 | med  | agent | fal tool path возвращает пустой plan при полном фейле | platform-app/src/server/agent/llmProviders.ts:388 | throw или пробросить ошибку | open |
 | A5 | med  | agent | Vision ошибки скрыты, фейковые summary инжектятся в prompt | platform-app/src/server/agent/visionAnalyzer.ts:41 | flag failure, не инжектить mock-контекст | open |
 | A6 | med  | sec/log | Полный image prompt логируется в console | platform-app/src/server/agent/executeAction.ts:157 | хэши/редакция, dev-only guard | fixed (QF-7: base64-redacted + length cap) |
-| A7 | med  | sec   | Canvas `add_image` берёт LLM-URL без проверки (SSRF риск) | platform-app/src/server/agent/executeAction.ts:224 | allowlist схем/хостов или proxy fetch | open |
+| A7 | med  | sec   | Canvas `add_image` берёт LLM-URL без проверки (SSRF риск) | platform-app/src/server/agent/executeAction.ts:224 | allowlist схем/хостов или proxy fetch | fixed (MF-2) |
 | A8 | med  | agent | Provider fallback retry без backoff | platform-app/src/server/agent/orchestrator.ts:202 | exp backoff + классификация retriable | open |
 | A9 | low  | agent | Нет кап на кол-во tool-call в плане | platform-app/src/server/agent/orchestrator.ts:60 | лимит `steps.length` | open |
 | A10| low  | agent | `chatResponse` экспортирован, но не вызывается | platform-app/src/server/agent/orchestrator.ts:217 | wire или удалить dead API | open |
@@ -60,7 +60,7 @@ _Last updated: 2026-04-21 — scope: agent, data, layout, security, frontend —
 | S3 | high | sec | `template.recent/getById/create/delete` без членства/видимости | platform-app/src/server/routers/template.ts:77 | `requireRole` + правила видимости | fixed (MF-1) |
 | S4 | high | sec | `asset.getUploadUrl/getDownloadUrl/delete*` без проверки workspace | platform-app/src/server/routers/asset.ts:319 | проверка member по workspaceId объекта | fixed (MF-1) |
 | S5 | high | sec | `asset.copyTemplateAssetsToProject` без проверки projectId | platform-app/src/server/routers/asset.ts:275 | проверить членство в проекте/workspace | fixed (MF-1) |
-| S6 | high | sec | POST `/api/upload` — серверный fetch произвольного URL (SSRF) | platform-app/src/app/api/upload/route.ts:52 | allowlist хостов или отключить режим `url` | partial (authz added; MF-2 нужен allowlist) |
+| S6 | high | sec | POST `/api/upload` — серверный fetch произвольного URL (SSRF) | platform-app/src/app/api/upload/route.ts:52 | allowlist хостов или отключить режим `url` | fixed (MF-2: safeFetch + uploadImagePolicy) |
 | S7 | med  | sec | `/api/upload/presign`: projectId в S3 key без авторизации | platform-app/src/app/api/upload/presign/route.ts:59 | связать ключ с проверенным проектом | fixed (MF-1) |
 | S8 | med  | sec | `/api/setup-cors`: любой залогиненный меняет CORS бакета на `*` | platform-app/src/app/api/setup-cors/route.ts:37 | только super-admin, ограничить origins | open |
 | S9 | med  | sec | `/api/template/[id]`: полный шаблон без проверки видимости | platform-app/src/app/api/template/[id]/route.ts:53 | те же проверки, что в `template.loadState` | fixed (MF-1) |
@@ -83,21 +83,25 @@ _Last updated: 2026-04-21 — scope: agent, data, layout, security, frontend —
 | F13| med  | perf | Почти все `app/**/page.tsx` — клиентские | platform-app/src/app/page.tsx:1 | вынести интерактив в листья | open |
 | F14| med  | perf | Figma статус: `refetchInterval` 2s до терминального | platform-app/src/components/dashboard/FigmaImportModal.tsx:85 | backoff, стоп после done | wontfix (QF-9: уже корректно — interval=false на COMPLETED/FAILED) |
 | F15| low  | perf | Сайдбар опрос админки 60s | platform-app/src/components/layout/Sidebar.tsx:84 | `staleTime`/условный опрос | fixed (QF-10: staleTime=30s) |
+| A11| low  | sec | `apply_and_fill_template` пишет `update_layer.src` напрямую из `generateWithFallback` | platform-app/src/server/agent/executeAction.ts:568 | sanity-проверка MIME/схемы при смене провайдера | open |
+| A12| low  | sec | `safeFetch` не следует за redirects; 3xx → !ok. Для публичных CDN это ок, но возможны false negatives | platform-app/src/server/security/ssrfGuard.ts:1 | опциональный follow с повторной SSRF-валидацией каждого hop | open |
 
 ## Top-10 risks (триаж завершён)
 
 Ранжировано по `severity × blast radius × likelihood`:
 
-1. **D1 + D2 + S1…S5** — **массовый IDOR по всем доменным роутерам** (`workflow`, `project`, `template`, `asset`) и в `/api/canvas/save`. Любой залогиненный может читать/писать чужие проекты/ассеты/шаблоны по известному id. **Одна проблема, лечится введением единого `assertProjectAccess`/`assertWorkspaceAccess` + применением во всех процедурах, берущих id.**
-2. **S6** — SSRF через `/api/upload` (серверный fetch произвольного URL).
-3. **D3** — Lost updates: параллельные `saveState` перезаписывают canvas JSON без версии. Для multi-tab/flaky-network — реальный сценарий потери данных.
-4. **D4** — Template save без транзакции: DB + S3 + createMany/deleteMany; частичный сбой → несогласованное состояние.
-5. **A2 + A3** — Бесконечный Replicate poll + отсутствие timeout на всех LLM fetch → висящие серверные запросы, трата квоты и слотов функции Vercel.
-6. **A1** — Silent drop параметров при невалидном JSON tool-args → агент тихо делает не то, что просил пользователь.
-7. **A7** — Canvas `add_image` берёт URL от LLM без валидации (SSRF + mix-content).
-8. **L1 + L2** — NaN/Infinity в layout при вырожденных размерах: визуальная поломка редактора и падения в Konva.
+1. ~~**D1 + D2 + S1…S5**~~ — **FIXED (MF-1)**: массовый IDOR по всем доменным роутерам закрыт через `src/server/authz/guards.ts`.
+2. ~~**S6**~~ — **FIXED (MF-2)**: SSRF через `/api/upload` закрыт `safeFetch + uploadImagePolicy`.
+3. **D3** — Lost updates: параллельные `saveState` перезаписывают canvas JSON без версии. Для multi-tab/flaky-network — реальный сценарий потери данных. _(следующий: MF-3)_
+4. **D4** — Template save без транзакции: DB + S3 + createMany/deleteMany; частичный сбой → несогласованное состояние. _(следующий: MF-4)_
+5. ~~**A2 + A3**~~ — **FIXED (QF-5, QF-4)**: Replicate poll ограничен `REPLICATE_MAX_POLLS`; все LLM fetch обёрнуты в `AbortSignal.timeout`.
+6. ~~**A1**~~ — **FIXED (QF-6)**: невалидный JSON tool-args → step `error` + user-facing reason.
+7. ~~**A7**~~ — **FIXED (MF-2)**: `add_image` проходит `assertUrlIsSafe` с blocklist/allowlist.
+8. ~~**L1 + L2**~~ — **FIXED (QF-1, QF-2)**: NaN/Infinity в layout закрыт guards + regression-тест.
 9. **F2 + F3 + F4** — 3.3k+ строк клиентского JS в редакторе + невиртуализированные списки ассетов → долгая загрузка и фризы на слабых машинах.
-10. **S12** — Dev-автологин как SUPER_ADMIN в `createTRPCContext`: если где-то случайно включится в prod (неправильный `NODE_ENV`/флаг) — мгновенный privilege bypass.
+10. **S12** — Dev-автологин как SUPER_ADMIN в `createTRPCContext`: если где-то случайно включится в prod (неправильный `NODE_ENV`/флаг) — мгновенный privilege bypass. _(следующий: MF-5)_
+
+**Статус**: 7/10 Top-рисков закрыты. Осталось: D3 (lost updates), D4 (transactions), F2/F3/F4 (frontend perf), S12 (dev-guard).
 
 ## Quickfix candidates (требуют апрува)
 
@@ -131,4 +135,5 @@ _Last updated: 2026-04-21 — scope: agent, data, layout, security, frontend —
 - 2026-04-21 — скоуп: agent, data, layout, security, frontend; глубина: triage; артефакт: этот документ; субагенты: serial; старт: LayoutEngine.
 - 2026-04-21 — триаж завершён по всем 5 зонам; 61 находка, из них 2 crit + 14 high. Top-10 и quickfix-кандидаты ожидают апрува.
 - 2026-04-21 — **MF-1 applied**: `src/server/authz/guards.ts` + guards во всех доменных роутерах (project, template, asset, workspace, workflow) и в 4 route handlers (canvas/save, template/[id], upload/presign, upload). Закрыто: D1, D2, S1–S5, S7, S9. Partial: S6 (authz добавлен; SSRF-allowlist — MF-2). Ревьюер (Opus) нашёл 2 blocker (template.create, template.recent/list перечисляли WORKSPACE-шаблоны чужих) — исправлены. Orphaned `requireRole` в workspace.ts удалён. `tsc` clean, lints clean. Остался non-blocker: `template.loadState` теперь возвращает полный объект вместо узкого select (не критично, фронт проглотит).
+- 2026-04-21 — **MF-2 applied**: `platform-app/src/server/security/ssrfGuard.ts` (архитектор Opus, без npm-зависимостей, только `node:https`/`dns`/`net`) + `ssrfGuard.test.ts` (32/32). Утилита: блоклист IPv4/IPv6 (включая `169.254.169.254` AWS metadata, GCP `metadata.google.internal`, IPv4-mapped IPv6), DNS-lookup всех записей, TOCTOU-защита через pinned-IP lookup на `https.Agent`, HEAD + GET Range fallback, enforcement Content-Length/Content-Type. Интеграция: `api/upload/route.ts` использует `safeFetch(url, signal, uploadImagePolicy())` (scheme=https, port=443, mime=image|video, ≤25 MB); `executeAction.ts:add_image` — `assertUrlIsSafe(url, agentAddImagePolicy())` с ENV `AGENT_IMAGE_URL_ALLOWLIST`. Ревьюер (Opus) нашёл 1 blocker: protocol-relative `//host/...` байпасил regex `^https?://` → `isInline=true`, валидация скипалась. Исправлено: normalize `//x` → `https://x` перед проверкой, сужена проверка inline до `data:image/` (не `data:` вообще, чтобы data:text/html не проходил), полный URL больше не логируется (редакция токенов). Добавлены follow-up notes A11 (`update_layer.src` из provider output — отдельный класс риска, не LLM) и A12 (`safeFetch` без follow-redirects). Закрыто: **S6** (был partial → fixed), **A7**. `tsc` clean, 61/61 vitest зелёные.
 - 2026-04-21 — **QF-пакет applied** (без субагентов, каждая правка 1–10 строк): QF-1 (L1 NaN guard в `layoutEngine`), QF-2 (L2 zero-parent guard в `helpers.ts` + unit-регрессия `computeConstrainedPosition.test.ts`), QF-3 + доп. очистка unused `intrinsicPrimary/Counter` (L9), QF-4 (A3: `AbortSignal.timeout(LLM_FETCH_TIMEOUT_MS=30s)` на все 7 fetch в `llmProviders.ts`), QF-5 (A2: `REPLICATE_MAX_POLLS=120` + throw при превышении), QF-6 (A1: invalid tool-call JSON → `status: "error"` + понятный error; добавлено поле `AgentStep.error`), QF-7 (A6: base64-redact + length cap в логе prompt), QF-8 (D9: `take=200` по умолчанию, опциональный `limit ≤500`), QF-10 (F15: `staleTime=30_000` в Sidebar). **QF-9 → wontfix**: Figma `refetchInterval` уже возвращает `false` на `COMPLETED/FAILED`, ложная тревога триажа. `tsc` clean, lint clean, 5/5 vitest зелёные. Закрыто в Findings: L1, L2, L9, A1, A2, A3, A6, D9, F15.
