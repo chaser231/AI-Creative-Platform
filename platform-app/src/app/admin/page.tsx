@@ -1,11 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
     Users, Building2, FolderKanban, LayoutTemplate, Sparkles, DollarSign,
-    Search, Shield, ShieldCheck, ChevronDown, MoreHorizontal, ShieldX,
-    UserCheck, UserX, Clock,
+    Search, Shield, ShieldCheck, MoreHorizontal, ShieldX,
+    UserCheck, UserX, Clock, ChevronLeft, ChevronRight, X,
 } from "lucide-react";
 import { AppShell } from "@/components/layout/AppShell";
 import { TopBar } from "@/components/layout/TopBar";
@@ -302,9 +302,33 @@ function CostAnalyticsSection({ data, period, onPeriodChange, customFrom, custom
 
 /* ─── Main Page ──────────────────────────────────────── */
 
+const USERS_PAGE_SIZE = 15;
+
+type RoleFilter = "ALL" | "SUPER_ADMIN" | "USER";
+type StatusFilter = "ALL" | "PENDING" | "APPROVED" | "REJECTED";
+
+/** Produce a compact pagination list with ellipses. */
+function buildPageList(current: number, total: number): Array<number | "ellipsis"> {
+    if (total <= 7) {
+        return Array.from({ length: total }, (_, i) => i + 1);
+    }
+    const pages: Array<number | "ellipsis"> = [1];
+    const start = Math.max(2, current - 1);
+    const end = Math.min(total - 1, current + 1);
+    if (start > 2) pages.push("ellipsis");
+    for (let i = start; i <= end; i++) pages.push(i);
+    if (end < total - 1) pages.push("ellipsis");
+    pages.push(total);
+    return pages;
+}
+
 export default function AdminDashboardPage() {
     const router = useRouter();
     const [userSearch, setUserSearch] = useState("");
+    const [debouncedUserSearch, setDebouncedUserSearch] = useState("");
+    const [roleFilter, setRoleFilter] = useState<RoleFilter>("ALL");
+    const [statusFilter, setStatusFilter] = useState<StatusFilter>("ALL");
+    const [usersPage, setUsersPage] = useState(1);
     const [costPeriod, setCostPeriod] = useState<PeriodKey>("all");
     const [customFrom, setCustomFrom] = useState(() => {
         const d = new Date(); d.setMonth(d.getMonth() - 1);
@@ -324,11 +348,42 @@ export default function AdminDashboardPage() {
 
     // ALL hooks must be called unconditionally (React Rules of Hooks)
     const { data: stats, isLoading: statsLoading } = trpc.admin.stats.useQuery(undefined, { enabled: isSuperAdmin });
-    const { data: usersData, isLoading: usersLoading } = trpc.admin.users.useQuery({
-        search: userSearch || undefined,
-        limit: 50,
-        offset: 0,
+
+    // Debounce the search input so we don't hit the API on every keystroke.
+    useEffect(() => {
+        const t = setTimeout(() => setDebouncedUserSearch(userSearch.trim()), 300);
+        return () => clearTimeout(t);
+    }, [userSearch]);
+
+    // Reset pagination whenever filters/search change.
+    useEffect(() => {
+        setUsersPage(1);
+    }, [debouncedUserSearch, roleFilter, statusFilter]);
+
+    const { data: usersData, isLoading: usersLoading, isFetching: usersFetching } = trpc.admin.users.useQuery({
+        search: debouncedUserSearch || undefined,
+        role: roleFilter === "ALL" ? undefined : roleFilter,
+        status: statusFilter === "ALL" ? undefined : statusFilter,
+        limit: USERS_PAGE_SIZE,
+        offset: (usersPage - 1) * USERS_PAGE_SIZE,
     }, { enabled: isSuperAdmin });
+
+    const totalUsersFiltered = usersData?.total ?? 0;
+    const totalUsersPages = Math.max(1, Math.ceil(totalUsersFiltered / USERS_PAGE_SIZE));
+    const filtersActive = Boolean(debouncedUserSearch) || roleFilter !== "ALL" || statusFilter !== "ALL";
+
+    const resetUserFilters = () => {
+        setUserSearch("");
+        setDebouncedUserSearch("");
+        setRoleFilter("ALL");
+        setStatusFilter("ALL");
+    };
+
+    const usersRangeStart = totalUsersFiltered === 0 ? 0 : (usersPage - 1) * USERS_PAGE_SIZE + 1;
+    const usersRangeEnd = Math.min(usersPage * USERS_PAGE_SIZE, totalUsersFiltered);
+
+    // Build a compact page list: [1, 2, '…', k-1, k, k+1, '…', N-1, N]
+    const usersPageList = useMemo(() => buildPageList(usersPage, totalUsersPages), [usersPage, totalUsersPages]);
     const { data: workspaces, isLoading: wsLoading } = trpc.admin.workspaces.useQuery(undefined, { enabled: isSuperAdmin });
     const { data: costAnalytics, isLoading: costLoading } = trpc.admin.aiCostAnalytics.useQuery(
         { dateFrom: costDateRange.dateFrom, dateTo: costDateRange.dateTo },
@@ -501,16 +556,62 @@ export default function AdminDashboardPage() {
 
                     {/* Users Table */}
                     <section>
-                        <div className="flex items-center justify-between mb-4">
-                            <h2 className="text-lg font-semibold text-text-primary">Пользователи</h2>
-                            <div className="w-64">
-                                <Input
-                                    value={userSearch}
-                                    onChange={(e) => setUserSearch(e.target.value)}
-                                    placeholder="Поиск по имени или email..."
-                                    icon={<Search size={14} />}
-                                    className="h-9 text-xs"
-                                />
+                        <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+                            <div className="flex items-center gap-3">
+                                <h2 className="text-lg font-semibold text-text-primary">Пользователи</h2>
+                                <span className="text-xs text-text-tertiary">
+                                    {filtersActive
+                                        ? `Найдено: ${totalUsersFiltered}`
+                                        : `Всего: ${totalUsersFiltered}`}
+                                </span>
+                            </div>
+                            <div className="flex flex-wrap items-center gap-2">
+                                {/* Role filter */}
+                                <div className="relative">
+                                    <select
+                                        value={roleFilter}
+                                        onChange={(e) => setRoleFilter(e.target.value as RoleFilter)}
+                                        className="h-9 pl-3 pr-8 text-xs rounded-lg border border-border-primary bg-bg-surface text-text-primary appearance-none cursor-pointer hover:border-border-secondary transition-colors"
+                                    >
+                                        <option value="ALL">Все роли</option>
+                                        <option value="SUPER_ADMIN">Super Admin</option>
+                                        <option value="USER">User</option>
+                                    </select>
+                                    <Shield size={12} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-text-tertiary pointer-events-none" />
+                                </div>
+                                {/* Status filter */}
+                                <div className="relative">
+                                    <select
+                                        value={statusFilter}
+                                        onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
+                                        className="h-9 pl-3 pr-8 text-xs rounded-lg border border-border-primary bg-bg-surface text-text-primary appearance-none cursor-pointer hover:border-border-secondary transition-colors"
+                                    >
+                                        <option value="ALL">Все статусы</option>
+                                        <option value="APPROVED">Одобрены</option>
+                                        <option value="PENDING">Ожидание</option>
+                                        <option value="REJECTED">Отклонены</option>
+                                    </select>
+                                    <Clock size={12} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-text-tertiary pointer-events-none" />
+                                </div>
+                                {filtersActive && (
+                                    <button
+                                        onClick={resetUserFilters}
+                                        className="h-9 px-2.5 text-xs rounded-lg border border-border-primary bg-bg-surface text-text-tertiary hover:text-text-primary hover:border-border-secondary transition-colors cursor-pointer inline-flex items-center gap-1"
+                                        title="Сбросить фильтры"
+                                    >
+                                        <X size={12} />
+                                        Сбросить
+                                    </button>
+                                )}
+                                <div className="w-64">
+                                    <Input
+                                        value={userSearch}
+                                        onChange={(e) => setUserSearch(e.target.value)}
+                                        placeholder="Поиск по имени или email..."
+                                        icon={<Search size={14} />}
+                                        className="h-9 text-xs"
+                                    />
+                                </div>
                             </div>
                         </div>
 
@@ -533,6 +634,12 @@ export default function AdminDashboardPage() {
                                 <tbody>
                                     {usersLoading ? (
                                         <tr><td colSpan={10} className="px-4 py-8 text-center text-text-tertiary">Загрузка...</td></tr>
+                                    ) : usersData && usersData.users.length === 0 ? (
+                                        <tr>
+                                            <td colSpan={10} className="px-4 py-10 text-center text-text-tertiary">
+                                                {filtersActive ? "Ничего не найдено по заданным фильтрам." : "Пока нет пользователей."}
+                                            </td>
+                                        </tr>
                                     ) : usersData?.users.map((user) => (
                                         <tr key={user.id} className="border-b border-border-primary/50 hover:bg-bg-secondary/30 transition-colors">
                                             <td className="px-4 py-3 font-medium text-text-primary">{user.name}</td>
@@ -565,9 +672,50 @@ export default function AdminDashboardPage() {
                                     ))}
                                 </tbody>
                             </table>
-                            {usersData && (
-                                <div className="px-4 py-2 text-[10px] text-text-tertiary border-t border-border-primary/50">
-                                    Показано {usersData.users.length} из {usersData.total}
+                            {usersData && totalUsersFiltered > 0 && (
+                                <div className="flex items-center justify-between gap-3 px-4 py-2.5 border-t border-border-primary/50 bg-bg-secondary/20">
+                                    <div className="text-[11px] text-text-tertiary">
+                                        {usersFetching && <span className="mr-2 opacity-60">обновление…</span>}
+                                        Показано <span className="text-text-secondary font-medium">{usersRangeStart}–{usersRangeEnd}</span>
+                                        {" "}из <span className="text-text-secondary font-medium">{totalUsersFiltered}</span>
+                                    </div>
+                                    {totalUsersPages > 1 && (
+                                        <div className="flex items-center gap-1">
+                                            <button
+                                                onClick={() => setUsersPage(p => Math.max(1, p - 1))}
+                                                disabled={usersPage === 1}
+                                                className="w-7 h-7 flex items-center justify-center rounded-md border border-border-primary bg-bg-surface text-text-tertiary hover:text-text-primary hover:border-border-secondary transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                                                title="Предыдущая"
+                                            >
+                                                <ChevronLeft size={14} />
+                                            </button>
+                                            {usersPageList.map((p, idx) => (
+                                                p === "ellipsis" ? (
+                                                    <span key={`e-${idx}`} className="w-7 h-7 flex items-center justify-center text-text-tertiary text-[11px]">…</span>
+                                                ) : (
+                                                    <button
+                                                        key={p}
+                                                        onClick={() => setUsersPage(p)}
+                                                        className={`w-7 h-7 flex items-center justify-center rounded-md text-[11px] font-medium transition-colors cursor-pointer border ${
+                                                            p === usersPage
+                                                                ? "bg-accent-primary/15 text-accent-primary border-accent-primary/30"
+                                                                : "bg-bg-surface text-text-tertiary hover:text-text-primary border-border-primary hover:border-border-secondary"
+                                                        }`}
+                                                    >
+                                                        {p}
+                                                    </button>
+                                                )
+                                            ))}
+                                            <button
+                                                onClick={() => setUsersPage(p => Math.min(totalUsersPages, p + 1))}
+                                                disabled={usersPage === totalUsersPages}
+                                                className="w-7 h-7 flex items-center justify-center rounded-md border border-border-primary bg-bg-surface text-text-tertiary hover:text-text-primary hover:border-border-secondary transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                                                title="Следующая"
+                                            >
+                                                <ChevronRight size={14} />
+                                            </button>
+                                        </div>
+                                    )}
                                 </div>
                             )}
                         </div>

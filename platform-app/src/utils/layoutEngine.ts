@@ -1,4 +1,6 @@
 import { Layer, FrameLayer, TextLayer, TemplateSlotRole, ResizeFormat } from "@/types";
+import { computeConstrainedPosition } from "@/store/canvas/helpers";
+import type { FrameResizeDelta } from "@/store/canvas/types";
 import Konva from "konva";
 
 // ─── Text Size Estimation ──────────────────────────────────────
@@ -617,13 +619,17 @@ export function applyAllAutoLayouts(layers: Layer[]): Layer[] {
         }
     }
 
-    // ── Cascade position deltas ──────────────────────────────
-    // When auto-layout moves a frame, its children (both managed and unmanaged)
-    // need their absolute coords updated. Auto-layout managed children were already
-    // positioned by commitUpdates (frame.x + localOffset). But for ALL frames
-    // (including non-auto-layout ones) that were repositioned, cascade dx/dy
-    // to their non-managed children (invisible, absolute-positioned, or children
-    // of non-auto-layout frames).
+    // ── Cascade position deltas with constraints ─────────────
+    // When a frame is moved OR resized (either by auto-layout hug, or by an
+    // external Transformer drag that the caller captured in the input array),
+    // its unmanaged children (invisible, absolute-positioned, or children of
+    // non-auto-layout frames) must honour their `LayerConstraints` instead of
+    // just sliding along dx/dy. Managed children were already positioned by
+    // commitUpdates (frame.x + localOffset), so we skip them.
+    //
+    // If an unmanaged child is itself an auto-layout frame whose width/height
+    // changed under the constraint pass (e.g. `stretch`), we re-run its
+    // auto-layout so its managed descendants pick up the new size.
     const originalById = buildLayerMap(layers);
     const cascaded = new Set<string>();
 
@@ -633,11 +639,32 @@ export function applyAllAutoLayouts(layers: Layer[]): Layer[] {
 
         const original = originalById.get(frameId);
         const updated = layerById.get(frameId) as FrameLayer | undefined;
-        if (!original || !updated) return;
+        if (!original || !updated || original.type !== "frame") return;
+        const originalFrame = original as FrameLayer;
 
-        const dx = updated.x - original.x;
-        const dy = updated.y - original.y;
-        if (Math.abs(dx) < 0.01 && Math.abs(dy) < 0.01) return;
+        const dx = updated.x - originalFrame.x;
+        const dy = updated.y - originalFrame.y;
+        const dw = updated.width - originalFrame.width;
+        const dh = updated.height - originalFrame.height;
+        if (
+            Math.abs(dx) < 0.01 &&
+            Math.abs(dy) < 0.01 &&
+            Math.abs(dw) < 0.01 &&
+            Math.abs(dh) < 0.01
+        ) {
+            return;
+        }
+
+        const delta: FrameResizeDelta = {
+            oldX: originalFrame.x,
+            oldY: originalFrame.y,
+            oldWidth: originalFrame.width,
+            oldHeight: originalFrame.height,
+            newX: updated.x,
+            newY: updated.y,
+            newWidth: updated.width,
+            newHeight: updated.height,
+        };
 
         const isAutoLayout = !!updated.layoutMode && updated.layoutMode !== "none";
 
@@ -648,10 +675,33 @@ export function applyAllAutoLayouts(layers: Layer[]): Layer[] {
             const isManagedByAutoLayout = isAutoLayout && !child.isAbsolutePositioned && child.visible;
             if (isManagedByAutoLayout) continue;
 
-            const moved = { ...child, x: child.x + dx, y: child.y + dy } as Layer;
+            // Default constraints {left, top} reproduce the old dx/dy shift exactly,
+            // so layers without explicit constraints don't regress.
+            const constrained = computeConstrainedPosition(child, delta);
+            const prevW = child.width;
+            const prevH = child.height;
+            const moved = { ...child, ...constrained } as Layer;
             layerById.set(cid, moved);
 
+            // If this unmanaged child is itself an auto-layout frame whose
+            // dimensions were altered by the constraint pass, re-run its layout
+            // so its managed descendants are repositioned under the new size.
             if (child.type === "frame") {
+                const childFrame = moved as FrameLayer;
+                const sizeChanged =
+                    Math.abs(prevW - constrained.width) > 0.01 ||
+                    Math.abs(prevH - constrained.height) > 0.01;
+                if (
+                    sizeChanged &&
+                    childFrame.layoutMode &&
+                    childFrame.layoutMode !== "none"
+                ) {
+                    const nestedUpdates = computeAutoLayoutInternal(childFrame, layerById);
+                    for (const [uid, upd] of Object.entries(nestedUpdates)) {
+                        const existing = layerById.get(uid);
+                        if (existing) layerById.set(uid, { ...existing, ...upd } as Layer);
+                    }
+                }
                 cascade(cid);
             }
         }

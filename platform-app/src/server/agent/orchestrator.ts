@@ -1,7 +1,15 @@
 import { ACTIONS } from "../actionRegistry";
 import type { ActionContext, CanvasInstruction } from "../actionRegistry";
 import type { AgentStep, AgentResponse, ChatMessage, ModelPreferences } from "./types";
-import { getActiveProvider, callLLM, callOpenAIWithTools, callReplicateWithTools } from "./llmProviders";
+import {
+  getProviderChain,
+  callLLM,
+  callOpenAIWithTools,
+  callFalWithTools,
+  callReplicateWithTools,
+  type AgentProvider,
+  type AgentToolResponse,
+} from "./llmProviders";
 import { SYSTEM_PROMPT } from "./systemPrompt";
 import { executeAction } from "./executeAction";
 import { analyzeReferenceImages } from "./visionAnalyzer";
@@ -15,7 +23,6 @@ export async function interpretAndExecute(
   conversationHistory?: ChatMessage[],
   modelPreferences?: ModelPreferences
 ): Promise<AgentResponse> {
-  const provider = getActiveProvider();
   const contextInfo = workspaceName
     ? `\n\nВоркспейс: «${workspaceName}»`
     : "";
@@ -46,10 +53,8 @@ export async function interpretAndExecute(
     { role: "user", content: userMessage },
   ];
 
-  // Step 1: Interpret via LLM
-  const aiResponse = provider === "openai"
-    ? await callOpenAIWithTools(messages)
-    : await callReplicateWithTools(messages);
+  // Step 1: Interpret via LLM, with automatic fallback across providers
+  const { response: aiResponse, usedProvider } = await callWithFallback(messages);
 
   // Step 2: Build plan
   const steps: AgentStep[] = aiResponse.toolCalls.map((tc) => {
@@ -173,9 +178,40 @@ export async function interpretAndExecute(
   return {
     plan: { reasoning: textResponse, steps },
     textResponse,
-    provider,
+    provider: usedProvider,
     canvasActions: allCanvasActions,
   };
+}
+
+// ─── Provider Fallback ───────────────────────────────────
+
+async function callProvider(provider: AgentProvider, messages: ChatMessage[]): Promise<AgentToolResponse> {
+  if (provider === "openai") return callOpenAIWithTools(messages);
+  if (provider === "fal") return callFalWithTools(messages);
+  return callReplicateWithTools(messages);
+}
+
+/**
+ * Try each configured provider in order until one succeeds.
+ * If every provider errors out, rethrow the last error.
+ */
+async function callWithFallback(messages: ChatMessage[]): Promise<{ response: AgentToolResponse; usedProvider: AgentProvider }> {
+  const chain = getProviderChain();
+  let lastErr: unknown = null;
+
+  for (const provider of chain) {
+    try {
+      console.log(`[Agent] Trying provider: ${provider}`);
+      const response = await callProvider(provider, messages);
+      return { response, usedProvider: provider };
+    } catch (err: unknown) {
+      lastErr = err;
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[Agent] Provider ${provider} failed: ${msg.slice(0, 200)}. Trying next...`);
+    }
+  }
+
+  throw lastErr instanceof Error ? lastErr : new Error("All LLM providers failed.");
 }
 
 export async function chatResponse(
