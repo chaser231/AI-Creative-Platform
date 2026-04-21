@@ -19,6 +19,7 @@ import { ExpandOverlay } from "./ExpandOverlay";
 import { InlineTextEditor } from "./InlineTextEditor";
 import { SnapGuides } from "./SnapGuides";
 import { usePanZoom } from "./usePanZoom";
+import { ArtboardBackgroundRenderer } from "./ArtboardBackgroundRenderer";
 /* ─── Constants ───────────────────────────────────── */
 const FRAME_HIGHLIGHT_STROKE = "#6366F1";
 const FRAME_HIGHLIGHT_WIDTH = 2;
@@ -2063,6 +2064,7 @@ export function Canvas({ stageRef }: CanvasProps) {
                                     shadowBlur={20}
                                     listening={false}
                                 />
+                                <ArtboardBackgroundRenderer />
                                 {topLevelLayers.map(layer => (
                                     <CanvasLayer
                                         key={layer.id}
@@ -2093,6 +2095,7 @@ export function Canvas({ stageRef }: CanvasProps) {
                                 shadowBlur={20}
                                 listening={false}
                             />
+                            <ArtboardBackgroundRenderer />
                             {topLevelLayers.map(layer => (
                                 <CanvasLayer
                                     key={layer.id}
@@ -2295,6 +2298,9 @@ export function Canvas({ stageRef }: CanvasProps) {
                                 wrapInAutoLayout: () => wrapInAutoLayoutFrame(),
                                 toggleFixedAsset: isTemplateMode && layer.type === "image"
                                     ? () => updateLayer(layer.id, { isFixedAsset: !layer.isFixedAsset })
+                                    : undefined,
+                                createSwatchFromFill: (layer.type === "text" || layer.type === "rectangle" || layer.type === "badge" || layer.type === "frame")
+                                    ? () => useCanvasStore.getState().createSwatchFromLayerFill(layer.id)
                                     : undefined,
                             },
                             {

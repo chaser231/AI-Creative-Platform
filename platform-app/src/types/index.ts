@@ -174,6 +174,8 @@ export interface BaseComponentProps {
     detachedSizeSync?: boolean;
     /** When true, this layer's content (e.g. image src) is locked by the template and cannot be overridden */
     isFixedAsset?: boolean;
+    /** Links to palette swatches. When set, `fill`/`stroke`/text fill are driven by the referenced swatch. */
+    swatchRefs?: SwatchRefs;
 }
 
 export interface TextComponentProps extends BaseComponentProps {
@@ -392,6 +394,8 @@ export interface BaseLayer {
     detachedSizeSync?: boolean;
     /** When true, this layer's content (e.g. image src) is locked by the template and cannot be overridden */
     isFixedAsset?: boolean;
+    /** Links to palette swatches. When set, `fill`/`stroke`/text fill are driven by the referenced swatch. */
+    swatchRefs?: SwatchRefs;
     /** Opaque integration metadata (Figma, future Sketch/XD, etc.) */
     metadata?: LayerMetadata;
 }
@@ -500,3 +504,70 @@ export interface SerializedLayerNode {
     masterId?: string;
     children?: SerializedLayerNode[];
 }
+
+// ─── Palette / Swatches ─────────────────────────────────
+
+/**
+ * How a background image is fitted onto the artboard.
+ * Matches the semantics of CSS `background-size` for cover/contain and
+ * behaves like `fill` (stretch) when set to "fill".
+ */
+export type ArtboardBackgroundFit = "cover" | "contain" | "fill";
+
+/**
+ * Global artboard background image. Currently stored once on ArtboardProps
+ * (shared across all resizes). Per-resize overrides are a future extension.
+ */
+export interface ArtboardBackgroundImage {
+    src: string;
+    fit: ArtboardBackgroundFit;
+    /** 0..1, defaults to 1 */
+    opacity?: number;
+    /** 0..1, focal point (for cover/contain cropping) */
+    focusX?: number;
+    focusY?: number;
+    /** If the background was applied from a swatch, keep a backlink for cascade updates */
+    swatchRef?: string;
+}
+
+/** Which parts of a layer are driven by a swatch reference. */
+export interface SwatchRefs {
+    fill?: string;
+    stroke?: string;
+    /** Reserved for explicit text-fill swatch (separate from generic `fill`) */
+    text?: string;
+    /** Image-background swatch applied to an image layer's `src` */
+    src?: string;
+}
+
+export type SwatchType = "color" | "background";
+
+/**
+ * Value of a background swatch — either a solid color or an image with fit/focus.
+ * (Color swatches store their hex directly in `Swatch.value: string`.)
+ */
+export type BackgroundSwatchValue =
+    | { kind: "solid"; color: string }
+    | {
+          kind: "image";
+          src: string;
+          fit: ArtboardBackgroundFit;
+          focusX?: number;
+          focusY?: number;
+      };
+
+export interface Swatch {
+    id: string;
+    type: SwatchType;
+    name: string;
+    /** hex string for `type === "color"`, BackgroundSwatchValue for `type === "background"`. */
+    value: string | BackgroundSwatchValue;
+    sortOrder?: number;
+}
+
+export interface TemplatePalette {
+    colors: Swatch[];
+    backgrounds: Swatch[];
+}
+
+export const DEFAULT_PALETTE: TemplatePalette = { colors: [], backgrounds: [] };

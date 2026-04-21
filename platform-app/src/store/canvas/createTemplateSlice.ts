@@ -4,7 +4,7 @@
 
 import type { StateCreator } from "zustand";
 import type { CanvasStore, Layer } from "./types";
-import { DEFAULT_RESIZE, DEFAULT_ARTBOARD_PROPS } from "./types";
+import { DEFAULT_RESIZE, DEFAULT_ARTBOARD_PROPS, DEFAULT_PALETTE } from "./types";
 import { v4 as uuid } from "uuid";
 
 export type TemplateSlice = Pick<CanvasStore,
@@ -28,6 +28,7 @@ export const createTemplateSlice: StateCreator<CanvasStore, [], [], TemplateSlic
             editingLayerId: null,
             artboardProps: { ...DEFAULT_ARTBOARD_PROPS },
             highlightedFrameId: null,
+            palette: { ...DEFAULT_PALETTE, colors: [], backgrounds: [] },
         });
     },
 
@@ -71,6 +72,10 @@ export const createTemplateSlice: StateCreator<CanvasStore, [], [], TemplateSlic
             });
         }
 
+        // Strip palette / artboard background image — caller (templateService.applyTemplatePack)
+        // is responsible for hydrating these from the new template, otherwise
+        // they leak from the previously loaded template.
+        const prevArtboard = get().artboardProps;
         set({
             layers: initialLayers,
             masterComponents,
@@ -85,6 +90,8 @@ export const createTemplateSlice: StateCreator<CanvasStore, [], [], TemplateSlic
             zoom: 0.5,
             stageX: 0,
             stageY: 0,
+            palette: { colors: [], backgrounds: [] },
+            artboardProps: { ...prevArtboard, backgroundImage: undefined },
         });
 
         get().syncLayersToResize();

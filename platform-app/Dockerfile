@@ -7,6 +7,8 @@ RUN apt-get update && apt-get install -y openssl ca-certificates --no-install-re
 COPY package.json package-lock.json* ./
 COPY prisma ./prisma/
 
+# Upgrade npm to match local version (v11+) to prevent package-lock.json sync errors
+RUN npm install -g npm@latest
 RUN npm ci --ignore-scripts
 RUN npx prisma generate
 

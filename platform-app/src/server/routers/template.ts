@@ -406,6 +406,25 @@ export const templateRouter = createTRPCRouter({
           }
         }
 
+        // Artboard background image is global (shared across all formats) and
+        // should be fixated to the template just like `isFixedAsset` layers.
+        const artboardBgSrc: string | undefined = dataObj?.artboardProps?.backgroundImage?.src;
+        if (typeof artboardBgSrc === "string" && artboardBgSrc.length > 0) {
+          fixedUrls.add(artboardBgSrc);
+        }
+
+        // Background-swatches of kind="image" also live in the template and
+        // their underlying S3 blobs must be tracked / cleaned up alongside it.
+        const paletteBackgrounds: any[] | undefined = dataObj?.palette?.backgrounds;
+        if (Array.isArray(paletteBackgrounds)) {
+          for (const sw of paletteBackgrounds) {
+            const v = sw?.value;
+            if (v && typeof v === "object" && v.kind === "image" && typeof v.src === "string" && v.src) {
+              fixedUrls.add(v.src);
+            }
+          }
+        }
+
         const existingAssets = await ctx.prisma.asset.findMany({
           where: { templateId: input.id },
         });
@@ -436,13 +455,23 @@ export const templateRouter = createTRPCRouter({
           });
         }
 
-        // Remove asset records for images no longer marked as fixed
-        const toRemoveIds = existingAssets
-          .filter((a: { url: string }) => !fixedUrls.has(a.url))
-          .map((a: { id: string }) => a.id);
-        if (toRemoveIds.length > 0) {
+        // Remove asset records for images no longer marked as fixed.
+        // Delete the underlying S3 objects too — otherwise blobs leak into the bucket
+        // every time a fixed asset / palette image / artboard background is removed.
+        const toRemove = existingAssets.filter((a: { url: string }) => !fixedUrls.has(a.url));
+        if (toRemove.length > 0) {
+          const s3Keys = toRemove
+            .map((a: { url: string }) => extractS3KeyFromUrl(a.url))
+            .filter((k: string | null): k is string => Boolean(k));
+          if (s3Keys.length > 0) {
+            try {
+              await deleteS3Objects(s3Keys);
+            } catch (s3Err) {
+              console.error("[template.saveState] S3 cleanup failed (non-fatal):", s3Err);
+            }
+          }
           await ctx.prisma.asset.deleteMany({
-            where: { id: { in: toRemoveIds } },
+            where: { id: { in: toRemove.map((a: { id: string }) => a.id) } },
           });
         }
       } catch (syncErr) {
