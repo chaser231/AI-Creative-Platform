@@ -1,6 +1,6 @@
 # Stability Research
 
-_Last updated: 2026-04-21 — scope: agent, data, layout, security, frontend — depth: triage — execution: research + safe quickfixes_
+_Last updated: 2026-04-21 — scope: agent, data, layout, security, frontend — depth: triage + MF-1 + QF-pack — execution: research + safe quickfixes_
 
 ## How to read
 
@@ -22,22 +22,22 @@ _Last updated: 2026-04-21 — scope: agent, data, layout, security, frontend —
 
 | id | sev | area | summary | file:line | fix hint | status |
 |----|-----|------|---------|-----------|----------|--------|
-| L1 | high | layout | `Math.max(1, w)` не лечит NaN — размеры/позиции ломаются | platform-app/src/utils/layoutEngine.ts:337 | валидировать числа, fallback к 1 | open |
-| L2 | high | layout | Нулевая сторона родителя даёт NaN/Inf в center/scale ветках | platform-app/src/store/canvas/helpers.ts:52 | guard `oldWidth/oldHeight > 0` | open |
+| L1 | high | layout | `Math.max(1, w)` не лечит NaN — размеры/позиции ломаются | platform-app/src/utils/layoutEngine.ts:337 | валидировать числа, fallback к 1 | fixed (QF-1) |
+| L2 | high | layout | Нулевая сторона родителя даёт NaN/Inf в center/scale ветках | platform-app/src/store/canvas/helpers.ts:52 | guard `oldWidth/oldHeight > 0` | fixed (QF-2) |
 | L3 | med  | layout | Глобальный кэш текста + общий `Konva.Text` — риск при параллельных вызовах | platform-app/src/utils/layoutEngine.ts:32 | изолировать на контекст или убрать шаринг | open |
 | L4 | med  | layout | Отрицательный `availablePrimarySpace` даёт скрытое переполнение (fill=1px) | platform-app/src/utils/layoutEngine.ts:404 | явная политика overflow/min | open |
 | L5 | med  | layout | `childToParent`: при двух родителях побеждает первый в обходе | platform-app/src/utils/layoutEngine.ts:577 | детект дубликатов или жёсткая модель | open |
 | L6 | med  | layout | Цикл в иерархии: `getDepth` обрывает на 0 — порядок прохода слабый | platform-app/src/utils/layoutEngine.ts:589 | топосорт с ошибкой на цикл | open |
 | L7 | med  | layout | `applyLayout`: left/right/top/bottom перезаписывают друг друга | platform-app/src/utils/layoutEngine.ts:773 | явный приоритет или валидация правил | open |
 | L8 | med  | perf  | После каждого фрейма полный `map` всех слоёв | platform-app/src/utils/layoutEngine.ts:612 | точечные обновления по id | open |
-| L9 | low  | layout | Мёртвый тернар `isHorizontal ? totalPrimaryAll : totalPrimaryAll` | platform-app/src/utils/layoutEngine.ts:367 | удалить ветвление | open |
+| L9 | low  | layout | Мёртвый тернар `isHorizontal ? totalPrimaryAll : totalPrimaryAll` | platform-app/src/utils/layoutEngine.ts:367 | удалить ветвление | fixed (QF-3) |
 | L10| med  | tests | Нет тестов на `computeAutoLayout`/`applyLayout`/текст | platform-app/src/utils/__tests__/layoutEngineConstraints.test.ts:1 | добавить поведенческие кейсы | open |
-| A1 | high | agent | JSON parse errors на tool args молча роняют параметры | platform-app/src/server/agent/orchestrator.ts:63 | fail step или reject невалидный JSON | open |
-| A2 | high | agent | Replicate poll loop без лимита итераций — вечный висяк | platform-app/src/server/agent/llmProviders.ts:441 | max polls + timeout abort | open |
-| A3 | high | agent | Все LLM `fetch` без timeout/AbortSignal | platform-app/src/server/agent/llmProviders.ts:86 | `AbortSignal.timeout` или общий controller | open |
+| A1 | high | agent | JSON parse errors на tool args молча роняют параметры | platform-app/src/server/agent/orchestrator.ts:63 | fail step или reject невалидный JSON | fixed (QF-6) |
+| A2 | high | agent | Replicate poll loop без лимита итераций — вечный висяк | platform-app/src/server/agent/llmProviders.ts:441 | max polls + timeout abort | fixed (QF-5) |
+| A3 | high | agent | Все LLM `fetch` без timeout/AbortSignal | platform-app/src/server/agent/llmProviders.ts:86 | `AbortSignal.timeout` или общий controller | fixed (QF-4) |
 | A4 | med  | agent | fal tool path возвращает пустой plan при полном фейле | platform-app/src/server/agent/llmProviders.ts:388 | throw или пробросить ошибку | open |
 | A5 | med  | agent | Vision ошибки скрыты, фейковые summary инжектятся в prompt | platform-app/src/server/agent/visionAnalyzer.ts:41 | flag failure, не инжектить mock-контекст | open |
-| A6 | med  | sec/log | Полный image prompt логируется в console | platform-app/src/server/agent/executeAction.ts:157 | хэши/редакция, dev-only guard | open |
+| A6 | med  | sec/log | Полный image prompt логируется в console | platform-app/src/server/agent/executeAction.ts:157 | хэши/редакция, dev-only guard | fixed (QF-7: base64-redacted + length cap) |
 | A7 | med  | sec   | Canvas `add_image` берёт LLM-URL без проверки (SSRF риск) | platform-app/src/server/agent/executeAction.ts:224 | allowlist схем/хостов или proxy fetch | open |
 | A8 | med  | agent | Provider fallback retry без backoff | platform-app/src/server/agent/orchestrator.ts:202 | exp backoff + классификация retriable | open |
 | A9 | low  | agent | Нет кап на кол-во tool-call в плане | platform-app/src/server/agent/orchestrator.ts:60 | лимит `steps.length` | open |
@@ -50,7 +50,7 @@ _Last updated: 2026-04-21 — scope: agent, data, layout, security, frontend —
 | D6 | med  | perf | stats тянет все trackedMessages в память | platform-app/src/server/routers/admin.ts:30 | GROUP BY в БД или матвью | open |
 | D7 | med  | data | `AISession`: findFirst→create гонка, дубликаты | platform-app/src/server/routers/workflow.ts:28 | upsert или @@unique(projectId,userId) | open |
 | D8 | med  | data | `createVersion`: findFirst→create unique violation при гонке | platform-app/src/server/routers/project.ts:344 | транзакция/serialization + retry | open |
-| D9 | med  | perf | `asset.list`: findMany без take — неограниченный ответ | platform-app/src/server/routers/asset.ts:43 | take + курсор | open |
+| D9 | med  | perf | `asset.list`: findMany без take — неограниченный ответ | platform-app/src/server/routers/asset.ts:43 | take + курсор | fixed (QF-8: take=200, opt limit ≤500) |
 | D10| med  | data | Уход из workspace: многошаговая запись без транзакции | platform-app/src/server/routers/workspace.ts:353 | `$transaction` | open |
 | D11| low  | data | `saveState`: `z.any()` в canvas — слабая валидация | platform-app/src/server/routers/project.ts:244 | сузить zod-схему | open |
 | D12| low  | ops  | Нет каталога `prisma/migrations` в репо | platform-app/prisma/schema.prisma:1 | версионировать миграции | open |
@@ -81,8 +81,8 @@ _Last updated: 2026-04-21 — scope: agent, data, layout, security, frontend —
 | F11| med  | perf | Превью через `<img>` без `next/image` | platform-app/src/components/dashboard/WorkspaceAssetGrid.tsx:94 | `next/image` + sizes/srcset | open |
 | F12| med  | perf | AssetLibraryModal: полный `assets.map` без windowing | platform-app/src/components/editor/AssetLibraryModal.tsx:324 | виртуализировать сетку | open |
 | F13| med  | perf | Почти все `app/**/page.tsx` — клиентские | platform-app/src/app/page.tsx:1 | вынести интерактив в листья | open |
-| F14| med  | perf | Figma статус: `refetchInterval` 2s до терминального | platform-app/src/components/dashboard/FigmaImportModal.tsx:85 | backoff, стоп после done | open |
-| F15| low  | perf | Сайдбар опрос админки 60s | platform-app/src/components/layout/Sidebar.tsx:84 | `staleTime`/условный опрос | open |
+| F14| med  | perf | Figma статус: `refetchInterval` 2s до терминального | platform-app/src/components/dashboard/FigmaImportModal.tsx:85 | backoff, стоп после done | wontfix (QF-9: уже корректно — interval=false на COMPLETED/FAILED) |
+| F15| low  | perf | Сайдбар опрос админки 60s | platform-app/src/components/layout/Sidebar.tsx:84 | `staleTime`/условный опрос | fixed (QF-10: staleTime=30s) |
 
 ## Top-10 risks (триаж завершён)
 
@@ -131,3 +131,4 @@ _Last updated: 2026-04-21 — scope: agent, data, layout, security, frontend —
 - 2026-04-21 — скоуп: agent, data, layout, security, frontend; глубина: triage; артефакт: этот документ; субагенты: serial; старт: LayoutEngine.
 - 2026-04-21 — триаж завершён по всем 5 зонам; 61 находка, из них 2 crit + 14 high. Top-10 и quickfix-кандидаты ожидают апрува.
 - 2026-04-21 — **MF-1 applied**: `src/server/authz/guards.ts` + guards во всех доменных роутерах (project, template, asset, workspace, workflow) и в 4 route handlers (canvas/save, template/[id], upload/presign, upload). Закрыто: D1, D2, S1–S5, S7, S9. Partial: S6 (authz добавлен; SSRF-allowlist — MF-2). Ревьюер (Opus) нашёл 2 blocker (template.create, template.recent/list перечисляли WORKSPACE-шаблоны чужих) — исправлены. Orphaned `requireRole` в workspace.ts удалён. `tsc` clean, lints clean. Остался non-blocker: `template.loadState` теперь возвращает полный объект вместо узкого select (не критично, фронт проглотит).
+- 2026-04-21 — **QF-пакет applied** (без субагентов, каждая правка 1–10 строк): QF-1 (L1 NaN guard в `layoutEngine`), QF-2 (L2 zero-parent guard в `helpers.ts` + unit-регрессия `computeConstrainedPosition.test.ts`), QF-3 + доп. очистка unused `intrinsicPrimary/Counter` (L9), QF-4 (A3: `AbortSignal.timeout(LLM_FETCH_TIMEOUT_MS=30s)` на все 7 fetch в `llmProviders.ts`), QF-5 (A2: `REPLICATE_MAX_POLLS=120` + throw при превышении), QF-6 (A1: invalid tool-call JSON → `status: "error"` + понятный error; добавлено поле `AgentStep.error`), QF-7 (A6: base64-redact + length cap в логе prompt), QF-8 (D9: `take=200` по умолчанию, опциональный `limit ≤500`), QF-10 (F15: `staleTime=30_000` в Sidebar). **QF-9 → wontfix**: Figma `refetchInterval` уже возвращает `false` на `COMPLETED/FAILED`, ложная тревога триажа. `tsc` clean, lint clean, 5/5 vitest зелёные. Закрыто в Findings: L1, L2, L9, A1, A2, A3, A6, D9, F15.

@@ -44,10 +44,14 @@ export const assetRouter = createTRPCRouter({
         type: z
           .enum(["IMAGE", "VIDEO", "AUDIO", "FONT", "LOGO", "OTHER"])
           .optional(),
+        limit: z.number().int().min(1).max(500).optional(),
       })
     )
     .query(async ({ ctx, input }) => {
       await assertWorkspaceAccess(ctx, input.workspaceId);
+      // Hard cap: without a limit, a large workspace can dump thousands of rows
+      // in a single query and OOM the node process / freeze the client.
+      const take = input.limit ?? 200;
       const assets = await ctx.prisma.asset.findMany({
         where: {
           workspaceId: input.workspaceId,
@@ -59,6 +63,7 @@ export const assetRouter = createTRPCRouter({
           },
         },
         orderBy: { createdAt: "desc" },
+        take,
       });
 
       return assets;

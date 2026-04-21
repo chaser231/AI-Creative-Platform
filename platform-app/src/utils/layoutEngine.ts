@@ -334,8 +334,8 @@ function computeAutoLayoutInternal(
             ? child.layoutSizingHeight === "fill"
             : child.layoutSizingWidth === "fill");
 
-        w = Math.max(1, w);
-        h = Math.max(1, h);
+        w = Number.isFinite(w) ? Math.max(1, w) : 1;
+        h = Number.isFinite(h) ? Math.max(1, h) : 1;
 
         return { id: child.id, intrinsicW: w, intrinsicH: h, fillPrimary, fillCounter };
     });
@@ -363,9 +363,6 @@ function computeAutoLayoutInternal(
     });
 
     const totalSpacing = Math.max(0, childLayers.length - 1) * spacing;
-
-    const intrinsicPrimary = (primaryHug ? totalPrimaryNonFill : (isHorizontal ? totalPrimaryAll : totalPrimaryAll)) + totalSpacing;
-    const intrinsicCounter = counterHug ? maxCounterNonFill : maxCounterAll;
 
     let intrinsicFrameWidth: number;
     let intrinsicFrameHeight: number;
@@ -446,8 +443,8 @@ function computeAutoLayoutInternal(
             }
         }
 
-        w = Math.max(1, w);
-        h = Math.max(1, h);
+        w = Number.isFinite(w) ? Math.max(1, w) : 1;
+        h = Number.isFinite(h) ? Math.max(1, h) : 1;
 
         return { id: m.id, w, h, x: 0, y: 0 };
     });

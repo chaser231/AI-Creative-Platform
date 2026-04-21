@@ -8,6 +8,8 @@ export interface AgentStep {
   parameters: Record<string, unknown>;
   status: "pending" | "running" | "done" | "error";
   result?: import("../actionRegistry").ActionResult;
+  /** Human-readable reason when status is "error" (e.g. invalid LLM args). */
+  error?: string;
 }
 
 export interface ModelPreferences {

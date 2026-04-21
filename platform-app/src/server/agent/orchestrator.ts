@@ -60,17 +60,25 @@ export async function interpretAndExecute(
   const steps: AgentStep[] = aiResponse.toolCalls.map((tc) => {
     const action = ACTIONS.find((a) => a.id === tc.name);
     let parsedArgs: Record<string, unknown> = {};
+    let parseError: string | null = null;
     try {
       parsedArgs = JSON.parse(tc.arguments);
-    } catch {
-      // ignore
+    } catch (err) {
+      // Surface the failure instead of silently dropping user-supplied params.
+      parseError = err instanceof Error ? err.message : String(err);
+      console.warn(
+        `[agent] Failed to parse tool_call arguments for "${tc.name}": ${parseError}. Raw: ${String(tc.arguments).slice(0, 200)}`,
+      );
     }
 
     return {
       actionId: tc.name,
       actionName: action?.name || tc.name,
       parameters: parsedArgs,
-      status: "pending" as const,
+      status: parseError ? ("error" as const) : ("pending" as const),
+      error: parseError
+        ? `Некорректные параметры от LLM: ${parseError}`
+        : undefined,
     };
   });
 
@@ -79,6 +87,10 @@ export async function interpretAndExecute(
   const generatedContent: Record<string, string> = {};
 
   for (const step of steps) {
+    // Pre-flagged failures (e.g. malformed LLM tool-call JSON) must not execute.
+    if (step.status === "error") {
+      continue;
+    }
     step.status = "running";
 
     try {

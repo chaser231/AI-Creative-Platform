@@ -3,6 +3,23 @@ import { callLLM } from "./llmProviders";
 import { resolveRefTags } from "@/lib/ai-models";
 import { SYSTEM_IMAGE_PRESETS } from "@/lib/stylePresets";
 
+// ─── Logging helpers ─────────────────────────────────────
+
+/**
+ * Prompts can contain embedded base64 image blobs (especially when VLM output
+ * or a user paste leaks through ref-tag resolution). Raw data URIs blow up
+ * structured logs and risk persisting PII. Replace them with a short marker.
+ */
+function redactForLog(value: string, maxLen = 2000): string {
+  if (!value) return value;
+  const stripped = value.replace(
+    /data:[a-z0-9.+-]+\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=]{32,}/gi,
+    "[base64-redacted]",
+  );
+  if (stripped.length <= maxLen) return stripped;
+  return `${stripped.slice(0, maxLen)}…[+${stripped.length - maxLen} chars]`;
+}
+
 // ─── Action Executors ────────────────────────────────────
 
 export async function executeAction(
@@ -155,7 +172,7 @@ RULES:
       const { generateWithFallback } = await import("@/lib/ai-providers");
 
       console.log(`[Pipeline ▶5 executeAction] generate_image — model: ${selectedModel}, hasRefImages: ${hasActualRefs ? referenceImages.length : 0}`);
-      console.log(`[Pipeline ▶5 executeAction] FULL PROMPT: "${cleanPrompt}"`);
+      console.log(`[Pipeline ▶5 executeAction] FULL PROMPT: "${redactForLog(cleanPrompt)}"`);
 
       try {
         const aiResult = await generateWithFallback({

@@ -1,6 +1,22 @@
 import { actionsToOpenAITools, ACTIONS } from "../actionRegistry";
 import type { ChatMessage } from "./types";
 
+// ─── Network timeouts ────────────────────────────────────
+
+/**
+ * Hard timeout for any single LLM HTTP request. Without this, a hung
+ * provider can tie up a Vercel function slot indefinitely. Override with
+ * `LLM_FETCH_TIMEOUT_MS` if you need longer on slow networks.
+ */
+const LLM_FETCH_TIMEOUT_MS = Number(process.env.LLM_FETCH_TIMEOUT_MS) || 30_000;
+
+/** Maximum number of 1s polls for Replicate predictions before giving up. */
+const REPLICATE_MAX_POLLS = Number(process.env.REPLICATE_MAX_POLLS) || 120;
+
+function llmFetchSignal(): AbortSignal {
+  return AbortSignal.timeout(LLM_FETCH_TIMEOUT_MS);
+}
+
 // ─── Types ───────────────────────────────────────────────
 
 export interface AgentToolResponse {
@@ -95,6 +111,7 @@ async function callOpenAI(messages: ChatMessage[]): Promise<string> {
       temperature: 0.7,
       max_tokens: 1024,
     }),
+    signal: llmFetchSignal(),
   });
 
   if (!response.ok) {
@@ -124,6 +141,7 @@ export async function callOpenAIWithTools(messages: ChatMessage[]): Promise<Agen
       temperature: 0.3,
       max_tokens: 2048,
     }),
+    signal: llmFetchSignal(),
   });
 
   if (!response.ok) {
@@ -291,6 +309,7 @@ async function callFalText(messages: ChatMessage[], model: string): Promise<stri
       "Content-Type": "application/json",
     },
     body: JSON.stringify(input),
+    signal: llmFetchSignal(),
   });
 
   if (!submitRes.ok) {
@@ -320,6 +339,7 @@ async function callFalText(messages: ChatMessage[], model: string): Promise<stri
     try {
       const statusRes = await fetch(statusUrl, {
         headers: { "Authorization": `Key ${apiKey}` },
+        signal: llmFetchSignal(),
       });
       if (!statusRes.ok) continue;
       const status = await statusRes.json() as { status: string; error?: string };
@@ -338,6 +358,7 @@ async function callFalText(messages: ChatMessage[], model: string): Promise<stri
 
   const resultRes = await fetch(responseUrl, {
     headers: { "Authorization": `Key ${apiKey}` },
+    signal: llmFetchSignal(),
   });
   if (!resultRes.ok) {
     const errBody = await resultRes.text();
@@ -427,6 +448,7 @@ async function callReplicateText(messages: ChatMessage[]): Promise<string> {
           temperature: 0.7,
         },
       }),
+      signal: llmFetchSignal(),
     }
   );
 
@@ -438,12 +460,20 @@ async function callReplicateText(messages: ChatMessage[]): Promise<string> {
   const prediction = await createRes.json();
 
   let result = prediction;
+  let polls = 0;
   while (result.status !== "succeeded" && result.status !== "failed") {
+    if (polls >= REPLICATE_MAX_POLLS) {
+      throw new Error(
+        `Replicate prediction timed out after ${REPLICATE_MAX_POLLS}s (${REPLICATE_TEXT_MODEL}, id=${result.id})`,
+      );
+    }
     await new Promise((resolve) => setTimeout(resolve, 1000));
     const pollRes = await fetch(`https://api.replicate.com/v1/predictions/${result.id}`, {
       headers: { Authorization: `Bearer ${token}` },
+      signal: llmFetchSignal(),
     });
     result = await pollRes.json();
+    polls += 1;
   }
 
   if (result.status === "failed") {
