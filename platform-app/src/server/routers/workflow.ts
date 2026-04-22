@@ -248,13 +248,15 @@ export const workflowRouter = createTRPCRouter({
         }
       );
 
-      // Track AI costs (non-blocking)
-      await trackAgentCosts(
+      // Fire-and-forget: cost tracking must never delay the response path
+      // or trigger a gateway timeout. `trackAgentCosts` already has internal
+      // try/catch; the outer .catch is a last-resort guard.
+      void trackAgentCosts(
         ctx.prisma,
         ctx.user.id,
         input.projectId,
         result.plan.steps
-      );
+      ).catch((err) => console.error("[trackAgentCosts] async error:", err));
 
       return result;
     }),
@@ -305,13 +307,15 @@ export const workflowRouter = createTRPCRouter({
         result,
       };
 
-      // Track AI costs (non-blocking)
-      await trackAgentCosts(
+      // Fire-and-forget: do not block the response (applyTemplate is already
+      // the slowest procedure in the app; one extra DB round-trip inflates
+      // the chance of a gateway 502).
+      void trackAgentCosts(
         ctx.prisma,
         ctx.user.id,
         undefined, // applyTemplate doesn't have projectId directly; use workspace-level
         [templateStep]
-      );
+      ).catch((err) => console.error("[trackAgentCosts] async error:", err));
 
       return {
         plan: {
