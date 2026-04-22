@@ -70,9 +70,19 @@ export const assetRouter = createTRPCRouter({
     }),
 
   /**
-   * List assets across the entire workspace (for personal library panels).
-   * Supports filtering by type and metadata.source to distinguish photo-generated
-   * assets from manual uploads.
+   * List unique workspace assets (for the personal library / dashboard catalog).
+   *
+   * A single S3 object may be referenced by multiple Asset rows (one per
+   * project the object was attached to via attachUrlToProject /
+   * cloneAssetToProject / copyTemplateAssetsToProject). The dashboard catalog
+   * shows *files*, not *project links*, so we collapse rows by `url` and
+   * return one representative record per unique S3 object — the oldest one,
+   * which is the "original" upload/generation.
+   *
+   * Source filter semantics ("photo-generation" vs "upload"):
+   * If ANY row for a given url has metadata.source === filter, the file is
+   * considered to match. This is because downstream clones can rewrite
+   * `source` to "cloned" even though the same bytes were originally generated.
    */
   listByWorkspace: protectedProcedure
     .input(
@@ -91,27 +101,64 @@ export const assetRouter = createTRPCRouter({
       const where: {
         workspaceId: string;
         type?: "IMAGE" | "VIDEO" | "AUDIO" | "FONT" | "LOGO" | "OTHER";
-        metadata?: { path: string[]; equals: string };
       } = {
         workspaceId: input.workspaceId,
         ...(input.type && { type: input.type }),
       };
-      if (input.source) {
-        // JSON field path filter on metadata.source
-        where.metadata = { path: ["source"], equals: input.source };
-      }
 
-      const assets = await ctx.prisma.asset.findMany({
+      // Fetch a generous window (up to 4× the limit) and collapse by url.
+      // We intentionally dedupe in-memory instead of relying on a DB DISTINCT
+      // because (a) JSON metadata filters + DISTINCT ON aren't portable
+      // across Prisma providers, and (b) we want the *oldest* row per url,
+      // which requires ordering inside each group.
+      const fetchLimit = Math.min(input.limit * 4, 800);
+
+      const rows = await ctx.prisma.asset.findMany({
         where: where as never,
         include: {
           uploadedBy: { select: { id: true, name: true } },
           project: { select: { id: true, name: true, goal: true } },
         },
-        orderBy: { createdAt: "desc" },
-        take: input.limit,
+        // Ascending: when we encounter a url for the first time, that's the
+        // oldest Asset row → we use its id as the stable representative.
+        orderBy: { createdAt: "asc" },
+        take: fetchLimit,
       });
 
-      return assets;
+      // Group by url, keep the oldest row, but merge metadata.source so we
+      // know which "kinds" of usage this file has across all projects.
+      const byUrl = new Map<
+        string,
+        (typeof rows)[number] & { _sources: Set<string> }
+      >();
+      for (const r of rows) {
+        const meta = (r.metadata as Record<string, unknown> | null) ?? {};
+        const src = typeof meta.source === "string" ? meta.source : undefined;
+        const existing = byUrl.get(r.url);
+        if (!existing) {
+          byUrl.set(r.url, {
+            ...r,
+            _sources: new Set(src ? [src] : []),
+          });
+        } else if (src) {
+          existing._sources.add(src);
+        }
+      }
+
+      let unique = Array.from(byUrl.values());
+
+      // Apply source filter *after* dedupe so a file counted as "photo-generation"
+      // in the origin project still surfaces in that filter even if another
+      // project re-registered it as "upload" / "cloned".
+      if (input.source) {
+        unique = unique.filter((r) => r._sources.has(input.source!));
+      }
+
+      // Sort desc by createdAt for display (newest files first).
+      unique.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+
+      // Strip the helper and cap to the requested limit.
+      return unique.slice(0, input.limit).map(({ _sources: _s, ...rest }) => rest);
     }),
 
   /**
@@ -135,6 +182,14 @@ export const assetRouter = createTRPCRouter({
     )
     .mutation(async ({ ctx, input }) => {
       const { project } = await assertProjectAccess(ctx, input.projectId, "USER");
+
+      // Idempotent per (projectId, url) — rapid double submits from React
+      // (StrictMode, double-click, retry after network blip) must never
+      // create two library entries for the same S3 object.
+      const existing = await ctx.prisma.asset.findFirst({
+        where: { projectId: input.projectId, url: input.url },
+      });
+      if (existing) return existing;
 
       const filename = `${input.source}-${Date.now()}.${input.mimeType.split("/")[1] ?? "png"}`;
 
@@ -474,21 +529,44 @@ export const assetRouter = createTRPCRouter({
       return { downloadUrl, asset };
     }),
 
-  /** Delete a single asset */
+  /**
+   * Delete a single asset.
+   *
+   * Because one S3 object can be referenced by multiple Asset rows (one per
+   * project — see listByWorkspace for context), deleting from the workspace
+   * catalog must also cascade to all sibling rows pointing at the same url.
+   * Otherwise the dashboard appears to "put the file back" on the next
+   * refresh when another row surfaces as the representative.
+   *
+   * Permission check: the caller must be allowed to delete the *originally
+   * selected* row. Admins can cascade across the whole workspace; regular
+   * users can only cascade to rows they uploaded themselves.
+   */
   delete: protectedProcedure
     .input(z.object({ id: z.string() }))
     .mutation(async ({ ctx, input }) => {
       const asset = await assertAssetAccess(ctx, input.id, "write");
       const role = await getWorkspaceRole(ctx.prisma, ctx.user.id, asset.workspaceId);
-      if (asset.uploadedById !== ctx.user.id && role !== "ADMIN") {
+      const isAdmin = role === "ADMIN";
+      if (asset.uploadedById !== ctx.user.id && !isAdmin) {
         throw new TRPCError({ code: "FORBIDDEN", message: "Удалять ассет может только загрузивший или администратор" });
       }
 
-      // Extract key and delete from S3
-      const urlObj = new URL(asset.url);
-      const key = urlObj.pathname.replace(`/${BUCKET}/`, "");
+      // Find all sibling rows across the workspace that reference the same
+      // S3 object. Admins clear the whole set; regular users only their own.
+      const siblings = await ctx.prisma.asset.findMany({
+        where: {
+          workspaceId: asset.workspaceId,
+          url: asset.url,
+          ...(isAdmin ? {} : { uploadedById: ctx.user.id }),
+        },
+        select: { id: true },
+      });
 
+      // Delete from S3 once — the bytes are shared.
       try {
+        const urlObj = new URL(asset.url);
+        const key = urlObj.pathname.replace(`/${BUCKET}/`, "");
         await s3.send(
           new DeleteObjectCommand({
             Bucket: BUCKET,
@@ -499,47 +577,82 @@ export const assetRouter = createTRPCRouter({
         console.error("Failed to delete from S3:", err);
       }
 
-      await ctx.prisma.asset.delete({
-        where: { id: input.id },
+      await ctx.prisma.asset.deleteMany({
+        where: { id: { in: siblings.map((s) => s.id) } },
       });
 
-      return { success: true };
+      return { success: true, removedRows: siblings.length };
     }),
 
-  /** Delete multiple assets at once */
+  /**
+   * Delete multiple assets at once.
+   *
+   * Same cascade-by-url semantics as single delete: the selected rows define
+   * the set of S3 objects to remove, and we also remove any sibling Asset
+   * rows pointing at those urls (subject to the caller's permissions).
+   */
   deleteMany: protectedProcedure
     .input(z.object({ ids: z.array(z.string()).min(1) }))
     .mutation(async ({ ctx, input }) => {
+      const selected: { id: string; url: string; workspaceId: string; uploadedById: string }[] =
+        [];
       for (const __id of input.ids) {
         const __a = await assertAssetAccess(ctx, __id, "write");
         const __r = await getWorkspaceRole(ctx.prisma, ctx.user.id, __a.workspaceId);
         if (__a.uploadedById !== ctx.user.id && __r !== "ADMIN") {
           throw new TRPCError({ code: "FORBIDDEN", message: "Нет прав удалять один из ассетов" });
         }
+        selected.push({
+          id: __a.id,
+          url: __a.url,
+          workspaceId: __a.workspaceId,
+          uploadedById: __a.uploadedById,
+        });
       }
 
-      const assets = await ctx.prisma.asset.findMany({
-        where: { id: { in: input.ids } },
-      });
+      // Group selected rows by workspace + url to collect unique S3 objects.
+      const byUrl = new Map<string, { workspaceId: string; url: string }>();
+      for (const s of selected) {
+        byUrl.set(`${s.workspaceId}::${s.url}`, {
+          workspaceId: s.workspaceId,
+          url: s.url,
+        });
+      }
 
-      // Delete from S3 concurrently
+      // Delete each unique S3 object once.
       await Promise.allSettled(
-        assets.map(async (asset) => {
+        Array.from(byUrl.values()).map(async ({ url }) => {
           try {
-            const urlObj = new URL(asset.url);
+            const urlObj = new URL(url);
             const key = urlObj.pathname.replace(`/${BUCKET}/`, "");
             await s3.send(new DeleteObjectCommand({ Bucket: BUCKET, Key: key }));
           } catch (err) {
-            console.error(`Failed to delete ${asset.id} from S3:`, err);
+            console.error(`Failed to delete ${url} from S3:`, err);
           }
         })
       );
 
-      // Delete from DB
+      // Find all sibling rows (same workspace + same url) the caller can delete.
+      // Admins remove every sibling; regular users only their own.
+      const caller = ctx.user.id;
+      const idsToDelete = new Set<string>();
+      for (const { workspaceId, url } of byUrl.values()) {
+        const role = await getWorkspaceRole(ctx.prisma, caller, workspaceId);
+        const siblings = await ctx.prisma.asset.findMany({
+          where: {
+            workspaceId,
+            url,
+            ...(role === "ADMIN" ? {} : { uploadedById: caller }),
+          },
+          select: { id: true },
+        });
+        for (const s of siblings) idsToDelete.add(s.id);
+      }
+
       await ctx.prisma.asset.deleteMany({
-        where: { id: { in: input.ids } },
+        where: { id: { in: Array.from(idsToDelete) } },
       });
 
-      return { success: true, deleted: assets.length };
+      return { success: true, deleted: idsToDelete.size };
     }),
 });
