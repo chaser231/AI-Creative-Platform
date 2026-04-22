@@ -215,10 +215,16 @@ async function runImport(args: StartImportArgs, prisma: PrismaClient): Promise<v
     }
 
     // ── 5. Build CanvasState and persist onto the Project ───────────────────
+    // MF-3: bump `version` so any editor tab already holding this project open
+    // detects the import on its next saveState attempt and refetches instead
+    // of silently overwriting the imported scene.
     const canvasState = buildCanvasState(allFrames);
     await prisma.project.update({
         where: { id: project.id },
-        data: { canvasState: canvasState as unknown as Prisma.InputJsonValue },
+        data: {
+            canvasState: canvasState as unknown as Prisma.InputJsonValue,
+            version: { increment: 1 },
+        },
     });
 
     // ── 6. Finalise the report ──────────────────────────────────────────────

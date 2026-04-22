@@ -227,8 +227,21 @@ export default function EditorPage({ params }: EditorPageProps) {
     // ─── Project mode: load & auto-save ───
     // IMPORTANT: Load canvas state FIRST, then enable auto-save AFTER load completes.
     // This prevents the canvas-clear-on-mount from triggering an empty save.
-    const { isLoaded: canvasLoaded } = useLoadCanvasState(isTemplateMode ? "__skip__" : id);
-    const { isSaving, getUnsavedState, saveNowSync } = useCanvasAutoSave(isTemplateMode ? "__skip__" : id, !isTemplateMode && canvasLoaded, stageRef);
+    const { isLoaded: canvasLoaded, refetch: refetchCanvas } = useLoadCanvasState(isTemplateMode ? "__skip__" : id);
+    // MF-3: when the server detects a version mismatch (another tab saved
+    // first), we refetch and let Zustand re-hydrate from the canonical state.
+    // No toast yet — we only log; UI polish is a follow-up.
+    const handleVersionConflict = useCallback(() => {
+        if (isTemplateMode) return;
+        console.error(`[editor] version conflict on project ${id} — refetching canvas state`);
+        void refetchCanvas();
+    }, [isTemplateMode, id, refetchCanvas]);
+    const { isSaving, getUnsavedState, saveNowSync } = useCanvasAutoSave(
+        isTemplateMode ? "__skip__" : id,
+        !isTemplateMode && canvasLoaded,
+        stageRef,
+        handleVersionConflict,
+    );
 
     const [showExitWarning, setShowExitWarning] = useState(false);
 
