@@ -57,12 +57,18 @@ async function analyzeWithGPT4oVision(
 ): Promise<VisionAnalysisResult> {
   const apiKey = process.env.OPENAI_API_KEY!;
 
-  // Build content array: text question + all images
-  const imageContent = images.map((imgB64) => ({
+  // Build content array: text question + all images.
+  // Each image can be:
+  //  - a data URL ("data:image/...;base64,...") — pass through
+  //  - a regular http(s) URL (e.g. S3-persisted generated image) — pass through
+  //  - a raw base64 string — wrap as jpeg data URL
+  const imageContent = images.map((img) => ({
     type: "image_url" as const,
     image_url: {
-      // GPT-4o accepts data URLs directly
-      url: imgB64.startsWith("data:") ? imgB64 : `data:image/jpeg;base64,${imgB64}`,
+      url:
+        img.startsWith("data:") || /^https?:\/\//i.test(img)
+          ? img
+          : `data:image/jpeg;base64,${img}`,
       detail: "high" as const,
     },
   }));
@@ -128,7 +134,11 @@ async function analyzeWithGeminiFlash(
 
   // Process each image individually for guaranteed description coverage
   for (let i = 0; i < images.length; i++) {
-    const imgUrl = images[i].startsWith("data:") ? images[i] : `data:image/jpeg;base64,${images[i]}`;
+    const img = images[i];
+    const imgUrl =
+      img.startsWith("data:") || /^https?:\/\//i.test(img)
+        ? img
+        : `data:image/jpeg;base64,${img}`;
     const sizeKB = Math.round(imgUrl.length / 1024);
 
     console.log(`[VisionAnalyzer] Sending image ${i + 1}/${images.length} to Gemini Flash (${sizeKB} KB base64)...`);

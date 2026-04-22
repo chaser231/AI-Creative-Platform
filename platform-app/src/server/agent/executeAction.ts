@@ -1,5 +1,6 @@
 import type { ActionResult, ActionContext, CanvasInstruction } from "../actionRegistry";
 import { callLLM } from "./llmProviders";
+import { analyzeReferenceImages } from "./visionAnalyzer";
 import { resolveRefTags } from "@/lib/ai-models";
 import { SYSTEM_IMAGE_PRESETS } from "@/lib/stylePresets";
 import {
@@ -394,7 +395,9 @@ RULES:
       const topic = params.topic as string;
       const imageModel = (params.imageModel as string) || "flux-schnell";
       const templateRefImages = params.referenceImages as string[] | undefined;
-      const templateVisionCtx = params.visionContext as string | undefined;
+      // `visionContext` is `let` because we can hydrate it lazily from
+      // `preGeneratedImageUrl` below (no-refs-but-have-image scenario).
+      let templateVisionCtx = params.visionContext as string | undefined;
       const templateStyleSuffix = params.stylePromptSuffix as string | undefined;
       const preGeneratedImageUrl = params.lastGeneratedImageUrl as string | undefined;
       const hasTemplateRefs = templateRefImages && templateRefImages.length > 0;
@@ -475,6 +478,33 @@ RULES:
       const hasHeadline = slots.some(s => s.slotId === "headline" && s.type === "text");
       const hasSubhead = slots.some(s => s.slotId === "subhead" && s.type === "text");
       const hasPairedTextSlots = hasHeadline && hasSubhead;
+
+      // ─── Lazy VLM on pre-generated image ──────────────────
+      // If the orchestrator didn't pre-populate `visionContext` (the usual
+      // case when user clicks a template card directly) BUT a previous
+      // pipeline step produced an image we're about to drop into the
+      // template background, describe that image now so copywriting
+      // doesn't invent products that aren't there.
+      // This is the root cause of the "text doesn't match picture" bug:
+      // previously copywriting saw only `topic` (e.g. "Сгенерируй баннеры
+      // для Маркета") and happily wrote about irrelevant products.
+      if (!templateVisionCtx && preGeneratedImageUrl) {
+        try {
+          const vision = await analyzeReferenceImages(
+            [preGeneratedImageUrl],
+            topic,
+          );
+          if (vision.imageCount > 0 && vision.combinedSummary) {
+            templateVisionCtx = vision.combinedSummary;
+            console.log(
+              `[Template Fill] Hydrated visionContext from pre-generated image (${vision.combinedSummary.slice(0, 120)}...)`,
+            );
+          }
+        } catch (err) {
+          // Non-blocking: fall through to topic-based cleanTopic path.
+          console.warn("[Template Fill] VLM on pre-generated image failed:", err);
+        }
+      }
 
       // ─── Clean topic: extract actual product/promo theme ───────
       // The raw `topic` is often the user's meta-request like "Сгенерируй баннеры для Маркета",
