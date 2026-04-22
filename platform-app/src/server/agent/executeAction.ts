@@ -619,6 +619,7 @@ ${templateStyleSuffix ? `- Additional style: ${templateStyleSuffix}` : ""}
 • Бренды пиши корректно (род/число не придумывай).
 • Title всегда пиши с CAPS-LOCK, без эмодзи, без многоточий.
 • Subtitle без CAPS-LOCK, без эмодзи, без многоточий злоупотребления.
+• НЕ ПРИДУМЫВАЙ конкретные товары, бренды или категории, которых нет во входных данных. Если входная «идея» абстрактна (например «распродажа» или «Маркет») — пиши только общие формулировки (скидки, выбор, доставка, цена). Лучше общая формулировка, чем выдуманная конкретика.
 
 ЕДИНЫЙ TOV (как мы звучим)
 • Пиши короче, яснее, ближе к речи.
@@ -747,13 +748,19 @@ ${templateStyleSuffix ? `- Additional style: ${templateStyleSuffix}` : ""}
       const hasHeadlineSlot = slots.some((s) => s.slotId === "headline" && s.type === "text");
       const hasSubheadSlot = slots.some((s) => s.slotId === "subhead" && s.type === "text");
 
+      // Anti-hallucination rule shared by all generic text slots: when the
+      // topic is abstract, the model must stay abstract rather than inventing
+      // products that aren't depicted on the banner.
+      const NO_HALLUCINATION_RULE =
+        "ВАЖНО: НЕ придумывай конкретные товары, бренды или категории, которых нет в теме. Если тема абстрактна — пиши общо (скидки, выбор, доставка, цена). Лучше общо, чем выдуманная конкретика.";
+
       const [headlineRaw, subtitleRaw, ctaRaw, imgPromptGeneric] = await Promise.all([
         hasHeadlineSlot
           ? callLLM([
               {
                 role: "system",
                 content:
-                  "Ты — копирайтер. Напиши ОДИН заголовок для баннера. Максимум 5 слов. Без кавычек, без точки. Только текст.",
+                  `Ты — копирайтер. Напиши ОДИН заголовок для баннера. Максимум 5 слов. Без кавычек, без точки. Только текст.\n${NO_HALLUCINATION_RULE}`,
               },
               { role: "user", content: `Заголовок для: ${cleanTopic}` },
             ])
@@ -763,7 +770,7 @@ ${templateStyleSuffix ? `- Additional style: ${templateStyleSuffix}` : ""}
               {
                 role: "system",
                 content:
-                  "Ты — копирайтер. Напиши подзаголовок для баннера. 8-15 слов. Без кавычек. Только текст.",
+                  `Ты — копирайтер. Напиши подзаголовок для баннера. 8-15 слов. Без кавычек. Только текст.\n${NO_HALLUCINATION_RULE}`,
               },
               { role: "user", content: `Подзаголовок для: ${cleanTopic}` },
             ])
@@ -773,7 +780,7 @@ ${templateStyleSuffix ? `- Additional style: ${templateStyleSuffix}` : ""}
               {
                 role: "system",
                 content:
-                  "Ты — копирайтер. Напиши текст для кнопки призыва к действию (CTA). 1-3 слова. Без кавычек. Только текст.",
+                  `Ты — копирайтер. Напиши текст для кнопки призыва к действию (CTA). 1-3 слова. Без кавычек. Только текст.\n${NO_HALLUCINATION_RULE}`,
               },
               { role: "user", content: `CTA для: ${cleanTopic}` },
             ])
