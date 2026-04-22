@@ -46,6 +46,12 @@ const UNBATCHED_PATHS = new Set<string>([
  *
  * Non-OK responses with `application/json` bodies are passed through untouched
  * so tRPC's own error handling (TRPCError shape) still works.
+ *
+ * Envelope shape matters: `httpBatchLink` posts to `...?batch=1` and expects an
+ * array of response objects back; `httpLink` posts without `batch=` and expects
+ * a single object. Sending the wrong shape reintroduces the exact "unable to
+ * transform response" error we are trying to eliminate. We detect batched mode
+ * from the request URL and emit the corresponding envelope.
  */
 async function friendlyFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   const res = await fetch(input, init);
@@ -61,7 +67,7 @@ async function friendlyFetch(input: RequestInfo | URL, init?: RequestInit): Prom
         ? "Сервис временно недоступен. Попробуйте через минуту."
         : `Ошибка сервера (${res.status}). Попробуйте ещё раз.`;
 
-  const jsonError = {
+  const envelope = {
     error: {
       json: {
         message: statusText,
@@ -74,7 +80,16 @@ async function friendlyFetch(input: RequestInfo | URL, init?: RequestInit): Prom
     },
   };
 
-  return new Response(JSON.stringify([jsonError]), {
+  const requestUrl =
+    typeof input === "string"
+      ? input
+      : input instanceof URL
+        ? input.toString()
+        : input.url;
+  const isBatched = /[?&]batch=/.test(requestUrl);
+  const body = isBatched ? JSON.stringify([envelope]) : JSON.stringify(envelope);
+
+  return new Response(body, {
     status: res.status,
     headers: { "content-type": "application/json" },
   });
