@@ -27,6 +27,12 @@ import type { RequiredFont } from "@/utils/fontUtils";
 interface TemplatePanelProps {
     open: boolean;
     onClose: () => void;
+    /**
+     * Current banner project. When set, applying a template from the catalog
+     * also clones the template's own assets (logos, placeholder photos, …)
+     * into this project's library so they show up in Assets.
+     */
+    projectId?: string;
 }
 
 /* ─── Constants for save form ──────────────────────────── */
@@ -73,7 +79,34 @@ function Chip({
     );
 }
 
-export function TemplatePanel({ open, onClose }: TemplatePanelProps) {
+export function TemplatePanel({ open, onClose, projectId }: TemplatePanelProps) {
+    // Mirror the template's own assets (logos, placeholder photos, …) into the
+    // current project's library. Called from every apply path so the library
+    // panel reflects everything the banner actually depends on.
+    const copyTemplateAssetsMutation = trpc.asset.copyTemplateAssetsToProject.useMutation();
+    const trpcUtilsInner = trpc.useUtils();
+    const cloneTemplateAssetsIntoProject = useCallback(
+        async (templateId: string | undefined) => {
+            if (!projectId || !templateId) return;
+            try {
+                await copyTemplateAssetsMutation.mutateAsync({
+                    templateId,
+                    projectId,
+                });
+                await Promise.all([
+                    trpcUtilsInner.asset.listByProject
+                        .invalidate({ projectId })
+                        .catch(() => undefined),
+                    trpcUtilsInner.asset.listByWorkspace
+                        .invalidate()
+                        .catch(() => undefined),
+                ]);
+            } catch (e) {
+                console.warn("copyTemplateAssetsToProject failed:", e);
+            }
+        },
+        [projectId, copyTemplateAssetsMutation, trpcUtilsInner],
+    );
     const { savedPacks, addPack, deletePack } = useTemplateStore();
     const { backendTemplates, refetch, workspaceId } = useTemplateListSync();
     const { saveTemplate } = useSaveTemplateSync();
@@ -202,6 +235,7 @@ export function TemplatePanel({ open, onClose }: TemplatePanelProps) {
             onSuccess: () => {
                 setPackToApply(null);
                 setSelectedResizeId(null);
+                void cloneTemplateAssetsIntoProject(packToApply.id);
                 onClose();
             }
         });
@@ -989,17 +1023,25 @@ export function TemplatePanel({ open, onClose }: TemplatePanelProps) {
                             }
                         }
 
+                        const pendingId = (pack as { id?: string }).id;
                         setMissingFontsData(null);
                         applyTemplatePack(pack, {
-                            onSuccess: () => onClose(),
+                            onSuccess: () => {
+                                void cloneTemplateAssetsIntoProject(pendingId);
+                                onClose();
+                            },
                         });
                     }}
                     onContinueWithoutReplace={async () => {
                         const { applyTemplatePack } = await import("@/services/templateService");
                         const pack = missingFontsData.pendingPack;
+                        const pendingId = (pack as { id?: string }).id;
                         setMissingFontsData(null);
                         applyTemplatePack(pack, {
-                            onSuccess: () => onClose(),
+                            onSuccess: () => {
+                                void cloneTemplateAssetsIntoProject(pendingId);
+                                onClose();
+                            },
                         });
                     }}
                 />

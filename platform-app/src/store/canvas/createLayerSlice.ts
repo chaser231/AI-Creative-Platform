@@ -266,6 +266,7 @@ export const createLayerSlice: StateCreator<CanvasStore, [], [], LayerSlice> = (
             selectedLayerIds: [id],
             activeTool: "select",
         }));
+        return id;
     },
 
     addBadgeLayer: (overrides = {}) => {

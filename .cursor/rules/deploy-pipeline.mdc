@@ -1,0 +1,147 @@
+---
+description: Deployment pipeline guardrails — commit / push / Docker build conventions for the Yandex Cloud CI. Always apply.
+globs:
+  - "**/*"
+alwaysApply: true
+---
+
+# Deploy pipeline — Yandex Cloud container build
+
+Изменения на `main` триггерят `.github/workflows/deploy.yml`, который собирает
+Docker-образ из `platform-app/Dockerfile` (node:22-slim, multi-stage build),
+пушит его в Yandex Container Registry и катит новую ревизию Serverless
+Containers. Билд **жёсткий**: одна кривая команда в Dockerfile — и деплой на
+прод падает до того, как образ вообще попадёт в registry.
+
+Следующие правила фиксируют то, что уже роняло прод несколько раз. Нарушение
+любого из них = сломанный деплой.
+
+---
+
+## Что ДЕЛАТЬ при коммите / пуше
+
+1. **Перед коммитом всегда** прогоняй локально:
+
+   ```bash
+   cd platform-app
+   npx tsc --noEmit
+   npx vitest run       # если менял код, покрытый тестами
+   ```
+
+   Локальный зелёный `tsc` — минимальный барьер перед push'ем. `next build`
+   гонять не обязательно — он медленный и его прогонит CI, но ошибки типов
+   точно так же свалят `next build` в Docker, так что выловить их заранее
+   дешевле.
+
+2. **Если менял `platform-app/package.json`**, закоммить `package-lock.json`
+   в том же коммите. Рассинхрон package.json и lock → `npm ci` в Docker
+   упадёт с `EUSAGE npm ci can only install packages when your package.json
+   and package-lock.json ... are in sync`.
+
+   Регенерировать lock правильно:
+
+   ```bash
+   cd platform-app
+   rm -rf node_modules package-lock.json
+   npm install
+   ```
+
+   Локально у нас npm 11+, но lockfileVersion 3 совместим с npm 10, который
+   идёт в node:22-slim. Не регенерируй lock более старым npm.
+
+3. **Коммит-сообщение** — conventional commits в стиле истории репо
+   (`feat:`, `fix:`, `chore:`, `build:`, `docs:`, `perf:`). Формат — как в
+   `git log --oneline -20`. Коммить через heredoc, а не через одиночный
+   `-m "..."`, чтобы длинные сообщения не ломались на экранировании:
+
+   ```bash
+   git commit -m "$(cat <<'EOF'
+   feat(scope): short subject
+
+   Optional body explaining why, not what.
+   EOF
+   )"
+   ```
+
+4. **Push всегда в feature-ветку**, не в `main`. Workflow запускается при
+   push в `main`, поэтому прямой push туда = моментальный прод-деплой.
+   Правильный путь: `git push -u origin <branch>` → создать/обновить PR
+   через `gh pr create` / `gh pr edit` → мерж через GitHub UI или `gh pr
+   merge --merge --delete-branch` **только** после подтверждения
+   пользователя.
+
+5. **После merge'а в main** — сразу проверь статус деплоя:
+
+   ```bash
+   gh run list --limit 3 --workflow deploy.yml
+   gh run watch <run-id>
+   # или если упал:
+   gh run view <run-id> --log-failed | tail -80
+   ```
+
+   Если билд красный, **не пуши новый коммит "наугад"** — разбери лог и
+   фиксируй конкретную стадию. Чаще всего причина — одна из перечисленных
+   в разделе "Известные грабли" ниже.
+
+---
+
+## Что НЕ ДЕЛАТЬ — известные грабли Yandex сборки
+
+1. **НИКОГДА не добавляй `RUN npm install -g npm@latest` в Dockerfile.**
+   Эта команда нестабильна на свежих node:22-slim образах: npm при
+   self-upgrade регулярно падает с `MODULE_NOT_FOUND: Cannot find module
+   'promise-retry'`. Именно это уронило деплои #49, #50, #52, #53. Нам
+   достаточно npm 10.x, который и так идёт в node:22-slim — он понимает
+   `lockfileVersion: 3` без проблем.
+
+2. **Не меняй base image Dockerfile** (`node:22-slim`) без явной причины.
+   Node 22 LTS + slim — проверенная комбинация, которая пересобирается
+   быстро (<3 минут) и не тянет лишних apt-пакетов. Alpine тянет musl-бинарь
+   Prisma, который нужно отдельно прокидывать в `binaryTargets` — лишний
+   риск.
+
+3. **Не удаляй** два COPY'я в `runner` стадии, которые тянут Prisma engine
+   из `deps`:
+
+   ```Dockerfile
+   COPY --from=deps --chown=nextjs:nodejs /app/node_modules/.prisma ./node_modules/.prisma
+   COPY --from=deps --chown=nextjs:nodejs /app/node_modules/@prisma ./node_modules/@prisma
+   ```
+
+   Без них Next.js standalone runtime падает с
+   "Prisma Client could not locate the Query Engine for runtime ...".
+
+4. **Не удаляй блок с `YandexCA.crt`** в стадии `runner`. Он нужен, чтобы
+   Node внутри контейнера доверял yandexcloud.net сертификатам при запросах
+   к S3, managed Postgres и т.д.
+
+5. **Не добавляй секреты прямо в Dockerfile или в .env**, который едет в
+   образ. Всё секретное пробрасывается через `--environment` в шаге "Deploy
+   new container revision" в `.github/workflows/deploy.yml`. Новую
+   переменную окружения добавляй одновременно в GitHub Actions secrets и
+   в этот шаг workflow, иначе контейнер её не увидит.
+
+6. **Не меняй `yc serverless container revision deploy` флаги наобум**.
+   Текущие значения (`--memory 1GB --cores 1 --execution-timeout 300s
+   --concurrency 4`) — рабочая конфигурация. Уменьшать память ниже 1GB
+   опасно: Next.js standalone + Prisma engine легко съедают 700-900MB при
+   холодном старте.
+
+7. **Не коммить файлы `.env*`, `*.pem`, `*-sa-key.json`, `/tmp/` дампы**.
+   Если увидел их в `git status` — останови флоу и предупреди
+   пользователя.
+
+---
+
+## Быстрый self-check перед `gh pr merge`
+
+- [ ] `git status` чистый, нет забытых `.env` / SA-ключей.
+- [ ] Dockerfile не содержит `npm install -g npm@latest`.
+- [ ] `package.json` и `package-lock.json` синхронны (`lockfileVersion: 3`).
+- [ ] `npx tsc --noEmit` зелёный локально.
+- [ ] Коммит-сообщение в стиле conventional commits.
+- [ ] PR открыт в `main`, не prerelease.
+
+После мержа — открой `gh run list --limit 3 --workflow deploy.yml` и
+подожди, пока статус не станет `completed success`. Если `failure` —
+сразу разбирай лог, не коммить "патч сверху" вслепую.

@@ -87,11 +87,7 @@ export async function POST(req: Request) {
         response = await safeFetch(
           url,
           { signal: AbortSignal.timeout(30_000) },
-          // TODO: uploadImagePolicy() is too strict for some AI provider URLs
-          // that don't return Content-Length or properly handle HEAD requests.
-          // For now, we bypass the strict policy and rely on the content-type
-          // check below after the body is fetched.
-          undefined,
+          uploadImagePolicy(),
         );
       } catch (e) {
         if (e instanceof SsrfBlockedError) {

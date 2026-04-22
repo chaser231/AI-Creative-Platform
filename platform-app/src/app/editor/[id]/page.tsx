@@ -283,112 +283,239 @@ export default function EditorPage({ params }: EditorPageProps) {
     //                                    the specified image slot via contentOverrides.
     //   3. ?openTemplates=1            — legacy: just open the TemplatePanel after seeding
     //                                    the image as a layer. Kept for back-compat.
-    const assetIdParam = searchParams.get("assetId");
-    const imageUrlParam = searchParams.get("imageUrl");
-    const openTemplatesParam = searchParams.get("openTemplates") === "1";
-    const applyTemplateParam = searchParams.get("applyTemplate");
-    const applySlotParam = searchParams.get("applySlot");
+    //
+    // IMPORTANT: the seed params are captured ONCE on mount into a ref. Reading
+    // them straight from `searchParams` on every render caused a feedback loop
+    // in the effect below (router.replace changes searchParams -> effect
+    // re-runs -> applies template again -> wipes the canvas), which is what
+    // manifested as the editor "hanging" on a blank artboard after "В баннер".
+    const seedParamsRef = useRef<{
+        assetId: string | null;
+        imageUrl: string | null;
+        openTemplates: boolean;
+        applyTemplate: string | null;
+        applySlot: string | null;
+        captured: boolean;
+    }>({
+        assetId: null,
+        imageUrl: null,
+        openTemplates: false,
+        applyTemplate: null,
+        applySlot: null,
+        captured: false,
+    });
+    if (!seedParamsRef.current.captured) {
+        seedParamsRef.current = {
+            assetId: searchParams.get("assetId"),
+            imageUrl: searchParams.get("imageUrl"),
+            openTemplates: searchParams.get("openTemplates") === "1",
+            applyTemplate: searchParams.get("applyTemplate"),
+            applySlot: searchParams.get("applySlot"),
+            captured: true,
+        };
+    }
+    const seed = seedParamsRef.current;
+
     const assetByIdQuery = trpc.asset.getById.useQuery(
-        { id: assetIdParam ?? "" },
+        { id: seed.assetId ?? "" },
         {
-            enabled: !isTemplateMode && !!assetIdParam,
+            enabled: !isTemplateMode && !!seed.assetId,
             retry: false,
             refetchOnWindowFocus: false,
+            staleTime: Infinity,
         },
     );
     const templateByIdQuery = trpc.template.getById.useQuery(
-        { id: applyTemplateParam ?? "" },
+        { id: seed.applyTemplate ?? "" },
         {
-            enabled: !isTemplateMode && !!applyTemplateParam,
+            enabled: !isTemplateMode && !!seed.applyTemplate,
             retry: false,
             refetchOnWindowFocus: false,
+            staleTime: Infinity,
         },
     );
+
+    // Mutations used by the seed-from-query effect to keep the project's
+    // asset library in sync with whatever pre-loaded content lands on the
+    // canvas. Keep fresh references in a ref so the effect below doesn't need
+    // them in its dependency list (react-query mutation objects are recreated
+    // on every render, which would otherwise re-trigger the seeding loop).
+    const trpcUtils = trpc.useUtils();
+    const cloneAssetMutation = trpc.asset.cloneAssetToProject.useMutation();
+    const attachUrlMutation = trpc.asset.attachUrlToProject.useMutation();
+    const copyTemplateAssetsMutation =
+        trpc.asset.copyTemplateAssetsToProject.useMutation();
+    const seedMutationsRef = useRef({
+        cloneAsset: cloneAssetMutation,
+        attachUrl: attachUrlMutation,
+        copyTemplateAssets: copyTemplateAssetsMutation,
+        trpcUtils,
+        router,
+    });
+    seedMutationsRef.current = {
+        cloneAsset: cloneAssetMutation,
+        attachUrl: attachUrlMutation,
+        copyTemplateAssets: copyTemplateAssetsMutation,
+        trpcUtils,
+        router,
+    };
+
     const didSeedFromQueryRef = useRef(false);
     useEffect(() => {
         if (isTemplateMode) return;
         if (!canvasLoaded) return;
         if (didSeedFromQueryRef.current) return;
 
+        // Nothing to seed — bail out so we don't waste a render cycle.
+        const { assetId, imageUrl, openTemplates, applyTemplate, applySlot } = seed;
+        const hasSeed =
+            !!assetId || !!imageUrl || !!applyTemplate || openTemplates;
+        if (!hasSeed) {
+            didSeedFromQueryRef.current = true;
+            return;
+        }
+
         // Wait for dependent queries before acting — otherwise we'd race and
         // either apply an empty template or drop the wrong src.
-        if (assetIdParam && assetByIdQuery.isLoading) return;
-        if (applyTemplateParam && templateByIdQuery.isLoading) return;
+        if (assetId && assetByIdQuery.isLoading) return;
+        if (applyTemplate && templateByIdQuery.isLoading) return;
+
+        // Capture the "already seeded" flag SYNCHRONOUSLY, before any awaits,
+        // so concurrent renders (e.g. caused by the setState inside
+        // applyTemplatePack) cannot schedule a second seed pass.
+        didSeedFromQueryRef.current = true;
 
         const src =
-            assetIdParam && assetByIdQuery.data?.url
+            assetId && assetByIdQuery.data?.url
                 ? assetByIdQuery.data.url
-                : imageUrlParam ?? null;
+                : imageUrl ?? null;
 
         const run = async () => {
-            let consumedAny = false;
-
-            // ── (2) Apply template with the image going into a specific slot ──
-            if (applyTemplateParam && templateByIdQuery.data) {
-                const template = templateByIdQuery.data;
-                const { applyTemplatePack } = await import("@/services/templateService");
-                const overrides: Record<string, string> = {};
-                if (src && applySlotParam) overrides[applySlotParam] = src;
-
-                await new Promise<void>((resolve) => {
-                    applyTemplatePack(
-                        template.data as never,
-                        {
-                            contentOverrides: Object.keys(overrides).length > 0 ? overrides : undefined,
-                            onSuccess: () => resolve(),
-                            onError: () => resolve(),
-                        },
+            const muts = seedMutationsRef.current;
+            try {
+                // ── (2) Apply template with the image going into a specific slot ──
+                if (applyTemplate && templateByIdQuery.data?.data) {
+                    const template = templateByIdQuery.data;
+                    const { applyTemplatePack } = await import(
+                        "@/services/templateService"
                     );
-                });
+                    const overrides: Record<string, string> = {};
+                    if (src && applySlot) overrides[applySlot] = src;
 
-                // Fallback: if the template had no matching slot but we still have
-                // an image to seed, drop it as a new layer so it isn't lost.
-                if (src && !applySlotParam) {
+                    await applyTemplatePack(template.data as never, {
+                        contentOverrides:
+                            Object.keys(overrides).length > 0 ? overrides : undefined,
+                    });
+
+                    // Fallback: if the template had no matching slot but we
+                    // still have an image to seed, drop it as a new layer so
+                    // it isn't lost.
+                    if (src && !applySlot) {
+                        useCanvasStore.getState().addImageLayer(src, 400, 400);
+                    }
+
+                    // Clone the template's own assets (logos, placeholder
+                    // photos, …) into this project's library so the user
+                    // sees everything the banner actually depends on in one
+                    // place. Non-blocking — failures here shouldn't break
+                    // the editor.
+                    muts.copyTemplateAssets
+                        .mutateAsync({
+                            templateId: applyTemplate,
+                            projectId: id,
+                        })
+                        .catch((e) => {
+                            console.warn(
+                                "copyTemplateAssetsToProject failed:",
+                                e,
+                            );
+                        });
+                }
+                // ── (1) Just seed the image as a new layer on the empty canvas ──
+                else if (src) {
                     useCanvasStore.getState().addImageLayer(src, 400, 400);
                 }
-                consumedAny = true;
-            }
-            // ── (1) Just seed the image as a new layer on the empty canvas ──
-            else if (src) {
-                useCanvasStore.getState().addImageLayer(src, 400, 400);
-                consumedAny = true;
-            }
 
-            // ── (3) Legacy path — open template picker after seeding ──
-            if (openTemplatesParam) {
-                setTemplatesOpen(true);
-                consumedAny = true;
-            }
+                // ── (3) Legacy path — open template picker after seeding ──
+                if (openTemplates) {
+                    setTemplatesOpen(true);
+                }
 
-            if (consumedAny) {
-                didSeedFromQueryRef.current = true;
-                // Strip the seed params so a refresh/navigation doesn't re-apply them.
-                const next = new URLSearchParams(searchParams.toString());
-                next.delete("assetId");
-                next.delete("imageUrl");
-                next.delete("openTemplates");
-                next.delete("applyTemplate");
-                next.delete("applySlot");
-                const qs = next.toString();
-                router.replace(qs ? `/editor/${id}?${qs}` : `/editor/${id}`);
+                // ── Register the seed image in the new project's asset
+                // library. Non-blocking — on failure we just log; the main
+                // flow (canvas seeded) has already succeeded. ──
+                if (assetId && assetByIdQuery.data) {
+                    muts.cloneAsset
+                        .mutateAsync({
+                            assetId,
+                            targetProjectId: id,
+                            source: "banner-seed",
+                        })
+                        .then(() => {
+                            void muts.trpcUtils.asset.listByProject
+                                .invalidate({ projectId: id })
+                                .catch(() => undefined);
+                            void muts.trpcUtils.asset.listByWorkspace
+                                .invalidate()
+                                .catch(() => undefined);
+                        })
+                        .catch((e) => {
+                            console.warn("cloneAssetToProject failed:", e);
+                        });
+                } else if (imageUrl && src) {
+                    muts.attachUrl
+                        .mutateAsync({
+                            projectId: id,
+                            url: src,
+                            source: "banner-seed",
+                        })
+                        .then(() => {
+                            void muts.trpcUtils.asset.listByProject
+                                .invalidate({ projectId: id })
+                                .catch(() => undefined);
+                            void muts.trpcUtils.asset.listByWorkspace
+                                .invalidate()
+                                .catch(() => undefined);
+                        })
+                        .catch((e) => {
+                            console.warn("attachUrlToProject failed:", e);
+                        });
+                }
+            } catch (e) {
+                console.error("Failed to seed editor from query params:", e);
+            } finally {
+                // Strip the seed params regardless of success so a refresh
+                // or back-navigation doesn't trigger another attempt.
+                try {
+                    const next = new URLSearchParams(searchParams.toString());
+                    next.delete("assetId");
+                    next.delete("imageUrl");
+                    next.delete("openTemplates");
+                    next.delete("applyTemplate");
+                    next.delete("applySlot");
+                    const qs = next.toString();
+                    muts.router.replace(
+                        qs ? `/editor/${id}?${qs}` : `/editor/${id}`,
+                    );
+                } catch {
+                    // non-blocking
+                }
             }
         };
         void run();
     }, [
         canvasLoaded,
         isTemplateMode,
-        assetIdParam,
-        imageUrlParam,
-        openTemplatesParam,
-        applyTemplateParam,
-        applySlotParam,
+        seed,
         assetByIdQuery.data,
         assetByIdQuery.isLoading,
         templateByIdQuery.data,
         templateByIdQuery.isLoading,
         id,
-        router,
-        searchParams,
+        // `searchParams` intentionally omitted — we snapshot it once via
+        // `seedParamsRef` above, and we only ever read it inside the finally
+        // block (via the current ref snapshot at the time `run()` was
+        // scheduled, which is good enough for param stripping).
     ]);
 
     // Inline rename state
@@ -643,7 +770,7 @@ export default function EditorPage({ params }: EditorPageProps) {
             ) : (
                 <div className="relative flex-1 min-h-0">
                     {/* Canvas fills the entire area */}
-                    <Canvas stageRef={stageRef} />
+                    <Canvas stageRef={stageRef} projectId={isTemplateMode ? undefined : id} />
 
                     {/* Floating Layers Panel — left */}
                     <div className="absolute top-3 left-3 bottom-3 z-10">
@@ -659,6 +786,7 @@ export default function EditorPage({ params }: EditorPageProps) {
                             onOpenTemplates={() => setTemplatesOpen(true)}
                             onToggleAI={() => setAiPanelOpen(!aiPanelOpen)}
                             aiActive={aiPanelOpen}
+                            projectId={isTemplateMode ? undefined : id}
                         />
                     </div>
 
@@ -737,6 +865,7 @@ export default function EditorPage({ params }: EditorPageProps) {
             <TemplatePanel
                 open={templatesOpen}
                 onClose={() => setTemplatesOpen(false)}
+                projectId={isTemplateMode ? undefined : id}
             />
 
             {/* Share Dialog */}

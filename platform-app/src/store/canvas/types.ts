@@ -200,7 +200,7 @@ export interface CanvasStore {
     // Layer actions
     addTextLayer: (overrides?: Partial<TextLayer>) => void;
     addRectangleLayer: (overrides?: Partial<RectangleLayer>) => void;
-    addImageLayer: (src: string, width: number, height: number) => void;
+    addImageLayer: (src: string, width: number, height: number) => string;
     addBadgeLayer: (overrides?: Partial<BadgeLayer>) => void;
     addFrameLayer: (overrides?: Partial<FrameLayer>) => void;
     updateLayer: (id: string, updates: LayerUpdate) => void;

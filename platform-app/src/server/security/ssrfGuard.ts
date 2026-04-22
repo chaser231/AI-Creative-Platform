@@ -453,6 +453,18 @@ export async function assertUrlIsSafe(
         resolvedIps.push(a.address);
     }
 
+    // Prefer IPv4 when both are returned. Many egress environments (dev, proxied
+    // CI, Yandex Cloud serverless) don't have reliable IPv6 routing, and the
+    // pinned IPv6 connect ends up timing out or throwing generic socket errors.
+    // The security guarantee is the same either way — every address in the list
+    // passed `isBlockedIp`, so only the connectivity order changes.
+    resolvedIps.sort((a, b) => {
+        const fa = isIP(a);
+        const fb = isIP(b);
+        if (fa === fb) return 0;
+        return fa === 4 ? -1 : 1;
+    });
+
     return { url, resolvedIps };
 }
 
@@ -471,12 +483,29 @@ function pinnedAgent(
     const AgentCtor = secure ? https.Agent : http.Agent;
     return new AgentCtor({
         keepAlive: false,
+        // Node 20+ calls the custom lookup with { all: true } via
+        // `lookupAndConnectMultiple`. In that case the callback must receive an
+        // array of { address, family } entries; passing (err, address, family)
+        // to the happy-eyeballs path surfaces as ERR_INVALID_IP_ADDRESS
+        // (node:net:1495 emitLookup). We handle both legacy and modern
+        // signatures here.
         lookup: (
             _hostname: string,
-            _opts: unknown,
-            cb: (err: NodeJS.ErrnoException | null, address: string, family: number) => void,
+            opts: unknown,
+            cb: unknown,
         ) => {
-            cb(null, pinnedIp, family);
+            const options = (opts ?? {}) as { all?: boolean };
+            const callback = cb as (
+                err: NodeJS.ErrnoException | null,
+                addressOrList: string | Array<{ address: string; family: number }>,
+                family?: number,
+            ) => void;
+
+            if (options.all === true) {
+                callback(null, [{ address: pinnedIp, family }]);
+            } else {
+                callback(null, pinnedIp, family);
+            }
         },
     } as http.AgentOptions);
 }
@@ -542,7 +571,7 @@ export async function headCheck(
     url: URL,
     resolvedIps: string[],
     opts?: SsrfPolicyOptions,
-): Promise<{ contentLength: number | null; contentType: string | null }> {
+): Promise<{ contentLength: number | null; contentType: string | null; pinnedIp: string }> {
     if (resolvedIps.length === 0) {
         throw new SsrfBlockedError(
             "HEAD_FAILED",
@@ -550,38 +579,49 @@ export async function headCheck(
             url.toString(),
         );
     }
-    const pinnedIp = resolvedIps[0]!;
     const timeoutMs = opts?.headTimeoutMs ?? DEFAULT_HEAD_TIMEOUT_MS;
     const maxLen = opts?.maxContentLength ?? DEFAULT_MAX_CONTENT_LENGTH;
 
-    const ac = new AbortController();
-    const timer = setTimeout(() => ac.abort(), timeoutMs);
-
     let statusCode = 0;
     let headers: http.IncomingHttpHeaders = {};
+    let lastError: unknown = null;
+    let usedIp: string | null = null;
 
-    try {
-        const head = await requestOnce("HEAD", url, pinnedIp, ac.signal);
-        statusCode = head.statusCode;
-        headers = head.headers;
+    // Try each resolved IP in turn. CDNs usually publish several A/AAAA records
+    // and only a subset of them are reachable from any given egress network.
+    for (const candidateIp of resolvedIps) {
+        const ac = new AbortController();
+        const timer = setTimeout(() => ac.abort(), timeoutMs);
+        try {
+            const head = await requestOnce("HEAD", url, candidateIp, ac.signal);
+            statusCode = head.statusCode;
+            headers = head.headers;
 
-        if (statusCode === 405 || statusCode === 403 || statusCode === 501) {
-            const got = await requestOnce("GET", url, pinnedIp, ac.signal, {
-                range: "bytes=0-0",
-            });
-            statusCode = got.statusCode;
-            headers = got.headers;
-            got.abort();
+            if (statusCode === 405 || statusCode === 403 || statusCode === 501) {
+                const got = await requestOnce("GET", url, candidateIp, ac.signal, {
+                    range: "bytes=0-0",
+                });
+                statusCode = got.statusCode;
+                headers = got.headers;
+                got.abort();
+            }
+            usedIp = candidateIp;
+            clearTimeout(timer);
+            break;
+        } catch (err) {
+            lastError = err;
+            clearTimeout(timer);
         }
-    } catch (err) {
-        clearTimeout(timer);
+    }
+
+    if (usedIp === null) {
         throw new SsrfBlockedError(
             "HEAD_FAILED",
-            `HEAD/Range провалился: ${err instanceof Error ? err.message : String(err)}`,
+            `HEAD/Range провалился для всех ${resolvedIps.length} IP: ${
+                lastError instanceof Error ? lastError.message : String(lastError)
+            }`,
             url.toString(),
         );
-    } finally {
-        clearTimeout(timer);
     }
 
     if (statusCode >= 400 && statusCode !== 206 && statusCode !== 200) {
@@ -640,7 +680,7 @@ export async function headCheck(
         }
     }
 
-    return { contentLength, contentType };
+    return { contentLength, contentType, pinnedIp: usedIp };
 }
 
 // ── validateExternalUrl ──────────────────────────────────
@@ -653,14 +693,15 @@ export async function validateExternalUrl(
     resolvedIps: string[];
     contentType: string | null;
     contentLength: number | null;
+    pinnedIp: string;
 }> {
     const { url, resolvedIps } = await assertUrlIsSafe(rawUrl, opts);
-    const { contentType, contentLength } = await headCheck(
+    const { contentType, contentLength, pinnedIp } = await headCheck(
         url,
         resolvedIps,
         opts,
     );
-    return { url, resolvedIps, contentType, contentLength };
+    return { url, resolvedIps, contentType, contentLength, pinnedIp };
 }
 
 // ── safeFetch ────────────────────────────────────────────
@@ -680,8 +721,7 @@ export async function safeFetch(
     init?: RequestInit,
     opts?: SsrfPolicyOptions,
 ): Promise<Response> {
-    const { url, resolvedIps } = await validateExternalUrl(rawUrl, opts);
-    const pinnedIp = resolvedIps[0]!;
+    const { url, pinnedIp } = await validateExternalUrl(rawUrl, opts);
 
     const timeoutMs = opts?.headTimeoutMs ?? DEFAULT_HEAD_TIMEOUT_MS;
     const timeoutSignal = AbortSignal.timeout(timeoutMs * 6);

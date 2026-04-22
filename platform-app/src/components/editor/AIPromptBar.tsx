@@ -12,6 +12,7 @@ import { getImagePresetPromptSuffix, getTextPresetInstruction } from "@/lib/styl
 import { useStylePresets } from "@/hooks/useStylePresets";
 import { persistImageToS3, uploadForAI, uploadManyForAI } from "@/utils/imageUpload";
 import { compositeExpandResult } from "@/utils/imageComposite";
+import { useProjectLibrary } from "@/hooks/useProjectLibrary";
 import { trpc } from "@/lib/trpc";
 import type { ImageLayer } from "@/types";
 
@@ -167,6 +168,7 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
     // Persist edit/expand results as a project asset so they appear in the library
     const trpcUtils = trpc.useUtils();
     const saveGeneratedAssetMutation = trpc.asset.saveGeneratedImage.useMutation();
+    const { registerFile } = useProjectLibrary();
 
     // Workspace-aware presets (system + custom from DB)
     const { imagePresets, textPresets } = useStylePresets();
@@ -550,8 +552,9 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                     prompt: rawPrompt || action,
                     model: data.model,
                 });
-                setPrompt("");
-                setReferenceImages([]);
+                // Prompt and references are intentionally preserved after a
+                // successful edit so the user can iterate on the same input
+                // (tweak wording, swap a reference, rerun) without retyping.
             }
         } catch (e: unknown) {
             const error = e as Error;
@@ -692,8 +695,9 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                 prompt: prompt,
                 model: res.model,
             });
-            setPrompt(""); // Clear prompt after success
-            setReferenceImages([]); // Clear references after use
+            // Keep the prompt and reference images in the bar after a
+            // successful generation so users can iterate on the same request
+            // without retyping (tweak wording, swap a ref, regenerate).
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : "Unknown error";
             console.error("AI Generation Error:", message);
@@ -1002,6 +1006,18 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                                 onChange={setReferenceImages}
                                 max={getMaxRefs(selectedModel)}
                                 onTagClick={(tag) => promptRef.current?.insertAtCursor(tag)}
+                                onFilesAdded={(files) => {
+                                    if (!projectId) return;
+                                    // Fire and forget — mirror refs into the
+                                    // project's library so they persist.
+                                    for (const file of files) {
+                                        void registerFile({
+                                            projectId,
+                                            file,
+                                            source: "ai-reference",
+                                        });
+                                    }
+                                }}
                             />
                         )}
 

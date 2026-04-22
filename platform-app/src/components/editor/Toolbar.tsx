@@ -17,6 +17,7 @@ import type { ToolType } from "@/types";
 import { useRef, useState } from "react";
 import { Popover } from "@/components/ui/Popover";
 import { Select } from "@/components/ui/Select";
+import { useProjectLibrary } from "@/hooks/useProjectLibrary";
 
 const TOOLS: { id: ToolType; icon: React.ReactNode; label: string }[] = [
     { id: "select", icon: <MousePointer2 size={18} />, label: "Выбор" },
@@ -31,9 +32,16 @@ interface ToolbarProps {
     onOpenTemplates?: () => void;
     onToggleAI?: () => void;
     aiActive?: boolean;
+    /**
+     * Target project for image uploads. When set, uploaded files are also
+     * registered in the project's asset library (so they appear in the
+     * library panel / dashboard). When missing, we still drop the image
+     * onto the canvas but skip the library write.
+     */
+    projectId?: string;
 }
 
-export function Toolbar({ onOpenTemplates, onToggleAI, aiActive }: ToolbarProps) {
+export function Toolbar({ onOpenTemplates, onToggleAI, aiActive, projectId }: ToolbarProps) {
     const {
         activeTool,
         setActiveTool,
@@ -46,6 +54,7 @@ export function Toolbar({ onOpenTemplates, onToggleAI, aiActive }: ToolbarProps)
         addImageLayer: s.addImageLayer, addBadgeLayer: s.addBadgeLayer,
         snapConfig: s.snapConfig, updateSnapConfig: s.updateSnapConfig,
     })));
+    const { registerFile } = useProjectLibrary();
     const fileRef = useRef<HTMLInputElement>(null);
     const [showSnapConfig, setShowSnapConfig] = useState(false);
 
@@ -63,27 +72,34 @@ export function Toolbar({ onOpenTemplates, onToggleAI, aiActive }: ToolbarProps)
 
     const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
-        if (!file) return;
-        import("@/utils/imageUpload").then(({ compressImageFile }) => {
-            compressImageFile(file).then((compressedBase64) => {
-                const img = new window.Image();
-                img.onload = () => {
-                    const maxSize = 500;
-                    const scale = Math.min(
-                        maxSize / img.width,
-                        maxSize / img.height,
-                        1
-                    );
-                    addImageLayer(
-                        compressedBase64,
-                        img.width * scale,
-                        img.height * scale
-                    );
-                };
-                img.src = compressedBase64;
-            });
-        });
         e.target.value = "";
+        if (!file) return;
+
+        // Drop the layer immediately (via an ObjectURL), then register the
+        // file to S3 + project library in the background. Once the library
+        // mutation returns an S3 url, swap the layer's src so the canvas
+        // uses the permanent url instead of the blob URL.
+        const localPreview = URL.createObjectURL(file);
+        const img = new window.Image();
+        img.onload = () => {
+            const maxSize = 500;
+            const scale = Math.min(maxSize / img.width, maxSize / img.height, 1);
+            const width = img.width * scale;
+            const height = img.height * scale;
+            const layerId = addImageLayer(localPreview, width, height);
+
+            if (!projectId) return;
+            void registerFile({ projectId, file, source: "upload" }).then(
+                (permanentUrl) => {
+                    if (!permanentUrl || !layerId) return;
+                    useCanvasStore
+                        .getState()
+                        .updateLayer(layerId, { src: permanentUrl });
+                    URL.revokeObjectURL(localPreview);
+                },
+            );
+        };
+        img.src = localPreview;
     };
 
     return (

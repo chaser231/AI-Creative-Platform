@@ -28,6 +28,13 @@ export interface ReferenceImageInputProps {
     showLabels?: boolean;
     /** Called when user clicks an @refN badge — use to insert into prompt */
     onTagClick?: (tag: string) => void;
+    /**
+     * Optional side-channel: the raw File objects the user dropped, fired
+     * once per drop/pick. Prompt bars use this to mirror the reference into
+     * the project's asset library so the user can reuse it later. Firing is
+     * fire-and-forget; errors must not block compression/preview.
+     */
+    onFilesAdded?: (files: File[]) => void;
 }
 
 /** Get the @ref tag for a given index (0-based → @ref1, @ref2, ...) */
@@ -68,6 +75,7 @@ export function ReferenceImageInput({
     label = "Референс",
     showLabels = true,
     onTagClick,
+    onFilesAdded,
 }: ReferenceImageInputProps) {
     const fileInputRef = useRef<HTMLInputElement>(null);
     const [isDragging, setIsDragging] = useState(false);
@@ -85,12 +93,19 @@ export function ReferenceImageInput({
         try {
             const compressed = await Promise.all(toProcess.map(compressImage));
             onChange([...images, ...compressed]);
+            // Fire the file side-channel AFTER previews land — prompt bars
+            // handle this asynchronously and we want the UI to update first.
+            try {
+                onFilesAdded?.(toProcess);
+            } catch (err) {
+                console.warn("ReferenceImageInput: onFilesAdded threw", err);
+            }
         } catch (err) {
             console.warn("ReferenceImageInput: compression failed", err);
         } finally {
             setIsProcessing(false);
         }
-    }, [images, max, onChange]);
+    }, [images, max, onChange, onFilesAdded]);
 
     const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         if (e.target.files) processFiles(e.target.files);
