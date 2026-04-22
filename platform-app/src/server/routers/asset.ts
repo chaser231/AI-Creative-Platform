@@ -161,6 +161,125 @@ export const assetRouter = createTRPCRouter({
       return asset;
     }),
 
+  /**
+   * Register an existing S3 URL as a project asset.
+   *
+   * Idempotent — if an Asset with the same url already exists in the same
+   * project (same workspace + same url), return that record instead of
+   * creating a duplicate. This is the single place where "generic image used
+   * in a project" (AI refs, manual uploads, pasted screenshots, …) should be
+   * persisted so that the project library reliably mirrors everything the
+   * project touches.
+   */
+  attachUrlToProject: protectedProcedure
+    .input(
+      z.object({
+        projectId: z.string(),
+        url: z.string().url(),
+        filename: z.string().optional(),
+        mimeType: z.string().default("image/png"),
+        sizeBytes: z.number().int().nonnegative().default(0),
+        source: z.string().default("upload"),
+        width: z.number().optional(),
+        height: z.number().optional(),
+        type: z
+          .enum(["IMAGE", "VIDEO", "AUDIO", "FONT", "LOGO", "OTHER"])
+          .default("IMAGE"),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const { project } = await assertProjectAccess(ctx, input.projectId, "USER");
+
+      // Idempotency guard — never register the same S3 url twice per project.
+      const existing = await ctx.prisma.asset.findFirst({
+        where: { projectId: input.projectId, url: input.url },
+        select: { id: true },
+      });
+      if (existing) return existing;
+
+      const filename =
+        input.filename ??
+        `${input.source}-${Date.now()}.${input.mimeType.split("/")[1] ?? "bin"}`;
+
+      return ctx.prisma.asset.create({
+        data: {
+          type: input.type,
+          filename,
+          url: input.url,
+          mimeType: input.mimeType,
+          sizeBytes: input.sizeBytes,
+          metadata: {
+            source: input.source,
+            ...(input.width && { width: input.width }),
+            ...(input.height && { height: input.height }),
+          },
+          workspaceId: project.workspaceId,
+          uploadedById: ctx.user.id,
+          projectId: input.projectId,
+        },
+        select: { id: true },
+      });
+    }),
+
+  /**
+   * Clone an existing workspace Asset into another project.
+   *
+   * Used when the user takes an image that already lives in the library
+   * (e.g. generated in a photo project) and turns it into a banner — the
+   * banner project should show that image in its own library panel without
+   * duplicating the S3 object. The clone points at the same `url` but carries
+   * the new `projectId` / fresh `uploadedById`. Idempotent per (project, url).
+   */
+  cloneAssetToProject: protectedProcedure
+    .input(
+      z.object({
+        assetId: z.string(),
+        targetProjectId: z.string(),
+        source: z.string().default("cloned"),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const original = await assertAssetAccess(ctx, input.assetId, "read");
+      const { project } = await assertProjectAccess(
+        ctx,
+        input.targetProjectId,
+        "USER",
+      );
+      if (original.workspaceId !== project.workspaceId) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Нельзя клонировать ассет между разными воркспейсами",
+        });
+      }
+
+      const existing = await ctx.prisma.asset.findFirst({
+        where: { projectId: input.targetProjectId, url: original.url },
+        select: { id: true },
+      });
+      if (existing) return existing;
+
+      const metaBase =
+        (original.metadata as Record<string, unknown> | null) ?? {};
+      return ctx.prisma.asset.create({
+        data: {
+          type: original.type,
+          filename: original.filename,
+          url: original.url,
+          mimeType: original.mimeType,
+          sizeBytes: original.sizeBytes,
+          metadata: {
+            ...metaBase,
+            source: input.source,
+            clonedFrom: original.id,
+          },
+          workspaceId: project.workspaceId,
+          uploadedById: ctx.user.id,
+          projectId: input.targetProjectId,
+        },
+        select: { id: true },
+      });
+    }),
+
   /** List assets for a specific project */
   listByProject: protectedProcedure
     .input(
@@ -238,7 +357,14 @@ export const assetRouter = createTRPCRouter({
       });
     }),
 
-  /** Copy all template assets to a project (used when creating a project from template) */
+  /**
+   * Copy all template assets to a project.
+   *
+   * Called when materializing a template into a banner project so the project
+   * library shows the template's logos, photos, etc. Idempotent: skips assets
+   * whose `url` is already present in the target project — safe to call after
+   * every template apply.
+   */
   copyTemplateAssetsToProject: protectedProcedure
     .input(z.object({ templateId: z.string(), projectId: z.string() }))
     .mutation(async ({ ctx, input }) => {
@@ -250,8 +376,22 @@ export const assetRouter = createTRPCRouter({
       });
       if (templateAssets.length === 0) return { copied: 0 };
 
+      const existingUrls = new Set(
+        (
+          await ctx.prisma.asset.findMany({
+            where: {
+              projectId: input.projectId,
+              url: { in: templateAssets.map((a) => a.url) },
+            },
+            select: { url: true },
+          })
+        ).map((a) => a.url),
+      );
+      const toCreate = templateAssets.filter((a) => !existingUrls.has(a.url));
+      if (toCreate.length === 0) return { copied: 0 };
+
       const created = await ctx.prisma.asset.createMany({
-        data: templateAssets.map((a) => ({
+        data: toCreate.map((a) => ({
           type: a.type,
           filename: a.filename,
           url: a.url,

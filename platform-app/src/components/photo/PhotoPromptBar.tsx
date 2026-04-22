@@ -11,6 +11,7 @@ import { ImageStylePresetPicker } from "@/components/ui/StylePresetPicker";
 import { useStylePresets } from "@/hooks/useStylePresets";
 import { getImagePresetPromptSuffix } from "@/lib/stylePresets";
 import { ReferenceImageInput } from "@/components/ui/ReferenceImageInput";
+import { useProjectLibrary } from "@/hooks/useProjectLibrary";
 
 interface PhotoPromptBarProps {
     projectId: string;
@@ -87,6 +88,7 @@ export function PhotoPromptBar({ projectId }: PhotoPromptBarProps) {
     const addMessageMutation = trpc.ai.addMessage.useMutation();
     const saveGeneratedAssetMutation = trpc.asset.saveGeneratedImage.useMutation();
     const createSessionMutation = trpc.ai.createSession.useMutation();
+    const { registerFile } = useProjectLibrary();
 
     const isEditMode = !!editContext;
     const activeModelId = isEditMode ? editModelId : selectedModelId;
@@ -440,6 +442,15 @@ export function PhotoPromptBar({ projectId }: PhotoPromptBarProps) {
                             images={referenceImages}
                             onChange={setReferenceImages}
                             max={getMaxRefs(activeModelId) || 3}
+                            onFilesAdded={(files) => {
+                                for (const file of files) {
+                                    void registerFile({
+                                        projectId,
+                                        file,
+                                        source: "ai-reference",
+                                    });
+                                }
+                            }}
                         />
                     )}
 

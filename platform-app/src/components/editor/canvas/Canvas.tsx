@@ -20,6 +20,7 @@ import { InlineTextEditor } from "./InlineTextEditor";
 import { SnapGuides } from "./SnapGuides";
 import { usePanZoom } from "./usePanZoom";
 import { ArtboardBackgroundRenderer } from "./ArtboardBackgroundRenderer";
+import { useProjectLibrary } from "@/hooks/useProjectLibrary";
 /* ─── Constants ───────────────────────────────────── */
 const FRAME_HIGHLIGHT_STROKE = "#6366F1";
 const FRAME_HIGHLIGHT_WIDTH = 2;
@@ -516,9 +517,15 @@ function FrameLayerRenderer({
 
 interface CanvasProps {
     stageRef: React.RefObject<Konva.Stage | null>;
+    /**
+     * Banner project id. Used by the drag-and-drop upload path to register
+     * dropped files in the project's asset library (alongside placing them
+     * on the canvas). Leave unset for template-editor mode.
+     */
+    projectId?: string;
 }
 
-export function Canvas({ stageRef }: CanvasProps) {
+export function Canvas({ stageRef, projectId }: CanvasProps) {
     const containerRef = useRef<HTMLDivElement>(null);
     const [containerDimensions, setContainerDimensions] = useState({ width: 0, height: 0 });
     const searchParams = useSearchParams();
@@ -1845,6 +1852,7 @@ export function Canvas({ stageRef }: CanvasProps) {
         setIsDraggingFile(false);
     }, []);
 
+    const { registerFile } = useProjectLibrary();
     const handleDrop = useCallback(
         (e: React.DragEvent) => {
             e.preventDefault();
@@ -1855,20 +1863,34 @@ export function Canvas({ stageRef }: CanvasProps) {
                 f.type.startsWith("image/")
             );
             for (const file of files) {
-                import("@/utils/imageUpload").then(({ compressImageFile }) => {
-                    compressImageFile(file).then((compressedBase64) => {
-                        const img = new window.Image();
-                        img.onload = () => {
-                            const maxSize = 500;
-                            const scale = Math.min(maxSize / img.width, maxSize / img.height, 1);
-                            addImageLayer(compressedBase64, img.width * scale, img.height * scale);
-                        };
-                        img.src = compressedBase64;
-                    });
-                });
+                // Show the dropped image instantly with an ObjectURL, then
+                // upload + register in the background. When the permanent S3
+                // url returns, swap the layer's src so save/export use the
+                // non-blob url.
+                const localPreview = URL.createObjectURL(file);
+                const img = new window.Image();
+                img.onload = () => {
+                    const maxSize = 500;
+                    const scale = Math.min(maxSize / img.width, maxSize / img.height, 1);
+                    const width = img.width * scale;
+                    const height = img.height * scale;
+                    const layerId = addImageLayer(localPreview, width, height);
+
+                    if (!projectId) return;
+                    void registerFile({ projectId, file, source: "upload" }).then(
+                        (permanentUrl) => {
+                            if (!permanentUrl || !layerId) return;
+                            useCanvasStore
+                                .getState()
+                                .updateLayer(layerId, { src: permanentUrl });
+                            URL.revokeObjectURL(localPreview);
+                        },
+                    );
+                };
+                img.src = localPreview;
             }
         },
-        [addImageLayer]
+        [addImageLayer, projectId, registerFile]
     );
 
     /* ─── Export Layers Utility ────────────────────────── */

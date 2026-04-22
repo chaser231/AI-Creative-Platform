@@ -304,6 +304,13 @@ export default function EditorPage({ params }: EditorPageProps) {
             refetchOnWindowFocus: false,
         },
     );
+    // Mutations used by the seed-from-query effect to keep the project's
+    // asset library in sync with whatever pre-loaded content lands on the canvas.
+    const trpcUtils = trpc.useUtils();
+    const cloneAssetMutation = trpc.asset.cloneAssetToProject.useMutation();
+    const attachUrlMutation = trpc.asset.attachUrlToProject.useMutation();
+    const copyTemplateAssetsMutation =
+        trpc.asset.copyTemplateAssetsToProject.useMutation();
     const didSeedFromQueryRef = useRef(false);
     useEffect(() => {
         if (isTemplateMode) return;
@@ -346,6 +353,18 @@ export default function EditorPage({ params }: EditorPageProps) {
                 if (src && !applySlotParam) {
                     useCanvasStore.getState().addImageLayer(src, 400, 400);
                 }
+
+                // Clone the template's own assets (logos, placeholder photos, …)
+                // into this project's library so the user sees everything the
+                // banner actually depends on in one place.
+                try {
+                    await copyTemplateAssetsMutation.mutateAsync({
+                        templateId: applyTemplateParam,
+                        projectId: id,
+                    });
+                } catch (e) {
+                    console.warn("copyTemplateAssetsToProject failed:", e);
+                }
                 consumedAny = true;
             }
             // ── (1) Just seed the image as a new layer on the empty canvas ──
@@ -360,8 +379,47 @@ export default function EditorPage({ params }: EditorPageProps) {
                 consumedAny = true;
             }
 
+            // ── Register the seed image in the new project's asset library ──
+            // When a photo-workspace image is dropped into a banner via "В
+            // баннер", the original Asset lives in the photo project. We want
+            // it to also appear in *this* project's local library. Prefer a
+            // clean clone when we have the assetId, fall back to attaching the
+            // url otherwise (e.g. paste-in from external).
+            if (assetIdParam && assetByIdQuery.data) {
+                try {
+                    await cloneAssetMutation.mutateAsync({
+                        assetId: assetIdParam,
+                        targetProjectId: id,
+                        source: "banner-seed",
+                    });
+                } catch (e) {
+                    console.warn("cloneAssetToProject failed:", e);
+                }
+            } else if (imageUrlParam && src) {
+                try {
+                    await attachUrlMutation.mutateAsync({
+                        projectId: id,
+                        url: src,
+                        source: "banner-seed",
+                    });
+                } catch (e) {
+                    console.warn("attachUrlToProject failed:", e);
+                }
+            }
+
             if (consumedAny) {
                 didSeedFromQueryRef.current = true;
+                // Refresh the library panel / dashboard so the just-registered
+                // assets show up without a page reload.
+                await Promise.all([
+                    trpcUtils.asset.listByProject
+                        .invalidate({ projectId: id })
+                        .catch(() => undefined),
+                    trpcUtils.asset.listByWorkspace
+                        .invalidate()
+                        .catch(() => undefined),
+                ]);
+
                 // Strip the seed params so a refresh/navigation doesn't re-apply them.
                 const next = new URLSearchParams(searchParams.toString());
                 next.delete("assetId");
@@ -389,6 +447,10 @@ export default function EditorPage({ params }: EditorPageProps) {
         id,
         router,
         searchParams,
+        cloneAssetMutation,
+        attachUrlMutation,
+        copyTemplateAssetsMutation,
+        trpcUtils,
     ]);
 
     // Inline rename state
@@ -643,7 +705,7 @@ export default function EditorPage({ params }: EditorPageProps) {
             ) : (
                 <div className="relative flex-1 min-h-0">
                     {/* Canvas fills the entire area */}
-                    <Canvas stageRef={stageRef} />
+                    <Canvas stageRef={stageRef} projectId={isTemplateMode ? undefined : id} />
 
                     {/* Floating Layers Panel — left */}
                     <div className="absolute top-3 left-3 bottom-3 z-10">
@@ -659,6 +721,7 @@ export default function EditorPage({ params }: EditorPageProps) {
                             onOpenTemplates={() => setTemplatesOpen(true)}
                             onToggleAI={() => setAiPanelOpen(!aiPanelOpen)}
                             aiActive={aiPanelOpen}
+                            projectId={isTemplateMode ? undefined : id}
                         />
                     </div>
 
@@ -737,6 +800,7 @@ export default function EditorPage({ params }: EditorPageProps) {
             <TemplatePanel
                 open={templatesOpen}
                 onClose={() => setTemplatesOpen(false)}
+                projectId={isTemplateMode ? undefined : id}
             />
 
             {/* Share Dialog */}

@@ -12,6 +12,7 @@ import { getImagePresetPromptSuffix, getTextPresetInstruction } from "@/lib/styl
 import { useStylePresets } from "@/hooks/useStylePresets";
 import { persistImageToS3, uploadForAI, uploadManyForAI } from "@/utils/imageUpload";
 import { compositeExpandResult } from "@/utils/imageComposite";
+import { useProjectLibrary } from "@/hooks/useProjectLibrary";
 import { trpc } from "@/lib/trpc";
 import type { ImageLayer } from "@/types";
 
@@ -167,6 +168,7 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
     // Persist edit/expand results as a project asset so they appear in the library
     const trpcUtils = trpc.useUtils();
     const saveGeneratedAssetMutation = trpc.asset.saveGeneratedImage.useMutation();
+    const { registerFile } = useProjectLibrary();
 
     // Workspace-aware presets (system + custom from DB)
     const { imagePresets, textPresets } = useStylePresets();
@@ -1002,6 +1004,18 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                                 onChange={setReferenceImages}
                                 max={getMaxRefs(selectedModel)}
                                 onTagClick={(tag) => promptRef.current?.insertAtCursor(tag)}
+                                onFilesAdded={(files) => {
+                                    if (!projectId) return;
+                                    // Fire and forget — mirror refs into the
+                                    // project's library so they persist.
+                                    for (const file of files) {
+                                        void registerFile({
+                                            projectId,
+                                            file,
+                                            source: "ai-reference",
+                                        });
+                                    }
+                                }}
                             />
                         )}
 
