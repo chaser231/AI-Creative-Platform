@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Sparkles, Wand2, X, Ratio, Settings2, Loader2 } from "lucide-react";
+import { Sparkles, Wand2, X, Ratio, Settings2, Loader2, Maximize2 } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { usePhotoStore } from "@/store/photoStore";
 import { RefAutocompleteTextarea } from "@/components/ui/RefAutocompleteTextarea";
@@ -62,7 +62,11 @@ export function PhotoPromptBar({ projectId }: PhotoPromptBarProps) {
     const [referenceImages, setReferenceImages] = useState<string[]>([]);
     const [isGenerating, setIsGenerating] = useState(false);
     const [errorMsg, setErrorMsg] = useState<string | null>(null);
-    const [scale, setScale] = useState("");
+    // Initialize with the first resolution of the default model so the
+    // selector never renders as an empty pill.
+    const [scale, setScale] = useState(
+        () => getResolutions(selectedModelId)[0]?.id ?? "",
+    );
     const textareaRef = useRef<HTMLTextAreaElement>(null);
 
     // Consume pending references pushed from result cards / library "Use as reference".
@@ -100,6 +104,19 @@ export function PhotoPromptBar({ projectId }: PhotoPromptBarProps) {
     );
     const modelAspectRatios = useMemo(() => getAspectRatios(activeModelId), [activeModelId]);
     const modelResolutions = useMemo(() => getResolutions(activeModelId), [activeModelId]);
+
+    // Keep `scale` in sync with the model's available resolutions. If the
+    // current value isn't valid for the active model (e.g. after switching to
+    // edit mode, or after the store was hydrated with a stale value), reset
+    // to the first option so the selector always shows a real label.
+    useEffect(() => {
+        if (modelResolutions.length === 0) {
+            if (scale !== "") setScale("");
+            return;
+        }
+        const isValid = modelResolutions.some((r) => r.id === scale);
+        if (!isValid) setScale(modelResolutions[0].id);
+    }, [modelResolutions, scale]);
 
     const handleModelChange = (id: string) => {
         if (isEditMode) setEditModel(id);
@@ -292,8 +309,11 @@ export function PhotoPromptBar({ projectId }: PhotoPromptBarProps) {
                 utils.project.list.invalidate(),
             ]);
 
-            setPrompt("");
-            setReferenceImages([]);
+            // Keep the prompt and reference images in the bar after a
+            // successful generation so users can iterate on the same request
+            // (tweak the wording, swap a ref, regenerate) without retyping.
+            // Only the edit-context badge is dismissed, since the freshly
+            // produced image is now the natural "source" for the next edit.
             if (isEditMode) clearEditContext();
         } catch (e) {
             const err = e as Error;
@@ -404,7 +424,7 @@ export function PhotoPromptBar({ projectId }: PhotoPromptBarProps) {
 
                     {/* Resolution */}
                     {!isEditMode && modelResolutions.length > 0 && (
-                        <Selector>
+                        <Selector icon={<Maximize2 size={12} />}>
                             <select
                                 value={scale}
                                 onChange={(e) => setScale(e.target.value)}
@@ -415,7 +435,8 @@ export function PhotoPromptBar({ projectId }: PhotoPromptBarProps) {
                                 ))}
                             </select>
                             <span className="text-text-secondary font-medium pointer-events-none">
-                                {modelResolutions.find(r => r.id === scale)?.label || scale}
+                                {modelResolutions.find(r => r.id === scale)?.label
+                                    ?? modelResolutions[0].label}
                             </span>
                         </Selector>
                     )}

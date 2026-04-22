@@ -1,4 +1,10 @@
 # ── Stage 1: Install dependencies ──────────────────────────
+# Pin to a specific node:22 digest-free tag. The npm that ships with node:22
+# (v10.x) understands lockfileVersion 3 just fine — DO NOT add
+# `npm install -g npm@latest` here. That command intermittently fails with
+# "Cannot find module 'promise-retry'" when npm tries to self-upgrade on a
+# fresh image, and killed every Yandex Cloud deploy between #49 and #53.
+# See .cursor/rules/deploy-pipeline.mdc for the full rationale.
 FROM node:22-slim AS deps
 WORKDIR /app
 
@@ -7,8 +13,6 @@ RUN apt-get update && apt-get install -y openssl ca-certificates --no-install-re
 COPY package.json package-lock.json* ./
 COPY prisma ./prisma/
 
-# Upgrade npm to match local version (v11+) to prevent package-lock.json sync errors
-RUN npm install -g npm@latest
 RUN npm ci --ignore-scripts
 RUN npx prisma generate
 

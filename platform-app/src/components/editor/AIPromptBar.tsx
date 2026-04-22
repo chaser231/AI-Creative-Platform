@@ -552,8 +552,9 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                     prompt: rawPrompt || action,
                     model: data.model,
                 });
-                setPrompt("");
-                setReferenceImages([]);
+                // Prompt and references are intentionally preserved after a
+                // successful edit so the user can iterate on the same input
+                // (tweak wording, swap a reference, rerun) without retyping.
             }
         } catch (e: unknown) {
             const error = e as Error;
@@ -694,8 +695,9 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                 prompt: prompt,
                 model: res.model,
             });
-            setPrompt(""); // Clear prompt after success
-            setReferenceImages([]); // Clear references after use
+            // Keep the prompt and reference images in the bar after a
+            // successful generation so users can iterate on the same request
+            // without retyping (tweak wording, swap a ref, regenerate).
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : "Unknown error";
             console.error("AI Generation Error:", message);
