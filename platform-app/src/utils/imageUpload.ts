@@ -170,21 +170,29 @@ export async function uploadExternalUrlToS3(
   const cached = uploadCache.get(cacheKey);
   if (cached) return cached;
 
-  try {
-    const res = await fetch("/api/upload", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      // See note above: callers register Asset records themselves when
-      // library visibility is desired. Prevents duplicate entries.
-      body: JSON.stringify({ url: externalUrl, projectId, skipAssetRecord: true }),
-    });
-    if (!res.ok) return null;
-    const { url } = await res.json();
-    if (url) uploadCache.set(cacheKey, url);
-    return url || null;
-  } catch {
-    return null;
-  }
+    try {
+        const res = await fetch("/api/upload", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            // See note above: callers register Asset records themselves when
+            // library visibility is desired. Prevents duplicate entries.
+            body: JSON.stringify({ url: externalUrl, projectId, skipAssetRecord: true }),
+        });
+        if (!res.ok) {
+            let errorMsg = "Upload failed";
+            try {
+                const data = await res.json();
+                if (data.error) errorMsg = data.error;
+            } catch { }
+            throw new Error(errorMsg);
+        }
+        const { url } = await res.json();
+        if (url) uploadCache.set(cacheKey, url);
+        return url || null;
+    } catch (err) {
+        console.error("uploadExternalUrlToS3 failed:", err);
+        return null;
+    }
 }
 
 /**
