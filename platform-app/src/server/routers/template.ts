@@ -13,6 +13,7 @@ import {
   deleteS3Objects,
   extractS3KeyFromUrl,
 } from "../utils/s3-cleanup";
+import { assertTemplateAccess, assertWorkspaceAccess } from "../authz/guards";
 
 /**
  * Extract only resize metadata (id, name, width, height) from template data
@@ -82,6 +83,7 @@ export const templateRouter = createTRPCRouter({
       })
     )
     .query(async ({ ctx, input }) => {
+      await assertWorkspaceAccess(ctx, input.workspaceId);
       const templates = await ctx.prisma.template.findMany({
         where: {
           OR: [
@@ -131,6 +133,7 @@ export const templateRouter = createTRPCRouter({
       })
     )
     .query(async ({ ctx, input }) => {
+      await assertWorkspaceAccess(ctx, input.workspaceId);
       const { workspaceId, search, ...filters } = input;
 
       // Build AND conditions to safely combine multiple OR filters
@@ -210,13 +213,7 @@ export const templateRouter = createTRPCRouter({
   getById: protectedProcedure
     .input(z.object({ id: z.string() }))
     .query(async ({ ctx, input }) => {
-      const template = await ctx.prisma.template.findUnique({
-        where: { id: input.id },
-      });
-
-      if (!template) {
-        throw new TRPCError({ code: "NOT_FOUND" });
-      }
+      const template = await assertTemplateAccess(ctx, input.id, "read");
 
       // Increment popularity
       await ctx.prisma.template.update({
@@ -246,6 +243,7 @@ export const templateRouter = createTRPCRouter({
       })
     )
     .mutation(async ({ ctx, input }) => {
+      await assertWorkspaceAccess(ctx, input.workspaceId, "USER");
       const template = await ctx.prisma.template.create({
         data: {
           ...input,
@@ -276,6 +274,7 @@ export const templateRouter = createTRPCRouter({
     )
     .mutation(async ({ ctx, input }) => {
       const { id, ...data } = input;
+      await assertTemplateAccess(ctx, id, "write");
 
       // Fetch existing template to check permissions
       const existing = await ctx.prisma.template.findUnique({ where: { id } });
@@ -317,32 +316,9 @@ export const templateRouter = createTRPCRouter({
   loadState: protectedProcedure
     .input(z.object({ id: z.string() }))
     .query(async ({ ctx, input }) => {
-      const template = await ctx.prisma.template.findUnique({
-        where: { id: input.id },
-        select: {
-          id: true,
-          name: true,
-          description: true,
-          data: true,
-          author: true,
-          visibility: true,
-          editPermission: true,
-          isOfficial: true,
-          workspaceId: true,
-        },
-      });
+      const template = await assertTemplateAccess(ctx, input.id, "read");
 
-      if (!template) throw new TRPCError({ code: "NOT_FOUND" });
-
-      // Check visibility access
       const isAuthor = template.author === ctx.user.id;
-      // TODO: check workspace membership for WORKSPACE visibility
-      const canView = isAuthor
-        || template.visibility === "PUBLIC"
-        || template.visibility === "WORKSPACE"
-        || template.isOfficial;
-
-      if (!canView) throw new TRPCError({ code: "FORBIDDEN" });
 
       // Determine if current user can edit
       const canEdit = isAuthor
@@ -365,15 +341,7 @@ export const templateRouter = createTRPCRouter({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      const existing = await ctx.prisma.template.findUnique({ where: { id: input.id } });
-      if (!existing) throw new TRPCError({ code: "NOT_FOUND" });
-
-      const isAuthor = existing.author === ctx.user.id;
-      const canEdit = isAuthor || existing.editPermission === "WORKSPACE";
-
-      if (!canEdit) {
-        throw new TRPCError({ code: "FORBIDDEN", message: "У вас нет прав на редактирование этого шаблона" });
-      }
+      const existing = await assertTemplateAccess(ctx, input.id, "write");
 
       const updateData: Record<string, unknown> = { data: input.data };
       if (input.thumbnailUrl !== undefined) {
@@ -485,14 +453,9 @@ export const templateRouter = createTRPCRouter({
   delete: protectedProcedure
     .input(z.object({ id: z.string() }))
     .mutation(async ({ ctx, input }) => {
-      // Fetch template to extract S3 URLs from data/thumbnail
-      const template = await ctx.prisma.template.findUnique({
-        where: { id: input.id },
-        select: { data: true, thumbnailUrl: true },
-      });
-
-      if (!template) {
-        throw new TRPCError({ code: "NOT_FOUND" });
+      const template = await assertTemplateAccess(ctx, input.id, "write");
+      if (template.author !== ctx.user.id) {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Удалять шаблон может только автор" });
       }
 
       // ── S3 cleanup: template data + linked Asset records ──

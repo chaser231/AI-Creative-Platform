@@ -13,6 +13,7 @@ import {
   collectS3KeysFromCanvasState,
   deleteS3Objects,
 } from "../utils/s3-cleanup";
+import { assertProjectAccess, assertVersionAccess, assertWorkspaceAccess } from "../authz/guards";
 
 /** Role hierarchy for comparisons */
 const ROLE_RANK: Record<string, number> = { VIEWER: 0, USER: 1, CREATOR: 2, ADMIN: 3 };
@@ -114,6 +115,7 @@ export const projectRouter = createTRPCRouter({
   getById: protectedProcedure
     .input(z.object({ id: z.string() }))
     .query(async ({ ctx, input }) => {
+      await assertProjectAccess(ctx, input.id);
       const project = await ctx.prisma.project.findUnique({
         where: { id: input.id },
         select: {
@@ -178,6 +180,7 @@ export const projectRouter = createTRPCRouter({
     )
     .mutation(async ({ ctx, input }) => {
       const { id, ...data } = input;
+      await assertProjectAccess(ctx, id);
       // Check: must be CREATOR in workspace, OR the project owner
       const project = await ctx.prisma.project.findUnique({ where: { id } });
       if (!project) throw new TRPCError({ code: "NOT_FOUND" });
@@ -198,6 +201,7 @@ export const projectRouter = createTRPCRouter({
   delete: protectedProcedure
     .input(z.object({ id: z.string() }))
     .mutation(async ({ ctx, input }) => {
+      await assertProjectAccess(ctx, input.id);
       // Check: must be CREATOR in workspace, OR the project owner
       const project = await ctx.prisma.project.findUnique({
         where: { id: input.id },
@@ -254,6 +258,7 @@ export const projectRouter = createTRPCRouter({
       })
     )
     .mutation(async ({ ctx, input }) => {
+      await assertProjectAccess(ctx, input.id, "USER");
       // Drop inline base64 thumbnails that would bloat the DB row and may
       // have already exceeded the 3.5 MB Serverless Container request limit.
       let thumbnail = input.thumbnail;
@@ -278,6 +283,7 @@ export const projectRouter = createTRPCRouter({
   loadState: protectedProcedure
     .input(z.object({ id: z.string() }))
     .query(async ({ ctx, input }) => {
+      await assertProjectAccess(ctx, input.id);
       const project = await ctx.prisma.project.findUnique({
         where: { id: input.id },
         select: { canvasState: true },
@@ -327,6 +333,7 @@ export const projectRouter = createTRPCRouter({
       })
     )
     .mutation(async ({ ctx, input }) => {
+      await assertProjectAccess(ctx, input.projectId, "USER");
       // Get current project state
       const project = await ctx.prisma.project.findUnique({
         where: { id: input.projectId },
@@ -364,6 +371,7 @@ export const projectRouter = createTRPCRouter({
   listVersions: protectedProcedure
     .input(z.object({ projectId: z.string() }))
     .query(async ({ ctx, input }) => {
+      await assertProjectAccess(ctx, input.projectId);
       const versions = await ctx.prisma.projectVersion.findMany({
         where: { projectId: input.projectId },
         select: {
@@ -388,6 +396,11 @@ export const projectRouter = createTRPCRouter({
       })
     )
     .mutation(async ({ ctx, input }) => {
+      await assertProjectAccess(ctx, input.projectId, "USER");
+      const __v = await assertVersionAccess(ctx, input.versionId, "write");
+      if (__v.projectId !== input.projectId) {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Версия не принадлежит этому проекту" });
+      }
       const version = await ctx.prisma.projectVersion.findUnique({
         where: { id: input.versionId },
         select: { canvasState: true },
@@ -409,6 +422,7 @@ export const projectRouter = createTRPCRouter({
   favorite: protectedProcedure
     .input(z.object({ projectId: z.string() }))
     .mutation(async ({ ctx, input }) => {
+      await assertProjectAccess(ctx, input.projectId);
       // Upsert to avoid duplicates
       await ctx.prisma.favoriteProject.upsert({
         where: {
@@ -430,6 +444,7 @@ export const projectRouter = createTRPCRouter({
   unfavorite: protectedProcedure
     .input(z.object({ projectId: z.string() }))
     .mutation(async ({ ctx, input }) => {
+      await assertProjectAccess(ctx, input.projectId);
       await ctx.prisma.favoriteProject.deleteMany({
         where: {
           userId: ctx.user.id,
@@ -443,6 +458,7 @@ export const projectRouter = createTRPCRouter({
   listFavorites: protectedProcedure
     .input(z.object({ workspaceId: z.string() }))
     .query(async ({ ctx, input }) => {
+      await assertWorkspaceAccess(ctx, input.workspaceId);
       const favorites = await ctx.prisma.favoriteProject.findMany({
         where: {
           userId: ctx.user.id,

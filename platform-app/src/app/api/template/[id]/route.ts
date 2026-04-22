@@ -5,6 +5,21 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/server/auth";
 import { prisma } from "@/server/db";
+import { TRPCError } from "@trpc/server";
+import { requireSessionAndTemplateAccess } from "@/server/authz/guards";
+
+function trpcErrorResponse(e: unknown) {
+  if (e instanceof TRPCError) {
+    if (e.code === "FORBIDDEN") {
+      return NextResponse.json({ error: e.message }, { status: 403 });
+    }
+    if (e.code === "NOT_FOUND") {
+      return NextResponse.json({ error: e.message }, { status: 404 });
+    }
+    return NextResponse.json({ error: e.message ?? "Internal error" }, { status: 500 });
+  }
+  return null;
+}
 
 const MAX_RESPONSE_BYTES = 3_200_000;
 
@@ -49,6 +64,14 @@ export async function GET(
     }
 
     const { id } = await params;
+
+    try {
+      await requireSessionAndTemplateAccess(session.user.id, id, "read");
+    } catch (e) {
+      const res = trpcErrorResponse(e);
+      if (res) return res;
+      throw e;
+    }
 
     const template = await prisma.template.findUnique({
       where: { id },

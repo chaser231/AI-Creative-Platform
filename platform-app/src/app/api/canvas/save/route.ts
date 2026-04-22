@@ -7,6 +7,21 @@
 import { prisma } from "@/server/db";
 import { auth } from "@/server/auth";
 import { NextResponse } from "next/server";
+import { TRPCError } from "@trpc/server";
+import { requireSessionAndProjectAccess } from "@/server/authz/guards";
+
+function trpcErrorResponse(e: unknown) {
+  if (e instanceof TRPCError) {
+    if (e.code === "FORBIDDEN") {
+      return NextResponse.json({ error: e.message }, { status: 403 });
+    }
+    if (e.code === "NOT_FOUND") {
+      return NextResponse.json({ error: e.message }, { status: 404 });
+    }
+    return NextResponse.json({ error: e.message ?? "Internal error" }, { status: 500 });
+  }
+  return null;
+}
 
 export async function POST(req: Request) {
   try {
@@ -24,6 +39,14 @@ export async function POST(req: Request) {
     // Validate canvasState structure — reject empty/invalid saves
     if (!canvasState.layers || !Array.isArray(canvasState.layers)) {
       return NextResponse.json({ error: "Invalid canvas state: missing layers" }, { status: 400 });
+    }
+
+    try {
+      await requireSessionAndProjectAccess(session.user.id, projectId, "write");
+    } catch (e) {
+      const res = trpcErrorResponse(e);
+      if (res) return res;
+      throw e;
     }
 
     await prisma.project.update({

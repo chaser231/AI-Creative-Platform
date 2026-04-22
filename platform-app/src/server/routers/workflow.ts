@@ -11,6 +11,7 @@ import { interpretAndExecute, executeAction } from "../agent";
 import { getModelById } from "@/lib/ai-models";
 import type { PrismaClient } from "@prisma/client";
 import type { AgentStep } from "../agent/types";
+import { assertProjectAccess, assertTemplateAccess, assertWorkspaceAccess } from "../authz/guards";
 
 /**
  * Record AI cost entries for completed agent steps.
@@ -68,6 +69,7 @@ export const workflowRouter = createTRPCRouter({
   list: protectedProcedure
     .input(z.object({ workspaceId: z.string() }))
     .query(async ({ ctx, input }) => {
+      await assertWorkspaceAccess(ctx, input.workspaceId);
       const workflows = await ctx.prisma.aIWorkflow.findMany({
         where: {
           workspaceId: input.workspaceId,
@@ -109,6 +111,8 @@ export const workflowRouter = createTRPCRouter({
         throw new TRPCError({ code: "NOT_FOUND" });
       }
 
+      await assertWorkspaceAccess(ctx, workflow.workspaceId);
+
       return workflow;
     }),
 
@@ -123,6 +127,7 @@ export const workflowRouter = createTRPCRouter({
       })
     )
     .mutation(async ({ ctx, input }) => {
+      await assertWorkspaceAccess(ctx, input.workspaceId, "CREATOR");
       const workflow = await ctx.prisma.aIWorkflow.create({
         data: {
           name: input.name,
@@ -148,6 +153,11 @@ export const workflowRouter = createTRPCRouter({
     )
     .mutation(async ({ ctx, input }) => {
       const { id, ...data } = input;
+      const existing = await ctx.prisma.aIWorkflow.findUnique({ where: { id } });
+      if (!existing) {
+        throw new TRPCError({ code: "NOT_FOUND" });
+      }
+      await assertWorkspaceAccess(ctx, existing.workspaceId, "CREATOR");
       const workflow = await ctx.prisma.aIWorkflow.update({
         where: { id },
         data,
@@ -160,6 +170,11 @@ export const workflowRouter = createTRPCRouter({
   delete: protectedProcedure
     .input(z.object({ id: z.string() }))
     .mutation(async ({ ctx, input }) => {
+      const existing = await ctx.prisma.aIWorkflow.findUnique({ where: { id: input.id } });
+      if (!existing) {
+        throw new TRPCError({ code: "NOT_FOUND" });
+      }
+      await assertWorkspaceAccess(ctx, existing.workspaceId, "CREATOR");
       await ctx.prisma.aIWorkflow.delete({
         where: { id: input.id },
       });
@@ -195,6 +210,14 @@ export const workflowRouter = createTRPCRouter({
       })
     )
     .mutation(async ({ ctx, input }) => {
+      await assertWorkspaceAccess(ctx, input.workspaceId, "USER");
+      if (input.projectId) {
+        const { project } = await assertProjectAccess(ctx, input.projectId, "USER");
+        if (project.workspaceId !== input.workspaceId) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "Проект не принадлежит этому воркспейсу" });
+        }
+      }
+
       // ▶ STAGE 1: tRPC entry point
       if (input.referenceImages && input.referenceImages.length > 0) {
         console.log(`[Pipeline ▶1 tRPC] referenceImages: ${input.referenceImages.length} image(s), first ~60 chars: ${input.referenceImages[0].slice(0, 60)}...`);
@@ -253,6 +276,8 @@ export const workflowRouter = createTRPCRouter({
       })
     )
     .mutation(async ({ ctx, input }) => {
+      await assertWorkspaceAccess(ctx, input.workspaceId, "USER");
+      await assertTemplateAccess(ctx, input.templateId, "read");
       const result = await executeAction(
         "apply_and_fill_template",
         {

@@ -621,8 +621,23 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
             if (activeTab !== "text" && projectId) {
                 try {
                     persistedContent = await persistImageToS3(res.content, projectId);
+                    
+                    // Save as a workspace asset tagged with source=banner-generation
+                    await saveGeneratedAssetMutation.mutateAsync({
+                        projectId,
+                        url: persistedContent,
+                        prompt,
+                        model: res.model ?? selectedModel,
+                        source: "banner-generation",
+                    });
+                    
+                    // Invalidate queries so the asset library updates immediately
+                    await Promise.all([
+                        trpcUtils.asset.listByProject.invalidate({ projectId }),
+                        trpcUtils.asset.listByWorkspace.invalidate().catch(() => undefined),
+                    ]);
                 } catch (e) {
-                    console.warn("Image S3 persistence failed, using original URL:", e);
+                    console.warn("Image S3 persistence or asset save failed:", e);
                 }
             }
 

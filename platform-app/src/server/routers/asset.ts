@@ -14,6 +14,13 @@ import {
   GetObjectCommand,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import {
+  assertAssetAccess,
+  assertProjectAccess,
+  assertTemplateAccess,
+  assertWorkspaceAccess,
+  getWorkspaceRole,
+} from "../authz/guards";
 
 // ─── S3 Client (Yandex Object Storage) ──────────────────
 
@@ -37,9 +44,14 @@ export const assetRouter = createTRPCRouter({
         type: z
           .enum(["IMAGE", "VIDEO", "AUDIO", "FONT", "LOGO", "OTHER"])
           .optional(),
+        limit: z.number().int().min(1).max(500).optional(),
       })
     )
     .query(async ({ ctx, input }) => {
+      await assertWorkspaceAccess(ctx, input.workspaceId);
+      // Hard cap: without a limit, a large workspace can dump thousands of rows
+      // in a single query and OOM the node process / freeze the client.
+      const take = input.limit ?? 200;
       const assets = await ctx.prisma.asset.findMany({
         where: {
           workspaceId: input.workspaceId,
@@ -51,6 +63,7 @@ export const assetRouter = createTRPCRouter({
           },
         },
         orderBy: { createdAt: "desc" },
+        take,
       });
 
       return assets;
@@ -73,13 +86,7 @@ export const assetRouter = createTRPCRouter({
       })
     )
     .query(async ({ ctx, input }) => {
-      // Must be at least VIEWER in this workspace
-      const membership = await ctx.prisma.workspaceMember.findUnique({
-        where: { userId_workspaceId: { userId: ctx.user.id, workspaceId: input.workspaceId } },
-      });
-      if (!membership) {
-        throw new TRPCError({ code: "FORBIDDEN", message: "Вы не являетесь участником этого воркспейса" });
-      }
+      await assertWorkspaceAccess(ctx, input.workspaceId);
 
       const where: {
         workspaceId: string;
@@ -127,20 +134,7 @@ export const assetRouter = createTRPCRouter({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      const project = await ctx.prisma.project.findUnique({
-        where: { id: input.projectId },
-        select: { workspaceId: true },
-      });
-      if (!project) {
-        throw new TRPCError({ code: "NOT_FOUND", message: "Project not found" });
-      }
-
-      const membership = await ctx.prisma.workspaceMember.findUnique({
-        where: { userId_workspaceId: { userId: ctx.user.id, workspaceId: project.workspaceId } },
-      });
-      if (!membership) {
-        throw new TRPCError({ code: "FORBIDDEN", message: "Нет доступа к воркспейсу проекта" });
-      }
+      const { project } = await assertProjectAccess(ctx, input.projectId, "USER");
 
       const filename = `${input.source}-${Date.now()}.${input.mimeType.split("/")[1] ?? "png"}`;
 
@@ -178,6 +172,7 @@ export const assetRouter = createTRPCRouter({
       })
     )
     .query(async ({ ctx, input }) => {
+      await assertProjectAccess(ctx, input.projectId);
       const assets = await ctx.prisma.asset.findMany({
         where: {
           projectId: input.projectId,
@@ -200,25 +195,7 @@ export const assetRouter = createTRPCRouter({
   getById: protectedProcedure
     .input(z.object({ id: z.string() }))
     .query(async ({ ctx, input }) => {
-      const asset = await ctx.prisma.asset.findUnique({
-        where: { id: input.id },
-      });
-      if (!asset) throw new TRPCError({ code: "NOT_FOUND" });
-
-      const membership = await ctx.prisma.workspaceMember.findUnique({
-        where: {
-          userId_workspaceId: {
-            userId: ctx.user.id,
-            workspaceId: asset.workspaceId,
-          },
-        },
-      });
-      if (!membership) {
-        throw new TRPCError({
-          code: "FORBIDDEN",
-          message: "Нет доступа к ассету",
-        });
-      }
+      const asset = await assertAssetAccess(ctx, input.id, "read");
       return asset;
     }),
 
@@ -226,17 +203,7 @@ export const assetRouter = createTRPCRouter({
   listByTemplate: protectedProcedure
     .input(z.object({ templateId: z.string() }))
     .query(async ({ ctx, input }) => {
-      const template = await ctx.prisma.template.findUnique({
-        where: { id: input.templateId },
-        select: { author: true, visibility: true, isOfficial: true, workspaceId: true },
-      });
-      if (!template) throw new TRPCError({ code: "NOT_FOUND" });
-
-      const canView = template.author === ctx.user.id
-        || template.visibility === "PUBLIC"
-        || template.visibility === "WORKSPACE"
-        || template.isOfficial;
-      if (!canView) throw new TRPCError({ code: "FORBIDDEN" });
+      await assertTemplateAccess(ctx, input.templateId, "read");
 
       return ctx.prisma.asset.findMany({
         where: { templateId: input.templateId },
@@ -275,23 +242,8 @@ export const assetRouter = createTRPCRouter({
   copyTemplateAssetsToProject: protectedProcedure
     .input(z.object({ templateId: z.string(), projectId: z.string() }))
     .mutation(async ({ ctx, input }) => {
-      const template = await ctx.prisma.template.findUnique({
-        where: { id: input.templateId },
-        select: { author: true, visibility: true, isOfficial: true },
-      });
-      if (!template) throw new TRPCError({ code: "NOT_FOUND", message: "Template not found" });
-
-      const canView = template.author === ctx.user.id
-        || template.visibility === "PUBLIC"
-        || template.visibility === "WORKSPACE"
-        || template.isOfficial;
-      if (!canView) throw new TRPCError({ code: "FORBIDDEN" });
-
-      const project = await ctx.prisma.project.findUnique({
-        where: { id: input.projectId },
-        select: { workspaceId: true },
-      });
-      if (!project) throw new TRPCError({ code: "NOT_FOUND", message: "Project not found" });
+      await assertTemplateAccess(ctx, input.templateId, "read");
+      const { project } = await assertProjectAccess(ctx, input.projectId, "USER");
 
       const templateAssets = await ctx.prisma.asset.findMany({
         where: { templateId: input.templateId },
@@ -329,6 +281,11 @@ export const assetRouter = createTRPCRouter({
       })
     )
     .mutation(async ({ ctx, input }) => {
+      await assertWorkspaceAccess(ctx, input.workspaceId, "USER");
+      if (input.templateId) {
+        await assertTemplateAccess(ctx, input.templateId, "write");
+      }
+
       const key = `${input.workspaceId}/${input.type.toLowerCase()}/${Date.now()}-${input.filename}`;
 
       const command = new PutObjectCommand({
@@ -361,13 +318,7 @@ export const assetRouter = createTRPCRouter({
   getDownloadUrl: protectedProcedure
     .input(z.object({ id: z.string() }))
     .query(async ({ ctx, input }) => {
-      const asset = await ctx.prisma.asset.findUnique({
-        where: { id: input.id },
-      });
-
-      if (!asset) {
-        throw new TRPCError({ code: "NOT_FOUND" });
-      }
+      const asset = await assertAssetAccess(ctx, input.id, "read");
 
       // Extract key from URL
       const urlObj = new URL(asset.url);
@@ -387,12 +338,10 @@ export const assetRouter = createTRPCRouter({
   delete: protectedProcedure
     .input(z.object({ id: z.string() }))
     .mutation(async ({ ctx, input }) => {
-      const asset = await ctx.prisma.asset.findUnique({
-        where: { id: input.id },
-      });
-
-      if (!asset) {
-        throw new TRPCError({ code: "NOT_FOUND" });
+      const asset = await assertAssetAccess(ctx, input.id, "write");
+      const role = await getWorkspaceRole(ctx.prisma, ctx.user.id, asset.workspaceId);
+      if (asset.uploadedById !== ctx.user.id && role !== "ADMIN") {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Удалять ассет может только загрузивший или администратор" });
       }
 
       // Extract key and delete from S3
@@ -421,6 +370,14 @@ export const assetRouter = createTRPCRouter({
   deleteMany: protectedProcedure
     .input(z.object({ ids: z.array(z.string()).min(1) }))
     .mutation(async ({ ctx, input }) => {
+      for (const __id of input.ids) {
+        const __a = await assertAssetAccess(ctx, __id, "write");
+        const __r = await getWorkspaceRole(ctx.prisma, ctx.user.id, __a.workspaceId);
+        if (__a.uploadedById !== ctx.user.id && __r !== "ADMIN") {
+          throw new TRPCError({ code: "FORBIDDEN", message: "Нет прав удалять один из ассетов" });
+        }
+      }
+
       const assets = await ctx.prisma.asset.findMany({
         where: { id: { in: input.ids } },
       });

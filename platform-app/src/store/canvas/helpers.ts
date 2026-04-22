@@ -30,6 +30,18 @@ export function computeConstrainedPosition(
     const c = child.constraints ?? DEFAULT_CONSTRAINTS;
     const { oldX, oldY, oldWidth, oldHeight, newX, newY, newWidth, newHeight } = delta;
 
+    // Degenerate parent bounds would produce NaN/Infinity in center/scale
+    // branches (division by zero). Fall back to a "fixed" translation:
+    // keep the child in place relative to the new parent origin.
+    if (!(oldWidth > 0) || !(oldHeight > 0)) {
+        return {
+            x: newX + (child.x - oldX),
+            y: newY + (child.y - oldY),
+            width: Math.max(1, child.width),
+            height: Math.max(1, child.height),
+        };
+    }
+
     const relX = child.x - oldX;
     const relY = child.y - oldY;
     const rightGap = oldWidth - (relX + child.width);

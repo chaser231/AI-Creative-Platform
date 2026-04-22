@@ -4,12 +4,13 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Sparkles, Wand2, X, Ratio, Settings2, Loader2 } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { usePhotoStore } from "@/store/photoStore";
-import { ReferenceImageInput } from "@/components/ui/ReferenceImageInput";
+import { RefAutocompleteTextarea } from "@/components/ui/RefAutocompleteTextarea";
 import { getModelById, getMaxRefs, getAspectRatios, getResolutions, resolveRefTags } from "@/lib/ai-models";
 import { persistImageToS3, uploadForAI, uploadManyForAI } from "@/utils/imageUpload";
 import { ImageStylePresetPicker } from "@/components/ui/StylePresetPicker";
 import { useStylePresets } from "@/hooks/useStylePresets";
 import { getImagePresetPromptSuffix } from "@/lib/stylePresets";
+import { ReferenceImageInput } from "@/components/ui/ReferenceImageInput";
 
 interface PhotoPromptBarProps {
     projectId: string;
@@ -343,10 +344,11 @@ export function PhotoPromptBar({ projectId }: PhotoPromptBarProps) {
             <div className="relative flex flex-col w-full bg-bg-surface/95 backdrop-blur-xl border border-border-primary rounded-[20px] shadow-2xl">
                 {/* Prompt area */}
                 <div className="flex-1 px-4 pt-3 pb-2 min-h-[72px]">
-                    <textarea
-                        ref={textareaRef}
+                    <RefAutocompleteTextarea
+                        ref={textareaRef as any}
                         value={prompt}
-                        onChange={(e) => setPrompt(e.target.value)}
+                        onChange={setPrompt}
+                        referenceImages={referenceImages}
                         onKeyDown={(e) => {
                             if (e.key === "Enter" && !e.shiftKey) {
                                 e.preventDefault();
@@ -369,12 +371,15 @@ export function PhotoPromptBar({ projectId }: PhotoPromptBarProps) {
                         <select
                             value={activeModelId}
                             onChange={(e) => handleModelChange(e.target.value)}
-                            className="bg-transparent text-[12px] font-medium text-text-secondary cursor-pointer hover:text-text-primary focus:outline-none appearance-none"
+                            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
                         >
                             {currentModels.map((m) => (
                                 <option key={m.id} value={m.id}>{m.name}</option>
                             ))}
                         </select>
+                        <span className="text-text-secondary font-medium pointer-events-none">
+                            {currentModels.find(m => m.id === activeModelId)?.name}
+                        </span>
                     </Selector>
 
                     {/* Aspect ratio (generate mode only) */}
@@ -383,12 +388,15 @@ export function PhotoPromptBar({ projectId }: PhotoPromptBarProps) {
                             <select
                                 value={aspectRatio}
                                 onChange={(e) => setAspectRatio(e.target.value)}
-                                className="bg-transparent text-[12px] font-medium text-text-secondary cursor-pointer hover:text-text-primary focus:outline-none appearance-none"
+                                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
                             >
                                 {modelAspectRatios.map((r) => (
                                     <option key={r} value={r}>{r}</option>
                                 ))}
                             </select>
+                            <span className="text-text-secondary font-medium pointer-events-none">
+                                {aspectRatio}
+                            </span>
                         </Selector>
                     )}
 
@@ -398,12 +406,15 @@ export function PhotoPromptBar({ projectId }: PhotoPromptBarProps) {
                             <select
                                 value={scale}
                                 onChange={(e) => setScale(e.target.value)}
-                                className="bg-transparent text-[12px] font-medium text-text-secondary cursor-pointer hover:text-text-primary focus:outline-none appearance-none"
+                                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
                             >
                                 {modelResolutions.map((r) => (
                                     <option key={r.id} value={r.id}>{r.label}</option>
                                 ))}
                             </select>
+                            <span className="text-text-secondary font-medium pointer-events-none">
+                                {modelResolutions.find(r => r.id === scale)?.label || scale}
+                            </span>
                         </Selector>
                     )}
 
@@ -454,8 +465,8 @@ export function PhotoPromptBar({ projectId }: PhotoPromptBarProps) {
 
 function Selector({ icon, children }: { icon?: React.ReactNode; children: React.ReactNode }) {
     return (
-        <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-[10px] border border-border-primary/60 text-[12px] text-text-secondary hover:border-border-secondary hover:bg-bg-tertiary/30 transition-all">
-            {icon && <span className="text-text-tertiary flex-shrink-0">{icon}</span>}
+        <div className="relative flex items-center gap-1.5 px-2.5 py-1 rounded-[10px] border border-border-primary/60 text-[12px] text-text-secondary hover:border-border-secondary hover:bg-bg-tertiary/30 transition-all focus-within:border-border-secondary focus-within:bg-bg-tertiary/30">
+            {icon && <span className="text-text-tertiary flex-shrink-0 pointer-events-none">{icon}</span>}
             {children}
         </div>
     );

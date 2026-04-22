@@ -8,6 +8,8 @@ export interface AgentStep {
   parameters: Record<string, unknown>;
   status: "pending" | "running" | "done" | "error";
   result?: import("../actionRegistry").ActionResult;
+  /** Human-readable reason when status is "error" (e.g. invalid LLM args). */
+  error?: string;
 }
 
 export interface ModelPreferences {
@@ -29,7 +31,7 @@ export interface AgentPlan {
 export interface AgentResponse {
   plan: AgentPlan;
   textResponse: string;
-  provider: "openai" | "replicate" | "direct";
+  provider: "openai" | "fal" | "replicate" | "direct";
   /** All canvas instructions from all steps, aggregated for client execution */
   canvasActions: CanvasInstruction[];
 }

@@ -1,4 +1,6 @@
 import { Layer, FrameLayer, TextLayer, TemplateSlotRole, ResizeFormat } from "@/types";
+import { computeConstrainedPosition } from "@/store/canvas/helpers";
+import type { FrameResizeDelta } from "@/store/canvas/types";
 import Konva from "konva";
 
 // ─── Text Size Estimation ──────────────────────────────────────
@@ -25,6 +27,43 @@ function getMeasureCanvas(): OffscreenCanvas | HTMLCanvasElement | null {
     return _measureCanvas;
 }
 
+// Shared reusable Konva.Text node — avoids allocating+destroying a node on every
+// measurement. Safe because measurement is synchronous and single-threaded.
+let _sharedKonvaText: Konva.Text | null = null;
+
+function getSharedKonvaText(K: typeof Konva): Konva.Text {
+    if (!_sharedKonvaText) {
+        _sharedKonvaText = new K.Text({});
+    }
+    return _sharedKonvaText;
+}
+
+// Measurement cache — layout engine runs per-keystroke, so the same text is
+// re-measured thousands of times. Key covers every Konva.Text input that affects
+// layout geometry (content, font metrics, wrap width). On overflow we drop the
+// whole cache; an LRU is overkill since cache eviction is rare in practice.
+const _textMeasureCache = new Map<string, { width: number; height: number }>();
+const TEXT_CACHE_MAX = 2000;
+
+function buildTextCacheKey(
+    displayText: string,
+    text: TextLayer,
+    adj: string,
+    measureW: number | undefined
+): string {
+    const fontStyle = text.fontWeight || "normal";
+    const ls = text.letterSpacing || 0;
+    const lh = text.lineHeight || 1.2;
+    return `${displayText}\u0001${text.fontFamily}\u0001${text.fontSize}\u0001${fontStyle}\u0001${ls}\u0001${lh}\u0001${adj}\u0001${measureW ?? ""}`;
+}
+
+function cacheMeasurement(key: string, value: { width: number; height: number }) {
+    if (_textMeasureCache.size >= TEXT_CACHE_MAX) {
+        _textMeasureCache.clear();
+    }
+    _textMeasureCache.set(key, value);
+}
+
 /**
  * Measure the rendered size of a text layer.
  * Uses Konva.Text internally so the measurement exactly matches canvas rendering.
@@ -43,37 +82,37 @@ function estimateTextSize(
         return { width: text.width, height: text.height };
     }
 
-    // Apply textTransform to match rendering (Canvas.tsx applies it on the Konva.Text node)
     let displayText = text.text;
     if (text.textTransform === "uppercase") displayText = displayText.toUpperCase();
     else if (text.textTransform === "lowercase") displayText = displayText.toLowerCase();
 
-    // ── Primary path: Konva.Text measurement (pixel-perfect) ──
-    const Konva = getKonva();
-    if (Konva) {
-        const isAutoWidth = textAdjust === "auto_width";
-        const measureW = isAutoWidth ? undefined : (containerWidth ?? text.width);
+    const isAutoWidth = textAdjust === "auto_width";
+    const measureW = isAutoWidth ? undefined : (containerWidth ?? text.width);
 
-        const node = new Konva.Text({
-            text: displayText,
-            fontSize: text.fontSize,
-            fontFamily: text.fontFamily,
-            fontStyle: text.fontWeight || "normal",
-            letterSpacing: text.letterSpacing || 0,
-            lineHeight: text.lineHeight || 1.2,
-            width: measureW,
-            wrap: isAutoWidth ? "none" : "word",
-        });
+    const cacheKey = buildTextCacheKey(displayText, text, textAdjust, measureW);
+    const cached = _textMeasureCache.get(cacheKey);
+    if (cached) return cached;
+
+    const K = getKonva();
+    if (K) {
+        const node = getSharedKonvaText(K);
+        node.text(displayText);
+        node.fontSize(text.fontSize);
+        node.fontFamily(text.fontFamily);
+        node.fontStyle(text.fontWeight || "normal");
+        node.letterSpacing(text.letterSpacing || 0);
+        node.lineHeight(text.lineHeight || 1.2);
+        // setAttr accepts `undefined` to clear wrap-width; node.width(undefined)
+        // would be interpreted as a getter call.
+        node.setAttr("width", measureW);
+        node.wrap(isAutoWidth ? "none" : "word");
 
         const w = isAutoWidth ? node.width() : (measureW ?? text.width);
         const h = node.height();
 
-        node.destroy();
-
-        return {
-            width: Math.max(1, w),
-            height: Math.max(1, h),
-        };
+        const result = { width: Math.max(1, w), height: Math.max(1, h) };
+        cacheMeasurement(cacheKey, result);
+        return result;
     }
 
     // ── Fallback: OffscreenCanvas / rough estimate (SSR only) ──
@@ -86,14 +125,18 @@ function estimateTextSize(
         const avgCharWidth = text.fontSize * 0.6;
         const totalLetterSpacing = Math.max(0, displayText.length - 1) * (text.letterSpacing || 0);
 
+        let result: { width: number; height: number };
         if (textAdjust === "auto_width") {
             const w = displayText.length * avgCharWidth + totalLetterSpacing;
-            return { width: Math.max(1, w), height: Math.max(1, singleLineHeight) };
+            result = { width: Math.max(1, w), height: Math.max(1, singleLineHeight) };
+        } else {
+            const fixedW = containerWidth ?? text.width;
+            const charsPerLine = Math.max(1, Math.floor(fixedW / (avgCharWidth + (text.letterSpacing || 0))));
+            const lineCount = Math.max(1, Math.ceil(displayText.length / charsPerLine));
+            result = { width: fixedW, height: Math.max(1, lineCount * singleLineHeight) };
         }
-        const fixedW = containerWidth ?? text.width;
-        const charsPerLine = Math.max(1, Math.floor(fixedW / (avgCharWidth + (text.letterSpacing || 0))));
-        const lineCount = Math.max(1, Math.ceil(displayText.length / charsPerLine));
-        return { width: fixedW, height: Math.max(1, lineCount * singleLineHeight) };
+        cacheMeasurement(cacheKey, result);
+        return result;
     }
 
     const ctx = canvas.getContext("2d") as CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
@@ -102,22 +145,25 @@ function estimateTextSize(
     }
     ctx.font = fontSpec;
 
+    let result: { width: number; height: number };
     if (textAdjust === "auto_width") {
         const metrics = ctx.measureText(displayText);
         const totalLetterSpacing = Math.max(0, displayText.length - 1) * (text.letterSpacing || 0);
         const measuredWidth = metrics.width + totalLetterSpacing;
-        return {
+        result = {
             width: Math.max(1, measuredWidth),
             height: Math.max(1, singleLineHeight),
         };
+    } else {
+        const fixedW = containerWidth ?? text.width;
+        const lineCount = countWrappedLines(ctx, displayText, fixedW, text.letterSpacing || 0);
+        result = {
+            width: fixedW,
+            height: Math.max(1, lineCount * singleLineHeight),
+        };
     }
-
-    const fixedW = containerWidth ?? text.width;
-    const lineCount = countWrappedLines(ctx, displayText, fixedW, text.letterSpacing || 0);
-    return {
-        width: fixedW,
-        height: Math.max(1, lineCount * singleLineHeight),
-    };
+    cacheMeasurement(cacheKey, result);
+    return result;
 }
 
 /**
@@ -164,6 +210,12 @@ function countWrappedLines(
 
 // ─── Core Auto-Layout Engine ───────────────────────────────────
 
+function buildLayerMap(layers: Layer[]): Map<string, Layer> {
+    const m = new Map<string, Layer>();
+    for (const l of layers) m.set(l.id, l);
+    return m;
+}
+
 /**
  * Re-computes the x, y, width, and height of layers living inside an auto-layout frame.
  * This function returns a partial record of updates. It does NOT mutate the layers directly.
@@ -177,6 +229,13 @@ function countWrappedLines(
 export function computeAutoLayout(
     frame: FrameLayer,
     allLayers: Layer[]
+): Record<string, Partial<Layer>> {
+    return computeAutoLayoutInternal(frame, buildLayerMap(allLayers));
+}
+
+function computeAutoLayoutInternal(
+    frame: FrameLayer,
+    layerById: Map<string, Layer>
 ): Record<string, Partial<Layer>> {
     const updates: Record<string, Partial<Layer>> = {};
 
@@ -199,17 +258,16 @@ export function computeAutoLayout(
 
     const isHorizontal = layoutMode === "horizontal";
 
-    // Is this axis in "hug" mode?
     const primaryHug = primaryAxisSizingMode === "auto";
     const counterHug = counterAxisSizingMode === "auto";
 
-    // Filter and map children
-    const childLayers = frame.childIds
-        .map(id => allLayers.find(l => l.id === id))
-        .filter((l): l is Layer => !!l && !l.isAbsolutePositioned && l.visible);
+    const childLayers: Layer[] = [];
+    for (const id of frame.childIds) {
+        const l = layerById.get(id);
+        if (l && !l.isAbsolutePositioned && l.visible) childLayers.push(l);
+    }
 
     if (childLayers.length === 0) {
-        // Just resize the frame itself if it's "hug"
         if (primaryHug || counterHug) {
             const w = (isHorizontal && primaryHug) || (!isHorizontal && counterHug)
                 ? paddingLeft + paddingRight
@@ -221,6 +279,9 @@ export function computeAutoLayout(
         }
         return updates;
     }
+
+    const childById = new Map<string, Layer>();
+    for (const c of childLayers) childById.set(c.id, c);
 
     // ── First pass: resolve intrinsic child sizes ──────────────
 
@@ -236,7 +297,6 @@ export function computeAutoLayout(
         let w = child.width;
         let h = child.height;
 
-        // --- Text auto-sizing ---
         if (child.type === "text") {
             const textChild = child as TextLayer;
             const adj = textChild.textAdjust || "auto_width";
@@ -245,22 +305,13 @@ export function computeAutoLayout(
                 const est = estimateTextSize(textChild);
                 w = est.width;
                 h = est.height;
-                // Sync back to store
                 updates[child.id] = { ...updates[child.id], width: w, height: h };
             } else if (adj === "auto_height") {
-                // For fill-width children, pre-compute the expected fill width.
-                // In non-hug horizontal frame, counter-axis fill gives frame width - padding.
-                // In non-hug vertical frame, primary-axis fill gives remaining proportional space.
-                // But we don't have fill sizes yet; use the best available width.
                 let measureWidth = child.width;
 
-                // If this text is fill on the counter axis (vertical frame, fill width)
-                // and the frame itself has a fixed width, we can pre-compute
                 if (!isHorizontal && child.layoutSizingWidth === "fill" && !counterHug) {
                     measureWidth = frame.width - paddingLeft - paddingRight;
                 }
-                // If horizontal frame and fill on counter(height), width stays as is
-                // If horizontal frame and fill on primary(width), width is fill — measured later
 
                 const est = estimateTextSize(textChild, measureWidth);
                 w = measureWidth;
@@ -283,16 +334,13 @@ export function computeAutoLayout(
             ? child.layoutSizingHeight === "fill"
             : child.layoutSizingWidth === "fill");
 
-        // Clamp to minimum
-        w = Math.max(1, w);
-        h = Math.max(1, h);
+        w = Number.isFinite(w) ? Math.max(1, w) : 1;
+        h = Number.isFinite(h) ? Math.max(1, h) : 1;
 
         return { id: child.id, intrinsicW: w, intrinsicH: h, fillPrimary, fillCounter };
     });
 
     // ── Accumulate totals for hug sizing ───────────────────────
-    // When computing hug size, fill children on that axis contribute 0
-    // (they expand to match the frame, not the other way around)
 
     let totalPrimaryNonFill = 0;
     let maxCounterNonFill = 0;
@@ -316,12 +364,6 @@ export function computeAutoLayout(
 
     const totalSpacing = Math.max(0, childLayers.length - 1) * spacing;
 
-    // ── Determine intrinsic frame sizes (Hug) ─────────────────
-    // For hug, use non-fill children only (fill children adapt to the frame, not vice versa)
-
-    const intrinsicPrimary = (primaryHug ? totalPrimaryNonFill : (isHorizontal ? totalPrimaryAll : totalPrimaryAll)) + totalSpacing;
-    const intrinsicCounter = counterHug ? maxCounterNonFill : maxCounterAll;
-
     let intrinsicFrameWidth: number;
     let intrinsicFrameHeight: number;
 
@@ -333,7 +375,6 @@ export function computeAutoLayout(
         intrinsicFrameWidth = paddingLeft + paddingRight + (counterHug ? maxCounterNonFill : maxCounterAll);
     }
 
-    // Determine final frame size based on sizing mode
     const finalFrameWidth = (isHorizontal && primaryHug) || (!isHorizontal && counterHug)
         ? intrinsicFrameWidth
         : frame.width;
@@ -342,7 +383,6 @@ export function computeAutoLayout(
         ? intrinsicFrameHeight
         : frame.height;
 
-    // Check if we need to update frame size
     if (Math.abs(finalFrameWidth - frame.width) > 0.01 || Math.abs(finalFrameHeight - frame.height) > 0.01) {
         updates[frame.id] = { ...updates[frame.id], width: finalFrameWidth, height: finalFrameHeight };
     }
@@ -362,7 +402,6 @@ export function computeAutoLayout(
         ? Math.max(1, availablePrimarySpace / primaryFillChildren.length)
         : 0;
 
-    // Build computed children with resolved sizes
     interface ComputedChild {
         id: string;
         w: number;
@@ -375,23 +414,20 @@ export function computeAutoLayout(
         let w = m.intrinsicW;
         let h = m.intrinsicH;
 
-        // Fill on primary axis
         if (m.fillPrimary) {
             if (isHorizontal) w = fillPrimarySize;
             else h = fillPrimarySize;
         }
 
-        // Fill on counter axis
         if (m.fillCounter) {
             if (isHorizontal) h = finalFrameHeight - paddingTop - paddingBottom;
             else w = finalFrameWidth - paddingLeft - paddingRight;
         }
 
-        // Re-measure text after fill resolution.
-        // ALWAYS re-measure because text content may have changed since the
-        // stored dimensions were last computed. Also, auto_width text inside
-        // a fill-width slot needs its natural width re-calculated.
-        const originalChild = childLayers.find(c => c.id === m.id);
+        // Re-measure text after fill resolution. The measurement cache makes a
+        // repeat call with unchanged width a cheap hit, so this stays O(1) when
+        // fill didn't actually change the wrap width.
+        const originalChild = childById.get(m.id);
         if (originalChild && originalChild.type === "text") {
             const textChild = originalChild as TextLayer;
             const adj = textChild.textAdjust || "auto_width";
@@ -407,9 +443,8 @@ export function computeAutoLayout(
             }
         }
 
-        // Clamp
-        w = Math.max(1, w);
-        h = Math.max(1, h);
+        w = Number.isFinite(w) ? Math.max(1, w) : 1;
+        h = Number.isFinite(h) ? Math.max(1, h) : 1;
 
         return { id: m.id, w, h, x: 0, y: 0 };
     });
@@ -422,7 +457,6 @@ export function computeAutoLayout(
     const resolvedTotalW = computedChildren.reduce((acc, c) => acc + c.w, 0);
     const resolvedTotalH = computedChildren.reduce((acc, c) => acc + c.h, 0);
 
-    // Primary axis alignment
     if (isHorizontal) {
         if (primaryAxisAlignItems === "center") {
             currentX = paddingLeft + (finalFrameWidth - paddingLeft - paddingRight - resolvedTotalW - totalSpacing) / 2;
@@ -437,7 +471,7 @@ export function computeAutoLayout(
                 cc.y = cy;
                 currentX += cc.w + flexibleSpacing;
             });
-            return commitUpdates(updates, childLayers, computedChildren, frame);
+            return commitUpdates(updates, childById, computedChildren, frame);
         }
     } else {
         if (primaryAxisAlignItems === "center") {
@@ -453,11 +487,10 @@ export function computeAutoLayout(
                 cc.y = currentY;
                 currentY += cc.h + flexibleSpacing;
             });
-            return commitUpdates(updates, childLayers, computedChildren, frame);
+            return commitUpdates(updates, childById, computedChildren, frame);
         }
     }
 
-    // Standard layout pass
     computedChildren.forEach(cc => {
         if (isHorizontal) {
             cc.x = currentX;
@@ -470,7 +503,7 @@ export function computeAutoLayout(
         }
     });
 
-    return commitUpdates(updates, childLayers, computedChildren, frame);
+    return commitUpdates(updates, childById, computedChildren, frame);
 }
 
 function getCounterAxisOffset(size: number, frameSize: number, padStart: number, padEnd: number, align: string) {
@@ -479,25 +512,23 @@ function getCounterAxisOffset(size: number, frameSize: number, padStart: number,
     } else if (align === "flex-end") {
         return frameSize - padEnd - size;
     }
-    // "stretch" or "flex-start" starts at padStart 
-    // (Note: "stretch" size is handled during Fill logic)
     return padStart;
 }
 
 function commitUpdates(
     updates: Record<string, Partial<Layer>>,
-    originalLayers: Layer[],
+    originalById: Map<string, Layer>,
     computed: { id: string, x: number, y: number, w: number, h: number }[],
     frame: FrameLayer
 ) {
     computed.forEach(cc => {
-        const original = originalLayers.find(l => l.id === cc.id);
+        const original = originalById.get(cc.id);
         if (!original) return;
 
         const existingUpdate = updates[cc.id] || {};
 
-        // Convert auto-layout local coords to scene absolute coords
-        // because the store uses absolute coordinates for all layers.
+        // Auto-layout produces local coords; the store keeps absolute coords,
+        // so we offset by the frame origin before diffing.
         const absoluteX = frame.x + cc.x;
         const absoluteY = frame.y + cc.y;
 
@@ -520,114 +551,164 @@ function commitUpdates(
  *  - 2nd pass: fix child positions after parents reposition child frames
  */
 export function applyAllAutoLayouts(layers: Layer[]): Layer[] {
-    let updatedLayers = [...layers];
+    let updatedLayers = layers.slice();
+    let layerById = buildLayerMap(updatedLayers);
 
-    // Find all auto-layout frames
     const frames = updatedLayers.filter(
         (l): l is FrameLayer => l.type === "frame" && !!l.layoutMode && l.layoutMode !== "none"
     );
     if (frames.length === 0) return updatedLayers;
 
-    // Guard: remove self-references from childIds
-    frames.forEach(f => {
+    let selfRefChanged = false;
+    for (const f of frames) {
         if (f.childIds.includes(f.id)) {
-            updatedLayers = updatedLayers.map(l =>
-                l.id === f.id
-                    ? { ...l, childIds: (l as FrameLayer).childIds.filter(c => c !== f.id) } as Layer
-                    : l
-            );
+            const fixed = { ...f, childIds: f.childIds.filter(c => c !== f.id) } as Layer;
+            layerById.set(f.id, fixed);
+            selfRefChanged = true;
         }
-    });
+    }
+    if (selfRefChanged) {
+        updatedLayers = updatedLayers.map(l => layerById.get(l.id) ?? l);
+    }
 
-    // Compute nesting depth with circular-reference protection
-    const depthCache = new Map<string, number>();
-    const getDepth = (id: string, visited: Set<string>): number => {
-        if (depthCache.has(id)) return depthCache.get(id)!;
-        if (visited.has(id)) return 0;
-        visited.add(id);
-        const allFrames = updatedLayers.filter((l): l is FrameLayer => l.type === "frame");
-        const parent = allFrames.find(f => f.childIds.includes(id));
-        const depth = parent ? 1 + getDepth(parent.id, visited) : 0;
-        depthCache.set(id, depth);
-        return depth;
-    };
-
-    // Sort deepest first (bottom-up)
-    const frameIds = frames.map(f => f.id);
-    const sortedIds = [...frameIds].sort((a, b) => {
-        return getDepth(b, new Set<string>()) - getDepth(a, new Set<string>());
-    });
-
-    // Run bottom-up pass twice to handle nested repositioning
-    for (let pass = 0; pass < 2; pass++) {
-        for (const fid of sortedIds) {
-            const currentFrame = updatedLayers.find(l => l.id === fid) as FrameLayer | undefined;
-            if (!currentFrame || !currentFrame.layoutMode || currentFrame.layoutMode === "none") continue;
-
-            const updates = computeAutoLayout(currentFrame, updatedLayers);
-
-            if (Object.keys(updates).length > 0) {
-                updatedLayers = updatedLayers.map(l => {
-                    if (updates[l.id]) {
-                        return { ...l, ...updates[l.id] } as Layer;
-                    }
-                    return l;
-                });
+    // childId → parentFrameId (first parent wins, matching the prior `.find` semantics).
+    const childToParent = new Map<string, string>();
+    for (const l of updatedLayers) {
+        if (l.type === "frame") {
+            const fl = l as FrameLayer;
+            for (const cid of fl.childIds) {
+                if (!childToParent.has(cid)) childToParent.set(cid, fl.id);
             }
         }
     }
 
-    // ── Cascade position deltas ──────────────────────────────
-    // When auto-layout moves a frame, its children (both managed and unmanaged)
-    // need their absolute coords updated. Auto-layout managed children were already
-    // positioned by commitUpdates (frame.x + localOffset). But for ALL frames
-    // (including non-auto-layout ones) that were repositioned, cascade dx/dy
-    // to their non-managed children (invisible, absolute-positioned, or children
-    // of non-auto-layout frames).
-    const cascadeFrameDeltas = (originalLayers: Layer[]) => {
-        const allFrames = updatedLayers.filter((l): l is FrameLayer => l.type === "frame");
-        const cascaded = new Set<string>();
-
-        const cascade = (frameId: string) => {
-            if (cascaded.has(frameId)) return;
-            cascaded.add(frameId);
-
-            const original = originalLayers.find(l => l.id === frameId);
-            const updated = updatedLayers.find(l => l.id === frameId) as FrameLayer | undefined;
-            if (!original || !updated) return;
-
-            const dx = updated.x - original.x;
-            const dy = updated.y - original.y;
-            if (Math.abs(dx) < 0.01 && Math.abs(dy) < 0.01) return;
-
-            const isAutoLayout = updated.layoutMode && updated.layoutMode !== "none";
-
-            updated.childIds.forEach(cid => {
-                const child = updatedLayers.find(l => l.id === cid);
-                if (!child) return;
-
-                // Skip children already positioned by auto-layout
-                const isManagedByAutoLayout = isAutoLayout && !child.isAbsolutePositioned && child.visible;
-                if (isManagedByAutoLayout) return;
-
-                // Cascade delta to unmanaged child
-                updatedLayers = updatedLayers.map(l =>
-                    l.id === cid ? { ...l, x: l.x + dx, y: l.y + dy } as Layer : l
-                );
-
-                // Recursively cascade for child frames
-                if (child.type === "frame") {
-                    cascade(cid);
-                }
-            });
-        };
-
-        allFrames.forEach(f => cascade(f.id));
+    const depthCache = new Map<string, number>();
+    const getDepth = (id: string, visited: Set<string>): number => {
+        const cached = depthCache.get(id);
+        if (cached !== undefined) return cached;
+        if (visited.has(id)) return 0;
+        visited.add(id);
+        const parentId = childToParent.get(id);
+        const depth = parentId ? 1 + getDepth(parentId, visited) : 0;
+        depthCache.set(id, depth);
+        return depth;
     };
 
-    cascadeFrameDeltas(layers);
+    const frameIds = frames.map(f => f.id);
+    const sortedIds = frameIds.slice().sort((a, b) => {
+        return getDepth(b, new Set<string>()) - getDepth(a, new Set<string>());
+    });
 
-    return updatedLayers;
+    for (let pass = 0; pass < 2; pass++) {
+        for (const fid of sortedIds) {
+            const currentFrame = layerById.get(fid) as FrameLayer | undefined;
+            if (!currentFrame || !currentFrame.layoutMode || currentFrame.layoutMode === "none") continue;
+
+            const updates = computeAutoLayoutInternal(currentFrame, layerById);
+
+            if (Object.keys(updates).length > 0) {
+                updatedLayers = updatedLayers.map(l => {
+                    const u = updates[l.id];
+                    return u ? ({ ...l, ...u } as Layer) : l;
+                });
+                layerById = buildLayerMap(updatedLayers);
+            }
+        }
+    }
+
+    // ── Cascade position deltas with constraints ─────────────
+    // When a frame is moved OR resized (either by auto-layout hug, or by an
+    // external Transformer drag that the caller captured in the input array),
+    // its unmanaged children (invisible, absolute-positioned, or children of
+    // non-auto-layout frames) must honour their `LayerConstraints` instead of
+    // just sliding along dx/dy. Managed children were already positioned by
+    // commitUpdates (frame.x + localOffset), so we skip them.
+    //
+    // If an unmanaged child is itself an auto-layout frame whose width/height
+    // changed under the constraint pass (e.g. `stretch`), we re-run its
+    // auto-layout so its managed descendants pick up the new size.
+    const originalById = buildLayerMap(layers);
+    const cascaded = new Set<string>();
+
+    const cascade = (frameId: string) => {
+        if (cascaded.has(frameId)) return;
+        cascaded.add(frameId);
+
+        const original = originalById.get(frameId);
+        const updated = layerById.get(frameId) as FrameLayer | undefined;
+        if (!original || !updated || original.type !== "frame") return;
+        const originalFrame = original as FrameLayer;
+
+        const dx = updated.x - originalFrame.x;
+        const dy = updated.y - originalFrame.y;
+        const dw = updated.width - originalFrame.width;
+        const dh = updated.height - originalFrame.height;
+        if (
+            Math.abs(dx) < 0.01 &&
+            Math.abs(dy) < 0.01 &&
+            Math.abs(dw) < 0.01 &&
+            Math.abs(dh) < 0.01
+        ) {
+            return;
+        }
+
+        const delta: FrameResizeDelta = {
+            oldX: originalFrame.x,
+            oldY: originalFrame.y,
+            oldWidth: originalFrame.width,
+            oldHeight: originalFrame.height,
+            newX: updated.x,
+            newY: updated.y,
+            newWidth: updated.width,
+            newHeight: updated.height,
+        };
+
+        const isAutoLayout = !!updated.layoutMode && updated.layoutMode !== "none";
+
+        for (const cid of updated.childIds) {
+            const child = layerById.get(cid);
+            if (!child) continue;
+
+            const isManagedByAutoLayout = isAutoLayout && !child.isAbsolutePositioned && child.visible;
+            if (isManagedByAutoLayout) continue;
+
+            // Default constraints {left, top} reproduce the old dx/dy shift exactly,
+            // so layers without explicit constraints don't regress.
+            const constrained = computeConstrainedPosition(child, delta);
+            const prevW = child.width;
+            const prevH = child.height;
+            const moved = { ...child, ...constrained } as Layer;
+            layerById.set(cid, moved);
+
+            // If this unmanaged child is itself an auto-layout frame whose
+            // dimensions were altered by the constraint pass, re-run its layout
+            // so its managed descendants are repositioned under the new size.
+            if (child.type === "frame") {
+                const childFrame = moved as FrameLayer;
+                const sizeChanged =
+                    Math.abs(prevW - constrained.width) > 0.01 ||
+                    Math.abs(prevH - constrained.height) > 0.01;
+                if (
+                    sizeChanged &&
+                    childFrame.layoutMode &&
+                    childFrame.layoutMode !== "none"
+                ) {
+                    const nestedUpdates = computeAutoLayoutInternal(childFrame, layerById);
+                    for (const [uid, upd] of Object.entries(nestedUpdates)) {
+                        const existing = layerById.get(uid);
+                        if (existing) layerById.set(uid, { ...existing, ...upd } as Layer);
+                    }
+                }
+                cascade(cid);
+            }
+        }
+    };
+
+    for (const l of updatedLayers) {
+        if (l.type === "frame") cascade(l.id);
+    }
+
+    return updatedLayers.map(l => layerById.get(l.id) ?? l);
 }
 
 // ─── Template Slot Layout Rules ────────────────────────────────
@@ -651,12 +732,10 @@ export interface LayoutRule {
 }
 
 const SLOT_LAYOUT_RULES: LayoutRule[] = [
-    // Instagram Story Rules
     { slotId: "headline", formatId: "instagram-story", constraints: { top: "15%", centerX: true, width: "80%" } },
     { slotId: "subhead", formatId: "instagram-story", constraints: { top: "25%", centerX: true, width: "70%" } },
     { slotId: "cta", formatId: "instagram-story", constraints: { bottom: "10%", centerX: true } },
     { slotId: "background", formatId: "*", constraints: { top: "0", left: "0", width: "100%", height: "100%" } },
-    // Instagram Post Rules
     { slotId: "headline", formatId: "instagram-post", constraints: { top: "10%", left: "10%", width: "80%" } },
     { slotId: "cta", formatId: "instagram-post", constraints: { bottom: "10%", right: "10%" } },
 ];

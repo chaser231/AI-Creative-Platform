@@ -59,21 +59,28 @@ export const adminRouter = createTRPCRouter({
     .input(
       z.object({
         search: z.string().optional(),
-        limit: z.number().min(1).max(100).default(50),
+        role: z.enum(["SUPER_ADMIN", "USER"]).optional(),
+        status: z.enum(["PENDING", "APPROVED", "REJECTED"]).optional(),
+        limit: z.number().min(1).max(100).default(20),
         offset: z.number().min(0).default(0),
       }).optional()
     )
     .query(async ({ ctx, input }) => {
-      const { search, limit = 50, offset = 0 } = input || {};
+      const { search, role, status, limit = 20, offset = 0 } = input || {};
 
-      const where: Prisma.UserWhereInput = search
-        ? {
-            OR: [
-              { name: { contains: search, mode: "insensitive" as const } },
-              { email: { contains: search, mode: "insensitive" as const } },
-            ],
-          }
-        : {};
+      const andFilters: Prisma.UserWhereInput[] = [];
+      if (search) {
+        andFilters.push({
+          OR: [
+            { name: { contains: search, mode: "insensitive" as const } },
+            { email: { contains: search, mode: "insensitive" as const } },
+          ],
+        });
+      }
+      if (role) andFilters.push({ role });
+      if (status) andFilters.push({ status });
+
+      const where: Prisma.UserWhereInput = andFilters.length > 0 ? { AND: andFilters } : {};
 
       const [users, total] = await Promise.all([
         ctx.prisma.user.findMany({

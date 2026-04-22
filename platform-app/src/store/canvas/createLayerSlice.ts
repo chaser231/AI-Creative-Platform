@@ -894,14 +894,17 @@ export const createLayerSlice: StateCreator<CanvasStore, [], [], LayerSlice> = (
     // ─── Visibility / Lock ──────────────────────────────
 
     toggleLayerVisibility: (id) => {
-        set((state) => ({
-            layers: state.layers.map((l) =>
+        pushSnapshot(set as (p: Partial<CanvasStore>) => void, get);
+        set((state) => {
+            const newLayers = state.layers.map((l) =>
                 l.id === id ? ({ ...l, visible: !l.visible } as Layer) : l
-            ),
-        }));
+            );
+            return { layers: applyAllAutoLayouts(newLayers) };
+        });
     },
 
     toggleLayerLock: (id) => {
+        pushSnapshot(set as (p: Partial<CanvasStore>) => void, get);
         set((state) => ({
             layers: state.layers.map((l) => (l.id === id ? { ...l, locked: !l.locked } as Layer : l)),
         }));

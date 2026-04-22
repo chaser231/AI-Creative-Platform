@@ -2,6 +2,28 @@ import type { ActionResult, ActionContext, CanvasInstruction } from "../actionRe
 import { callLLM } from "./llmProviders";
 import { resolveRefTags } from "@/lib/ai-models";
 import { SYSTEM_IMAGE_PRESETS } from "@/lib/stylePresets";
+import {
+  assertUrlIsSafe,
+  agentAddImagePolicy,
+  SsrfBlockedError,
+} from "@/server/security/ssrfGuard";
+
+// ─── Logging helpers ─────────────────────────────────────
+
+/**
+ * Prompts can contain embedded base64 image blobs (especially when VLM output
+ * or a user paste leaks through ref-tag resolution). Raw data URIs blow up
+ * structured logs and risk persisting PII. Replace them with a short marker.
+ */
+function redactForLog(value: string, maxLen = 2000): string {
+  if (!value) return value;
+  const stripped = value.replace(
+    /data:[a-z0-9.+-]+\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=]{32,}/gi,
+    "[base64-redacted]",
+  );
+  if (stripped.length <= maxLen) return stripped;
+  return `${stripped.slice(0, maxLen)}…[+${stripped.length - maxLen} chars]`;
+}
 
 // ─── Action Executors ────────────────────────────────────
 
@@ -155,7 +177,7 @@ RULES:
       const { generateWithFallback } = await import("@/lib/ai-providers");
 
       console.log(`[Pipeline ▶5 executeAction] generate_image — model: ${selectedModel}, hasRefImages: ${hasActualRefs ? referenceImages.length : 0}`);
-      console.log(`[Pipeline ▶5 executeAction] FULL PROMPT: "${cleanPrompt}"`);
+      console.log(`[Pipeline ▶5 executeAction] FULL PROMPT: "${redactForLog(cleanPrompt)}"`);
 
       try {
         const aiResult = await generateWithFallback({
@@ -222,10 +244,44 @@ RULES:
             },
           });
         } else if (el.type === "image") {
+          // SSRF guard for LLM-provided image URLs before they hit the canvas.
+          // We normalise first, then classify:
+          //   - data:image/... inline payloads → allowed (come from our own
+          //     generate_image step);
+          //   - anything else that looks URL-like (incl. protocol-relative
+          //     "//host/...", "javascript:", "file:", "http:", "https:") →
+          //     must pass assertUrlIsSafe. Non-https schemes and private/IP
+          //     literals are rejected by the policy.
+          const rawSrc = typeof el.content === "string" ? el.content.trim() : "";
+          if (!rawSrc) continue;
+
+          const isInlineImageData = /^data:image\//i.test(rawSrc);
+          let src = rawSrc;
+
+          if (!isInlineImageData) {
+            // Protocol-relative "//foo/bar" must be validated as https://foo/bar,
+            // otherwise the browser will upgrade it on our https pages and
+            // bypass allowlist/IP checks.
+            if (/^\/\//.test(src)) {
+              src = `https:${src}`;
+            }
+            try {
+              await assertUrlIsSafe(src, agentAddImagePolicy());
+            } catch (e) {
+              if (e instanceof SsrfBlockedError) {
+                // Do not log full URL — temp links can carry tokens.
+                console.warn(
+                  `[agent] add_image URL rejected (${e.code}): ${e.reason}`,
+                );
+                continue;
+              }
+              throw e;
+            }
+          }
           canvasActions.push({
             action: "add_image",
             params: {
-              src: el.content,
+              src,
               width: 1024,
               height: 1024,
             },

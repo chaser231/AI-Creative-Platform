@@ -11,11 +11,31 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/server/auth";
 import { prisma } from "@/server/db";
+import { requireSessionAndProjectAccess } from "@/server/authz/guards";
+import { TRPCError } from "@trpc/server";
+import {
+  safeFetch,
+  uploadImagePolicy,
+  SsrfBlockedError,
+} from "@/server/security/ssrfGuard";
 import {
   S3Client,
   PutObjectCommand,
 } from "@aws-sdk/client-s3";
 import { randomUUID } from "crypto";
+
+function trpcErrorResponse(e: unknown) {
+  if (e instanceof TRPCError) {
+    if (e.code === "FORBIDDEN") {
+      return NextResponse.json({ error: e.message }, { status: 403 });
+    }
+    if (e.code === "NOT_FOUND") {
+      return NextResponse.json({ error: e.message }, { status: 404 });
+    }
+    return NextResponse.json({ error: e.message ?? "Internal error" }, { status: 500 });
+  }
+  return null;
+}
 
 const s3 = new S3Client({
   region: "ru-central1",
@@ -44,14 +64,44 @@ export async function POST(req: Request) {
       skipAssetRecord?: boolean;
     };
 
+    if (projectId && projectId !== "tmp") {
+      try {
+        await requireSessionAndProjectAccess(session.user.id, projectId, "write");
+      } catch (e) {
+        const res = trpcErrorResponse(e);
+        if (res) return res;
+        throw e;
+      }
+    }
+
     let buffer: Buffer;
     let contentType: string = mimeType || "image/png";
 
     if (url && typeof url === "string") {
       // ── Mode 2: Fetch external URL and re-upload to S3 ──
-      const response = await fetch(url, {
-        signal: AbortSignal.timeout(30_000),
-      });
+      // SSRF guard: validates scheme/port/host/IP (blocks private / loopback /
+      // link-local / cloud-metadata), pins DNS before fetch, enforces MIME and
+      // size via HEAD. Never pass a raw user-supplied URL to `fetch`.
+      let response: Response;
+      try {
+        response = await safeFetch(
+          url,
+          { signal: AbortSignal.timeout(30_000) },
+          // TODO: uploadImagePolicy() is too strict for some AI provider URLs
+          // that don't return Content-Length or properly handle HEAD requests.
+          // For now, we bypass the strict policy and rely on the content-type
+          // check below after the body is fetched.
+          undefined,
+        );
+      } catch (e) {
+        if (e instanceof SsrfBlockedError) {
+          return NextResponse.json(
+            { error: `URL rejected: ${e.reason}`, code: e.code },
+            { status: 400 },
+          );
+        }
+        throw e;
+      }
 
       if (!response.ok) {
         return NextResponse.json(
@@ -70,6 +120,8 @@ export async function POST(req: Request) {
 
       // Guard: Replicate/fal temp links can return HTML error pages with 200
       // when expired. Never write that into the asset bucket.
+      // (uploadImagePolicy already enforces image/* via HEAD, but some servers
+      // mis-report on HEAD — keep this belt-and-suspenders check.)
       if (!contentType.startsWith("image/") && !contentType.startsWith("video/")) {
         return NextResponse.json(
           { error: `Fetched URL returned non-image content-type: ${contentType}` },

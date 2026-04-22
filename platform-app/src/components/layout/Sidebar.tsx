@@ -85,6 +85,7 @@ export function Sidebar() {
         enabled: isSuperAdmin,
         refetchOnWindowFocus: false,
         refetchInterval: 60_000, // poll every 60s
+        staleTime: 30_000, // dedupe quick remounts within half the poll window
     });
     const pendingCount = pendingQuery.data?.length ?? 0;
 
