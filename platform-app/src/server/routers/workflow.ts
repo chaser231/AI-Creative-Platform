@@ -275,7 +275,16 @@ export const workflowRouter = createTRPCRouter({
         workspaceId: z.string(),
         selectedImageModel: z.string().optional(),
         referenceImages: z.array(z.string()).optional(),
-        lastGeneratedImageUrl: z.string().optional(),
+        // Accept either an absolute URL (e.g. https://s3…/image.jpg) or a
+        // data URL (e.g. data:image/jpeg;base64,…). executeAction still
+        // runs assertUrlIsSafe() for absolute URLs as a second guard.
+        lastGeneratedImageUrl: z
+          .string()
+          .refine(
+            (v) => /^data:image\//i.test(v) || /^https?:\/\//i.test(v),
+            { message: "Must be an http(s) URL or data:image/… blob" },
+          )
+          .optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {

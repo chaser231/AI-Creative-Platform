@@ -399,11 +399,35 @@ RULES:
       // `preGeneratedImageUrl` below (no-refs-but-have-image scenario).
       let templateVisionCtx = params.visionContext as string | undefined;
       const templateStyleSuffix = params.stylePromptSuffix as string | undefined;
-      const preGeneratedImageUrl = params.lastGeneratedImageUrl as string | undefined;
+      // `preGeneratedImageUrl` is `let` because we reject it to `undefined`
+      // if SSRF guard fails — see validation block below.
+      let preGeneratedImageUrl = params.lastGeneratedImageUrl as string | undefined;
       const hasTemplateRefs = templateRefImages && templateRefImages.length > 0;
 
       console.log(`[Template Fill] lastGeneratedImageUrl: ${preGeneratedImageUrl ? preGeneratedImageUrl.slice(0, 60) + '...' : 'NONE'}`);
       console.log(`[Template Fill] referenceImages: ${hasTemplateRefs ? templateRefImages.length : 0}`);
+
+      // ─── SSRF / stored-payload guard on preGeneratedImageUrl ────────
+      // The URL flows into canvasState.layers[].src (persisted + re-rendered
+      // on share/publish). Apply the same policy `place_on_canvas` uses for
+      // LLM-provided image URLs. Accept `data:image/...` blobs as-is
+      // (in-memory uploads); reject anything else that the guard rejects
+      // (javascript:, file:, http to private/IP, etc.).
+      if (preGeneratedImageUrl && !/^data:image\//i.test(preGeneratedImageUrl)) {
+        try {
+          await assertUrlIsSafe(preGeneratedImageUrl, agentAddImagePolicy());
+        } catch (e) {
+          if (e instanceof SsrfBlockedError) {
+            // Do not log full URL — temp URLs can carry tokens.
+            console.warn(
+              `[Template Fill] preGeneratedImageUrl rejected (${e.code}): ${e.reason}`,
+            );
+            preGeneratedImageUrl = undefined;
+          } else {
+            throw e;
+          }
+        }
+      }
 
       // Fetch the full template
       const template = await context.prisma.template.findUnique({
