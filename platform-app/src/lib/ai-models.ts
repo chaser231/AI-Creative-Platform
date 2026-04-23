@@ -19,8 +19,8 @@ export interface ResolutionOption {
 export interface ModelEntry {
     id: string;
     label: string;
-    slug: string;             // Replicate slug or "openai-direct"
-    provider: "replicate" | "openai";
+    slug: string;             // Replicate slug, fal.ai endpoint, or "openai-direct"
+    provider: "replicate" | "openai" | "fal";
     caps: ModelCap[];
     /** Estimated cost per single run in USD (for analytics) */
     costPerRun: number;
@@ -287,6 +287,15 @@ export const MODEL_REGISTRY: ModelEntry[] = [
         label: "Bria Product Shadow",
         slug: "bria/product-shadow",
         provider: "replicate",
+        caps: ["edit"],
+        costPerRun: 0.04,
+    },
+    {
+        // fal.ai primary for reflection/shadow generation (Bria Product Shot API)
+        id: "bria-product-shot",
+        label: "Bria Product Shot (fal.ai)",
+        slug: "fal-ai/bria/product-shot",
+        provider: "fal",
         caps: ["edit"],
         costPerRun: 0.04,
     },

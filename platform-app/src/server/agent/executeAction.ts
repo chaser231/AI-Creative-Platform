@@ -8,7 +8,7 @@ import {
   agentAddImagePolicy,
   SsrfBlockedError,
 } from "@/server/security/ssrfGuard";
-import { invokeReplicateModel } from "@/lib/ai-providers";
+import { invokeReplicateModel, invokeFalModel } from "@/lib/ai-providers";
 import {
   tryWithFallback,
   uploadFromExternalUrl,
@@ -950,17 +950,22 @@ ${templateStyleSuffix ? `- Additional style: ${templateStyleSuffix}` : ""}
       }
 
       try {
+        // Cascade: fal.ai primary (faster, cheaper) → Replicate fallbacks.
         const { result, winner } = await tryWithFallback([
           {
-            name: "bria-product-cutout",
+            name: "fal:bria-rmbg",
+            run: () => invokeFalModel("bria-rmbg", { image_url: imageUrl }),
+          },
+          {
+            name: "replicate:bria-product-cutout",
             run: () => invokeReplicateModel("bria-product-cutout", { image: imageUrl }),
           },
           {
-            name: "rembg-851-labs",
+            name: "replicate:rembg-851-labs",
             run: () => invokeReplicateModel("rembg-851-labs", { image: imageUrl }),
           },
           {
-            name: "rembg",
+            name: "replicate:rembg",
             run: () => invokeReplicateModel("rembg", { image: imageUrl }),
           },
         ]);
@@ -1002,13 +1007,18 @@ ${templateStyleSuffix ? `- Additional style: ${templateStyleSuffix}` : ""}
 
       const prompt = buildReflectionPrompt(style, intensity);
       try {
+        // Cascade: fal.ai primary → Replicate Bria → Replicate FLUX (opaque, needs rembg).
         const { result, winner } = await tryWithFallback([
           {
-            name: "bria-product-shadow",
+            name: "fal:bria-product-shot",
+            run: () => invokeFalModel("bria-product-shot", { image_url: imageUrl, prompt }),
+          },
+          {
+            name: "replicate:bria-product-shadow",
             run: () => invokeReplicateModel("bria-product-shadow", { image: imageUrl, prompt }),
           },
           {
-            name: "flux-kontext-pro",
+            name: "replicate:flux-kontext-pro",
             run: () => invokeReplicateModel("flux-kontext-pro", { image: imageUrl, prompt }),
           },
         ]);
@@ -1020,7 +1030,7 @@ ${templateStyleSuffix ? `- Additional style: ${templateStyleSuffix}` : ""}
         // FLUX Kontext returns an opaque image. Re-run bg-removal to guarantee
         // alpha channel so downstream canvas can place the reflection on any bg.
         let finalUrl = s3Url;
-        if (winner === "flux-kontext-pro") {
+        if (winner === "replicate:flux-kontext-pro") {
           finalUrl = await postProcessToTransparent(s3Url, context);
         }
 
@@ -1032,7 +1042,7 @@ ${templateStyleSuffix ? `- Additional style: ${templateStyleSuffix}` : ""}
             imageUrl: finalUrl,
             provider: winner,
             costUsd: result.costUsd,
-            postProcessed: winner === "flux-kontext-pro",
+            postProcessed: winner === "replicate:flux-kontext-pro",
           },
         };
       } catch (err) {

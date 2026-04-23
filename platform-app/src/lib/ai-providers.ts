@@ -506,6 +506,121 @@ export async function invokeReplicateModel(
     return { output: firstOutput, model: entry.slug, costUsd: entry.costPerRun };
 }
 
+// ─── fal.ai Queue Submit + Poll (shared helper) ─────────────────────────────
+
+/**
+ * Submit a request to the fal.ai queue and poll until it completes.
+ * Used both by the FalProvider class and by invokeFalModel() for the
+ * workflow-node executor.
+ */
+async function falSubmitAndPoll(
+    endpoint: string,
+    input: Record<string, unknown>,
+    apiKey: string,
+    maxPollSeconds = 300,
+): Promise<Record<string, unknown>> {
+    const submitRes = await fetch(`https://queue.fal.run/${endpoint}`, {
+        method: "POST",
+        headers: {
+            "Authorization": `Key ${apiKey}`,
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify(input),
+    });
+    if (!submitRes.ok) {
+        const errBody = await submitRes.text();
+        throw new Error(`fal.ai submit failed (${submitRes.status}): ${errBody.slice(0, 300)}`);
+    }
+    const submitData = await submitRes.json() as Record<string, unknown>;
+    const requestId = submitData.request_id as string | undefined;
+
+    // Synchronous response (some endpoints bypass the queue)
+    if (!requestId) {
+        return submitData;
+    }
+
+    const statusUrl = (submitData.status_url as string | undefined)
+        || `https://queue.fal.run/${endpoint}/requests/${requestId}/status`;
+    const responseUrl = (submitData.response_url as string | undefined)
+        || `https://queue.fal.run/${endpoint}/requests/${requestId}`;
+
+    const iterations = Math.ceil(maxPollSeconds / 2);
+    for (let i = 0; i < iterations; i++) {
+        await new Promise(r => setTimeout(r, 2000));
+        try {
+            const statusRes = await fetch(statusUrl, {
+                headers: { "Authorization": `Key ${apiKey}` },
+            });
+            if (!statusRes.ok) continue;
+            const status = await statusRes.json() as { status?: string; error?: unknown };
+            if (status.status === "COMPLETED") {
+                const resultRes = await fetch(responseUrl, {
+                    headers: { "Authorization": `Key ${apiKey}` },
+                });
+                if (!resultRes.ok) {
+                    const errText = await resultRes.text();
+                    throw new Error(`fal.ai result fetch failed (${resultRes.status}): ${errText.slice(0, 300)}`);
+                }
+                return await resultRes.json() as Record<string, unknown>;
+            }
+            if (status.status === "FAILED") {
+                throw new Error(`fal.ai prediction failed: ${String(status.error ?? "unknown")}`);
+            }
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            if (err instanceof TypeError && msg.includes("fetch")) continue;
+            throw err;
+        }
+    }
+    throw new Error(`fal.ai prediction timed out after ${maxPollSeconds} seconds`);
+}
+
+/**
+ * Module-scope invoker for workflow node executors.
+ *
+ * Handles the full fal.ai lifecycle (auth → queue submit → poll → result parse)
+ * and normalises output shape to the same contract as invokeReplicateModel:
+ * `{ output: string (URL), model: string, costUsd: number }`.
+ */
+export async function invokeFalModel(
+    modelId: string,
+    input: Record<string, unknown>,
+    opts: { maxPollSeconds?: number } = {},
+): Promise<{ output: string; model: string; costUsd: number }> {
+    const entry = getModelById(modelId);
+    if (!entry) throw new Error(`Unknown model: ${modelId}`);
+
+    const endpoint = FAL_MODEL_MAP[modelId] ?? entry.slug;
+    if (!endpoint) {
+        throw new Error(`Model ${modelId} has no fal.ai endpoint mapping`);
+    }
+
+    const apiKey = process.env.FAL_KEY;
+    if (!apiKey) {
+        throw new Error("fal.ai API key not configured. Set FAL_KEY in .env.local");
+    }
+
+    const result = await falSubmitAndPoll(endpoint, input, apiKey, opts.maxPollSeconds);
+
+    // fal.ai response shapes we support:
+    //   { image: { url } }                  → bria/background/remove, bria/product-shot
+    //   { images: [{ url, width, height }]} → nano-banana, flux, seedream
+    //   { output: "https://..." }           → some community endpoints
+    const image = (result.image as { url?: string } | undefined);
+    const images = (result.images as { url?: string }[] | undefined);
+    const output = image?.url
+        ?? images?.[0]?.url
+        ?? (typeof result.output === "string" ? result.output : undefined);
+
+    if (!output) {
+        throw new Error(
+            `fal.ai ${endpoint}: no image URL in response. Keys: ${Object.keys(result).join(", ")}`,
+        );
+    }
+
+    return { output, model: entry.slug, costUsd: entry.costPerRun };
+}
+
 // ─── fal.ai Fallback Provider ───────────────────────────────────────────────
 
 /** Model ID → fal.ai text-to-image endpoint mapping */
@@ -516,6 +631,7 @@ const FAL_MODEL_MAP: Record<string, string> = {
     "seedream":        "fal-ai/seedream-4.5",
     "bria-expand":     "fal-ai/bria/expand",
     "bria-rmbg":       "fal-ai/bria/background/remove",
+    "bria-product-shot": "fal-ai/bria/product-shot",
     "esrgan":          "fal-ai/esrgan",
     "seedvr":          "fal-ai/seedvr/upscale/image",
     "sima-upscaler":   "simalabs/sima-upscaler",
