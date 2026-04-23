@@ -265,6 +265,40 @@ export const MODEL_REGISTRY: ModelEntry[] = [
         costPerRun: 0.004,
     },
 
+    // ── Workflow-only Models (Phase 1: node-editor bg-removal + reflection) ─
+    {
+        id: "bria-product-cutout",
+        label: "Bria Product Cutout",
+        slug: "bria/product-cutout",
+        provider: "replicate",
+        caps: ["remove-bg"],
+        costPerRun: 0.025,
+    },
+    {
+        id: "rembg-851-labs",
+        label: "851 Labs Background Remover",
+        slug: "851-labs/background-remover",
+        provider: "replicate",
+        caps: ["remove-bg"],
+        costPerRun: 0.002,
+    },
+    {
+        id: "bria-product-shadow",
+        label: "Bria Product Shadow",
+        slug: "bria/product-shadow",
+        provider: "replicate",
+        caps: ["edit"],
+        costPerRun: 0.04,
+    },
+    {
+        id: "flux-kontext-pro",
+        label: "FLUX Kontext Pro",
+        slug: "black-forest-labs/flux-kontext-pro",
+        provider: "replicate",
+        caps: ["edit", "inpaint"],
+        costPerRun: 0.055,
+    },
+
     // ── Text LLMs ───────────────────────────────────────────────────────
     {
         id: "deepseek",

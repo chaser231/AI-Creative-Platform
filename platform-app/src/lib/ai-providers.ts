@@ -346,6 +346,13 @@ class ReplicateProvider implements AIProviderImplementation {
     // ── Replicate API Call ───────────────────────────────────────────────
 
     private async callReplicate(entry: ModelEntry, input: Record<string, unknown>, token: string): Promise<unknown> {
+        return replicatePredict(entry, input, token);
+    }
+}
+
+// ─── Shared Replicate polling (module-scope, reused by invokeReplicateModel) ─
+
+async function replicatePredict(entry: ModelEntry, input: Record<string, unknown>, token: string): Promise<unknown> {
         let url: string;
         const body: Record<string, unknown> = { input };
 
@@ -451,6 +458,52 @@ class ReplicateProvider implements AIProviderImplementation {
 
         throw new Error("Replicate prediction timed out after 300 seconds");
     }
+
+/**
+ * Top-level Replicate invoker for workflow nodes.
+ *
+ * Phase 1 extraction: reuses replicatePredict (same polling loop as
+ * ReplicateProvider.callReplicate) so the workflow runtime can fire Replicate
+ * models without instantiating AIProvider / AIRequestParams.
+ *
+ * @param modelId id from MODEL_REGISTRY (e.g. "bria-product-cutout")
+ * @param input raw Replicate `input` payload for the model
+ * @returns { output: first URL, model: slug, costUsd: per-run estimate }
+ *
+ * Throws if:
+ * - modelId unknown or not a Replicate entry
+ * - REPLICATE_API_TOKEN missing
+ * - prediction fails / times out
+ * - output shape is unexpected (not a URL or list of URLs)
+ */
+export async function invokeReplicateModel(
+    modelId: string,
+    input: Record<string, unknown>,
+): Promise<{ output: string; model: string; costUsd: number }> {
+    const entry = getModelById(modelId);
+    if (!entry || entry.provider !== "replicate") {
+        throw new Error(`Unknown or non-Replicate model: ${modelId}`);
+    }
+    const token = process.env.REPLICATE_API_TOKEN;
+    if (!token) throw new Error("REPLICATE_API_TOKEN not configured");
+
+    const raw = await replicatePredict(entry, input, token);
+    // Most Replicate models return a single URL string or an array of URLs.
+    // Some (e.g. flux-kontext) return an object with .image — try that too.
+    let firstOutput: unknown = raw;
+    if (Array.isArray(raw)) {
+        firstOutput = raw[0];
+    } else if (raw && typeof raw === "object" && "image" in (raw as Record<string, unknown>)) {
+        firstOutput = (raw as Record<string, unknown>).image;
+    }
+
+    if (typeof firstOutput !== "string" || firstOutput.length === 0) {
+        throw new Error(
+            `Unexpected Replicate output shape for ${entry.slug}: ${JSON.stringify(raw).slice(0, 200)}`,
+        );
+    }
+
+    return { output: firstOutput, model: entry.slug, costUsd: entry.costPerRun };
 }
 
 // ─── fal.ai Fallback Provider ───────────────────────────────────────────────
