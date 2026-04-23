@@ -8,26 +8,33 @@
  * Redirects to dashboard when approved.
  */
 
-import { useSession, signOut } from "next-auth/react";
+import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { Clock, XCircle, LogOut, RefreshCw } from "lucide-react";
+import { useSignOutAndClearState } from "@/hooks/useSignOutAndClearState";
 
 export default function WaitlistPage() {
     const router = useRouter();
     const { data: session, status: sessionStatus, update: updateSession } = useSession();
+    const signOutAndClearState = useSignOutAndClearState();
     const [isRefreshing, setIsRefreshing] = useState(false);
     const [hasRefreshedOnce, setHasRefreshedOnce] = useState(false);
+    const refreshStartedRef = useRef(false);
 
     const accountStatus = session?.user?.status;
 
     // Force-refresh session on first mount to get fresh status from DB
     useEffect(() => {
-        if (sessionStatus === "authenticated" && !hasRefreshedOnce) {
-            setHasRefreshedOnce(true);
-            updateSession();
+        if (sessionStatus === "authenticated" && !refreshStartedRef.current) {
+            refreshStartedRef.current = true;
+            updateSession()
+                .catch((err) => {
+                    console.error("[auth] Session refresh failed:", err);
+                })
+                .finally(() => setHasRefreshedOnce(true));
         }
-    }, [sessionStatus, hasRefreshedOnce, updateSession]);
+    }, [sessionStatus, updateSession]);
 
     // Redirect to sign-in if not authenticated
     useEffect(() => {
@@ -65,7 +72,7 @@ export default function WaitlistPage() {
 
     // Handle sign out
     const handleSignOut = () => {
-        signOut({ callbackUrl: "/auth/signin" });
+        signOutAndClearState();
     };
 
     const isRejected = accountStatus === "REJECTED";

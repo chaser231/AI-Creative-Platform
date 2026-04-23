@@ -18,10 +18,16 @@
 "use client";
 
 import { useState } from "react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import {
+  MutationCache,
+  QueryCache,
+  QueryClient,
+  QueryClientProvider,
+} from "@tanstack/react-query";
 import { httpBatchLink, httpLink, splitLink } from "@trpc/client";
 import superjson from "superjson";
 import { trpc } from "@/lib/trpc";
+import { logAuthDiagnostic } from "@/lib/authDiagnostics";
 
 function getBaseUrl() {
   if (typeof window !== "undefined") return "";
@@ -38,6 +44,24 @@ const UNBATCHED_PATHS = new Set<string>([
   "workflow.applyTemplate",
   "workflow.interpretAndExecute",
 ]);
+
+function isUnauthorizedError(error: unknown) {
+  if (!(error instanceof Error)) return false;
+
+  const data = (error as { data?: { code?: string; httpStatus?: number } }).data;
+  return data?.code === "UNAUTHORIZED" || data?.httpStatus === 401;
+}
+
+function redirectToSignIn() {
+  if (typeof window === "undefined") return;
+
+  const { pathname, search } = window.location;
+  if (pathname.startsWith("/auth/")) return;
+
+  const signInUrl = new URL("/auth/signin", window.location.origin);
+  signInUrl.searchParams.set("callbackUrl", `${pathname}${search}`);
+  window.location.assign(signInUrl.toString());
+}
 
 /**
  * Wrap `fetch` so that when an upstream proxy (Yandex API Gateway, Vercel edge,
@@ -97,20 +121,45 @@ async function friendlyFetch(input: RequestInfo | URL, init?: RequestInit): Prom
 
 export function TRPCProvider({ children }: { children: React.ReactNode }) {
   const [queryClient] = useState(
-    () =>
-      new QueryClient({
+    () => {
+      let client: QueryClient | null = null;
+      let redirecting = false;
+
+      const handleAuthFailure = (error: unknown) => {
+        if (!isUnauthorizedError(error) || redirecting) return;
+        redirecting = true;
+        logAuthDiagnostic("unauthorized_response", {
+          pathname: typeof window === "undefined" ? null : window.location.pathname,
+          error,
+        });
+        client?.clear();
+        redirectToSignIn();
+      };
+
+      client = new QueryClient({
+        queryCache: new QueryCache({
+          onError: handleAuthFailure,
+        }),
+        mutationCache: new MutationCache({
+          onError: handleAuthFailure,
+        }),
         defaultOptions: {
           queries: {
             staleTime: 30 * 1000,
             refetchOnWindowFocus: false,
-            retry: 2,
+            retry: (failureCount, error) =>
+              isUnauthorizedError(error) ? false : failureCount < 2,
             retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 5000),
           },
           mutations: {
-            retry: 1,
+            retry: (failureCount, error) =>
+              isUnauthorizedError(error) ? false : failureCount < 1,
           },
         },
-      })
+      });
+
+      return client;
+    }
   );
 
   const [trpcClient] = useState(() => {
