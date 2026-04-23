@@ -8,10 +8,13 @@ vi.mock("@/server/security/ssrfGuard", () => ({
     SsrfBlockedError: class SsrfBlockedError extends Error {
         code: string;
         reason: string;
-        constructor(code: string, reason: string) {
-            super(`[${code}] ${reason}`);
+        url: string;
+        constructor(code: string, reason: string, url = "") {
+            super(`[SSRF:${code}] ${reason} (url=${url})`);
+            this.name = "SsrfBlockedError";
             this.code = code;
             this.reason = reason;
+            this.url = url;
         }
     },
 }));
@@ -142,10 +145,12 @@ describe("uploadFromExternalUrl", () => {
     });
 
     it("re-throws SsrfBlockedError from safeFetch without catching", async () => {
-        safeFetchMock.mockRejectedValueOnce(new SsrfBlockedError("private_ip", "rfc1918"));
+        safeFetchMock.mockRejectedValueOnce(
+            new SsrfBlockedError("IP_BLOCKED", "rfc1918", "http://10.0.0.1/x.png"),
+        );
         await expect(
             uploadFromExternalUrl("http://10.0.0.1/x.png", { workspaceId: "ws-test" }),
-        ).rejects.toMatchObject({ code: "private_ip" });
+        ).rejects.toMatchObject({ code: "IP_BLOCKED" });
         expect(s3SendMock).not.toHaveBeenCalled();
     });
 

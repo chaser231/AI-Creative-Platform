@@ -8,6 +8,14 @@ import {
   agentAddImagePolicy,
   SsrfBlockedError,
 } from "@/server/security/ssrfGuard";
+import { invokeReplicateModel } from "@/lib/ai-providers";
+import {
+  tryWithFallback,
+  uploadFromExternalUrl,
+  buildReflectionPrompt,
+  postProcessToTransparent,
+  type ReflectionStyle,
+} from "@/server/workflow/helpers";
 
 // ─── Logging helpers ─────────────────────────────────────
 
@@ -924,6 +932,113 @@ ${templateStyleSuffix ? `- Additional style: ${templateStyleSuffix}` : ""}
         content: `Доступно ${choices.length} стилевых пресетов. Выберите стиль генерации:`,
         presetChoices: choices,
       };
+    }
+
+    // ── Workflow node actions (v1.0 — node-based editor) ──────────────
+    case "remove_background": {
+      const imageUrl = params.imageUrl as string;
+      if (!imageUrl || typeof imageUrl !== "string") {
+        return { success: false, type: "error", content: "imageUrl обязателен" };
+      }
+      try {
+        await assertUrlIsSafe(imageUrl, agentAddImagePolicy());
+      } catch (err) {
+        if (err instanceof SsrfBlockedError) {
+          return { success: false, type: "error", content: `URL заблокирован: ${err.reason}` };
+        }
+        throw err;
+      }
+
+      try {
+        const { result, winner } = await tryWithFallback([
+          {
+            name: "bria-product-cutout",
+            run: () => invokeReplicateModel("bria-product-cutout", { image: imageUrl }),
+          },
+          {
+            name: "rembg-851-labs",
+            run: () => invokeReplicateModel("rembg-851-labs", { image: imageUrl }),
+          },
+          {
+            name: "rembg",
+            run: () => invokeReplicateModel("rembg", { image: imageUrl }),
+          },
+        ]);
+        const { s3Url } = await uploadFromExternalUrl(result.output, {
+          workspaceId: context.workspaceId,
+        });
+        return {
+          success: true,
+          type: "image",
+          content: s3Url,
+          metadata: { imageUrl: s3Url, provider: winner, costUsd: result.costUsd },
+        };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return {
+          success: false,
+          type: "error",
+          content: `Все провайдеры bg-removal упали: ${msg}`,
+        };
+      }
+    }
+
+    case "add_reflection": {
+      const imageUrl = params.imageUrl as string;
+      const style = (params.style as ReflectionStyle | undefined) ?? "subtle";
+      const intensity = typeof params.intensity === "number" ? params.intensity : 0.3;
+
+      if (!imageUrl || typeof imageUrl !== "string") {
+        return { success: false, type: "error", content: "imageUrl обязателен" };
+      }
+      try {
+        await assertUrlIsSafe(imageUrl, agentAddImagePolicy());
+      } catch (err) {
+        if (err instanceof SsrfBlockedError) {
+          return { success: false, type: "error", content: `URL заблокирован: ${err.reason}` };
+        }
+        throw err;
+      }
+
+      const prompt = buildReflectionPrompt(style, intensity);
+      try {
+        const { result, winner } = await tryWithFallback([
+          {
+            name: "bria-product-shadow",
+            run: () => invokeReplicateModel("bria-product-shadow", { image: imageUrl, prompt }),
+          },
+          {
+            name: "flux-kontext-pro",
+            run: () => invokeReplicateModel("flux-kontext-pro", { image: imageUrl, prompt }),
+          },
+        ]);
+
+        const { s3Url } = await uploadFromExternalUrl(result.output, {
+          workspaceId: context.workspaceId,
+        });
+
+        // FLUX Kontext returns an opaque image. Re-run bg-removal to guarantee
+        // alpha channel so downstream canvas can place the reflection on any bg.
+        let finalUrl = s3Url;
+        if (winner === "flux-kontext-pro") {
+          finalUrl = await postProcessToTransparent(s3Url, context);
+        }
+
+        return {
+          success: true,
+          type: "image",
+          content: finalUrl,
+          metadata: {
+            imageUrl: finalUrl,
+            provider: winner,
+            costUsd: result.costUsd,
+            postProcessed: winner === "flux-kontext-pro",
+          },
+        };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { success: false, type: "error", content: `add_reflection упал: ${msg}` };
+      }
     }
 
     default:
