@@ -177,6 +177,12 @@ model Project {
   // Canvas state — full JSON blob (MVP approach)
   canvasState Json?
 
+  // Optimistic-locking counter. Incremented on every write that touches
+  // canvasState (saveState, beacon, restoreVersion, Figma import). Callers
+  // pass the last seen value in `expectedVersion` to detect concurrent
+  // overwrites from other tabs / flaky-network retries.
+  version Int @default(0)
+
   thumbnail String?
 
   createdAt DateTime @default(now())

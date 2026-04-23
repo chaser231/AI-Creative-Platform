@@ -8,7 +8,7 @@
  * Provides currentRole and isAdmin for RBAC-aware UI.
  */
 
-import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from "react";
+import { createContext, useContext, useState, useEffect, useCallback, useMemo, type ReactNode } from "react";
 import { trpc } from "@/lib/trpc";
 
 interface WorkspaceInfo {
@@ -50,23 +50,23 @@ const WorkspaceContext = createContext<WorkspaceContextValue>({
   isAdmin: false,
 });
 
-const LS_KEY = "acp_workspace_id";
+export const WORKSPACE_STORAGE_KEY = "acp_workspace_id";
 
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-
-  // Load saved workspace ID from localStorage
-  useEffect(() => {
-    const saved = localStorage.getItem(LS_KEY);
-    if (saved) setSelectedId(saved);
-  }, []);
+  const [selectedId, setSelectedId] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    return localStorage.getItem(WORKSPACE_STORAGE_KEY);
+  });
 
   const workspaceQuery = trpc.workspace.list.useQuery(undefined, {
     retry: 1,
     refetchOnWindowFocus: false,
   });
 
-  const workspaces = (workspaceQuery.data ?? []) as WorkspaceInfo[];
+  const workspaces = useMemo(
+    () => (workspaceQuery.data ?? []) as WorkspaceInfo[],
+    [workspaceQuery.data],
+  );
 
   // Determine current workspace
   const currentWorkspace =
@@ -78,18 +78,17 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const currentRole = currentWorkspace?.role ?? null;
   const isAdmin = currentRole === "ADMIN";
 
-  // If selectedId doesn't match any workspace, auto-select first
+  // Keep persisted selection valid without adding an extra render.
   useEffect(() => {
     if (workspaces.length > 0 && !workspaces.find((ws) => ws.id === selectedId)) {
       const firstId = workspaces[0].id;
-      setSelectedId(firstId);
-      localStorage.setItem(LS_KEY, firstId);
+      localStorage.setItem(WORKSPACE_STORAGE_KEY, firstId);
     }
   }, [workspaces, selectedId]);
 
   const setWorkspaceId = useCallback((id: string) => {
     setSelectedId(id);
-    localStorage.setItem(LS_KEY, id);
+    localStorage.setItem(WORKSPACE_STORAGE_KEY, id);
   }, []);
 
   const refetch = useCallback(() => {

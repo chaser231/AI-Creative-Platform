@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { signOut } from "next-auth/react";
 import Image from "next/image";
 import Link from "next/link";
 import {
@@ -15,6 +14,7 @@ import { Button } from "@/components/ui/Button";
 import { trpc } from "@/lib/trpc";
 import { useThemeStore, type ThemeMode } from "@/store/themeStore";
 import { useWorkspace } from "@/providers/WorkspaceProvider";
+import { useSignOutAndClearState } from "@/hooks/useSignOutAndClearState";
 
 const themeOptions: { id: ThemeMode; label: string; icon: React.ReactNode; description: string }[] = [
   { id: "light", label: "Светлая", icon: <Sun size={18} />, description: "Кремовая палитра" },
@@ -37,6 +37,7 @@ const PROVIDER_LABELS: Record<string, string> = {
 };
 
 export default function ProfileSettingsPage() {
+  const signOutAndClearState = useSignOutAndClearState();
   const { theme, setTheme } = useThemeStore();
   const { setWorkspaceId } = useWorkspace();
 
@@ -402,7 +403,7 @@ export default function ProfileSettingsPage() {
           {/* ═══════════════════════════════════════════════ */}
           <section className="pb-8">
             <button
-              onClick={() => signOut({ callbackUrl: "/auth/signin" })}
+              onClick={signOutAndClearState}
               className="flex items-center gap-2.5 px-5 py-3 rounded-[var(--radius-xl)] border border-red-200 dark:border-red-900/30 bg-red-50/50 dark:bg-red-950/20 hover:bg-red-100/80 dark:hover:bg-red-950/40 text-red-600 dark:text-red-400 text-sm font-medium transition-all cursor-pointer"
             >
               <LogOut size={16} />

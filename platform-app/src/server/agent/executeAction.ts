@@ -1,5 +1,6 @@
 import type { ActionResult, ActionContext, CanvasInstruction } from "../actionRegistry";
 import { callLLM } from "./llmProviders";
+import { analyzeReferenceImages } from "./visionAnalyzer";
 import { resolveRefTags } from "@/lib/ai-models";
 import { SYSTEM_IMAGE_PRESETS } from "@/lib/stylePresets";
 import {
@@ -394,13 +395,39 @@ RULES:
       const topic = params.topic as string;
       const imageModel = (params.imageModel as string) || "flux-schnell";
       const templateRefImages = params.referenceImages as string[] | undefined;
-      const templateVisionCtx = params.visionContext as string | undefined;
+      // `visionContext` is `let` because we can hydrate it lazily from
+      // `preGeneratedImageUrl` below (no-refs-but-have-image scenario).
+      let templateVisionCtx = params.visionContext as string | undefined;
       const templateStyleSuffix = params.stylePromptSuffix as string | undefined;
-      const preGeneratedImageUrl = params.lastGeneratedImageUrl as string | undefined;
+      // `preGeneratedImageUrl` is `let` because we reject it to `undefined`
+      // if SSRF guard fails — see validation block below.
+      let preGeneratedImageUrl = params.lastGeneratedImageUrl as string | undefined;
       const hasTemplateRefs = templateRefImages && templateRefImages.length > 0;
 
       console.log(`[Template Fill] lastGeneratedImageUrl: ${preGeneratedImageUrl ? preGeneratedImageUrl.slice(0, 60) + '...' : 'NONE'}`);
       console.log(`[Template Fill] referenceImages: ${hasTemplateRefs ? templateRefImages.length : 0}`);
+
+      // ─── SSRF / stored-payload guard on preGeneratedImageUrl ────────
+      // The URL flows into canvasState.layers[].src (persisted + re-rendered
+      // on share/publish). Apply the same policy `place_on_canvas` uses for
+      // LLM-provided image URLs. Accept `data:image/...` blobs as-is
+      // (in-memory uploads); reject anything else that the guard rejects
+      // (javascript:, file:, http to private/IP, etc.).
+      if (preGeneratedImageUrl && !/^data:image\//i.test(preGeneratedImageUrl)) {
+        try {
+          await assertUrlIsSafe(preGeneratedImageUrl, agentAddImagePolicy());
+        } catch (e) {
+          if (e instanceof SsrfBlockedError) {
+            // Do not log full URL — temp URLs can carry tokens.
+            console.warn(
+              `[Template Fill] preGeneratedImageUrl rejected (${e.code}): ${e.reason}`,
+            );
+            preGeneratedImageUrl = undefined;
+          } else {
+            throw e;
+          }
+        }
+      }
 
       // Fetch the full template
       const template = await context.prisma.template.findUnique({
@@ -476,6 +503,33 @@ RULES:
       const hasSubhead = slots.some(s => s.slotId === "subhead" && s.type === "text");
       const hasPairedTextSlots = hasHeadline && hasSubhead;
 
+      // ─── Lazy VLM on pre-generated image ──────────────────
+      // If the orchestrator didn't pre-populate `visionContext` (the usual
+      // case when user clicks a template card directly) BUT a previous
+      // pipeline step produced an image we're about to drop into the
+      // template background, describe that image now so copywriting
+      // doesn't invent products that aren't there.
+      // This is the root cause of the "text doesn't match picture" bug:
+      // previously copywriting saw only `topic` (e.g. "Сгенерируй баннеры
+      // для Маркета") and happily wrote about irrelevant products.
+      if (!templateVisionCtx && preGeneratedImageUrl) {
+        try {
+          const vision = await analyzeReferenceImages(
+            [preGeneratedImageUrl],
+            topic,
+          );
+          if (vision.imageCount > 0 && vision.combinedSummary) {
+            templateVisionCtx = vision.combinedSummary;
+            console.log(
+              `[Template Fill] Hydrated visionContext from pre-generated image (${vision.combinedSummary.slice(0, 120)}...)`,
+            );
+          }
+        } catch (err) {
+          // Non-blocking: fall through to topic-based cleanTopic path.
+          console.warn("[Template Fill] VLM on pre-generated image failed:", err);
+        }
+      }
+
       // ─── Clean topic: extract actual product/promo theme ───────
       // The raw `topic` is often the user's meta-request like "Сгенерируй баннеры для Маркета",
       // which leaks into generated headlines. We need to extract the ACTUAL theme.
@@ -498,6 +552,81 @@ RULES:
         console.log(`[Template Fill] Cleaned topic: "${topic}" → "${cleanTopic}"`);
       }
 
+      // ─── Shared helpers for slot fillers ───────────────
+      // All `callLLM` invocations below are independent once `cleanTopic` is
+      // resolved. Running them sequentially was costing 20-40 sec on slow
+      // upstream LLM providers — enough to hit API Gateway 502 timeouts.
+      // We now fan them out with `Promise.all` and stage the image generation
+      // after its prompt resolves.
+
+      const hasCta = slots.some((s) => s.slotId === "cta" && s.type === "text");
+      const imageSlot = slots.find(
+        (s) =>
+          (s.slotId === "background" || s.slotId === "image-primary") &&
+          s.type === "image",
+      );
+      const needsImageGen = Boolean(imageSlot) && !preGeneratedImageUrl;
+
+      /** Generate the English image prompt used by the downstream image model. */
+      const buildImagePromptTask = async (): Promise<string | null> => {
+        if (!imageSlot) return null;
+        const raw =
+          hasTemplateRefs && templateVisionCtx
+            ? await callLLM([
+                {
+                  role: "system",
+                  content: `You write prompts for AI image generation that uses attached reference product photos.
+CRITICAL RULES:
+- Write in ENGLISH only
+- The user has attached ${templateRefImages!.length} reference product photos
+- The model CAN SEE the attached photos — tell it to USE them
+- Start with: "Using the attached reference images as the exact products:"
+- Describe COMPOSITION/SCENE: arrangement, lighting, background, angles
+- Do NOT describe products in detail (the model sees the photos)
+- Style: premium commercial photography, banner-quality hero shot
+${templateStyleSuffix ? `- Additional style: ${templateStyleSuffix}` : ""}
+- ALWAYS end with: "no text, no letters, no words, no logos, no watermarks"
+- Keep under 80 words. Return ONLY the prompt text.`,
+                },
+                {
+                  role: "user",
+                  content: `Create a banner image prompt for a ${topic} banner. ${templateVisionCtx}`,
+                },
+              ])
+            : await callLLM([
+                {
+                  role: "system",
+                  content: `You are an expert prompt engineer. Convert the request into a detailed English prompt for AI image generation. Include: high quality, commercial, professional.${
+                    templateStyleSuffix ? ` Style: ${templateStyleSuffix}.` : ""
+                  } CRITICAL: always add 'no text, no letters, no words, no logos, no watermarks, no graphics, no UI elements' to the prompt. Max 40 words. Return ONLY the prompt.`,
+                },
+                { role: "user", content: `Image for banner about: ${topic}` },
+              ]);
+
+        return raw
+          .trim()
+          .replace(/^["']|["']$/g, "")
+          .replace(/^(Here is the prompt:?\s*)/i, "")
+          .trim();
+      };
+
+      /** Generate image from prompt — returns null on failure so slot is simply skipped. */
+      const runImageGen = async (prompt: string): Promise<string | null> => {
+        try {
+          const { generateWithFallback } = await import("@/lib/ai-providers");
+          const imgResult = await generateWithFallback({
+            prompt,
+            type: "image",
+            model: imageModel,
+            referenceImages: hasTemplateRefs ? templateRefImages : undefined,
+          });
+          return imgResult.content;
+        } catch (err) {
+          console.warn(`[Template Fill] image generation failed:`, err);
+          return null;
+        }
+      };
+
       // ─── Market paired title+subtitle generation ───────
       if (isMarketTemplate && hasPairedTextSlots) {
         // Use specialized Market copywriting prompt (versioned in prompts/market-title-subtitle-v1.md)
@@ -514,6 +643,7 @@ RULES:
 • Бренды пиши корректно (род/число не придумывай).
 • Title всегда пиши с CAPS-LOCK, без эмодзи, без многоточий.
 • Subtitle без CAPS-LOCK, без эмодзи, без многоточий злоупотребления.
+• НЕ ПРИДУМЫВАЙ конкретные товары, бренды или категории, которых нет во входных данных. Если входная «идея» абстрактна (например «распродажа» или «Маркет») — пиши только общие формулировки (скидки, выбор, доставка, цена). Лучше общая формулировка, чем выдуманная конкретика.
 
 ЕДИНЫЙ TOV (как мы звучим)
 • Пиши короче, яснее, ближе к речи.
@@ -532,9 +662,26 @@ RULES:
   {"title": "...", "subtitle": "..."}
 ]`;
 
-        const pairsResponse = await callLLM([
-          { role: "system", content: MARKET_SYSTEM_PROMPT },
-          { role: "user", content: cleanTopic },
+        // ─── Parallel fan-out: pairs + CTA + image prompt ───
+        // All three tasks are independent once we have `cleanTopic`. We run
+        // them simultaneously; the image prompt result then feeds the image
+        // generator sequentially.
+        const [pairsResponse, ctaRaw, imgPrompt] = await Promise.all([
+          callLLM([
+            { role: "system", content: MARKET_SYSTEM_PROMPT },
+            { role: "user", content: cleanTopic },
+          ]),
+          hasCta
+            ? callLLM([
+                {
+                  role: "system",
+                  content:
+                    "Ты — копирайтер. Напиши текст для кнопки призыва к действию (CTA). 1-3 слова. Без кавычек. Только текст.",
+                },
+                { role: "user", content: `CTA для: ${cleanTopic}` },
+              ])
+            : Promise.resolve<string | null>(null),
+          needsImageGen ? buildImagePromptTask() : Promise.resolve<string | null>(null),
         ]);
 
         // Parse JSON pairs from the response
@@ -549,7 +696,6 @@ RULES:
         }
 
         if (pairs.length > 0) {
-          // Use the FIRST pair for immediate application
           const chosenPair = pairs[0];
           canvasActions.push({
             action: "update_layer",
@@ -561,77 +707,43 @@ RULES:
           });
         }
 
-        // Still generate other slots (CTA, images) generically
-        for (const slot of slots) {
-          if (slot.slotId === "headline" || slot.slotId === "subhead") continue; // already handled
+        if (ctaRaw) {
+          canvasActions.push({
+            action: "update_layer",
+            params: {
+              slotId: "cta",
+              updates: {
+                text: ctaRaw
+                  .trim()
+                  .replace(/^["«]|["»]$/g, "")
+                  .replace(/\.$/, ""),
+              },
+            },
+          });
+        }
 
-          if (slot.slotId === "cta" && slot.type === "text") {
-            const cta = await callLLM([
-              { role: "system", content: "Ты — копирайтер. Напиши текст для кнопки призыва к действию (CTA). 1-3 слова. Без кавычек. Только текст." },
-              { role: "user", content: `CTA для: ${cleanTopic}` },
-            ]);
+        // Image slot: prefer pre-generated URL; otherwise run image gen on the
+        // prompt we resolved in parallel above.
+        if (imageSlot) {
+          if (preGeneratedImageUrl) {
+            console.log(`[Template Fill] Using pre-generated image for slot "${imageSlot.slotId}"`);
             canvasActions.push({
               action: "update_layer",
-              params: { slotId: "cta", updates: { text: cta.trim().replace(/^["«]|["»]$/g, "").replace(/\.$/, "") } },
+              params: { slotId: imageSlot.slotId, updates: { src: preGeneratedImageUrl } },
             });
-          } else if ((slot.slotId === "background" || slot.slotId === "image-primary") && slot.type === "image") {
-            // Priority 1: Use pre-generated image from an earlier pipeline step
-            if (preGeneratedImageUrl) {
-              console.log(`[Template Fill] Using pre-generated image for slot "${slot.slotId}"`);
+          } else if (imgPrompt) {
+            console.log(
+              `[Template Fill] Image prompt for slot "${imageSlot.slotId}": "${imgPrompt.slice(0, 120)}..."`,
+            );
+            console.log(
+              `[Template Fill] hasRefImages: ${hasTemplateRefs ? templateRefImages!.length : 0}`,
+            );
+            const imgSrc = await runImageGen(imgPrompt);
+            if (imgSrc) {
               canvasActions.push({
                 action: "update_layer",
-                params: { slotId: slot.slotId, updates: { src: preGeneratedImageUrl } },
+                params: { slotId: imageSlot.slotId, updates: { src: imgSrc } },
               });
-            } else {
-              // Priority 2/3: Generate image (reference-aware or basic)
-              let imgPrompt: string;
-              if (hasTemplateRefs && templateVisionCtx) {
-                imgPrompt = await callLLM([
-                  { role: "system", content: `You write prompts for AI image generation that uses attached reference product photos.
-CRITICAL RULES:
-- Write in ENGLISH only
-- The user has attached ${templateRefImages!.length} reference product photos
-- The model CAN SEE the attached photos — tell it to USE them
-- Start with: "Using the attached reference images as the exact products:"
-- Describe COMPOSITION/SCENE: arrangement, lighting, background, angles
-- Do NOT describe products in detail (the model sees the photos)
-- Style: premium commercial photography, banner-quality hero shot
-${templateStyleSuffix ? `- Additional style: ${templateStyleSuffix}` : ''}
-- ALWAYS end with: "no text, no letters, no words, no logos, no watermarks"
-- Keep under 80 words. Return ONLY the prompt text.` },
-                  { role: "user", content: `Create a banner image prompt for a ${topic} banner. ${templateVisionCtx}` },
-                ]);
-              } else {
-                imgPrompt = await callLLM([
-                  { role: "system", content: `You are an expert prompt engineer. Convert the request into a detailed English prompt for AI image generation. Include: high quality, commercial, professional.${templateStyleSuffix ? ` Style: ${templateStyleSuffix}.` : ''} CRITICAL: always add 'no text, no letters, no words, no logos, no watermarks, no graphics, no UI elements' to the prompt. Max 40 words. Return ONLY the prompt.` },
-                  { role: "user", content: `Image for banner about: ${topic}` },
-                ]);
-              }
-
-              // Clean up LLM wrapper artifacts
-              let cleanImgPrompt = imgPrompt.trim();
-              cleanImgPrompt = cleanImgPrompt.replace(/^["']|["']$/g, '');
-              cleanImgPrompt = cleanImgPrompt.replace(/^(Here is the prompt:?\s*)/i, '');
-              cleanImgPrompt = cleanImgPrompt.trim();
-
-              console.log(`[Template Fill] Image prompt for slot "${slot.slotId}": "${cleanImgPrompt.slice(0, 120)}..."`);
-              console.log(`[Template Fill] hasRefImages: ${hasTemplateRefs ? templateRefImages!.length : 0}`);
-
-              try {
-                const { generateWithFallback } = await import("@/lib/ai-providers");
-                const imgResult = await generateWithFallback({
-                  prompt: cleanImgPrompt,
-                  type: "image",
-                  model: imageModel,
-                  referenceImages: hasTemplateRefs ? templateRefImages : undefined,
-                });
-                canvasActions.push({
-                  action: "update_layer",
-                  params: { slotId: slot.slotId, updates: { src: imgResult.content } },
-                });
-              } catch {
-                // skip failed image
-              }
             }
           }
         }
@@ -655,92 +767,104 @@ ${templateStyleSuffix ? `- Additional style: ${templateStyleSuffix}` : ''}
       }
 
       // ─── Generic slot filling (non-Market templates) ───────
-      for (const slot of slots) {
-        if (slot.slotId === "headline" && slot.type === "text") {
-          const headline = await callLLM([
-            { role: "system", content: "Ты — копирайтер. Напиши ОДИН заголовок для баннера. Максимум 5 слов. Без кавычек, без точки. Только текст." },
-            { role: "user", content: `Заголовок для: ${cleanTopic}` },
-          ]);
+      // Same idea: all text-slot LLM calls + the image prompt are independent
+      // of each other and can fan out.
+      const hasHeadlineSlot = slots.some((s) => s.slotId === "headline" && s.type === "text");
+      const hasSubheadSlot = slots.some((s) => s.slotId === "subhead" && s.type === "text");
+
+      // Anti-hallucination rule shared by all generic text slots: when the
+      // topic is abstract, the model must stay abstract rather than inventing
+      // products that aren't depicted on the banner.
+      const NO_HALLUCINATION_RULE =
+        "ВАЖНО: НЕ придумывай конкретные товары, бренды или категории, которых нет в теме. Если тема абстрактна — пиши общо (скидки, выбор, доставка, цена). Лучше общо, чем выдуманная конкретика.";
+
+      const [headlineRaw, subtitleRaw, ctaRaw, imgPromptGeneric] = await Promise.all([
+        hasHeadlineSlot
+          ? callLLM([
+              {
+                role: "system",
+                content:
+                  `Ты — копирайтер. Напиши ОДИН заголовок для баннера. Максимум 5 слов. Без кавычек, без точки. Только текст.\n${NO_HALLUCINATION_RULE}`,
+              },
+              { role: "user", content: `Заголовок для: ${cleanTopic}` },
+            ])
+          : Promise.resolve<string | null>(null),
+        hasSubheadSlot
+          ? callLLM([
+              {
+                role: "system",
+                content:
+                  `Ты — копирайтер. Напиши подзаголовок для баннера. 8-15 слов. Без кавычек. Только текст.\n${NO_HALLUCINATION_RULE}`,
+              },
+              { role: "user", content: `Подзаголовок для: ${cleanTopic}` },
+            ])
+          : Promise.resolve<string | null>(null),
+        hasCta
+          ? callLLM([
+              {
+                role: "system",
+                content:
+                  `Ты — копирайтер. Напиши текст для кнопки призыва к действию (CTA). 1-3 слова. Без кавычек. Только текст.\n${NO_HALLUCINATION_RULE}`,
+              },
+              { role: "user", content: `CTA для: ${cleanTopic}` },
+            ])
+          : Promise.resolve<string | null>(null),
+        needsImageGen ? buildImagePromptTask() : Promise.resolve<string | null>(null),
+      ]);
+
+      if (headlineRaw) {
+        canvasActions.push({
+          action: "update_layer",
+          params: {
+            slotId: "headline",
+            updates: {
+              text: headlineRaw
+                .trim()
+                .replace(/^["«]|["»]$/g, "")
+                .replace(/\.$/, ""),
+            },
+          },
+        });
+      }
+      if (subtitleRaw) {
+        canvasActions.push({
+          action: "update_layer",
+          params: {
+            slotId: "subhead",
+            updates: { text: subtitleRaw.trim().replace(/^["«]|["»]$/g, "") },
+          },
+        });
+      }
+      if (ctaRaw) {
+        canvasActions.push({
+          action: "update_layer",
+          params: {
+            slotId: "cta",
+            updates: { text: ctaRaw.trim().replace(/^["«]|["»]$/g, "") },
+          },
+        });
+      }
+
+      if (imageSlot) {
+        if (preGeneratedImageUrl) {
+          console.log(`[Template Fill Generic] Using pre-generated image for slot "${imageSlot.slotId}"`);
           canvasActions.push({
             action: "update_layer",
-            params: { slotId: "headline", updates: { text: headline.trim().replace(/^["«]|["»]$/g, "").replace(/\.$/, "") } },
+            params: { slotId: imageSlot.slotId, updates: { src: preGeneratedImageUrl } },
           });
-        } else if (slot.slotId === "subhead" && slot.type === "text") {
-          const subtitle = await callLLM([
-            { role: "system", content: "Ты — копирайтер. Напиши подзаголовок для баннера. 8-15 слов. Без кавычек. Только текст." },
-            { role: "user", content: `Подзаголовок для: ${cleanTopic}` },
-          ]);
-          canvasActions.push({
-            action: "update_layer",
-            params: { slotId: "subhead", updates: { text: subtitle.trim().replace(/^["«]|["»]$/g, "") } },
-          });
-        } else if (slot.slotId === "cta" && slot.type === "text") {
-          const cta = await callLLM([
-            { role: "system", content: "Ты — копирайтер. Напиши текст для кнопки призыва к действию (CTA). 1-3 слова. Без кавычек. Только текст." },
-            { role: "user", content: `CTA для: ${cleanTopic}` },
-          ]);
-          canvasActions.push({
-            action: "update_layer",
-            params: { slotId: "cta", updates: { text: cta.trim().replace(/^["«]|["»]$/g, "") } },
-          });
-        } else if ((slot.slotId === "background" || slot.slotId === "image-primary") && (slot.type === "image")) {
-          // Priority 1: Use pre-generated image from an earlier pipeline step
-          if (preGeneratedImageUrl) {
-            console.log(`[Template Fill Generic] Using pre-generated image for slot "${slot.slotId}"`);
+        } else if (imgPromptGeneric) {
+          console.log(
+            `[Template Fill Generic] Image prompt for slot "${imageSlot.slotId}": "${imgPromptGeneric.slice(0, 120)}..."`,
+          );
+          console.log(
+            `[Template Fill Generic] hasRefImages: ${hasTemplateRefs ? templateRefImages!.length : 0}`,
+          );
+          const imgSrc = await runImageGen(imgPromptGeneric);
+          if (imgSrc) {
             canvasActions.push({
               action: "update_layer",
-              params: { slotId: slot.slotId, updates: { src: preGeneratedImageUrl } },
+              params: { slotId: imageSlot.slotId, updates: { src: imgSrc } },
             });
-          } else {
-            // Priority 2/3: Generate image (reference-aware or basic)
-            let imgPrompt: string;
-            if (hasTemplateRefs && templateVisionCtx) {
-              imgPrompt = await callLLM([
-                { role: "system", content: `You write prompts for AI image generation that uses attached reference product photos.
-CRITICAL RULES:
-- Write in ENGLISH only
-- The user has attached ${templateRefImages!.length} reference product photos
-- The model CAN SEE the attached photos — tell it to USE them
-- Start with: "Using the attached reference images as the exact products:"
-- Describe COMPOSITION/SCENE: arrangement, lighting, background, angles
-- Do NOT describe products in detail (the model sees the photos)
-- Style: premium commercial photography, banner-quality hero shot
-${templateStyleSuffix ? `- Additional style: ${templateStyleSuffix}` : ''}
-- ALWAYS end with: "no text, no letters, no words, no logos, no watermarks"
-- Keep under 80 words. Return ONLY the prompt text.` },
-                { role: "user", content: `Create a banner image prompt for a ${topic} banner. ${templateVisionCtx}` },
-              ]);
-            } else {
-              imgPrompt = await callLLM([
-                { role: "system", content: `You are an expert prompt engineer. Convert the request into a detailed English prompt for AI image generation. Include: high quality, commercial, professional.${templateStyleSuffix ? ` Style: ${templateStyleSuffix}.` : ''} CRITICAL: always add 'no text, no letters, no words, no logos, no watermarks, no graphics, no UI elements' to the prompt. Max 40 words. Return ONLY the prompt.` },
-                { role: "user", content: `Image for banner about: ${topic}` },
-              ]);
-            }
-
-            // Clean up LLM wrapper artifacts
-            let cleanImgPrompt = imgPrompt.trim();
-            cleanImgPrompt = cleanImgPrompt.replace(/^["']|["']$/g, '');
-            cleanImgPrompt = cleanImgPrompt.replace(/^(Here is the prompt:?\s*)/i, '');
-            cleanImgPrompt = cleanImgPrompt.trim();
-
-            console.log(`[Template Fill Generic] Image prompt for slot "${slot.slotId}": "${cleanImgPrompt.slice(0, 120)}..."`);
-            console.log(`[Template Fill Generic] hasRefImages: ${hasTemplateRefs ? templateRefImages!.length : 0}`);
-
-            try {
-              const { generateWithFallback } = await import("@/lib/ai-providers");
-              const imgResult = await generateWithFallback({
-                prompt: cleanImgPrompt,
-                type: "image",
-                model: imageModel,
-                referenceImages: hasTemplateRefs ? templateRefImages : undefined,
-              });
-              canvasActions.push({
-                action: "update_layer",
-                params: { slotId: slot.slotId, updates: { src: imgResult.content } },
-              });
-            } catch {
-              // Image generation failed, skip this slot
-            }
           }
         }
       }

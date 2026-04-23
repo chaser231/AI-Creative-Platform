@@ -7,11 +7,13 @@
 
 "use client";
 
-import { useSession, signOut, signIn } from "next-auth/react";
+import { useSession, signIn } from "next-auth/react";
 import { LogOut, User as UserIcon } from "lucide-react";
+import { useSignOutAndClearState } from "@/hooks/useSignOutAndClearState";
 
 export function UserMenu() {
     const { data: session, status } = useSession();
+    const signOutAndClearState = useSignOutAndClearState();
 
     // Loading state
     if (status === "loading") {
@@ -61,7 +63,7 @@ export function UserMenu() {
                 </p>
             </div>
             <button
-                onClick={() => signOut({ callbackUrl: "/auth/signin" })}
+                onClick={signOutAndClearState}
                 className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-bg-tertiary transition-all cursor-pointer"
                 title="Выйти"
             >

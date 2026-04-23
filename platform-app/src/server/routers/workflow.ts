@@ -8,6 +8,7 @@ import { z } from "zod";
 import { createTRPCRouter, protectedProcedure } from "../trpc";
 import { TRPCError } from "@trpc/server";
 import { interpretAndExecute, executeAction } from "../agent";
+import { analyzeReferenceImages } from "../agent/visionAnalyzer";
 import { getModelById } from "@/lib/ai-models";
 import type { PrismaClient } from "@prisma/client";
 import type { AgentStep } from "../agent/types";
@@ -248,13 +249,15 @@ export const workflowRouter = createTRPCRouter({
         }
       );
 
-      // Track AI costs (non-blocking)
-      await trackAgentCosts(
+      // Fire-and-forget: cost tracking must never delay the response path
+      // or trigger a gateway timeout. `trackAgentCosts` already has internal
+      // try/catch; the outer .catch is a last-resort guard.
+      void trackAgentCosts(
         ctx.prisma,
         ctx.user.id,
         input.projectId,
         result.plan.steps
-      );
+      ).catch((err) => console.error("[trackAgentCosts] async error:", err));
 
       return result;
     }),
@@ -272,12 +275,45 @@ export const workflowRouter = createTRPCRouter({
         workspaceId: z.string(),
         selectedImageModel: z.string().optional(),
         referenceImages: z.array(z.string()).optional(),
-        lastGeneratedImageUrl: z.string().optional(),
+        // Accept either an absolute URL (e.g. https://s3…/image.jpg) or a
+        // data URL (e.g. data:image/jpeg;base64,…). executeAction still
+        // runs assertUrlIsSafe() for absolute URLs as a second guard.
+        lastGeneratedImageUrl: z
+          .string()
+          .refine(
+            (v) => /^data:image\//i.test(v) || /^https?:\/\//i.test(v),
+            { message: "Must be an http(s) URL or data:image/… blob" },
+          )
+          .optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
       await assertWorkspaceAccess(ctx, input.workspaceId, "USER");
       await assertTemplateAccess(ctx, input.templateId, "read");
+
+      // ── VLM Vision Pre-step ───────────────────────────────────────
+      // Mirror the behavior that `interpretAndExecute` already has: when
+      // the user attached reference images, run a VLM so the copywriter
+      // downstream can ground its text in what is actually depicted.
+      // Without this, apply_and_fill_template fills slots from the raw
+      // user `topic` (a meta-request like "Сгенерируй баннеры для Маркета")
+      // and produces text that doesn't match the generated banner at all.
+      let visionContext: string | undefined;
+      if (input.referenceImages && input.referenceImages.length > 0) {
+        try {
+          const vision = await analyzeReferenceImages(
+            input.referenceImages,
+            input.topic,
+          );
+          if (vision.imageCount > 0 && vision.combinedSummary) {
+            visionContext = `\n\n⚠️ ВИЗУАЛЬНЫЙ КОНТЕКСТ (загруженные референсы):\n${vision.combinedSummary}\n\nИнструкция: Используй эти описания при составлении текстов. Описывай товары конкретно.`;
+          }
+        } catch (err) {
+          // Non-blocking: copywriting will fall back to topic-based text.
+          console.warn("[applyTemplate] VLM analysis failed:", err);
+        }
+      }
+
       const result = await executeAction(
         "apply_and_fill_template",
         {
@@ -286,6 +322,7 @@ export const workflowRouter = createTRPCRouter({
           ...(input.selectedImageModel ? { imageModel: input.selectedImageModel } : {}),
           ...(input.referenceImages ? { referenceImages: input.referenceImages } : {}),
           ...(input.lastGeneratedImageUrl ? { lastGeneratedImageUrl: input.lastGeneratedImageUrl } : {}),
+          ...(visionContext ? { visionContext } : {}),
         },
         {
           userId: ctx.user.id,
@@ -305,13 +342,15 @@ export const workflowRouter = createTRPCRouter({
         result,
       };
 
-      // Track AI costs (non-blocking)
-      await trackAgentCosts(
+      // Fire-and-forget: do not block the response (applyTemplate is already
+      // the slowest procedure in the app; one extra DB round-trip inflates
+      // the chance of a gateway 502).
+      void trackAgentCosts(
         ctx.prisma,
         ctx.user.id,
         undefined, // applyTemplate doesn't have projectId directly; use workspace-level
         [templateStep]
-      );
+      ).catch((err) => console.error("[trackAgentCosts] async error:", err));
 
       return {
         plan: {

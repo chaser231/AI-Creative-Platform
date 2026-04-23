@@ -12,15 +12,13 @@ import superjson from "superjson";
 import { ZodError } from "zod";
 import { prisma } from "./db";
 import { auth } from "./auth";
+import { isDevAuthBypassEnabled } from "./auth/devBypass";
+import { logAuthDiagnostic } from "@/lib/authDiagnostics";
 
 // ─── Context ─────────────────────────────────────────────
 
-/**
- * Dev mode: auto-create and use a dev user when no real auth session exists.
- * This allows all protected routes to work without OAuth configuration.
- */
 async function getDevUser() {
-  if (process.env.NODE_ENV !== "development") return null;
+  if (!isDevAuthBypassEnabled()) return null;
 
   const DEV_EMAIL = "dev@acp.local";
   let user = await prisma.user.findUnique({ where: { email: DEV_EMAIL } });
@@ -58,11 +56,20 @@ async function getDevUser() {
 export async function createTRPCContext(opts: { headers: Headers }) {
   const session = await auth();
   
-  // In dev mode, use dev user if no real session
+  // In dev mode, only use a dev user when the bypass is explicitly enabled.
   let user = session?.user ?? null;
-  if (!user && process.env.NODE_ENV === "development") {
+  const devBypassEnabled = isDevAuthBypassEnabled();
+  if (!user && devBypassEnabled) {
     user = await getDevUser();
   }
+
+  logAuthDiagnostic("trpc_context_resolved", {
+    hasSession: Boolean(session?.user),
+    hasUser: Boolean(user),
+    userId: user?.id ?? null,
+    devBypassEnabled,
+    devBypassUsed: !session?.user && Boolean(user),
+  });
 
   return {
     prisma,
@@ -101,6 +108,10 @@ export const publicProcedure = t.procedure;
 /** Protected procedure — requires authenticated session (any status) */
 export const protectedProcedure = t.procedure.use(async ({ ctx, next }) => {
   if (!ctx.session || !ctx.user) {
+    logAuthDiagnostic("trpc_unauthorized", {
+      hasSession: Boolean(ctx.session),
+      hasUser: Boolean(ctx.user),
+    });
     throw new TRPCError({ code: "UNAUTHORIZED" });
   }
 

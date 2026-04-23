@@ -2,9 +2,11 @@
  * Next.js Middleware — Route Protection
  *
  * Redirects unauthenticated users to /auth/signin.
- * In development mode, all routes are accessible (dev auth bypass handles it).
+ * The middleware only checks for the presence of a NextAuth session cookie.
+ * tRPC and route handlers still validate the session server-side.
  *
- * Checks for NextAuth session cookie to determine auth status.
+ * Checks for NextAuth session cookie to avoid rendering private pages for
+ * obviously anonymous requests.
  * This approach works with Prisma adapter (non-Edge) since we only check cookies.
  */
 
@@ -38,11 +40,12 @@ export function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  // Check for NextAuth session cookie
-  // NextAuth v5 uses both secure and non-secure cookie names
+  // Check for NextAuth session cookie. NextAuth v5 can use secure/non-secure
+  // cookie names depending on deployment host and protocol.
   const hasSession =
     request.cookies.has("authjs.session-token") ||
-    request.cookies.has("__Secure-authjs.session-token");
+    request.cookies.has("__Secure-authjs.session-token") ||
+    request.cookies.has("__Host-authjs.session-token");
 
   if (!hasSession) {
     const signInUrl = new URL("/auth/signin", request.url);

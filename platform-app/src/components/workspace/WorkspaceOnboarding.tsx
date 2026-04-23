@@ -8,10 +8,10 @@
  */
 
 import { useState } from "react";
-import { signOut } from "next-auth/react";
 import { trpc } from "@/lib/trpc";
 import { useWorkspace } from "@/providers/WorkspaceProvider";
 import { Users, ShoppingCart, Utensils, Car, Store, Loader2, Check, LogOut } from "lucide-react";
+import { useSignOutAndClearState } from "@/hooks/useSignOutAndClearState";
 
 const TEAM_ICONS: Record<string, React.ReactNode> = {
   "yandex-market": <ShoppingCart size={28} />,
@@ -36,6 +36,7 @@ const TEAM_ACCENT: Record<string, string> = {
 
 export function WorkspaceOnboarding() {
   const { refetch, setWorkspaceId } = useWorkspace();
+  const signOutAndClearState = useSignOutAndClearState();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [joining, setJoining] = useState(false);
 
@@ -142,7 +143,7 @@ export function WorkspaceOnboarding() {
             )}
           </button>
           <button
-            onClick={() => signOut({ callbackUrl: "/auth/signin" })}
+            onClick={signOutAndClearState}
             className="flex items-center gap-2 px-4 py-2 rounded-[var(--radius-xl)] text-xs text-text-tertiary hover:text-text-primary hover:bg-bg-surface/60 transition-colors cursor-pointer"
           >
             <LogOut size={14} />

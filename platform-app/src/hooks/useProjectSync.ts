@@ -88,6 +88,27 @@ export function useProjectListSync(onlyMine?: boolean) {
 }
 
 /**
+ * Shared ref that `useLoadCanvasState` and `useCanvasAutoSave` use to agree on
+ * the current optimistic-locking version. Keyed by `projectId` so switching
+ * between editors doesn't leak a stale version into the next project.
+ *
+ * This is deliberately module-level (not a React context) so that the two
+ * hooks can communicate without requiring a provider — they're always used
+ * together on the editor page, and wrapping every editor in a new provider
+ * just for one number is overkill.
+ */
+const projectVersionRefs = new Map<string, { current: number | null }>();
+
+function getVersionRef(projectId: string) {
+  let ref = projectVersionRefs.get(projectId);
+  if (!ref) {
+    ref = { current: null };
+    projectVersionRefs.set(projectId, ref);
+  }
+  return ref;
+}
+
+/**
  * Hook to auto-save canvas state to the backend.
  * Use in the editor page.
  *
@@ -95,11 +116,17 @@ export function useProjectListSync(onlyMine?: boolean) {
  * @param enabled   - Set to true only AFTER the initial canvas load completes.
  *                    This prevents the clear-on-mount from triggering an empty save.
  * @param stageRef  - Optional Konva.Stage ref for thumbnail capture.
+ * @param onVersionConflict - Fired when the server reports that the client is
+ *                    writing over newer state (another tab / window saved
+ *                    first). The editor page should refetch canvas state and
+ *                    reconcile. MF-3 deliberately skips auto-retry so we don't
+ *                    clobber the newer work.
  */
 export function useCanvasAutoSave(
   projectId: string,
   enabled: boolean = true,
   stageRef?: RefObject<Konva.Stage | null>,
+  onVersionConflict?: () => void,
 ) {
   const saveStateMutation = trpc.project.saveState.useMutation();
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -108,6 +135,9 @@ export function useCanvasAutoSave(
   const hasEverLoadedRef = useRef(false);
   const isMigratingRef = useRef(false);
   const saveCountRef = useRef(0);
+  const lastKnownVersionRef = getVersionRef(projectId);
+  const onVersionConflictRef = useRef(onVersionConflict);
+  onVersionConflictRef.current = onVersionConflict;
   enabledRef.current = enabled;
 
   // Track when the first successful load happens
@@ -243,15 +273,40 @@ export function useCanvasAutoSave(
       }
     }
 
+    const expectedVersion = lastKnownVersionRef.current;
     saveStateMutation.mutate(
-      { id: projectId, canvasState, thumbnail: thumbnailUrl },
       {
-      onError: (err: { message: string }) => {
+        id: projectId,
+        canvasState,
+        thumbnail: thumbnailUrl,
+        ...(expectedVersion !== null && { expectedVersion }),
+      },
+      {
+        onSuccess: (data: { version?: number }) => {
+          if (typeof data?.version === "number") {
+            lastKnownVersionRef.current = data.version;
+          }
+        },
+        onError: (err) => {
+          // MF-3: version conflict → another tab/retry wrote newer state.
+          // Surface it to the caller so they can refetch + reconcile; do
+          // NOT auto-retry (would clobber the newer work). We also reset
+          // `lastSavedRef` so the next real change still triggers a save
+          // attempt once the caller has refetched.
+          const code = (err as { data?: { code?: string } | null })?.data?.code;
+          if (code === "CONFLICT") {
+            console.error(
+              `[useCanvasAutoSave] version conflict for project ${projectId} — refetching is required`,
+            );
+            lastSavedRef.current = "";
+            onVersionConflictRef.current?.();
+            return;
+          }
           console.error("Auto-save failed:", err.message);
         },
       }
     );
-  }, [projectId, saveStateMutation, captureThumbnail]);
+  }, [projectId, saveStateMutation, captureThumbnail, lastKnownVersionRef]);
 
   const getUnsavedState = useCallback(() => {
     return !!timeoutRef.current || isMigratingRef.current || saveStateMutation.isPending;
@@ -274,15 +329,23 @@ export function useCanvasAutoSave(
     // Always capture thumbnail on exit
     const thumbnail = captureThumbnail();
 
-    // Use sendBeacon for reliable delivery during navigation/unload
-    const payload = JSON.stringify({ projectId, canvasState, thumbnail });
+    // MF-3: ship last known version alongside the beacon. The endpoint
+    // applies soft-merge (warn + last-wins) rather than rejecting, because
+    // beacons fire during unload and have no retry path.
+    const expectedVersion = lastKnownVersionRef.current;
+    const payload = JSON.stringify({
+      projectId,
+      canvasState,
+      thumbnail,
+      ...(expectedVersion !== null && { expectedVersion }),
+    });
     const blob = new Blob([payload], { type: "application/json" });
-    
+
     let sent = false;
     try {
         sent = navigator.sendBeacon("/api/canvas/save", blob);
     } catch {}
-    
+
     if (!sent) {
       // Fallback for large payloads (e.g. over 64KB limit).
       // Since client-side routing unmounts this component without destroying the page context,
@@ -293,7 +356,7 @@ export function useCanvasAutoSave(
         body: payload,
       }).catch(() => { /* best-effort */ });
     }
-  }, [projectId, captureThumbnail]);
+  }, [projectId, captureThumbnail, lastKnownVersionRef]);
 
   // Subscribe to canvas store changes and debounce saves
   useEffect(() => {
@@ -357,7 +420,13 @@ export function useCanvasAutoSave(
       // Capture thumbnail on page unload
       const thumbnail = captureThumbnail();
 
-      const payload = JSON.stringify({ projectId, canvasState, thumbnail });
+      const expectedVersion = lastKnownVersionRef.current;
+      const payload = JSON.stringify({
+        projectId,
+        canvasState,
+        thumbnail,
+        ...(expectedVersion !== null && { expectedVersion }),
+      });
       const blob = new Blob([payload], { type: "application/json" });
 
       // sendBeacon has a ~64KB limit; fallback to fetch+keepalive for larger payloads
@@ -375,7 +444,7 @@ export function useCanvasAutoSave(
 
     window.addEventListener("beforeunload", handleBeforeUnload);
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
-  }, [projectId]);
+  }, [projectId, captureThumbnail, lastKnownVersionRef]);
 
   return {
     isSaving: saveStateMutation.isPending || isMigratingRef.current,
@@ -424,9 +493,22 @@ export function useLoadCanvasState(projectId: string) {
   );
 
   useEffect(() => {
-    if (canvasQuery.data && typeof canvasQuery.data === "object") {
-      const state = canvasQuery.data as Record<string, unknown>;
+    // MF-3: `loadState` now returns `{ canvasState, version }`. Extract both
+    // — push the version into the shared ref so `useCanvasAutoSave` can send
+    // it as `expectedVersion` on the next save.
+    const envelope = canvasQuery.data as
+      | { canvasState: Record<string, unknown> | null; version: number }
+      | null
+      | undefined;
+    if (!envelope) return;
 
+    const versionRef = getVersionRef(projectId);
+    if (typeof envelope.version === "number") {
+      versionRef.current = envelope.version;
+    }
+
+    const state = envelope.canvasState;
+    if (state && typeof state === "object") {
       if (state.layers && Array.isArray(state.layers)) {
         type Resizes = ReturnType<typeof useCanvasStore.getState>["resizes"];
         const resizes = (state.resizes ?? useCanvasStore.getState().resizes) as Resizes;
@@ -458,13 +540,16 @@ export function useLoadCanvasState(projectId: string) {
     }
     // If load fails (project not in DB), keep the current canvas state.
     // The projectId-change reset above already handles clearing between projects.
-  }, [canvasQuery.data]);
+  }, [canvasQuery.data, projectId]);
 
   return {
     isLoading: canvasQuery.isLoading,
     isError: canvasQuery.isError,
     // True once the query has completed (success or error)
     isLoaded: canvasQuery.isFetched,
+    // MF-3: callers (editor page) use this to reconcile after a version
+    // conflict reported by `useCanvasAutoSave`.
+    refetch: canvasQuery.refetch,
   };
 }
 

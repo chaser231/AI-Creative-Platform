@@ -7,7 +7,7 @@
 import { z } from "zod";
 import { createTRPCRouter, protectedProcedure } from "../trpc";
 import { TRPCError } from "@trpc/server";
-import type { PrismaClient } from "@prisma/client";
+import { Prisma, type PrismaClient } from "@prisma/client";
 import {
   collectS3KeysFromAssets,
   collectS3KeysFromCanvasState,
@@ -240,7 +240,20 @@ export const projectRouter = createTRPCRouter({
       return { success: true };
     }),
 
-  /** Save canvas state (auto-save) */
+  /**
+   * Save canvas state (auto-save).
+   *
+   * Optimistic locking (MF-3):
+   *   - Caller SHOULD pass the `version` value it last observed (via
+   *     `loadState` or the previous `saveState` response) as `expectedVersion`.
+   *   - If the current DB row has a different `version`, the caller is working
+   *     on stale state and we throw `CONFLICT` — the client is expected to
+   *     refetch and reconcile (MF-3 keeps it simple: no auto-retry).
+   *   - `version` is always incremented on successful writes so other tabs
+   *     detect the change on their next save attempt.
+   *   - Legacy callers that omit `expectedVersion` fall back to last-wins
+   *     (but still bump the version so newer clients stay in sync).
+   */
   saveState: protectedProcedure
     .input(
       z.object({
@@ -255,6 +268,7 @@ export const projectRouter = createTRPCRouter({
           canvasHeight: z.number().optional(),
         }),
         thumbnail: z.string().nullable().optional(),
+        expectedVersion: z.number().int().nonnegative().optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -267,26 +281,67 @@ export const projectRouter = createTRPCRouter({
         thumbnail = null;
       }
 
+      const data = {
+        canvasState: input.canvasState,
+        ...(thumbnail !== undefined && { thumbnail }),
+        status: "IN_PROGRESS" as const,
+        version: { increment: 1 },
+      };
+
+      if (typeof input.expectedVersion === "number") {
+        try {
+          const project = await ctx.prisma.project.update({
+            where: { id: input.id, version: input.expectedVersion },
+            data,
+            select: { updatedAt: true, version: true },
+          });
+          return { success: true, updatedAt: project.updatedAt, version: project.version };
+        } catch (err) {
+          // P2025 = "Record to update not found" — either id or version mismatch.
+          // Since access was already asserted above, a NOT_FOUND here means
+          // the version predicate failed → concurrent write wins.
+          if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2025") {
+            const current = await ctx.prisma.project.findUnique({
+              where: { id: input.id },
+              select: { version: true, updatedAt: true },
+            });
+            throw new TRPCError({
+              code: "CONFLICT",
+              message: "version mismatch",
+              cause: {
+                expectedVersion: input.expectedVersion,
+                currentVersion: current?.version ?? null,
+                updatedAt: current?.updatedAt ?? null,
+              },
+            });
+          }
+          throw err;
+        }
+      }
+
       const project = await ctx.prisma.project.update({
         where: { id: input.id },
-        data: {
-          canvasState: input.canvasState,
-          ...(thumbnail !== undefined && { thumbnail }),
-          status: "IN_PROGRESS",
-        },
+        data,
+        select: { updatedAt: true, version: true },
       });
-
-      return { success: true, updatedAt: project.updatedAt };
+      return { success: true, updatedAt: project.updatedAt, version: project.version };
     }),
 
-  /** Load canvas state */
+  /**
+   * Load canvas state.
+   *
+   * MF-3: response is now `{ canvasState, version }` — the client must feed
+   * `version` into the next `saveState` as `expectedVersion` to engage
+   * optimistic locking. Older clients that read a plain canvas object will
+   * need a small migration (see `useLoadCanvasState`).
+   */
   loadState: protectedProcedure
     .input(z.object({ id: z.string() }))
     .query(async ({ ctx, input }) => {
       await assertProjectAccess(ctx, input.id);
       const project = await ctx.prisma.project.findUnique({
         where: { id: input.id },
-        select: { canvasState: true },
+        select: { canvasState: true, version: true },
       });
 
       if (!project) {
@@ -321,7 +376,7 @@ export const projectRouter = createTRPCRouter({
         }
       }
 
-      return project.canvasState;
+      return { canvasState: project.canvasState, version: project.version };
     }),
 
   /** Create a version snapshot */
@@ -410,9 +465,14 @@ export const projectRouter = createTRPCRouter({
         throw new TRPCError({ code: "NOT_FOUND" });
       }
 
+      // MF-3: bump `version` so any open editor tab detects the restore on
+      // its next save attempt and refetches instead of silently overwriting.
       await ctx.prisma.project.update({
         where: { id: input.projectId },
-        data: { canvasState: version.canvasState ?? undefined },
+        data: {
+          canvasState: version.canvasState ?? undefined,
+          version: { increment: 1 },
+        },
       });
 
       return { success: true };
