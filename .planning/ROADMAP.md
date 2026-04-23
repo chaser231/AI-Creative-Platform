@@ -8,14 +8,16 @@
 
 ## Обзор фаз
 
-| # | Phase | Цель | Depends on | REQs | Parallel-able с |
-|---|---|---|---|---|---|
-| 1 | **DB + Server AI Actions** | Сервер умеет выполнять bg-removal и reflection через API + БД готова хранить graph | — | REQ-01, 04, 05, 06, 07 (partial), 08, 23 | Phase 2 (параллельно после schema migration) |
-| 2 | **Editor Canvas + tRPC CRUD** | `/workflows` страницы работают, граф создаётся / сохраняется / загружается без runtime | 1 (schema) | REQ-02, 09, 10, 13, 24, 25 | Phase 1 (после REQ-01) |
-| 3 | **Node Registry + Inspector + Client Handlers** | Каждая нода знает свою schema, inspector рендерит форму, ImageInput / AssetOutput client-handlers работают | 2 | REQ-11, 12, 13 (full), 14 | — |
-| 4 | **Runtime / Executor / Run Button** | Нажатие Run реально запускает граф end-to-end, per-node progress UI, rate-limit | 1, 3 | REQ-07 (full), 15, 16, 17, 18, 19, 26 | — |
-| 5 | **Preset + UX Polish + E2E Test** | Preset "Product Reflection" готов, RU тексты финализированы, e2e тест зелёный | 4 | REQ-03, 20, 21, 22, 27, 28 | — |
-| 6 | **QA / Hardening (optional)** | Load testing, edge cases, release prep | 5 | — | — |
+
+| #   | Phase                                           | Цель                                                                                                       | Depends on | REQs                                     | Parallel-able с                              |
+| --- | ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------- | ---------- | ---------------------------------------- | -------------------------------------------- |
+| 1   | **DB + Server AI Actions**                      | Сервер умеет выполнять bg-removal и reflection через API + БД готова хранить graph                         | —          | REQ-01, 04, 05, 06, 07 (partial), 08, 23 | Phase 2 (параллельно после schema migration) |
+| 2   | **Editor Canvas + tRPC CRUD**                   | `/workflows` страницы работают, граф создаётся / сохраняется / загружается без runtime                     | 1 (schema) | REQ-02, 09, 10, 13, 24, 25               | Phase 1 (после REQ-01)                       |
+| 3   | **Node Registry + Inspector + Client Handlers** | Каждая нода знает свою schema, inspector рендерит форму, ImageInput / AssetOutput client-handlers работают | 2          | REQ-11, 12, 13 (full), 14                | —                                            |
+| 4   | **Runtime / Executor / Run Button**             | Нажатие Run реально запускает граф end-to-end, per-node progress UI, rate-limit                            | 1, 3       | REQ-07 (full), 15, 16, 17, 18, 19, 26    | —                                            |
+| 5   | **Preset + UX Polish + E2E Test**               | Preset "Product Reflection" готов, RU тексты финализированы, e2e тест зелёный                              | 4          | REQ-03, 20, 21, 22, 27, 28               | —                                            |
+| 6   | **QA / Hardening (optional)**                   | Load testing, edge cases, release prep                                                                     | 5          | —                                        | —                                            |
+
 
 Критический путь: 1 → 2 → 3 → 4 → 5. Phase 6 — буфер.
 
@@ -44,7 +46,7 @@
   - case `add_reflection` — primary + fallback, cost-track.
 - **REST endpoint:** `src/app/api/workflow/execute-node/route.ts`:
   - `export const maxDuration = 300`.
-  - POST handler: auth via `requireSessionAnd*` wrapper, body `{ actionId, params, inputs, workspaceId, workflowId? }`, response `{ success, type, imageUrl }`.
+  - POST handler: auth via `requireSessionAnd`* wrapper, body `{ actionId, params, inputs, workspaceId, workflowId? }`, response `{ success, type, imageUrl }`.
   - Rate-limit stub (минимальная версия — full limits в Phase 4).
 - **Integration test:** `src/app/api/workflow/__tests__/execute-node.test.ts`:
   - Happy path: mock Replicate → 200 s3 URL.
@@ -65,9 +67,9 @@
 
 ### Checkpoints
 
-- [ ] Prisma migration merged.
-- [ ] Action handlers implemented + tests green.
-- [ ] REST endpoint POC working via curl.
+- Prisma migration merged.
+- Action handlers implemented + tests green.
+- REST endpoint POC working via curl.
 
 **Estimated effort:** 2-3 дня.
 
@@ -116,10 +118,10 @@
 
 ### Checkpoints
 
-- [ ] tRPC router mutations implemented + Zod schemas.
-- [ ] Pages render, no hydration warnings.
-- [ ] Auto-save works.
-- [ ] Drag-drop ноды functional.
+- tRPC router mutations implemented + Zod schemas.
+- Pages render, no hydration warnings.
+- Auto-save works.
+- Drag-drop ноды functional.
 
 **Estimated effort:** 3-4 дня.
 
@@ -133,7 +135,7 @@
 
 ### Deliverables
 
-- **`NODE_REGISTRY` полный:** `src/server/workflow/types.ts`:
+- `**NODE_REGISTRY` полный:** `src/server/workflow/types.ts`:
   - `imageInput`, `removeBackground`, `addReflection`, `assetOutput`.
   - Per-node Zod schema для params.
   - Russian display names + descriptions.
@@ -164,10 +166,10 @@
 
 ### Checkpoints
 
-- [ ] NODE_REGISTRY с 4 полноценными node definitions.
-- [ ] Inspector рендерит form для всех 4-х типов.
-- [ ] isValidConnection blocks bad edges.
-- [ ] ImageInput + AssetOutput client-handlers tested manually.
+- NODE_REGISTRY с 4 полноценными node definitions.
+- Inspector рендерит form для всех 4-х типов.
+- isValidConnection blocks bad edges.
+- ImageInput + AssetOutput client-handlers tested manually.
 
 **Estimated effort:** 3-4 дня.
 
@@ -219,10 +221,10 @@
 
 ### Checkpoints
 
-- [ ] Executor passes unit tests.
-- [ ] Manual run of 2-node graph works end-to-end.
-- [ ] Rate-limit enforced.
-- [ ] Pre-run validation blocks invalid graphs.
+- Executor passes unit tests.
+- Manual run of 2-node graph works end-to-end.
+- Rate-limit enforced.
+- Pre-run validation blocks invalid graphs.
 
 **Estimated effort:** 3-4 дня.
 
@@ -243,7 +245,7 @@
 - **Preset seeder:**
   - На `workspace.create` hook — создать `AIWorkflow` с `isTemplate: true` + `graph` из preset'а.
   - Migration script для существующих workspace'ов: `scripts/seed-presets.ts`.
-- **`/workflows/new?preset=...` handling:**
+- `**/workflows/new?preset=...` handling:**
   - Page читает query param, инициализирует Zustand store с preset graph.
   - Нужен только при отсутствии `workflowId` в URL.
 - **UX polish:**
@@ -277,10 +279,10 @@
 
 ### Checkpoints
 
-- [ ] Preset карточка показывается для нового workspace.
-- [ ] Preset graph loads + runs end-to-end manually.
-- [ ] E2E test green.
-- [ ] Design review done.
+- Preset карточка показывается для нового workspace.
+- Preset graph loads + runs end-to-end manually.
+- E2E test green.
+- Design review done.
 
 **Estimated effort:** 2-3 дня.
 
@@ -314,9 +316,9 @@
 
 ### Checkpoints
 
-- [ ] Load test plan run.
-- [ ] Monitoring alerts configured.
-- [ ] Docs updated.
+- Load test plan run.
+- Monitoring alerts configured.
+- Docs updated.
 
 **Estimated effort:** 1-2 дня (flexible).
 
