@@ -5,27 +5,43 @@ import { createPortal } from "react-dom";
 import { Pencil, Image as ImageIcon, Download, Copy, LayoutGrid, CheckCircle2, Loader2, Sparkles, Layers, Maximize2, Minimize2, X } from "lucide-react";
 import { usePhotoStore } from "@/store/photoStore";
 import { useCreateBannerFromAsset } from "@/hooks/useCreateBannerFromAsset";
+import { useProjectLibrary } from "@/hooks/useProjectLibrary";
+import { useWorkspace } from "@/providers/WorkspaceProvider";
 import { TemplatePickerForAssetModal } from "@/components/photo/TemplatePickerForAssetModal";
+import { AIScenariosModal } from "@/components/workflows/AIScenariosModal";
+import type { WorkflowScenarioRunResult } from "@/hooks/workflow/useWorkflowScenarioRun";
 
 interface PhotoResultCardProps {
     url: string;
     messageId: string;
+    projectId: string;
     prompt?: string;
     model?: string;
     savedAssetId?: string;
     onVariations?: () => void;
 }
 
-export function PhotoResultCard({ url, messageId, prompt, model, savedAssetId, onVariations }: PhotoResultCardProps) {
+export function PhotoResultCard({
+    url,
+    messageId,
+    projectId,
+    prompt,
+    model,
+    savedAssetId,
+    onVariations,
+}: PhotoResultCardProps) {
     const setEditContext = usePhotoStore((s) => s.setEditContext);
     const pushReference = usePhotoStore((s) => s.pushReference);
+    const { currentWorkspace } = useWorkspace();
     const [hovered, setHovered] = useState(false);
     const [bannerMenuOpen, setBannerMenuOpen] = useState(false);
     const [templatePickerOpen, setTemplatePickerOpen] = useState(false);
+    const [scenariosOpen, setScenariosOpen] = useState(false);
     const [maximized, setMaximized] = useState(false);
     const bannerMenuRef = useRef<HTMLDivElement>(null);
 
     const { createAndOpen, isCreating } = useCreateBannerFromAsset();
+    const { registerUrl } = useProjectLibrary();
 
     // Close banner menu on outside click
     useEffect(() => {
@@ -99,6 +115,23 @@ export function PhotoResultCard({ url, messageId, prompt, model, savedAssetId, o
         setTemplatePickerOpen(true);
     };
 
+    const handleScenarioResult = async (result: WorkflowScenarioRunResult) => {
+        if (!result.imageUrl) return;
+        if (result.scenarioConfig.output.behavior === "open-banner") {
+            await createAndOpen({
+                assetId: result.savedAssetId ?? result.assetId,
+                imageUrl: result.savedAssetId || result.assetId ? undefined : result.imageUrl,
+                name: result.scenarioConfig.title,
+            });
+            return;
+        }
+        await registerUrl({
+            projectId,
+            url: result.imageUrl,
+            source: "workflow-scenario",
+        });
+    };
+
     return (
         <div
             className="relative inline-block rounded-[var(--radius-lg)] overflow-hidden border border-border-primary bg-bg-tertiary group max-w-full"
@@ -137,6 +170,7 @@ export function PhotoResultCard({ url, messageId, prompt, model, savedAssetId, o
                     >
                         <ActionButton icon={<Pencil size={11} />} label="Редактировать" onClick={handleEdit} />
                         <ActionButton icon={<ImageIcon size={11} />} label="Как референс" onClick={handleUseAsReference} />
+                        <ActionButton icon={<Sparkles size={11} />} label="AI сценарии" onClick={() => setScenariosOpen(true)} />
                         <ActionButton icon={<Maximize2 size={11} />} label="Увеличить" onClick={() => setMaximized(true)} />
                         {onVariations && (
                             <ActionButton icon={<Copy size={11} />} label="Варианты" onClick={onVariations} />
@@ -198,6 +232,20 @@ export function PhotoResultCard({ url, messageId, prompt, model, savedAssetId, o
                 onClose={() => setTemplatePickerOpen(false)}
                 imageUrl={url}
                 assetId={savedAssetId}
+            />
+
+            <AIScenariosModal
+                open={scenariosOpen}
+                onClose={() => setScenariosOpen(false)}
+                workspaceId={currentWorkspace?.id}
+                projectId={projectId}
+                surface="photo"
+                input={{
+                    kind: "image",
+                    imageUrl: url,
+                    assetId: savedAssetId,
+                }}
+                onResult={handleScenarioResult}
             />
 
             {maximized && typeof document !== "undefined" &&

@@ -1,14 +1,12 @@
 "use client";
 
 import { useState, useMemo, useCallback } from "react";
-import { v4 as uuid } from "uuid";
 import { LayoutTemplate, Plus, ArrowRight, Check, Search, X, Star, Download, Upload, Shuffle, Lock, Globe, Users, Eye, Pencil } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useTemplateStore } from "@/store/templateStore";
 import { useTemplateListSync, useSaveTemplateSync } from "@/hooks/useTemplateSync";
 import { trpc } from "@/lib/trpc";
 import { useCanvasStore } from "@/store/canvasStore";
-import { useShallow } from "zustand/react/shallow";
 import { useProjectStore } from "@/store/projectStore";
 import { Modal } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
@@ -121,10 +119,7 @@ export function TemplatePanel({ open, onClose, projectId }: TemplatePanelProps) 
         const uniqueLocal = savedPacks.filter(p => !backendIds.has(p.id));
         return [...backendTemplates, ...uniqueLocal];
     }, [backendTemplates, savedPacks]);
-    const { masterComponents, componentInstances, resizes, layers, resetCanvas, setCanvasSize } = useCanvasStore(useShallow((s) => ({
-        masterComponents: s.masterComponents, componentInstances: s.componentInstances,
-        resizes: s.resizes, layers: s.layers, resetCanvas: s.resetCanvas, setCanvasSize: s.setCanvasSize,
-    })));
+    const masterComponentCount = useCanvasStore((s) => s.masterComponents.length);
     const { projects, activeProjectId } = useProjectStore();
     const [activeTab, setActiveTab] = useState<"single" | "pack">("single");
     const [packToApply, setPackToApply] = useState<TemplatePackV2 | null>(null);
@@ -275,7 +270,13 @@ export function TemplatePanel({ open, onClose, projectId }: TemplatePanelProps) 
             state.masterComponents,
             [], // Empty resizes implies single template
             [], // No instances
-            state.layers
+            state.layers,
+            {
+                artboardProps: state.artboardProps as unknown as Record<string, unknown>,
+                palette: state.palette,
+                canvasWidth: state.canvasWidth,
+                canvasHeight: state.canvasHeight,
+            },
         );
 
         const meta: Partial<TemplatePackV2> = {
@@ -313,15 +314,22 @@ export function TemplatePanel({ open, onClose, projectId }: TemplatePanelProps) 
     const handleSaveAsPack = async () => {
         if (!saveName.trim()) return;
 
+        const state = useCanvasStore.getState();
         const activeProject = projects.find((p) => p.id === activeProjectId);
         const projectData = activeProject || { name: saveName };
 
         const newPack = serializeTemplate(
             { ...projectData, name: saveName },
-            masterComponents,
-            resizes,
-            componentInstances,
-            layers
+            state.masterComponents,
+            state.resizes,
+            state.componentInstances,
+            state.layers,
+            {
+                artboardProps: state.artboardProps as unknown as Record<string, unknown>,
+                palette: state.palette,
+                canvasWidth: state.canvasWidth,
+                canvasHeight: state.canvasHeight,
+            },
         );
 
         const meta: Partial<TemplatePackV2> = {
@@ -507,7 +515,7 @@ export function TemplatePanel({ open, onClose, projectId }: TemplatePanelProps) 
                 {/* Action buttons — top-left on hover */}
                 <div className="absolute top-1.5 left-1.5 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                     {/* Smart Resize button — only when master has components */}
-                    {masterComponents.length > 0 && (
+                    {masterComponentCount > 0 && (
                         <button
                             onClick={(e) => {
                                 e.stopPropagation();
@@ -603,14 +611,14 @@ export function TemplatePanel({ open, onClose, projectId }: TemplatePanelProps) 
                     {activeTab === "single" ? (
                         <>
                             {/* Save current as template */}
-                            {masterComponents.length > 0 && (
+                            {masterComponentCount > 0 && (
                                 <div className="p-3 bg-bg-secondary rounded-xl border border-border-primary">
                                     <div className="flex items-center gap-2 mb-2">
                                         <Plus size={14} className="text-accent-primary" />
                                         <span className="text-xs font-medium text-text-primary">Сохранить холст как шаблон</span>
                                     </div>
                                     <p className="text-[11px] text-text-tertiary mb-2">
-                                        Создаст шаблон из {masterComponents.length} компонент{masterComponents.length !== 1 ? "ов" : "а"}.
+                                        Создаст шаблон из {masterComponentCount} компонент{masterComponentCount !== 1 ? "ов" : "а"}.
                                     </p>
                                     <Button size="sm" variant="secondary" onClick={handleSaveAsTemplate}>
                                         Сохранить как шаблон
@@ -660,7 +668,7 @@ export function TemplatePanel({ open, onClose, projectId }: TemplatePanelProps) 
                             </div>
 
                             {/* Save Pack (extended form) */}
-                            {masterComponents.length > 0 && (
+                            {masterComponentCount > 0 && (
                                 <div className="p-3 bg-bg-secondary rounded-xl border border-border-primary">
                                     {!showSaveForm ? (
                                         <>
@@ -1008,24 +1016,22 @@ export function TemplatePanel({ open, onClose, projectId }: TemplatePanelProps) 
                     onReplace={async (replacementMap) => {
                         const { applyTemplatePack } = await import("@/services/templateService");
                         const pack = missingFontsData.pendingPack;
-                        const packData = pack as any;
-
-                        // Apply font replacements to layers within the pack
-                        if (packData.layers && Array.isArray(packData.layers)) {
-                            packData.layers = applyFontReplacements(packData.layers, replacementMap);
-                        }
-                        // Also replace in format snapshots
-                        if (packData.resizes) {
-                            for (const r of packData.resizes) {
-                                if (r.layerSnapshot && Array.isArray(r.layerSnapshot)) {
-                                    r.layerSnapshot = applyFontReplacements(r.layerSnapshot, replacementMap);
-                                }
-                            }
-                        }
+                        const packData: TemplatePackV2 = {
+                            ...pack,
+                            layers: pack.layers
+                                ? applyFontReplacements(pack.layers, replacementMap)
+                                : pack.layers,
+                            resizes: pack.resizes?.map((resize) => ({
+                                ...resize,
+                                layerSnapshot: resize.layerSnapshot
+                                    ? applyFontReplacements(resize.layerSnapshot, replacementMap)
+                                    : resize.layerSnapshot,
+                            })) ?? pack.resizes,
+                        };
 
                         const pendingId = (pack as { id?: string }).id;
                         setMissingFontsData(null);
-                        applyTemplatePack(pack, {
+                        applyTemplatePack(packData, {
                             onSuccess: () => {
                                 void cloneTemplateAssetsIntoProject(pendingId);
                                 onClose();

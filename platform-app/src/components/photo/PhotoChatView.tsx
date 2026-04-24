@@ -77,6 +77,7 @@ export function PhotoChatView({ projectId }: PhotoChatViewProps) {
                         <MessageRow
                             key={m.id}
                             message={m}
+                            projectId={projectId}
                             savedAssetId={
                                 m.role === "assistant" && m.type === "image"
                                     ? urlToAssetId.get(m.content)
@@ -105,7 +106,15 @@ function EmptyState() {
     );
 }
 
-function MessageRow({ message, savedAssetId }: { message: AIMessageRecord; savedAssetId?: string }) {
+function MessageRow({
+    message,
+    projectId,
+    savedAssetId,
+}: {
+    message: AIMessageRecord;
+    projectId: string;
+    savedAssetId?: string;
+}) {
     const isUser = message.role === "user";
     const meta = (message.metadata ?? {}) as {
         kind?: "generate" | "edit";
@@ -166,6 +175,7 @@ function MessageRow({ message, savedAssetId }: { message: AIMessageRecord; saved
                 <PhotoResultCard
                     url={message.content}
                     messageId={message.id}
+                    projectId={projectId}
                     model={message.model ?? undefined}
                     savedAssetId={savedAssetId}
                 />

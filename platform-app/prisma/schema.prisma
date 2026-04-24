@@ -413,6 +413,7 @@ model AIWorkflow {
   description String  @default("")
   steps       Json    // legacy: AIStep[] — linear LLM-agent actions. Co-exists with graph.
   graph       Json?   // WorkflowGraph — node-based editor (v1.0+). Nullable for backward compatibility.
+  scenarioConfig Json? // WorkflowScenarioConfig — exposes graph workflows as reusable AI scenarios.
   isTemplate  Boolean @default(false) // preset workflow for BU
 
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)

@@ -1,6 +1,7 @@
 import type { StateCreator } from "zustand";
 import { NODE_REGISTRY } from "@/server/workflow/types";
 import type { WorkflowEdge, WorkflowNode } from "@/server/workflow/types";
+import { defaultWorkflowScenarioConfig } from "@/lib/workflow/scenarioConfig";
 import type { GraphSlice, WorkflowStore } from "./types";
 
 /**
@@ -19,11 +20,14 @@ export const createGraphSlice: StateCreator<WorkflowStore, [], [], GraphSlice> =
     edges: [],
     name: "",
     description: "",
+    scenarioConfig: defaultWorkflowScenarioConfig(),
     dirty: false,
 
     setName: (name) => set({ name, dirty: true }),
 
     setDescription: (description) => set({ description, dirty: true }),
+
+    setScenarioConfig: (scenarioConfig) => set({ scenarioConfig, dirty: true }),
 
     addNode: (type, position) => {
         const definition = NODE_REGISTRY[type];
@@ -84,12 +88,15 @@ export const createGraphSlice: StateCreator<WorkflowStore, [], [], GraphSlice> =
         return { version: 1, nodes, edges };
     },
 
-    hydrate: ({ name, description, graph }) => {
+    hydrate: ({ name, description, scenarioConfig, graph }) => {
         set({
             nodes: graph.nodes,
             edges: graph.edges,
             ...(name !== undefined ? { name } : {}),
             ...(description !== undefined ? { description } : {}),
+            scenarioConfig:
+                scenarioConfig ??
+                defaultWorkflowScenarioConfig(name ?? get().name),
             dirty: false,
         });
     },

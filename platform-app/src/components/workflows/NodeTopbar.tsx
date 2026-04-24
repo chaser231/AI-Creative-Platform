@@ -6,7 +6,7 @@
  */
 
 import Link from "next/link";
-import { ArrowLeft, Check, Loader2, Play, Save, XCircle } from "lucide-react";
+import { ArrowLeft, Check, Loader2, Play, Save, Workflow, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import type { SaveStatus } from "@/hooks/workflow/useWorkflowAutoSave";
 
@@ -20,6 +20,8 @@ interface NodeTopbarProps {
     isRunning: boolean;
     runError: { nodeId: string; message: string } | null;
     runDisabledReason?: string;
+    scenarioEnabled: boolean;
+    onOpenScenarioSettings: () => void;
 }
 
 function SaveStatusBadge({ status }: { status: SaveStatus }) {
@@ -61,6 +63,8 @@ export function NodeTopbar({
     isRunning,
     runError,
     runDisabledReason,
+    scenarioEnabled,
+    onOpenScenarioSettings,
 }: NodeTopbarProps) {
     return (
         <header className="flex h-12 shrink-0 items-center justify-between border-b border-border-primary bg-bg-surface px-4">
@@ -90,6 +94,16 @@ export function NodeTopbar({
                 <Button variant="ghost" size="sm" onClick={onSave} disabled={isRunning}>
                     <Save className="mr-1.5 h-4 w-4" />
                     Сохранить
+                </Button>
+                <Button
+                    variant={scenarioEnabled ? "secondary" : "ghost"}
+                    size="sm"
+                    onClick={onOpenScenarioSettings}
+                    disabled={isRunning}
+                    title="Настроить запуск этого workflow как AI-сценария"
+                >
+                    <Workflow className="mr-1.5 h-4 w-4" />
+                    Сценарий
                 </Button>
                 <Button
                     size="sm"

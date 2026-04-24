@@ -57,6 +57,7 @@ export function useWorkflowAutoSave({
             workflowId,
             name: state.name || "Untitled",
             description: state.description || undefined,
+            scenarioConfig: state.scenarioConfig,
             graph: state.serialize(),
         });
     }, [workflowId, workspaceId, saveGraph]);

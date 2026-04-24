@@ -3,7 +3,7 @@
 import { useRef, useState, use, useEffect, useCallback } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
-import { Download, Share2, Wand2, PenTool, Copy, Check, HelpCircle, Settings, History, AlertTriangle, FolderOpen, Save } from "lucide-react";
+import { Download, Share2, Wand2, PenTool, Copy, Check, HelpCircle, Settings, History, AlertTriangle, FolderOpen, Save, Workflow } from "lucide-react";
 import { TopBar } from "@/components/layout/TopBar";
 import { Button } from "@/components/ui/Button";
 import { Dialog } from "@/components/ui/Dialog";
@@ -20,6 +20,7 @@ import { AIPromptBar } from "@/components/editor/AIPromptBar";
 import { AIChatPanel } from "@/components/editor/ai-chat";
 import { VersionHistoryPanel } from "@/components/editor/VersionHistoryPanel";
 import { AssetLibraryModal } from "@/components/editor/AssetLibraryModal";
+import { AIScenariosModal } from "@/components/workflows/AIScenariosModal";
 import { TemplateSettingsModal } from "@/components/editor/TemplateSettingsModal";
 import { MissingFontsModal } from "@/components/editor/MissingFontsModal";
 import { WizardFlow } from "@/components/wizard/WizardFlow";
@@ -37,6 +38,9 @@ import { extractRequiredFonts, findMissingFonts, applyFontReplacements, getAvail
 import type { RequiredFont } from "@/utils/fontUtils";
 import Konva from "konva";
 import { useWorkspace } from "@/providers/WorkspaceProvider";
+import { useCreateBannerFromAsset } from "@/hooks/useCreateBannerFromAsset";
+import { useProjectLibrary } from "@/hooks/useProjectLibrary";
+import type { WorkflowScenarioRunResult } from "@/hooks/workflow/useWorkflowScenarioRun";
 
 // Dynamic import for Canvas (Konva needs client-only, no SSR)
 const Canvas = dynamic(
@@ -70,6 +74,7 @@ export default function EditorPage({ params }: EditorPageProps) {
     const [linkCopied, setLinkCopied] = useState(false);
     const [versionPanelOpen, setVersionPanelOpen] = useState(false);
     const [assetLibraryOpen, setAssetLibraryOpen] = useState(false);
+    const [aiScenariosOpen, setAiScenariosOpen] = useState(false);
     const [templateSaveStatus, setTemplateSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
     // Missing Fonts state for template loading
     const [missingFontsData, setMissingFontsData] = useState<{
@@ -83,6 +88,24 @@ export default function EditorPage({ params }: EditorPageProps) {
         undo: s.undo, redo: s.redo, history: s.history, future: s.future,
         artboardProps: s.artboardProps, updateArtboardProps: s.updateArtboardProps,
     })));
+    const {
+        selectedScenarioImageLayer,
+        updateLayer,
+        addImageLayer,
+    } = useCanvasStore(useShallow((s) => {
+        const selectedScenarioImageLayer = s.selectedLayerIds
+            .map((layerId) => s.layers.find((layer) => layer.id === layerId))
+            .find((layer) => layer?.type === "image") as
+            | { id: string; src: string; width: number; height: number }
+            | undefined;
+        return {
+            selectedScenarioImageLayer,
+            updateLayer: s.updateLayer,
+            addImageLayer: s.addImageLayer,
+        };
+    }));
+    const { createAndOpen: createBannerFromAsset } = useCreateBannerFromAsset();
+    const { registerUrl } = useProjectLibrary();
     useKeyboardShortcuts();
 
     // ─── Template mode: load & save ───
@@ -257,6 +280,52 @@ export default function EditorPage({ params }: EditorPageProps) {
         if (saveNowSync) saveNowSync();
         router.push("/");
     }, [saveNowSync, router]);
+
+    const handleBannerScenarioResult = useCallback(
+        async (result: WorkflowScenarioRunResult) => {
+            if (!result.imageUrl) return;
+            const behavior = result.scenarioConfig.output.behavior;
+
+            if (behavior === "open-banner") {
+                await createBannerFromAsset({
+                    assetId: result.savedAssetId ?? result.assetId,
+                    imageUrl: result.savedAssetId || result.assetId ? undefined : result.imageUrl,
+                    name: result.scenarioConfig.title,
+                });
+                return;
+            }
+
+            const registeredUrl = isTemplateMode
+                ? result.imageUrl
+                : (await registerUrl({
+                      projectId: id,
+                      url: result.imageUrl,
+                      source: "workflow-scenario",
+                  })) ?? result.imageUrl;
+
+            if (behavior === "replace-selection" && selectedScenarioImageLayer) {
+                updateLayer(selectedScenarioImageLayer.id, { src: registeredUrl });
+                return;
+            }
+
+            if (behavior === "create-layer" || behavior === "replace-selection") {
+                addImageLayer(
+                    registeredUrl,
+                    selectedScenarioImageLayer?.width ?? 400,
+                    selectedScenarioImageLayer?.height ?? 400,
+                );
+            }
+        },
+        [
+            addImageLayer,
+            createBannerFromAsset,
+            id,
+            isTemplateMode,
+            registerUrl,
+            selectedScenarioImageLayer,
+            updateLayer,
+        ],
+    );
 
     // Set editor mode from URL query parameters
     useEffect(() => {
@@ -746,6 +815,14 @@ export default function EditorPage({ params }: EditorPageProps) {
                                     <Button
                                         variant="ghost"
                                         size="sm"
+                                        icon={<Workflow size={14} />}
+                                        onClick={() => setAiScenariosOpen(true)}
+                                    >
+                                        AI сценарии
+                                    </Button>
+                                    <Button
+                                        variant="ghost"
+                                        size="sm"
                                         icon={<History size={14} />}
                                         onClick={() => setVersionPanelOpen(true)}
                                     >
@@ -797,6 +874,9 @@ export default function EditorPage({ params }: EditorPageProps) {
                     <div className={`absolute left-1/2 -translate-x-1/2 transition-all duration-300 z-10 ${aiPanelOpen ? "bottom-52" : "bottom-3"}`}>
                         <Toolbar
                             onOpenTemplates={() => setTemplatesOpen(true)}
+                            onOpenAIScenarios={
+                                isTemplateMode ? undefined : () => setAiScenariosOpen(true)
+                            }
                             onToggleAI={() => setAiPanelOpen(!aiPanelOpen)}
                             aiActive={aiPanelOpen}
                             projectId={isTemplateMode ? undefined : id}
@@ -844,7 +924,7 @@ export default function EditorPage({ params }: EditorPageProps) {
                     {/* Floating Formats / Palette Panel — right */}
                     <div className="absolute top-3 right-3 bottom-3 z-10 flex gap-3 pointer-events-none">
                         <div className="pointer-events-auto">
-                            <RightTabs isTemplateMode={isTemplateMode} />
+                            <RightTabs />
                         </div>
                     </div>
 
@@ -1014,6 +1094,24 @@ export default function EditorPage({ params }: EditorPageProps) {
                 onClose={() => setAssetLibraryOpen(false)}
             />
 
+            <AIScenariosModal
+                open={aiScenariosOpen}
+                onClose={() => setAiScenariosOpen(false)}
+                workspaceId={currentWorkspace?.id}
+                projectId={isTemplateMode ? undefined : id}
+                surface="banner"
+                input={
+                    selectedScenarioImageLayer
+                        ? {
+                              kind: "image",
+                              imageUrl: selectedScenarioImageLayer.src,
+                              selectedLayerId: selectedScenarioImageLayer.id,
+                          }
+                        : undefined
+                }
+                onResult={handleBannerScenarioResult}
+            />
+
             {/* Template Settings Modal */}
             {isTemplateMode && (
                 <TemplateSettingsModal
@@ -1129,42 +1227,33 @@ export default function EditorPage({ params }: EditorPageProps) {
 
 // ─── Right Tabs (Formats / Palette) ─────────────────────────────────────
 
-function RightTabs({ isTemplateMode }: { isTemplateMode: boolean }) {
-    const paletteSize = useCanvasStore(
-        (s) => s.palette.colors.length + s.palette.backgrounds.length,
-    );
-    const showPaletteTab = isTemplateMode || paletteSize > 0;
+function RightTabs() {
     const [tabRaw, setTab] = useState<"formats" | "palette">("formats");
-    // If the palette tab becomes unavailable (e.g. palette emptied outside
-    // template mode), fall back to formats without a setState-in-effect.
-    const tab: "formats" | "palette" = showPaletteTab ? tabRaw : "formats";
 
     return (
         <div className="flex flex-col gap-2 h-full">
-            {showPaletteTab && (
-                <div className="flex items-center gap-1 p-1 rounded-[var(--radius-full)] border border-border-primary bg-bg-surface/85 backdrop-blur-xl shadow-[var(--shadow-sm)]">
-                    <button
-                        onClick={() => setTab("formats")}
-                        className={`flex-1 h-7 px-3 rounded-[var(--radius-full)] text-[11px] font-medium transition-colors cursor-pointer ${tab === "formats"
-                            ? "bg-accent-primary text-text-inverse"
-                            : "text-text-tertiary hover:text-text-primary"
-                            }`}
-                    >
-                        Форматы
-                    </button>
-                    <button
-                        onClick={() => setTab("palette")}
-                        className={`flex-1 h-7 px-3 rounded-[var(--radius-full)] text-[11px] font-medium transition-colors cursor-pointer ${tab === "palette"
-                            ? "bg-accent-primary text-text-inverse"
-                            : "text-text-tertiary hover:text-text-primary"
-                            }`}
-                    >
-                        Палитра
-                    </button>
-                </div>
-            )}
+            <div className="flex items-center gap-1 p-1 rounded-[var(--radius-full)] border border-border-primary bg-bg-surface/85 backdrop-blur-xl shadow-[var(--shadow-sm)]">
+                <button
+                    onClick={() => setTab("formats")}
+                    className={`flex-1 h-7 px-3 rounded-[var(--radius-full)] text-[11px] font-medium transition-colors cursor-pointer ${tabRaw === "formats"
+                        ? "bg-accent-primary text-text-inverse"
+                        : "text-text-tertiary hover:text-text-primary"
+                        }`}
+                >
+                    Форматы
+                </button>
+                <button
+                    onClick={() => setTab("palette")}
+                    className={`flex-1 h-7 px-3 rounded-[var(--radius-full)] text-[11px] font-medium transition-colors cursor-pointer ${tabRaw === "palette"
+                        ? "bg-accent-primary text-text-inverse"
+                        : "text-text-tertiary hover:text-text-primary"
+                        }`}
+                >
+                    Палитра
+                </button>
+            </div>
             <div className="flex-1 min-h-0">
-                {tab === "formats" ? <ResizePanel /> : <SwatchesPanel />}
+                {tabRaw === "formats" ? <ResizePanel /> : <SwatchesPanel />}
             </div>
         </div>
     );

@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { useWorkflowStore } from "@/store/workflow/useWorkflowStore";
 import { workflowGraphSchema, emptyWorkflowGraph } from "@/lib/workflow/graphSchema";
+import { defaultWorkflowScenarioConfig } from "@/lib/workflow/scenarioConfig";
 import type { WorkflowGraph } from "@/server/workflow/types";
 
 // Zustand v5 stores retain state across tests; reset manually at the top.
@@ -10,6 +11,7 @@ function resetStore() {
         edges: [],
         name: "",
         description: "",
+        scenarioConfig: defaultWorkflowScenarioConfig(),
         dirty: false,
         viewport: { x: 0, y: 0, zoom: 1 },
         runState: {},
@@ -140,5 +142,16 @@ describe("useWorkflowStore — graph slice", () => {
         const empty = emptyWorkflowGraph();
         useWorkflowStore.getState().hydrate({ graph: empty });
         expect(useWorkflowStore.getState().serialize()).toEqual(empty);
+    });
+
+    it("setScenarioConfig marks graph metadata dirty", () => {
+        useWorkflowStore.getState().markSaved();
+        useWorkflowStore.getState().setScenarioConfig({
+            ...defaultWorkflowScenarioConfig("Scenario"),
+            enabled: true,
+        });
+
+        expect(useWorkflowStore.getState().scenarioConfig.enabled).toBe(true);
+        expect(useWorkflowStore.getState().dirty).toBe(true);
     });
 });

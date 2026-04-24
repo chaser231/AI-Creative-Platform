@@ -19,6 +19,7 @@ import { Loader2 } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { useWorkflowStore } from "@/store/workflow/useWorkflowStore";
 import { emptyWorkflowGraph } from "@/lib/workflow/graphSchema";
+import { normalizeWorkflowScenarioConfig } from "@/lib/workflow/scenarioConfig";
 import type { WorkflowGraph } from "@/server/workflow/types";
 
 // Dynamic import: xyflow bundle lands only in the /workflows/* route chunk.
@@ -53,6 +54,10 @@ export function WorkflowEditorShell({ workflowId }: { workflowId: string }) {
         hydrate({
             name: query.data.name,
             description: query.data.description,
+            scenarioConfig: normalizeWorkflowScenarioConfig(
+                query.data.scenarioConfig,
+                query.data.name,
+            ),
             graph,
         });
     }, [query.data, hydrate]);

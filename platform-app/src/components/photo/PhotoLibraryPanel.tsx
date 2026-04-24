@@ -1,11 +1,14 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { X, Download, Wand2, Trash2, LayoutGrid, Library, Loader2, Image as ImageRefIcon } from "lucide-react";
+import { X, Download, Wand2, Trash2, LayoutGrid, Library, Loader2, Image as ImageRefIcon, Sparkles } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { usePhotoStore } from "@/store/photoStore";
 import { useCreateBannerFromAsset } from "@/hooks/useCreateBannerFromAsset";
+import { useProjectLibrary } from "@/hooks/useProjectLibrary";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
+import { AIScenariosModal } from "@/components/workflows/AIScenariosModal";
+import type { WorkflowScenarioRunResult } from "@/hooks/workflow/useWorkflowScenarioRun";
 
 interface PhotoLibraryPanelProps {
     projectId: string;
@@ -21,6 +24,9 @@ export function PhotoLibraryPanel({ projectId }: PhotoLibraryPanelProps) {
     const [scope, setScope] = useState<Scope>("project");
     const [filter, setFilter] = useState<Filter>("all");
     const [deleteTarget, setDeleteTarget] = useState<{ id: string; filename: string } | null>(null);
+    const [scenarioTarget, setScenarioTarget] = useState<AssetRow | null>(null);
+    const { createAndOpen } = useCreateBannerFromAsset();
+    const { registerUrl } = useProjectLibrary();
 
     const projectQuery = trpc.project.getById.useQuery(
         { id: projectId },
@@ -65,6 +71,23 @@ export function PhotoLibraryPanel({ projectId }: PhotoLibraryPanelProps) {
     }, [scope, filter, projectAssetsQuery.data, workspaceAssetsQuery.data]);
 
     const isLoading = scope === "project" ? projectAssetsQuery.isLoading : workspaceAssetsQuery.isLoading;
+
+    const handleScenarioResult = async (result: WorkflowScenarioRunResult) => {
+        if (!result.imageUrl) return;
+        if (result.scenarioConfig.output.behavior === "open-banner") {
+            await createAndOpen({
+                assetId: result.savedAssetId ?? result.assetId,
+                imageUrl: result.savedAssetId || result.assetId ? undefined : result.imageUrl,
+                name: result.scenarioConfig.title,
+            });
+            return;
+        }
+        await registerUrl({
+            projectId,
+            url: result.imageUrl,
+            source: "workflow-scenario",
+        });
+    };
 
     return (
         <div className="flex-1 flex flex-col min-h-0">
@@ -122,6 +145,7 @@ export function PhotoLibraryPanel({ projectId }: PhotoLibraryPanelProps) {
                                 asset={a}
                                 onEdit={(url) => setEditContext({ assetId: a.id, url })}
                                 onReference={(url) => pushReference(url)}
+                                onScenarios={() => setScenarioTarget(a)}
                                 onDelete={(id) => {
                                     const target = assets.find((x) => x.id === id);
                                     setDeleteTarget({ id, filename: target?.filename ?? "ассет" });
@@ -147,6 +171,24 @@ export function PhotoLibraryPanel({ projectId }: PhotoLibraryPanelProps) {
                     );
                 }}
                 onClose={() => setDeleteTarget(null)}
+            />
+
+            <AIScenariosModal
+                open={!!scenarioTarget}
+                onClose={() => setScenarioTarget(null)}
+                workspaceId={workspaceId}
+                projectId={projectId}
+                surface="asset"
+                input={
+                    scenarioTarget
+                        ? {
+                              kind: "image",
+                              imageUrl: scenarioTarget.url,
+                              assetId: scenarioTarget.id,
+                          }
+                        : undefined
+                }
+                onResult={handleScenarioResult}
             />
         </div>
     );
@@ -186,11 +228,13 @@ function AssetTile({
     asset,
     onEdit,
     onReference,
+    onScenarios,
     onDelete,
 }: {
     asset: { id: string; url: string; filename: string };
     onEdit: (url: string) => void;
     onReference: (url: string) => void;
+    onScenarios: () => void;
     onDelete: (id: string) => void;
 }) {
     const handleDownload = async () => {
@@ -239,6 +283,11 @@ function AssetTile({
                         icon={<ImageRefIcon size={10} />}
                         title="Как референс"
                         onClick={() => onReference(asset.url)}
+                    />
+                    <TileAction
+                        icon={<Sparkles size={10} />}
+                        title="AI сценарии"
+                        onClick={onScenarios}
                     />
                 </div>
                 <div className="flex items-center justify-between">
