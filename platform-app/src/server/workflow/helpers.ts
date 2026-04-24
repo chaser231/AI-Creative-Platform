@@ -299,13 +299,11 @@ export async function applyBlur(
     const maskSvg = buildAlphaGradientSvg(width, height, direction, 0, 1);
 
     const sharpMasked = await sharp(sharpBuffer)
-        .ensureAlpha()
         .composite([{ input: maskSvg, blend: "dest-in" }])
         .png()
         .toBuffer();
 
     return sharp(baseBuffer)
-        .ensureAlpha()
         .composite([{ input: sharpMasked, blend: "over" }])
         .png()
         .toBuffer();
@@ -319,7 +317,7 @@ export async function applyBlur(
  */
 async function blurOrPass(buf: Buffer, sigma: number): Promise<Buffer> {
     if (sigma <= 0.3) {
-        return sharp(buf).png().toBuffer();
+        return sharp(buf).ensureAlpha().png().toBuffer();
     }
-    return sharp(buf).blur(sigma).png().toBuffer();
+    return sharp(buf).ensureAlpha().blur(sigma).png().toBuffer();
 }

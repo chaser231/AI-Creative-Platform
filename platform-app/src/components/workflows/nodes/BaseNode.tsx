@@ -82,6 +82,15 @@ export function BaseNode({ id, type, selected }: BaseNodeProps) {
                             ? "mt-2 w-full max-w-[300px] rounded border border-border-primary object-contain"
                             : "mt-2 h-12 w-full rounded border border-border-primary object-cover"
                     }
+                    style={
+                        type === "preview"
+                            ? {
+                                  backgroundImage:
+                                      "url('data:image/svg+xml;utf8,<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"16\" height=\"16\"><rect width=\"8\" height=\"8\" fill=\"%23e5e7eb\"/><rect x=\"8\" y=\"8\" width=\"8\" height=\"8\" fill=\"%23e5e7eb\"/></svg>')",
+                                  backgroundRepeat: "repeat",
+                              }
+                            : undefined
+                    }
                 />
             )}
 

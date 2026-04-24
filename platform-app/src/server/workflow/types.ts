@@ -127,7 +127,7 @@ export const NODE_REGISTRY: Record<WorkflowNodeType, NodeDefinition> = {
         category: "transform",
         inputs: [{ id: "image-in", type: "image", label: "Изображение", required: true }],
         outputs: [{ id: "image-out", type: "image", label: "Изображение" }],
-        defaultParams: { mode: "uniform", intensity: 4, direction: "top-to-bottom", start: 0, end: 8 },
+        defaultParams: { mode: "progressive", intensity: 4, direction: "bottom-to-top", start: 0, end: 12 },
         execute: { kind: "server", actionId: "apply_blur" },
     },
     preview: {

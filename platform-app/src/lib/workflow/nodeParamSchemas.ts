@@ -85,9 +85,9 @@ export const maskParamsSchema = z.object({
             "left-to-right",
             "right-to-left",
         ])
-        .default("top-to-bottom"),
-    start: z.number().min(0).max(1).default(1),
-    end: z.number().min(0).max(1).default(0),
+        .default("bottom-to-top"),
+    start: z.number().min(0).max(1).default(0),
+    end: z.number().min(0).max(1).default(0.4),
 });
 
 /**
@@ -99,7 +99,7 @@ export const maskParamsSchema = z.object({
  */
 export const blurParamsSchema = z
     .object({
-        mode: z.enum(["uniform", "progressive"]).default("uniform"),
+        mode: z.enum(["uniform", "progressive"]).default("progressive"),
         intensity: z.number().min(0).max(50).default(4),
         direction: z
             .enum([
@@ -108,9 +108,9 @@ export const blurParamsSchema = z
                 "left-to-right",
                 "right-to-left",
             ])
-            .default("top-to-bottom"),
+            .default("bottom-to-top"),
         start: z.number().min(0).max(50).default(0),
-        end: z.number().min(0).max(50).default(8),
+        end: z.number().min(0).max(50).default(12),
     })
     .refine(
         (d) =>

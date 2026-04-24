@@ -98,13 +98,13 @@ describe("assetOutputParamsSchema", () => {
 });
 
 describe("maskParamsSchema", () => {
-    it("applies defaults (top-to-bottom 1→0)", () => {
+    it("applies defaults (bottom-to-top 0→0.4)", () => {
         const r = maskParamsSchema.safeParse({});
         expect(r.success).toBe(true);
         if (r.success) {
-            expect(r.data.direction).toBe("top-to-bottom");
-            expect(r.data.start).toBe(1);
-            expect(r.data.end).toBe(0);
+            expect(r.data.direction).toBe("bottom-to-top");
+            expect(r.data.start).toBe(0);
+            expect(r.data.end).toBe(0.4);
         }
     });
 
@@ -120,11 +120,11 @@ describe("maskParamsSchema", () => {
 });
 
 describe("blurParamsSchema", () => {
-    it("applies uniform defaults", () => {
+    it("applies progressive defaults", () => {
         const r = blurParamsSchema.safeParse({});
         expect(r.success).toBe(true);
         if (r.success) {
-            expect(r.data.mode).toBe("uniform");
+            expect(r.data.mode).toBe("progressive");
             expect(r.data.intensity).toBe(4);
         }
     });

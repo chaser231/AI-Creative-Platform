@@ -127,11 +127,11 @@ describe("useWorkflowStore — graph slice", () => {
         // mode/direction/start/end were preserved from defaultParams; only
         // `intensity` was patched.
         expect(node?.data.params).toEqual({
-            mode: "uniform",
+            mode: "progressive",
             intensity: 12,
-            direction: "top-to-bottom",
+            direction: "bottom-to-top",
             start: 0,
-            end: 8,
+            end: 12,
         });
     });
 
