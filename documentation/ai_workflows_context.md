@@ -484,6 +484,15 @@ P1.5 Workflow preset creation:
   - nodes/edges have stable required params;
   - unknown preset falls back to empty graph.
 
+Status:
+
+- Done 2026-04-25:
+  - added pure workflow preset factories in `lib/workflow/presets.ts`;
+  - `/workflows/new?preset=...` now creates a prefilled graph with preset name/description;
+  - supported IDs: `product-reflection-pipeline`, `remove-background-preview`, `asset-transform-save`;
+  - unknown preset IDs still create the empty default workflow;
+  - tests cover schema-valid preset graphs, stable ids, executable defaults after user image input injection, and unknown fallback.
+
 P1.6 Image generation node:
 
 - Add node type `imageGeneration` with text prompt/model/style params and image output.
