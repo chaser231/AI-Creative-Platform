@@ -35,8 +35,8 @@ export function RenderField({
     const desc: FieldDescriptor = pickFieldKind(schema);
 
     return (
-        <label className="flex flex-col gap-1.5">
-            <span className="text-xs font-medium text-text-primary">
+        <label className="flex flex-col gap-2.5">
+            <span className="text-xs font-medium leading-5 text-text-primary">
                 {label}
                 {desc.optional && (
                     <span className="ml-1 text-text-tertiary">— необязательно</span>
@@ -77,7 +77,7 @@ export function RenderField({
             )}
 
             {desc.kind === "slider" && typeof desc.min === "number" && typeof desc.max === "number" && (
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-4 py-1">
                     <input
                         type="range"
                         min={desc.min}
@@ -136,7 +136,7 @@ export function RenderField({
 
 function inputClass(hasError: boolean): string {
     return [
-        "h-9 w-full rounded-md border bg-bg-surface px-2.5 text-sm text-text-primary",
+        "h-11 w-full rounded-[var(--radius-md)] border bg-bg-surface px-3 text-sm text-text-primary",
         "focus:outline-none focus:ring-2 focus:ring-border-focus/40",
         hasError
             ? "border-red-500 focus:border-red-500"

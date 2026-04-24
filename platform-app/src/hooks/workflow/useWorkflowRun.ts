@@ -10,10 +10,16 @@ import { useCallback, useMemo } from "react";
 import { trpc } from "@/lib/trpc";
 import { useWorkflowStore } from "@/store/workflow/useWorkflowStore";
 import {
+    buildExecutionPlan,
     executeGraph,
     fetchExecuteNode,
     validateBeforeRun,
+    type TargetRunMode,
 } from "@/store/workflow/executor";
+import {
+    prepareFullRunSnapshot,
+    prepareSliceRunSnapshot,
+} from "./runState";
 
 export interface UseWorkflowRunArgs {
     workspaceId: string | undefined;
@@ -33,17 +39,35 @@ export function useWorkflowRun({ workspaceId, workflowId }: UseWorkflowRunArgs) 
         [nodes, edges],
     );
 
-    const runAll = useCallback(async () => {
-        if (!workspaceId) return;
+    const runGraph = useCallback(async (
+        targetNodeId?: string,
+        targetRunMode: TargetRunMode = "ancestors",
+    ) => {
+        if (!workspaceId) return null;
         const store = useWorkflowStore.getState();
-        if (store.isRunning) return;
+        if (store.isRunning) return null;
+        const cachedResults = store.runResults;
+        const executionPlan = targetNodeId
+            ? buildExecutionPlan({
+                  targetNodeId,
+                  targetRunMode,
+                  nodes: store.nodes,
+                  edges: store.edges,
+                  cachedResults,
+              })
+            : null;
 
-        const initial: Record<string, "idle"> = {};
-        for (const n of store.nodes) initial[n.id] = "idle";
+        const snapshot = targetNodeId && executionPlan
+            ? prepareSliceRunSnapshot({
+                  nodeIds: executionPlan.nodeIds,
+                  currentRunState: store.runState,
+                  currentRunResults: store.runResults,
+              })
+            : prepareFullRunSnapshot(store.nodes);
         useWorkflowStore.setState({
             isRunning: true,
-            runState: initial,
-            runResults: {},
+            runState: snapshot.runState,
+            runResults: snapshot.runResults,
             runError: null,
         });
 
@@ -52,6 +76,9 @@ export function useWorkflowRun({ workspaceId, workflowId }: UseWorkflowRunArgs) 
             edges: store.edges,
             workspaceId,
             workflowId,
+            targetNodeId,
+            targetRunMode,
+            cachedResults,
             deps: {
                 getAssetById: ({ id }) =>
                     utils.asset.getById.fetch({ id }) as Promise<{
@@ -76,12 +103,46 @@ export function useWorkflowRun({ workspaceId, workflowId }: UseWorkflowRunArgs) 
             isRunning: false,
             runError: result.success ? null : result.error ?? null,
         });
+        return result;
     }, [workspaceId, workflowId, utils, attachUrl]);
+
+    const runAll = useCallback(async () => {
+        await runGraph();
+    }, [runGraph]);
+
+    const runNode = useCallback(
+        async (nodeId: string) => {
+            await runGraph(nodeId);
+        },
+        [runGraph],
+    );
+
+    const runNodeWithCachedInputs = useCallback(
+        async (nodeId: string) => {
+            await runGraph(nodeId, "cached-inputs");
+        },
+        [runGraph],
+    );
+
+    const validationIssuesForNode = useCallback(
+        (nodeId: string, targetRunMode: TargetRunMode = "ancestors") => {
+            const state = useWorkflowStore.getState();
+            return validateBeforeRun(state.nodes, state.edges, {
+                targetNodeId: nodeId,
+                targetRunMode,
+                cachedResults: state.runResults,
+            });
+        },
+        [],
+    );
 
     return {
         runAll,
+        runNode,
+        runNodeWithCachedInputs,
         isRunning,
         validationIssues,
+        validationIssuesForNode,
         canRun: !!workspaceId && validationIssues.length === 0 && !isRunning,
     };
 }

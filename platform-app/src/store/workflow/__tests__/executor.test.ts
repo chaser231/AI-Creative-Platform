@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+    buildExecutionPlan,
+    buildExecutionSlice,
     executeGraph,
+    getAncestorNodeIds,
     validateBeforeRun,
     type ExecutorDeps,
 } from "../executor";
@@ -66,6 +69,123 @@ describe("validateBeforeRun", () => {
         ];
         const issues = validateBeforeRun(nodes, [e("e1", "in", "out")]);
         expect(issues).toEqual([]);
+    });
+
+    it("validates only selected node ancestors when targetNodeId is provided", () => {
+        const nodes = [
+            n("in", "imageInput", validImageInput),
+            n("rb", "removeBackground"),
+            n("out", "assetOutput", validAssetOutput),
+            n("bad", "imageInput", { source: "asset" }),
+            n("dangling", "assetOutput", validAssetOutput),
+        ];
+        const edges = [e("e1", "in", "rb"), e("e2", "rb", "out")];
+
+        expect(validateBeforeRun(nodes, edges)).toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({ nodeId: "bad" }),
+                expect.objectContaining({ nodeId: "dangling" }),
+            ]),
+        );
+        expect(validateBeforeRun(nodes, edges, { targetNodeId: "rb" })).toEqual([]);
+    });
+
+    it("reports a missing selected node", () => {
+        const issues = validateBeforeRun([], [], { targetNodeId: "missing" });
+        expect(issues).toEqual([
+            { nodeId: "missing", message: "Выбранная нода не найдена." },
+        ]);
+    });
+});
+
+describe("execution slices", () => {
+    it("collects upstream ancestors without downstream or sibling branches", () => {
+        const nodes = [
+            n("in", "imageInput", validImageInput),
+            n("rb", "removeBackground"),
+            n("mask", "mask"),
+            n("preview", "preview"),
+            n("sibling", "assetOutput", validAssetOutput),
+        ];
+        const edges = [
+            e("e1", "in", "rb"),
+            e("e2", "rb", "mask"),
+            e("e3", "mask", "preview"),
+            e("e4", "rb", "sibling"),
+        ];
+
+        expect(new Set(getAncestorNodeIds("mask", nodes, edges))).toEqual(
+            new Set(["in", "rb"]),
+        );
+
+        const slice = buildExecutionSlice({ targetNodeId: "mask", nodes, edges });
+        expect(slice.nodes.map((node) => node.id)).toEqual(["in", "rb", "mask"]);
+        expect(slice.edges.map((edge) => edge.id)).toEqual(["e1", "e2"]);
+    });
+
+    it("builds a cached-input plan when required incoming ports have cached results", () => {
+        const nodes = [
+            n("in", "imageInput", validImageInput),
+            n("rb", "removeBackground"),
+            n("mask", "mask"),
+        ];
+        const edges = [e("e1", "in", "rb"), e("e2", "rb", "mask")];
+
+        const plan = buildExecutionPlan({
+            targetNodeId: "mask",
+            targetRunMode: "cached-inputs",
+            nodes,
+            edges,
+            cachedResults: { rb: { url: "https://cache/rb.png" } },
+        });
+
+        expect(plan.mode).toBe("cached-inputs");
+        expect(plan.nodes.map((node) => node.id)).toEqual(["mask"]);
+        expect(plan.inputEdges.map((edge) => edge.id)).toEqual(["e2"]);
+        expect(plan.initialResults.rb).toEqual({ url: "https://cache/rb.png" });
+    });
+
+    it("falls back to ancestors when cached inputs are missing", () => {
+        const nodes = [
+            n("in", "imageInput", validImageInput),
+            n("rb", "removeBackground"),
+            n("mask", "mask"),
+        ];
+        const edges = [e("e1", "in", "rb"), e("e2", "rb", "mask")];
+
+        const plan = buildExecutionPlan({
+            targetNodeId: "mask",
+            targetRunMode: "cached-inputs",
+            nodes,
+            edges,
+            cachedResults: {},
+        });
+
+        expect(plan.mode).toBe("ancestors");
+        expect(plan.nodes.map((node) => node.id)).toEqual(["in", "rb", "mask"]);
+        expect(plan.inputEdges.map((edge) => edge.id)).toEqual(["e1", "e2"]);
+    });
+});
+
+describe("cached-input validation", () => {
+    it("validates only the target node when cached incoming results are available", () => {
+        const nodes = [
+            n("in", "imageInput", { source: "asset" }),
+            n("rb", "removeBackground"),
+            n("mask", "mask"),
+        ];
+        const edges = [e("e1", "in", "rb"), e("e2", "rb", "mask")];
+
+        expect(validateBeforeRun(nodes, edges, { targetNodeId: "mask" })).toEqual(
+            expect.arrayContaining([expect.objectContaining({ nodeId: "in" })]),
+        );
+        expect(
+            validateBeforeRun(nodes, edges, {
+                targetNodeId: "mask",
+                targetRunMode: "cached-inputs",
+                cachedResults: { rb: { url: "https://cache/rb.png" } },
+            }),
+        ).toEqual([]);
     });
 });
 
@@ -156,5 +276,133 @@ describe("executeGraph", () => {
         expect(result.success).toBe(false);
         expect(result.error?.nodeId).toBe("rb");
         expect(blocked).toContain("out");
+    });
+
+    it("runs only ancestors and the target node when targetNodeId is provided", async () => {
+        const nodes = [
+            n("in", "imageInput", validImageInput),
+            n("rb", "removeBackground"),
+            n("mask", "mask"),
+            n("preview", "preview"),
+            n("unrelated", "imageInput", { source: "asset", assetId: "other" }),
+            n("unrelatedOut", "assetOutput", { name: "Other" }),
+        ];
+        const edges = [
+            e("e1", "in", "rb"),
+            e("e2", "rb", "mask"),
+            e("e3", "mask", "preview"),
+            e("e4", "unrelated", "unrelatedOut"),
+        ];
+        const deps = makeDeps();
+        const done: string[] = [];
+        const blocked: string[] = [];
+
+        const result = await executeGraph({
+            nodes,
+            edges,
+            workspaceId: "ws",
+            targetNodeId: "mask",
+            deps,
+            callbacks: {
+                onNodeDone: (id) => done.push(id),
+                onNodeBlocked: (id) => blocked.push(id),
+            },
+        });
+
+        expect(result.success).toBe(true);
+        expect(done).toEqual(["in", "rb", "mask"]);
+        expect(Object.keys(result.results)).toEqual(["in", "rb", "mask"]);
+        expect(blocked).toEqual([]);
+        expect(deps.getAssetById).toHaveBeenCalledTimes(1);
+        expect(deps.getAssetById).toHaveBeenCalledWith({ id: "asset-1" });
+        expect(deps.attachUrlToWorkspace).not.toHaveBeenCalled();
+    });
+
+    it("does not let invalid unrelated nodes block a selected-node run", async () => {
+        const nodes = [
+            n("in", "imageInput", validImageInput),
+            n("rb", "removeBackground"),
+            n("bad", "imageInput", { source: "asset" }),
+            n("dangling", "assetOutput", validAssetOutput),
+        ];
+        const edges = [e("e1", "in", "rb")];
+
+        const result = await executeGraph({
+            nodes,
+            edges,
+            workspaceId: "ws",
+            targetNodeId: "rb",
+            deps: makeDeps(),
+        });
+
+        expect(result.success).toBe(true);
+        expect(Object.keys(result.results)).toEqual(["in", "rb"]);
+    });
+
+    it("runs only the target node when cached inputs satisfy required ports", async () => {
+        const nodes = [
+            n("in", "imageInput", validImageInput),
+            n("rb", "removeBackground"),
+            n("mask", "mask"),
+            n("preview", "preview"),
+        ];
+        const edges = [
+            e("e1", "in", "rb"),
+            e("e2", "rb", "mask"),
+            e("e3", "mask", "preview"),
+        ];
+        const deps = makeDeps();
+        const done: string[] = [];
+
+        const result = await executeGraph({
+            nodes,
+            edges,
+            workspaceId: "ws",
+            targetNodeId: "mask",
+            targetRunMode: "cached-inputs",
+            cachedResults: { rb: { url: "https://cache/rb.png" } },
+            deps,
+            callbacks: { onNodeDone: (id) => done.push(id) },
+        });
+
+        expect(result.success).toBe(true);
+        expect(done).toEqual(["mask"]);
+        expect(Object.keys(result.results)).toEqual(["mask"]);
+        expect(deps.getAssetById).not.toHaveBeenCalled();
+        expect(deps.executeServerAction).toHaveBeenCalledTimes(1);
+        expect(deps.executeServerAction).toHaveBeenCalledWith(
+            expect.objectContaining({
+                actionId: "apply_mask",
+                inputs: { "image-in": { imageUrl: "https://cache/rb.png" } },
+            }),
+        );
+    });
+
+    it("falls back to running ancestors when cached inputs are unavailable", async () => {
+        const nodes = [
+            n("in", "imageInput", validImageInput),
+            n("rb", "removeBackground"),
+            n("mask", "mask"),
+        ];
+        const edges = [e("e1", "in", "rb"), e("e2", "rb", "mask")];
+        const deps = makeDeps();
+        const done: string[] = [];
+
+        const result = await executeGraph({
+            nodes,
+            edges,
+            workspaceId: "ws",
+            targetNodeId: "mask",
+            targetRunMode: "cached-inputs",
+            cachedResults: {},
+            deps,
+            callbacks: { onNodeDone: (id) => done.push(id) },
+        });
+
+        expect(result.success).toBe(true);
+        expect(done).toEqual(["in", "rb", "mask"]);
+        expect(Object.keys(result.results)).toEqual(["in", "rb", "mask"]);
+        expect(deps.getAssetById).toHaveBeenCalledTimes(1);
+        expect(deps.executeServerAction).toHaveBeenCalledTimes(2);
     });
 });

@@ -15,6 +15,46 @@ function makeId(prefix: "node" | "edge"): string {
     return `${prefix}-${ts}-${rand}`;
 }
 
+function collectDownstreamNodeIds(seedNodeIds: Iterable<string>, edges: WorkflowEdge[]): Set<string> {
+    const visited = new Set<string>();
+    const stack = Array.from(seedNodeIds);
+
+    while (stack.length > 0) {
+        const current = stack.pop()!;
+        if (visited.has(current)) continue;
+        visited.add(current);
+
+        for (const edge of edges) {
+            if (edge.source === current && !visited.has(edge.target)) {
+                stack.push(edge.target);
+            }
+        }
+    }
+
+    return visited;
+}
+
+function clearCachedRunOutputs(
+    state: WorkflowStore,
+    seedNodeIds: Iterable<string>,
+    edges: WorkflowEdge[] = state.edges,
+): Pick<WorkflowStore, "runState" | "runResults"> {
+    const staleNodeIds = collectDownstreamNodeIds(seedNodeIds, edges);
+    if (staleNodeIds.size === 0) {
+        return { runState: state.runState, runResults: state.runResults };
+    }
+
+    const runState = { ...state.runState };
+    const runResults = { ...state.runResults };
+
+    for (const nodeId of staleNodeIds) {
+        delete runResults[nodeId];
+        if (runState[nodeId]) runState[nodeId] = "idle";
+    }
+
+    return { runState, runResults };
+}
+
 export const createGraphSlice: StateCreator<WorkflowStore, [], [], GraphSlice> = (set, get) => ({
     nodes: [],
     edges: [],
@@ -56,6 +96,7 @@ export const createGraphSlice: StateCreator<WorkflowStore, [], [], GraphSlice> =
             nodes: state.nodes.map((n) =>
                 n.id === id ? { ...n, data: { params: { ...n.data.params, ...patch } } } : n,
             ),
+            ...clearCachedRunOutputs(state, [id]),
             dirty: true,
         }));
     },
@@ -65,6 +106,7 @@ export const createGraphSlice: StateCreator<WorkflowStore, [], [], GraphSlice> =
             nodes: state.nodes.filter((n) => n.id !== id),
             // Cascade: drop any edge that references the removed node.
             edges: state.edges.filter((e) => e.source !== id && e.target !== id),
+            ...clearCachedRunOutputs(state, [id]),
             dirty: true,
         }));
     },
@@ -72,15 +114,28 @@ export const createGraphSlice: StateCreator<WorkflowStore, [], [], GraphSlice> =
     connect: (edge) => {
         const id = makeId("edge");
         const newEdge: WorkflowEdge = { id, ...edge };
-        set((state) => ({ edges: [...state.edges, newEdge], dirty: true }));
+        set((state) => {
+            const nextEdges = [...state.edges, newEdge];
+            return {
+                edges: nextEdges,
+                ...clearCachedRunOutputs(state, [edge.target], nextEdges),
+                dirty: true,
+            };
+        });
         return id;
     },
 
     disconnect: (edgeId) => {
-        set((state) => ({
-            edges: state.edges.filter((e) => e.id !== edgeId),
-            dirty: true,
-        }));
+        set((state) => {
+            const removedEdge = state.edges.find((e) => e.id === edgeId);
+            return {
+                edges: state.edges.filter((e) => e.id !== edgeId),
+                ...(removedEdge
+                    ? clearCachedRunOutputs(state, [removedEdge.target])
+                    : {}),
+                dirty: true,
+            };
+        });
     },
 
     serialize: () => {
@@ -97,6 +152,10 @@ export const createGraphSlice: StateCreator<WorkflowStore, [], [], GraphSlice> =
             scenarioConfig:
                 scenarioConfig ??
                 defaultWorkflowScenarioConfig(name ?? get().name),
+            runState: {},
+            runResults: {},
+            runError: null,
+            isRunning: false,
             dirty: false,
         });
     },
