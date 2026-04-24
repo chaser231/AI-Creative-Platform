@@ -32,6 +32,17 @@ function makeDeps(overrides: Partial<ExecutorDeps> = {}): ExecutorDeps {
 }
 
 const validImageInput = { source: "asset" as const, assetId: "asset-1" };
+const validImageGeneration = {
+    prompt: "Premium product photo on a clean studio background",
+    style: "photo" as const,
+    model: "flux-schnell" as const,
+    aspectRatio: "1:1" as const,
+};
+const validTextGeneration = {
+    prompt: "Заголовок для весенней распродажи",
+    mode: "headline" as const,
+    tone: "bold" as const,
+};
 const validAssetOutput = { name: "Out" };
 const validReflection = { style: "subtle" as const, intensity: 0.3 };
 
@@ -69,6 +80,20 @@ describe("validateBeforeRun", () => {
         ];
         const issues = validateBeforeRun(nodes, [e("e1", "in", "out")]);
         expect(issues).toEqual([]);
+    });
+
+    it("accepts an image generation node as a root image producer", () => {
+        const nodes = [
+            n("gen", "imageGeneration", validImageGeneration),
+            n("preview", "preview"),
+        ];
+        const issues = validateBeforeRun(nodes, [e("e1", "gen", "preview")]);
+        expect(issues).toEqual([]);
+    });
+
+    it("accepts a text generation node as a root text producer", () => {
+        const nodes = [n("text", "textGeneration", validTextGeneration)];
+        expect(validateBeforeRun(nodes, [])).toEqual([]);
     });
 
     it("validates only selected node ancestors when targetNodeId is provided", () => {
@@ -404,5 +429,61 @@ describe("executeGraph", () => {
         expect(Object.keys(result.results)).toEqual(["in", "rb", "mask"]);
         expect(deps.getAssetById).toHaveBeenCalledTimes(1);
         expect(deps.executeServerAction).toHaveBeenCalledTimes(2);
+    });
+
+    it("executes imageGeneration as a server image producer", async () => {
+        const nodes = [
+            n("gen", "imageGeneration", validImageGeneration),
+            n("preview", "preview"),
+        ];
+        const edges = [e("e1", "gen", "preview")];
+        const deps = makeDeps();
+
+        const result = await executeGraph({
+            nodes,
+            edges,
+            workspaceId: "ws",
+            deps,
+        });
+
+        expect(result.success).toBe(true);
+        expect(result.results.gen?.url).toBe("https://s3/generate_image-out.png");
+        expect(result.results.preview?.url).toBe("https://s3/generate_image-out.png");
+        expect(deps.executeServerAction).toHaveBeenCalledWith(
+            expect.objectContaining({
+                actionId: "generate_image",
+                params: validImageGeneration,
+                inputs: {},
+            }),
+        );
+    });
+
+    it("executes textGeneration as a server text producer", async () => {
+        const nodes = [n("text", "textGeneration", validTextGeneration)];
+        const deps = makeDeps({
+            executeServerAction: vi.fn(async () => ({
+                success: true as const,
+                type: "text" as const,
+                text: "Весна начинается здесь",
+                requestId: "rid",
+            })),
+        });
+
+        const result = await executeGraph({
+            nodes,
+            edges: [],
+            workspaceId: "ws",
+            deps,
+        });
+
+        expect(result.success).toBe(true);
+        expect(result.results.text).toEqual({ text: "Весна начинается здесь" });
+        expect(deps.executeServerAction).toHaveBeenCalledWith(
+            expect.objectContaining({
+                actionId: "generate_text",
+                params: validTextGeneration,
+                inputs: {},
+            }),
+        );
     });
 });

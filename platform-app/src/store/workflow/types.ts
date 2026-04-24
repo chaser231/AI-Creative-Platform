@@ -64,6 +64,7 @@ export interface ViewportSlice {
 
 export interface NodeResult {
     url?: string;
+    text?: string;
     assetId?: string;
 }
 

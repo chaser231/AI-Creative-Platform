@@ -27,6 +27,8 @@ import {
 export interface NodeRunResult {
     /** Resolved image URL produced by the node, if any. */
     url?: string;
+    /** Generated text produced by the node, if any. */
+    text?: string;
     /** Asset id when the node persisted/picked an asset. */
     assetId?: string;
 }
@@ -238,14 +240,20 @@ function buildCachedInputPlan({
         (edge) => edge.target === targetNode.id && knownNodeIds.has(edge.source),
     );
     const cachedInputEdges = incomingEdges.filter(
-        (edge) => Boolean(cachedResults[edge.source]?.url),
+        (edge) => Boolean(cachedResults[edge.source]?.url || cachedResults[edge.source]?.text),
     );
     const definition = NODE_REGISTRY[targetNode.type];
 
     for (const port of definition.inputs) {
         if (!port.required) continue;
         const hasCachedInput = cachedInputEdges.some(
-            (edge) => edge.targetHandle === port.id,
+            (edge) => {
+                if (edge.targetHandle !== port.id) return false;
+                const cached = cachedResults[edge.source];
+                if (port.type === "text") return Boolean(cached?.text);
+                if (port.type === "image") return Boolean(cached?.url);
+                return Boolean(cached?.url || cached?.text);
+            },
         );
         if (!hasCachedInput) return null;
     }
@@ -464,7 +472,10 @@ async function runOne(
                 workflowId,
             });
             if (!resp.success) throw new Error(resp.error);
-            result = { url: resp.imageUrl };
+            result =
+                resp.type === "text"
+                    ? { text: resp.text ?? "" }
+                    : { url: resp.imageUrl };
         }
 
         results[nodeId] = result;
@@ -485,12 +496,13 @@ function collectInputs(
     nodeId: string,
     edges: WorkflowEdge[],
     results: Record<string, NodeRunResult>,
-): Record<string, { imageUrl: string }> {
-    const map: Record<string, { imageUrl: string }> = {};
+): ExecuteNodeRequest["inputs"] {
+    const map: ExecuteNodeRequest["inputs"] = {};
     for (const e of edges) {
         if (e.target !== nodeId) continue;
         const upstream = results[e.source];
         if (upstream?.url) map[e.targetHandle] = { imageUrl: upstream.url };
+        if (upstream?.text) map[e.targetHandle] = { text: upstream.text };
     }
     return map;
 }

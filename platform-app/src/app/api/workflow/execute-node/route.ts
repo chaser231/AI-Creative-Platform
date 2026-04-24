@@ -11,6 +11,8 @@ import type { ExecuteNodeRequest, ServerActionId } from "@/server/workflow/types
 export const maxDuration = 300;
 
 const ALLOWED_ACTIONS: ReadonlySet<string> = new Set<ServerActionId>([
+    "generate_text",
+    "generate_image",
     "remove_background",
     "add_reflection",
     "apply_mask",
@@ -112,6 +114,9 @@ export async function POST(req: NextRequest) {
         const imageInput = inputs["image-in"];
         const actionParams = {
             ...(params ?? {}),
+            ...(actionId === "generate_image" && typeof params?.prompt === "string"
+                ? { subject: params.prompt }
+                : {}),
             imageUrl: imageInput?.imageUrl,
         };
 
@@ -141,7 +146,22 @@ export async function POST(req: NextRequest) {
             imageUrl?: string;
             provider?: string;
             costUsd?: number;
+            role?: string;
         };
+        if (result.type === "text") {
+            return NextResponse.json({
+                success: true,
+                type: "text",
+                text: result.content,
+                metadata: {
+                    role: metadata.role,
+                    provider: metadata.provider,
+                    costUsd: metadata.costUsd,
+                },
+                requestId,
+            });
+        }
+
         const imageUrl = metadata.imageUrl ?? result.content;
 
         return NextResponse.json({

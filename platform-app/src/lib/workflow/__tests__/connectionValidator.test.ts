@@ -38,6 +38,11 @@ describe("isValidConnection", () => {
         expect(isValidConnection(conn("b", "image-out", "c", "image-in"), nodes)).toBe(true);
     });
 
+    it("rejects text-out → image-in because port types differ", () => {
+        const nodes = [node("a", "textGeneration"), node("b", "removeBackground")];
+        expect(isValidConnection(conn("a", "text-out", "b", "image-in"), nodes)).toBe(false);
+    });
+
     it("rejects when source node is missing from list", () => {
         const nodes = [node("b", "removeBackground")];
         expect(

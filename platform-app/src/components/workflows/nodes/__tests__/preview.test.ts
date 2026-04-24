@@ -50,4 +50,17 @@ describe("getWorkflowNodePreview", () => {
             ),
         ).toBeNull();
     });
+
+    it("uses text results for text generation nodes", () => {
+        expect(
+            getWorkflowNodePreview(
+                "textGeneration",
+                { prompt: "Sale headline" },
+                { text: "Скидки уже здесь" },
+            ),
+        ).toEqual({
+            text: "Скидки уже здесь",
+            source: "result",
+        });
+    });
 });

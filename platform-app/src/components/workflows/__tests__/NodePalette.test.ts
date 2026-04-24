@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
     getNodePaletteGroups,
+    getWorkflowPresetPaletteItems,
     shouldClosePaletteForPointerTarget,
 } from "../NodePalette";
 
@@ -60,5 +61,15 @@ describe("shouldClosePaletteForPointerTarget", () => {
 
         expect(shouldClosePaletteForPointerTarget(null, {})).toBe(false);
         expect(shouldClosePaletteForPointerTarget(root, null)).toBe(false);
+    });
+});
+
+describe("getWorkflowPresetPaletteItems", () => {
+    it("returns create links for workflow preset entrypoints", () => {
+        expect(getWorkflowPresetPaletteItems().map((item) => item.href)).toEqual([
+            "/workflows/new?preset=product-reflection-pipeline",
+            "/workflows/new?preset=remove-background-preview",
+            "/workflows/new?preset=asset-transform-save",
+        ]);
     });
 });

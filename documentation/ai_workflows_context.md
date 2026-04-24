@@ -40,7 +40,7 @@ Data model:
 Main routes:
 
 - `/workflows`: workspace workflow list, graph workflows only by default.
-- `/workflows/new`: creates an empty graph workflow via `workflow.saveGraph`.
+- `/workflows/new`: creates an empty graph workflow or a preset graph from `?preset=...` via `workflow.saveGraph`.
 - `/workflows/[id]`: loads `WorkflowEditorShell`, then dynamically imports the xyflow editor client-side.
 
 Key files:
@@ -484,6 +484,17 @@ P1.5 Workflow preset creation:
   - nodes/edges have stable required params;
   - unknown preset falls back to empty graph.
 
+Status:
+
+- Done 2026-04-25:
+  - added pure workflow preset factories in `lib/workflow/presets.ts`;
+  - `/workflows/new?preset=...` now creates a prefilled graph with preset name/description;
+  - supported IDs: `product-reflection-pipeline`, `remove-background-preview`, `asset-transform-save`;
+  - unknown preset IDs still create the empty default workflow;
+  - `/workflows` now exposes compact preset cards plus a separate empty workflow action;
+  - the workflow editor left rail opens a preset flyout from the bottom workflow button;
+  - tests cover schema-valid preset graphs, stable ids, executable defaults after user image input injection, unknown fallback, and preset entrypoint links.
+
 P1.6 Image generation node:
 
 - Add node type `imageGeneration` with text prompt/model/style params and image output.
@@ -497,6 +508,15 @@ P1.6 Image generation node:
   - executor sends correct action;
   - preview resolves from result.
 
+Status:
+
+- Done 2026-04-25:
+  - added `imageGeneration` workflow node with prompt/style/model/aspect-ratio params and image output;
+  - node is registered in graph schema, node registry, param schemas, React Flow node map, palette grouping, and inspector labels;
+  - workflow execute-node route now allows `generate_image` and maps workflow `prompt` to the existing action `subject`;
+  - `generate_image` now accepts `prompt` as an alias and forwards `aspectRatio` / `scale` to the provider layer;
+  - tests cover param validation, selected/full executor dispatch, API route mapping, and existing workflow graph behavior.
+
 P1.7 Text generation node:
 
 - Add text result support before or together with text nodes:
@@ -508,6 +528,17 @@ P1.7 Text generation node:
   - text port compatibility;
   - server response mapping for text;
   - node preview for text output.
+
+Status:
+
+- Done 2026-04-25:
+  - `NodeRunResult` / store `NodeResult` now support `text`;
+  - workflow executor collects generic inputs (`imageUrl` or `text`) and maps text server responses into run results;
+  - added workflow-only `generate_text` action with headline/subtitle/freeform modes;
+  - execute-node route now allows `generate_text` and returns `type: "text"` with `text`;
+  - added `textGeneration` node with prompt/mode/tone params and `text-out` port;
+  - node cards render text result previews instead of image placeholders;
+  - tests cover text param validation, executor dispatch, route response mapping, and text preview resolution.
 
 P1.8 Later node contracts:
 

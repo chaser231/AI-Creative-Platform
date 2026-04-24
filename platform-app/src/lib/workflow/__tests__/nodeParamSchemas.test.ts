@@ -3,10 +3,12 @@ import {
     addReflectionParamsSchema,
     assetOutputParamsSchema,
     blurParamsSchema,
+    imageGenerationParamsSchema,
     imageInputParamsSchema,
     maskParamsSchema,
     NODE_PARAM_SCHEMAS,
     removeBackgroundParamsSchema,
+    textGenerationParamsSchema,
 } from "@/lib/workflow/nodeParamSchemas";
 
 describe("imageInputParamsSchema", () => {
@@ -35,6 +37,60 @@ describe("imageInputParamsSchema", () => {
 
     it("rejects malformed url", () => {
         const r = imageInputParamsSchema.safeParse({ source: "url", sourceUrl: "not-a-url" });
+        expect(r.success).toBe(false);
+    });
+});
+
+describe("imageGenerationParamsSchema", () => {
+    it("accepts prompt with default image generation controls", () => {
+        const r = imageGenerationParamsSchema.safeParse({
+            prompt: "Premium product photo on a clean studio background",
+        });
+        expect(r.success).toBe(true);
+        if (r.success) {
+            expect(r.data.model).toBe("flux-schnell");
+            expect(r.data.style).toBe("photo");
+            expect(r.data.aspectRatio).toBe("1:1");
+        }
+    });
+
+    it("rejects an empty prompt", () => {
+        const r = imageGenerationParamsSchema.safeParse({ prompt: "" });
+        expect(r.success).toBe(false);
+    });
+});
+
+describe("textGenerationParamsSchema", () => {
+    it("accepts prompt with default text generation controls", () => {
+        const r = textGenerationParamsSchema.safeParse({
+            prompt: "Заголовок для весенней распродажи",
+        });
+        expect(r.success).toBe(true);
+        if (r.success) {
+            expect(r.data.mode).toBe("headline");
+            expect(r.data.tone).toBe("bold");
+        }
+    });
+
+    it("accepts subtitle and freeform modes", () => {
+        expect(
+            textGenerationParamsSchema.safeParse({
+                prompt: "Подзаголовок для новой коллекции",
+                mode: "subtitle",
+                tone: "neutral",
+            }).success,
+        ).toBe(true);
+        expect(
+            textGenerationParamsSchema.safeParse({
+                prompt: "Короткий текст о доставке",
+                mode: "freeform",
+                tone: "formal",
+            }).success,
+        ).toBe(true);
+    });
+
+    it("rejects an empty prompt", () => {
+        const r = textGenerationParamsSchema.safeParse({ prompt: "" });
         expect(r.success).toBe(false);
     });
 });
@@ -201,10 +257,12 @@ describe("NODE_PARAM_SCHEMAS", () => {
                 "addReflection",
                 "assetOutput",
                 "blur",
+                "imageGeneration",
                 "imageInput",
                 "mask",
                 "preview",
                 "removeBackground",
+                "textGeneration",
             ].sort(),
         );
     });

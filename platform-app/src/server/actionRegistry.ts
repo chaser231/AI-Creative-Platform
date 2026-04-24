@@ -160,6 +160,25 @@ export const ACTIONS: ActionDefinition[] = [
   // Callable through POST /api/workflow/execute-node — kept in the registry
   // so ACTIONS stays the single source of truth for handlers.
   {
+    id: "generate_text",
+    name: "Generate Text",
+    description: "Workflow-only text generation for headline, subtitle, or short copy nodes",
+    parameters: {
+      prompt: { type: "string", description: "Text generation task" },
+      mode: {
+        type: "string",
+        description: "Output mode",
+        enum: ["headline", "subtitle", "freeform"],
+      },
+      tone: {
+        type: "string",
+        description: "Tone",
+        enum: ["bold", "playful", "formal", "urgent", "neutral"],
+      },
+    },
+    required: ["prompt"],
+  },
+  {
     id: "remove_background",
     name: "Remove Background",
     description: "AI-powered background removal with alpha channel (workflow-only)",

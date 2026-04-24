@@ -34,6 +34,38 @@ export const imageInputParamsSchema = z
         },
     );
 
+export const imageGenerationParamsSchema = z.object({
+    prompt: z.string().trim().min(3, "Опишите, что нужно сгенерировать").max(1200),
+    style: z
+        .enum(["photo", "illustration", "3d", "flat", "gradient"])
+        .default("photo"),
+    model: z
+        .enum([
+            "flux-schnell",
+            "flux-dev",
+            "flux-1.1-pro",
+            "flux-2-pro",
+            "nano-banana-2",
+            "seedream",
+            "qwen-image",
+            "dall-e-3",
+        ])
+        .default("flux-schnell"),
+    aspectRatio: z
+        .enum(["1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9"])
+        .default("1:1"),
+});
+
+export const textGenerationParamsSchema = z.object({
+    prompt: z.string().trim().min(3, "Опишите, какой текст нужен").max(1200),
+    mode: z
+        .enum(["headline", "subtitle", "freeform"])
+        .default("headline"),
+    tone: z
+        .enum(["bold", "playful", "formal", "urgent", "neutral"])
+        .default("bold"),
+});
+
 /**
  * Background-removal models. Birefnet (fal) is default — it preserves shadows
  * and reflections better than Bria, which strips everything but the product
@@ -154,6 +186,8 @@ export const previewParamsSchema = z.object({});
 
 export const NODE_PARAM_SCHEMAS: Record<WorkflowNodeType, z.ZodTypeAny> = {
     imageInput: imageInputParamsSchema,
+    imageGeneration: imageGenerationParamsSchema,
+    textGeneration: textGenerationParamsSchema,
     removeBackground: removeBackgroundParamsSchema,
     addReflection: addReflectionParamsSchema,
     mask: maskParamsSchema,
@@ -163,6 +197,8 @@ export const NODE_PARAM_SCHEMAS: Record<WorkflowNodeType, z.ZodTypeAny> = {
 };
 
 export type ImageInputParams = z.infer<typeof imageInputParamsSchema>;
+export type ImageGenerationParams = z.infer<typeof imageGenerationParamsSchema>;
+export type TextGenerationParams = z.infer<typeof textGenerationParamsSchema>;
 export type RemoveBackgroundParams = z.infer<typeof removeBackgroundParamsSchema>;
 export type AddReflectionParams = z.infer<typeof addReflectionParamsSchema>;
 export type MaskParams = z.infer<typeof maskParamsSchema>;

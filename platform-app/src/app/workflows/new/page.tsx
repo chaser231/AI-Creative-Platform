@@ -2,8 +2,8 @@
 
 /**
  * /workflows/new — создаёт новый пустой graph-workflow и редиректит
- * на /workflows/<id>. Phase 5 будет поддерживать ?preset=X для
- * предзаполнения графа; Phase 2 только логирует запрошенный preset.
+ * на /workflows/<id>. Поддерживает ?preset=X для предзаполнения графа
+ * одним из системных workflow-шаблонов.
  */
 
 import { Suspense, useEffect, useRef } from "react";
@@ -12,6 +12,7 @@ import { Loader2 } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { useWorkspace } from "@/providers/WorkspaceProvider";
 import { emptyWorkflowGraph } from "@/lib/workflow/graphSchema";
+import { createWorkflowPresetDraft } from "@/lib/workflow/presets";
 
 function NewWorkflowInner() {
     const router = useRouter();
@@ -30,19 +31,14 @@ function NewWorkflowInner() {
         if (!currentWorkspace?.id) return;
         if (needsOnboarding) return;
 
-        const presetId = searchParams.get("preset");
-        if (presetId) {
-            // Phase 5 will resolve this to a pre-built graph. For now keep the
-            // route reachable so future preset links don't 404.
-            // eslint-disable-next-line no-console
-            console.warn("[workflows/new] preset requested (Phase 5):", presetId);
-        }
+        const preset = createWorkflowPresetDraft(searchParams.get("preset"));
 
         creationFired.current = true;
         saveGraph.mutate({
             workspaceId: currentWorkspace.id,
-            name: "Новый workflow",
-            graph: emptyWorkflowGraph(),
+            name: preset?.name ?? "Новый workflow",
+            description: preset?.description,
+            graph: preset?.graph ?? emptyWorkflowGraph(),
         });
     }, [currentWorkspace?.id, needsOnboarding, searchParams, saveGraph]);
 
