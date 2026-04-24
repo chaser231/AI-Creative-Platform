@@ -27,6 +27,8 @@ export interface Port {
     type: PortType;
     label: string;
     required?: boolean;
+    multiple?: boolean;
+    role?: "prompt" | "reference" | "source" | "primary";
 }
 
 export interface WorkflowNode<TType extends WorkflowNodeType = WorkflowNodeType> {
@@ -94,9 +96,17 @@ export const NODE_REGISTRY: Record<WorkflowNodeType, NodeDefinition> = {
     imageGeneration: {
         type: "imageGeneration",
         displayName: "Генерация изображения",
-        description: "Создаёт новое изображение по текстовому промпту.",
+        description: "Создаёт изображение по промпту и подключенным референсам.",
         category: "ai",
-        inputs: [],
+        inputs: [
+            {
+                id: "context-in",
+                type: "any",
+                label: "Контекст",
+                multiple: true,
+                role: "source",
+            },
+        ],
         outputs: [{ id: "image-out", type: "image", label: "Изображение" }],
         defaultParams: {
             prompt: "",
@@ -109,9 +119,17 @@ export const NODE_REGISTRY: Record<WorkflowNodeType, NodeDefinition> = {
     textGeneration: {
         type: "textGeneration",
         displayName: "Генерация текста",
-        description: "Создаёт заголовок, подзаголовок или короткий текст по задаче.",
+        description: "Создаёт текст по задаче и подключенным источникам.",
         category: "ai",
-        inputs: [],
+        inputs: [
+            {
+                id: "context-in",
+                type: "any",
+                label: "Контекст",
+                multiple: true,
+                role: "source",
+            },
+        ],
         outputs: [{ id: "text-out", type: "text", label: "Текст" }],
         defaultParams: {
             prompt: "",
@@ -212,7 +230,10 @@ export type ServerActionId =
 export interface ExecuteNodeRequest {
     actionId: ServerActionId;
     params: Record<string, unknown>;
-    inputs: Record<string, { imageUrl?: string; text?: string }>;
+    inputs: Record<
+        string,
+        { imageUrl?: string; text?: string; imageUrls?: string[]; texts?: string[] }
+    >;
     workspaceId: string;
     /** Reserved for future cost-tracking per-run; ignored in Phase 1 (D-02). */
     workflowId?: string;

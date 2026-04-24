@@ -19,6 +19,54 @@ const ALLOWED_ACTIONS: ReadonlySet<string> = new Set<ServerActionId>([
     "apply_blur",
 ]);
 
+type WorkflowInputValue = ExecuteNodeRequest["inputs"][string] | undefined;
+
+function compactStrings(values: Array<string | undefined>): string[] {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const value of values) {
+        const trimmed = value?.trim();
+        if (!trimmed || seen.has(trimmed)) continue;
+        seen.add(trimmed);
+        out.push(trimmed);
+    }
+    return out;
+}
+
+function collectTexts(input: WorkflowInputValue): string[] {
+    return compactStrings([...(input?.texts ?? []), input?.text]);
+}
+
+function collectImageUrls(input: WorkflowInputValue): string[] {
+    return compactStrings([...(input?.imageUrls ?? []), input?.imageUrl]);
+}
+
+function collectTextsFromInputs(inputs: ExecuteNodeRequest["inputs"], handles: string[]): string[] {
+    return compactStrings(handles.flatMap((handle) => collectTexts(inputs[handle])));
+}
+
+function collectImageUrlsFromInputs(
+    inputs: ExecuteNodeRequest["inputs"],
+    handles: string[],
+): string[] {
+    return compactStrings(handles.flatMap((handle) => collectImageUrls(inputs[handle])));
+}
+
+function mergePrompt(localPrompt: unknown, upstreamTexts: string[]): string {
+    const local = typeof localPrompt === "string" ? localPrompt.trim() : "";
+    const parts: string[] = [];
+    if (local) parts.push(local);
+    if (upstreamTexts.length > 0) {
+        parts.push(
+            [
+                "Контекст из подключенных текстовых нод:",
+                ...upstreamTexts.map((text, index) => `${index + 1}. ${text}`),
+            ].join("\n"),
+        );
+    }
+    return parts.join("\n\n");
+}
+
 export async function POST(req: NextRequest) {
     const requestId = randomUUID();
 
@@ -109,16 +157,42 @@ export async function POST(req: NextRequest) {
             );
         }
 
-        // D-04 client-resolved inputs: primary image port is "image-in".
-        // Flatten into params.imageUrl because executeAction expects a flat shape.
         const imageInput = inputs["image-in"];
         const actionParams = {
             ...(params ?? {}),
-            ...(actionId === "generate_image" && typeof params?.prompt === "string"
-                ? { subject: params.prompt }
-                : {}),
             imageUrl: imageInput?.imageUrl,
         };
+
+        if (actionId === "generate_image") {
+            const prompt = mergePrompt(
+                params?.prompt,
+                collectTextsFromInputs(inputs, ["context-in", "prompt-in"]),
+            );
+            const referenceImages = collectImageUrlsFromInputs(inputs, [
+                "context-in",
+                "reference-images",
+            ]);
+            Object.assign(actionParams, {
+                prompt,
+                subject: prompt,
+                referenceImages,
+            });
+        }
+
+        if (actionId === "generate_text") {
+            const prompt = mergePrompt(
+                params?.prompt,
+                collectTextsFromInputs(inputs, ["context-in", "prompt-in"]),
+            );
+            const sourceImageUrls = collectImageUrlsFromInputs(inputs, [
+                "context-in",
+                "source-images",
+            ]);
+            Object.assign(actionParams, {
+                prompt,
+                sourceImageUrls,
+            });
+        }
 
         const result = await executeAction(
             actionId as ServerActionId,

@@ -35,7 +35,7 @@ export const imageInputParamsSchema = z
     );
 
 export const imageGenerationParamsSchema = z.object({
-    prompt: z.string().trim().min(3, "Опишите, что нужно сгенерировать").max(1200),
+    prompt: z.string().trim().max(1200).default(""),
     style: z
         .enum(["photo", "illustration", "3d", "flat", "gradient"])
         .default("photo"),
@@ -57,7 +57,7 @@ export const imageGenerationParamsSchema = z.object({
 });
 
 export const textGenerationParamsSchema = z.object({
-    prompt: z.string().trim().min(3, "Опишите, какой текст нужен").max(1200),
+    prompt: z.string().trim().max(1200).default(""),
     mode: z
         .enum(["headline", "subtitle", "freeform"])
         .default("headline"),

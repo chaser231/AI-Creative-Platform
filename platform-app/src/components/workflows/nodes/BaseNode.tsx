@@ -10,7 +10,7 @@
  */
 
 import { Handle, Position } from "@xyflow/react";
-import type { MouseEvent } from "react";
+import { useMemo, type MouseEvent } from "react";
 import {
     AlertCircle,
     ArrowDown,
@@ -18,14 +18,20 @@ import {
     ArrowRight,
     ArrowUp,
     Check,
+    FileText,
     Image as ImageIcon,
     Loader2,
     MinusCircle,
     Play,
 } from "lucide-react";
-import { NODE_REGISTRY, type WorkflowNodeType } from "@/server/workflow/types";
+import {
+    NODE_REGISTRY,
+    type WorkflowEdge,
+    type WorkflowNode,
+    type WorkflowNodeType,
+} from "@/server/workflow/types";
 import { useWorkflowStore } from "@/store/workflow/useWorkflowStore";
-import type { NodeRunStatus } from "@/store/workflow/types";
+import type { NodeResult, NodeRunStatus } from "@/store/workflow/types";
 import { useWorkflowRunControls } from "../WorkflowRunControlsContext";
 import { getWorkflowNodePreview, type WorkflowNodePreview } from "./preview";
 
@@ -96,6 +102,20 @@ export function BaseNode({ id, type, selected }: BaseNodeProps) {
     const runError = useWorkflowStore((s) => s.runError);
     const errorMessage = runError?.nodeId === id ? runError.message : undefined;
     const preview = getWorkflowNodePreview(type, params, result);
+    const nodes = useWorkflowStore((s) => s.nodes);
+    const edges = useWorkflowStore((s) => s.edges);
+    const runResults = useWorkflowStore((s) => s.runResults);
+    const connectedInputs = useMemo(
+        () =>
+            getConnectedInputGroups({
+                nodeId: id,
+                type,
+                nodes,
+                edges,
+                runResults,
+            }),
+        [edges, id, nodes, runResults, type],
+    );
     const hasParamPreview = type === "mask" || type === "blur";
     const runControls = useWorkflowRunControls();
     const nodeRunDisabledReason = runControls?.getNodeRunDisabledReason(id);
@@ -166,6 +186,7 @@ export function BaseNode({ id, type, selected }: BaseNodeProps) {
             <div className="px-3 pb-3">
                 {type === "mask" && <MaskPreview params={params} />}
                 {type === "blur" && <BlurPreview params={params} />}
+                {connectedInputs && <ConnectedInputChips groups={connectedInputs} />}
                 {type === "textGeneration" ? (
                     <NodeTextPreview text={preview?.text} />
                 ) : (
@@ -283,6 +304,137 @@ function NodeTextPreview({ text }: { text: string | undefined }) {
             >
                 {text ?? "Нет результата"}
             </p>
+        </div>
+    );
+}
+
+interface ConnectedInputItem {
+    id: string;
+    label: string;
+    imageUrl?: string;
+    text?: string;
+}
+
+interface ConnectedInputGroup {
+    title: string;
+    kind: "image" | "text";
+    items: ConnectedInputItem[];
+}
+
+function getConnectedInputGroups({
+    nodeId,
+    type,
+    nodes,
+    edges,
+    runResults,
+}: {
+    nodeId: string;
+    type: WorkflowNodeType;
+    nodes: WorkflowNode[];
+    edges: WorkflowEdge[];
+    runResults: Record<string, NodeResult>;
+}): ConnectedInputGroup[] | null {
+    if (type !== "imageGeneration" && type !== "textGeneration") return null;
+
+    const imageTitle = type === "imageGeneration" ? "Референсы" : "Источники";
+    const textTitle = type === "imageGeneration" ? "Промпт" : "Задача";
+    const incoming = edges.filter((edge) => edge.target === nodeId);
+
+    const imageItems: ConnectedInputItem[] = [];
+    const textItems: ConnectedInputItem[] = [];
+
+    for (const edge of incoming) {
+        const sourceNode = nodes.find((node) => node.id === edge.source);
+        if (!sourceNode) continue;
+        const sourceDefinition = NODE_REGISTRY[sourceNode.type];
+        const sourceResult = runResults[sourceNode.id];
+        const sourcePreview = getWorkflowNodePreview(
+            sourceNode.type,
+            sourceNode.data.params,
+            sourceResult,
+        );
+
+        const isContextHandle =
+            edge.targetHandle === "context-in" ||
+            edge.targetHandle === "reference-images" ||
+            edge.targetHandle === "source-images" ||
+            edge.targetHandle === "prompt-in";
+
+        if (isContextHandle && (sourcePreview?.url || sourceResult?.url)) {
+            imageItems.push({
+                id: edge.id,
+                label: sourceDefinition.displayName,
+                imageUrl: sourcePreview?.url ?? sourceResult?.url,
+            });
+        }
+
+        if (isContextHandle && (sourceResult?.text || sourceNode.type === "textGeneration")) {
+            const promptPreview =
+                sourceResult?.text ??
+                (typeof sourceNode.data.params.prompt === "string"
+                    ? sourceNode.data.params.prompt
+                    : undefined);
+            textItems.push({
+                id: edge.id,
+                label: sourceDefinition.displayName,
+                text: promptPreview,
+            });
+        }
+    }
+
+    const groups: ConnectedInputGroup[] = [];
+    if (imageItems.length > 0) {
+        groups.push({ title: imageTitle, kind: "image", items: imageItems });
+    }
+    if (textItems.length > 0) {
+        groups.push({ title: textTitle, kind: "text", items: textItems });
+    }
+    return groups.length > 0 ? groups : null;
+}
+
+function ConnectedInputChips({ groups }: { groups: ConnectedInputGroup[] }) {
+    return (
+        <div className="mt-2 space-y-2 rounded-[var(--radius-md)] border border-border-primary bg-bg-secondary/80 px-2.5 py-2">
+            {groups.map((group) => (
+                <div key={group.title}>
+                    <div className="mb-1 text-[10px] font-medium uppercase tracking-wide text-text-tertiary">
+                        {group.title}
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                        {group.items.map((item) =>
+                            group.kind === "image" ? (
+                                <div
+                                    key={item.id}
+                                    className="workflow-transparent-bg flex h-9 w-9 items-center justify-center overflow-hidden rounded-[var(--radius-sm)] border border-border-primary bg-bg-tertiary"
+                                    title={item.label}
+                                >
+                                    {item.imageUrl ? (
+                                        // eslint-disable-next-line @next/next/no-img-element
+                                        <img
+                                            src={item.imageUrl}
+                                            alt={item.label}
+                                            className="h-full w-full object-cover"
+                                        />
+                                    ) : (
+                                        <ImageIcon className="h-4 w-4 text-text-tertiary" />
+                                    )}
+                                </div>
+                            ) : (
+                                <div
+                                    key={item.id}
+                                    className="flex max-w-full items-center gap-1.5 rounded-[var(--radius-sm)] border border-border-primary bg-bg-surface px-2 py-1 text-[10px] text-text-secondary"
+                                    title={item.text ?? item.label}
+                                >
+                                    <FileText className="h-3 w-3 shrink-0 text-text-tertiary" />
+                                    <span className="max-w-[210px] truncate">
+                                        {item.text || item.label}
+                                    </span>
+                                </div>
+                            ),
+                        )}
+                    </div>
+                </div>
+            ))}
         </div>
     );
 }
