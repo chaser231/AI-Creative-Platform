@@ -27,6 +27,7 @@ import {
 import { httpBatchLink, httpLink, splitLink } from "@trpc/client";
 import superjson from "superjson";
 import { trpc } from "@/lib/trpc";
+import { confirmAuthSessionMissing } from "@/lib/authClient";
 import { logAuthDiagnostic } from "@/lib/authDiagnostics";
 
 function getBaseUrl() {
@@ -124,16 +125,35 @@ export function TRPCProvider({ children }: { children: React.ReactNode }) {
     () => {
       let client: QueryClient | null = null;
       let redirecting = false;
+      let checkingSession = false;
 
       const handleAuthFailure = (error: unknown) => {
-        if (!isUnauthorizedError(error) || redirecting) return;
-        redirecting = true;
+        if (!isUnauthorizedError(error) || redirecting || checkingSession) return;
+        checkingSession = true;
         logAuthDiagnostic("unauthorized_response", {
           pathname: typeof window === "undefined" ? null : window.location.pathname,
           error,
         });
-        client?.clear();
-        redirectToSignIn();
+
+        logAuthDiagnostic("auth_redirect_probe_started", {
+          reason: "trpc_unauthorized",
+        });
+
+        void confirmAuthSessionMissing()
+          .then((sessionMissing) => {
+            logAuthDiagnostic("auth_redirect_probe_result", {
+              reason: "trpc_unauthorized",
+              sessionMissing,
+            });
+
+            if (!sessionMissing || redirecting) return;
+            redirecting = true;
+            client?.clear();
+            redirectToSignIn();
+          })
+          .finally(() => {
+            checkingSession = false;
+          });
       };
 
       client = new QueryClient({

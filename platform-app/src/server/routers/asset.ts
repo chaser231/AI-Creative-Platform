@@ -277,6 +277,64 @@ export const assetRouter = createTRPCRouter({
     }),
 
   /**
+   * Workspace-scoped twin of attachUrlToProject — registers an S3 URL as an
+   * Asset that lives directly on the workspace (no projectId). Used by the
+   * workflow executor (Phase 4) for assetOutput, since workflows are a
+   * workspace-level concept and aren't tied to a single project.
+   *
+   * Idempotent per (workspaceId, url, no-project): repeated executor runs
+   * with the same final URL must not duplicate library entries.
+   */
+  attachUrlToWorkspace: protectedProcedure
+    .input(
+      z.object({
+        workspaceId: z.string(),
+        url: z.string().url(),
+        filename: z.string().optional(),
+        mimeType: z.string().default("image/png"),
+        sizeBytes: z.number().int().nonnegative().default(0),
+        source: z.string().default("workflow"),
+        width: z.number().optional(),
+        height: z.number().optional(),
+        type: z
+          .enum(["IMAGE", "VIDEO", "AUDIO", "FONT", "LOGO", "OTHER"])
+          .default("IMAGE"),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      await assertWorkspaceAccess(ctx, input.workspaceId, "USER");
+
+      const existing = await ctx.prisma.asset.findFirst({
+        where: { workspaceId: input.workspaceId, projectId: null, url: input.url },
+        select: { id: true },
+      });
+      if (existing) return existing;
+
+      const filename =
+        input.filename ??
+        `${input.source}-${Date.now()}.${input.mimeType.split("/")[1] ?? "bin"}`;
+
+      return ctx.prisma.asset.create({
+        data: {
+          type: input.type,
+          filename,
+          url: input.url,
+          mimeType: input.mimeType,
+          sizeBytes: input.sizeBytes,
+          metadata: {
+            source: input.source,
+            ...(input.width && { width: input.width }),
+            ...(input.height && { height: input.height }),
+          },
+          workspaceId: input.workspaceId,
+          uploadedById: ctx.user.id,
+          projectId: null,
+        },
+        select: { id: true },
+      });
+    }),
+
+  /**
    * Clone an existing workspace Asset into another project.
    *
    * Used when the user takes an image that already lives in the library

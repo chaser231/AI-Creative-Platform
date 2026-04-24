@@ -156,6 +156,33 @@ export const ACTIONS: ActionDefinition[] = [
     },
     required: [],
   },
+  // ── Workflow node actions (v1.0 node-editor, not exposed to LLM agent) ──
+  // Callable through POST /api/workflow/execute-node — kept in the registry
+  // so ACTIONS stays the single source of truth for handlers.
+  {
+    id: "remove_background",
+    name: "Remove Background",
+    description: "AI-powered background removal with alpha channel (workflow-only)",
+    parameters: {
+      imageUrl: { type: "string", description: "Source image URL (http/https)" },
+    },
+    required: ["imageUrl"],
+  },
+  {
+    id: "add_reflection",
+    name: "Add Reflection",
+    description: "Generate realistic reflection below the product (workflow-only)",
+    parameters: {
+      imageUrl: { type: "string", description: "Source image URL (RGBA recommended)" },
+      style: {
+        type: "string",
+        description: "Reflection style",
+        enum: ["subtle", "hard", "soft-glow"],
+      },
+      intensity: { type: "number", description: "Opacity 0.1-1.0" },
+    },
+    required: ["imageUrl"],
+  },
 ];
 
 /**

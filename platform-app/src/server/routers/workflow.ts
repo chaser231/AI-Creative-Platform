@@ -7,12 +7,15 @@
 import { z } from "zod";
 import { createTRPCRouter, protectedProcedure } from "../trpc";
 import { TRPCError } from "@trpc/server";
+import { Prisma } from "@prisma/client";
 import { interpretAndExecute, executeAction } from "../agent";
 import { analyzeReferenceImages } from "../agent/visionAnalyzer";
 import { getModelById } from "@/lib/ai-models";
 import type { PrismaClient } from "@prisma/client";
 import type { AgentStep } from "../agent/types";
 import { assertProjectAccess, assertTemplateAccess, assertWorkspaceAccess } from "../authz/guards";
+import { workflowGraphSchema } from "@/lib/workflow/graphSchema";
+import type { WorkflowGraph } from "@/server/workflow/types";
 
 /**
  * Record AI cost entries for completed agent steps.
@@ -66,9 +69,20 @@ async function trackAgentCosts(
 }
 
 export const workflowRouter = createTRPCRouter({
-  /** List workflows for a workspace (user's + templates) */
+  /**
+   * List workflows for a workspace (user's + templates).
+   *
+   * Phase 2: default filter `graph IS NOT NULL` hides legacy chat-LLM workflows
+   * from the `/workflows` page. Callers that need legacy records (the old
+   * AI chat UI that still reads `steps`) must pass `includeLegacy: true`.
+   */
   list: protectedProcedure
-    .input(z.object({ workspaceId: z.string() }))
+    .input(
+      z.object({
+        workspaceId: z.string(),
+        includeLegacy: z.boolean().optional().default(false),
+      }),
+    )
     .query(async ({ ctx, input }) => {
       await assertWorkspaceAccess(ctx, input.workspaceId);
       const workflows = await ctx.prisma.aIWorkflow.findMany({
@@ -78,6 +92,10 @@ export const workflowRouter = createTRPCRouter({
             { createdById: ctx.user.id },
             { isTemplate: true },
           ],
+          ...(input.includeLegacy
+            ? {}
+            : // Only graph-mode workflows: `graph` column is non-null JSONB.
+              { graph: { not: Prisma.DbNull } }),
         },
         orderBy: [{ isTemplate: "desc" }, { updatedAt: "desc" }],
         select: {
@@ -85,6 +103,7 @@ export const workflowRouter = createTRPCRouter({
           name: true,
           description: true,
           steps: true,
+          graph: true,
           isTemplate: true,
           createdAt: true,
           updatedAt: true,
@@ -181,6 +200,103 @@ export const workflowRouter = createTRPCRouter({
       });
 
       return { success: true };
+    }),
+
+  /**
+   * Save (create or update) a graph-mode workflow.
+   *
+   * Phase 2: primary persistence entry point for the node editor.
+   * - Without `workflowId` → creates a new row with `graph` non-null and
+   *   legacy `steps: []` (existing column is required by the schema).
+   * - With `workflowId` → updates the owning row. 404 if missing.
+   * Authz: CREATOR role on the workspace (workflow is a write).
+   */
+  saveGraph: protectedProcedure
+    .input(
+      z.object({
+        workspaceId: z.string(),
+        workflowId: z.string().optional(),
+        name: z.string().min(1).max(200),
+        description: z.string().optional(),
+        graph: workflowGraphSchema,
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      await assertWorkspaceAccess(ctx, input.workspaceId, "CREATOR");
+
+      if (input.workflowId) {
+        const existing = await ctx.prisma.aIWorkflow.findUnique({
+          where: { id: input.workflowId },
+          select: { id: true, workspaceId: true },
+        });
+        if (!existing) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Workflow не найден" });
+        }
+        if (existing.workspaceId !== input.workspaceId) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "Workflow принадлежит другому workspace" });
+        }
+        const updated = await ctx.prisma.aIWorkflow.update({
+          where: { id: input.workflowId },
+          data: {
+            name: input.name,
+            description: input.description ?? "",
+            graph: input.graph as unknown as Prisma.InputJsonValue,
+          },
+          select: { id: true },
+        });
+        return { id: updated.id };
+      }
+
+      const created = await ctx.prisma.aIWorkflow.create({
+        data: {
+          name: input.name,
+          description: input.description ?? "",
+          steps: [] as unknown as Prisma.InputJsonValue,
+          graph: input.graph as unknown as Prisma.InputJsonValue,
+          workspaceId: input.workspaceId,
+          createdById: ctx.user.id,
+        },
+        select: { id: true },
+      });
+      return { id: created.id };
+    }),
+
+  /**
+   * Load a workflow by id with its graph field.
+   *
+   * Phase 2: editor page entrypoint. Returns `graph: null` for legacy chat
+   * workflows instead of throwing — the UI can show a dedicated "this is a
+   * legacy workflow" state instead of a generic 404.
+   */
+  loadGraph: protectedProcedure
+    .input(z.object({ id: z.string() }))
+    .query(async ({ ctx, input }) => {
+      const workflow = await ctx.prisma.aIWorkflow.findUnique({
+        where: { id: input.id },
+        select: {
+          id: true,
+          name: true,
+          description: true,
+          graph: true,
+          isTemplate: true,
+          updatedAt: true,
+          workspaceId: true,
+        },
+      });
+      if (!workflow) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Workflow не найден" });
+      }
+      await assertWorkspaceAccess(ctx, workflow.workspaceId, "USER");
+
+      return {
+        id: workflow.id,
+        name: workflow.name,
+        description: workflow.description,
+        graph: (workflow.graph as WorkflowGraph | null) ?? null,
+        isTemplate: workflow.isTemplate,
+        updatedAt: workflow.updatedAt,
+        workspaceId: workflow.workspaceId,
+      };
     }),
 
   /**

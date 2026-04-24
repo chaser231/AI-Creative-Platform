@@ -8,8 +8,10 @@ import { Input } from "@/components/ui/Input";
 import { useProjectStore } from "@/store/projectStore";
 import { useCreateProjectSync } from "@/hooks/useProjectSync";
 import { cn } from "@/lib/cn";
-import { ImageIcon, Type, PlayCircle, Camera, LayoutTemplate, Palette } from "lucide-react";
+import { ImageIcon, Type, PlayCircle, Camera, LayoutTemplate, Palette, Workflow } from "lucide-react";
 import type { ProjectGoal } from "@/types";
+
+type GoalChoice = ProjectGoal | "workflows";
 
 interface NewProjectModalProps {
     open: boolean;
@@ -18,7 +20,7 @@ interface NewProjectModalProps {
 }
 
 const goals: Array<{
-    value: ProjectGoal;
+    value: GoalChoice;
     label: string;
     description: string;
     icon: React.ReactNode;
@@ -47,11 +49,17 @@ const goals: Array<{
             description: "Генерация заголовков, подписей и текстов",
             icon: <Type size={24} />,
         },
+        {
+            value: "workflows",
+            label: "Workflow",
+            description: "Визуальный сценарий из AI-нод",
+            icon: <Workflow size={24} />,
+        },
     ];
 
 export function NewProjectModal({ open, onClose, workspaceId }: NewProjectModalProps) {
     const [name, setName] = useState("");
-    const [goal, setGoal] = useState<ProjectGoal>("banner");
+    const [goal, setGoal] = useState<GoalChoice>("banner");
     const [mode, setMode] = useState<"wizard" | "studio">("wizard");
     const [isCreating, setIsCreating] = useState(false);
 
@@ -61,6 +69,17 @@ export function NewProjectModal({ open, onClose, workspaceId }: NewProjectModalP
     const router = useRouter();
 
     const handleCreate = async () => {
+        // Workflow path: bypasses the project create flow entirely — workflows
+        // are workspace-level, have their own list/new pages, and use a
+        // separate tRPC router. We just navigate; the /workflows/new page
+        // owns the create mutation and the name prompt.
+        if (goal === "workflows") {
+            onClose();
+            setName("");
+            router.push("/workflows/new");
+            return;
+        }
+
         if (!name.trim() || isCreating) return;
         setIsCreating(true);
 
@@ -123,8 +142,11 @@ export function NewProjectModal({ open, onClose, workspaceId }: NewProjectModalP
                     <Button variant="ghost" onClick={onClose}>
                         Отмена
                     </Button>
-                    <Button onClick={handleCreate} disabled={!name.trim() || isCreating}>
-                        {isCreating ? "Создание..." : "Создать"}
+                    <Button
+                        onClick={handleCreate}
+                        disabled={(goal !== "workflows" && !name.trim()) || isCreating}
+                    >
+                        {isCreating ? "Создание..." : goal === "workflows" ? "Перейти" : "Создать"}
                     </Button>
                 </>
             }
@@ -145,7 +167,7 @@ export function NewProjectModal({ open, onClose, workspaceId }: NewProjectModalP
                     <label className="text-sm font-medium text-text-primary">
                         Тип проекта
                     </label>
-                    <div className="grid grid-cols-4 gap-2">
+                    <div className="grid grid-cols-5 gap-2">
                         {goals.map((g) => (
                             <button
                                 key={g.value}

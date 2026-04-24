@@ -13,6 +13,7 @@ import { useRouter } from "next/navigation";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { Clock, XCircle, LogOut, RefreshCw } from "lucide-react";
 import { useSignOutAndClearState } from "@/hooks/useSignOutAndClearState";
+import { confirmAuthSessionMissing } from "@/lib/authClient";
 
 export default function WaitlistPage() {
     const router = useRouter();
@@ -20,7 +21,9 @@ export default function WaitlistPage() {
     const signOutAndClearState = useSignOutAndClearState();
     const [isRefreshing, setIsRefreshing] = useState(false);
     const [hasRefreshedOnce, setHasRefreshedOnce] = useState(false);
+    const [isCheckingUnauthenticated, setIsCheckingUnauthenticated] = useState(false);
     const refreshStartedRef = useRef(false);
+    const unauthenticatedProbeRef = useRef(false);
 
     const accountStatus = session?.user?.status;
 
@@ -38,10 +41,28 @@ export default function WaitlistPage() {
 
     // Redirect to sign-in if not authenticated
     useEffect(() => {
-        if (sessionStatus === "unauthenticated") {
-            router.replace("/auth/signin");
-        }
-    }, [sessionStatus, router]);
+        if (sessionStatus !== "unauthenticated") return;
+        if (unauthenticatedProbeRef.current) return;
+
+        unauthenticatedProbeRef.current = true;
+        queueMicrotask(() => setIsCheckingUnauthenticated(true));
+        confirmAuthSessionMissing()
+            .then(async (sessionMissing) => {
+                if (sessionMissing) {
+                    router.replace("/auth/signin");
+                    return;
+                }
+
+                await new Promise((resolve) => setTimeout(resolve, 1_000));
+                await updateSession().catch((err) => {
+                    console.error("[auth] Session refresh failed:", err);
+                });
+            })
+            .finally(() => {
+                unauthenticatedProbeRef.current = false;
+                setIsCheckingUnauthenticated(false);
+            });
+    }, [sessionStatus, router, updateSession]);
 
     // Redirect to dashboard if approved (or if status is missing — legacy session)
     useEffect(() => {
@@ -77,7 +98,7 @@ export default function WaitlistPage() {
 
     const isRejected = accountStatus === "REJECTED";
 
-    if (sessionStatus === "loading") {
+    if (sessionStatus === "loading" || isCheckingUnauthenticated) {
         return (
             <div className="min-h-screen flex items-center justify-center bg-bg-canvas">
                 <div className="w-6 h-6 border-2 border-accent-primary border-t-transparent rounded-full animate-spin" />

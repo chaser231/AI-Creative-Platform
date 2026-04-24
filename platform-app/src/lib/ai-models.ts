@@ -19,8 +19,8 @@ export interface ResolutionOption {
 export interface ModelEntry {
     id: string;
     label: string;
-    slug: string;             // Replicate slug or "openai-direct"
-    provider: "replicate" | "openai";
+    slug: string;             // Replicate slug, fal.ai endpoint, or "openai-direct"
+    provider: "replicate" | "openai" | "fal";
     caps: ModelCap[];
     /** Estimated cost per single run in USD (for analytics) */
     costPerRun: number;
@@ -263,6 +263,61 @@ export const MODEL_REGISTRY: ModelEntry[] = [
         provider: "replicate",
         caps: ["upscale"],
         costPerRun: 0.004,
+    },
+
+    // ── Workflow-only Models (Phase 1: node-editor bg-removal + reflection) ─
+    {
+        id: "bria-product-cutout",
+        label: "Bria Product Cutout",
+        slug: "bria/product-cutout",
+        provider: "replicate",
+        caps: ["remove-bg"],
+        costPerRun: 0.025,
+    },
+    {
+        id: "rembg-851-labs",
+        label: "851 Labs Background Remover",
+        slug: "851-labs/background-remover",
+        provider: "replicate",
+        caps: ["remove-bg"],
+        costPerRun: 0.002,
+    },
+    {
+        id: "bria-product-shadow",
+        label: "Bria Product Shadow",
+        slug: "bria/product-shadow",
+        provider: "replicate",
+        caps: ["edit"],
+        costPerRun: 0.04,
+    },
+    {
+        // fal.ai primary for reflection/shadow generation (Bria Product Shot API)
+        id: "bria-product-shot",
+        label: "Bria Product Shot (fal.ai)",
+        slug: "fal-ai/bria/product-shot",
+        provider: "fal",
+        caps: ["edit"],
+        costPerRun: 0.04,
+    },
+    {
+        // BiRefNet on fal.ai — preserves shadows and reflections during
+        // background removal, unlike Bria/rembg which strip everything but
+        // the product silhouette. Default for the workflow `removeBackground`
+        // node when downstream graph contains a reflection step.
+        id: "fal-birefnet",
+        label: "BiRefNet (fal.ai)",
+        slug: "fal-ai/birefnet/v2",
+        provider: "fal",
+        caps: ["remove-bg"],
+        costPerRun: 0.005,
+    },
+    {
+        id: "flux-kontext-pro",
+        label: "FLUX Kontext Pro",
+        slug: "black-forest-labs/flux-kontext-pro",
+        provider: "replicate",
+        caps: ["edit", "inpaint"],
+        costPerRun: 0.055,
     },
 
     // ── Text LLMs ───────────────────────────────────────────────────────

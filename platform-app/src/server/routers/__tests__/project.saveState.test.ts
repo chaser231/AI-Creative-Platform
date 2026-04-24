@@ -152,6 +152,8 @@ function makeCtx(prisma: ReturnType<typeof makePrismaMock>["prisma"], userId: st
     user,
     session: { user, expires: "" },
     headers: new Headers(),
+    authSessionUnavailable: false,
+    authRecoveryStatus: null,
   };
 }
 

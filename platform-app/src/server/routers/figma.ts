@@ -233,7 +233,7 @@ function mapFigmaError(err: unknown): TRPCError {
         "Figma error";
 
     if (status === 401 || status === 403) {
-        return new TRPCError({ code: "UNAUTHORIZED", message });
+        return new TRPCError({ code: "FORBIDDEN", message });
     }
     if (status === 404) {
         return new TRPCError({ code: "NOT_FOUND", message: "Файл Figma не найден или нет доступа" });

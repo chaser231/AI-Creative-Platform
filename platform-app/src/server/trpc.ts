@@ -13,6 +13,7 @@ import { ZodError } from "zod";
 import { prisma } from "./db";
 import { auth } from "./auth";
 import { isDevAuthBypassEnabled } from "./auth/devBypass";
+import { getSessionTokenFromHeaders, probeDatabaseSessionFromHeaders } from "./auth/sessionProbe";
 import { logAuthDiagnostic } from "@/lib/authDiagnostics";
 
 // ─── Context ─────────────────────────────────────────────
@@ -54,7 +55,30 @@ async function getDevUser() {
 }
 
 export async function createTRPCContext(opts: { headers: Headers }) {
-  const session = await auth();
+  let session = await auth();
+  let authSessionUnavailable = false;
+  let authRecoveryStatus: string | null = null;
+
+  if (!session?.user && getSessionTokenFromHeaders(opts.headers)) {
+    try {
+      const probe = await probeDatabaseSessionFromHeaders(opts.headers, prisma);
+      authRecoveryStatus = probe.status;
+
+      if (probe.status === "authenticated") {
+        session = probe.session;
+        logAuthDiagnostic("auth_session_recovered", {
+          userId: probe.session.user.id,
+        });
+      }
+    } catch (err) {
+      authSessionUnavailable = true;
+      authRecoveryStatus = "probe_failed";
+      console.error("[auth] Failed to verify existing session cookie:", (err as Error)?.message);
+      logAuthDiagnostic("auth_session_unavailable", {
+        error: err,
+      });
+    }
+  }
   
   // In dev mode, only use a dev user when the bypass is explicitly enabled.
   let user = session?.user ?? null;
@@ -69,12 +93,16 @@ export async function createTRPCContext(opts: { headers: Headers }) {
     userId: user?.id ?? null,
     devBypassEnabled,
     devBypassUsed: !session?.user && Boolean(user),
+    authSessionUnavailable,
+    authRecoveryStatus,
   });
 
   return {
     prisma,
     session: session ?? (user ? { user, expires: "" } : null),
     user,
+    authSessionUnavailable,
+    authRecoveryStatus,
     ...opts,
   };
 }
@@ -107,10 +135,18 @@ export const publicProcedure = t.procedure;
 
 /** Protected procedure — requires authenticated session (any status) */
 export const protectedProcedure = t.procedure.use(async ({ ctx, next }) => {
+  if (!ctx.user && ctx.authSessionUnavailable) {
+    throw new TRPCError({
+      code: "INTERNAL_SERVER_ERROR",
+      message: "Не удалось проверить сессию. Попробуйте ещё раз.",
+    });
+  }
+
   if (!ctx.session || !ctx.user) {
     logAuthDiagnostic("trpc_unauthorized", {
       hasSession: Boolean(ctx.session),
       hasUser: Boolean(ctx.user),
+      authRecoveryStatus: ctx.authRecoveryStatus,
     });
     throw new TRPCError({ code: "UNAUTHORIZED" });
   }
