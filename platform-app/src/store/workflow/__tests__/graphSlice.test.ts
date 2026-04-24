@@ -124,14 +124,15 @@ describe("useWorkflowStore — graph slice", () => {
         useWorkflowStore.getState().updateNodeParams(id, { intensity: 12 });
 
         const node = useWorkflowStore.getState().nodes.find((n) => n.id === id);
-        // mode/direction/start/end were preserved from defaultParams; only
-        // `intensity` was patched.
+        // All other defaultParams are preserved; only `intensity` was patched.
         expect(node?.data.params).toEqual({
             mode: "progressive",
             intensity: 12,
             direction: "bottom-to-top",
-            start: 0,
-            end: 12,
+            startPos: 0,
+            endPos: 0.5,
+            startIntensity: 16,
+            endIntensity: 0,
         });
     });
 

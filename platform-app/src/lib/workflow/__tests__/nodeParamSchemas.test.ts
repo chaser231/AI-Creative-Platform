@@ -98,52 +98,92 @@ describe("assetOutputParamsSchema", () => {
 });
 
 describe("maskParamsSchema", () => {
-    it("applies defaults (bottom-to-top 0→0.4)", () => {
+    it("applies Figma-style defaults (bottom-to-top band 0→50%, alpha 0→1)", () => {
         const r = maskParamsSchema.safeParse({});
         expect(r.success).toBe(true);
         if (r.success) {
             expect(r.data.direction).toBe("bottom-to-top");
-            expect(r.data.start).toBe(0);
-            expect(r.data.end).toBe(0.4);
+            expect(r.data.startPos).toBe(0);
+            expect(r.data.endPos).toBe(0.5);
+            expect(r.data.startAlpha).toBe(0);
+            expect(r.data.endAlpha).toBe(1);
         }
     });
 
-    it("rejects start outside [0,1]", () => {
-        expect(maskParamsSchema.safeParse({ start: -0.1 }).success).toBe(false);
-        expect(maskParamsSchema.safeParse({ start: 1.5 }).success).toBe(false);
+    it("rejects position outside [0,1]", () => {
+        expect(maskParamsSchema.safeParse({ startPos: -0.1 }).success).toBe(false);
+        expect(maskParamsSchema.safeParse({ endPos: 1.5 }).success).toBe(false);
     });
 
-    it("accepts inverted gradient (start=0 end=1)", () => {
-        const r = maskParamsSchema.safeParse({ start: 0, end: 1 });
+    it("rejects alpha outside [0,1]", () => {
+        expect(maskParamsSchema.safeParse({ startAlpha: -0.1 }).success).toBe(false);
+        expect(maskParamsSchema.safeParse({ endAlpha: 1.5 }).success).toBe(false);
+    });
+
+    it("rejects degenerate band (endPos <= startPos)", () => {
+        expect(
+            maskParamsSchema.safeParse({ startPos: 0.5, endPos: 0.5 }).success,
+        ).toBe(false);
+        expect(
+            maskParamsSchema.safeParse({ startPos: 0.7, endPos: 0.3 }).success,
+        ).toBe(false);
+    });
+
+    it("accepts custom band + inverted alpha (startAlpha=1 endAlpha=0)", () => {
+        const r = maskParamsSchema.safeParse({
+            startPos: 0.2,
+            endPos: 0.8,
+            startAlpha: 1,
+            endAlpha: 0,
+        });
         expect(r.success).toBe(true);
     });
 });
 
 describe("blurParamsSchema", () => {
-    it("applies progressive defaults", () => {
+    it("applies progressive Figma-style defaults", () => {
         const r = blurParamsSchema.safeParse({});
         expect(r.success).toBe(true);
         if (r.success) {
             expect(r.data.mode).toBe("progressive");
-            expect(r.data.intensity).toBe(4);
+            expect(r.data.direction).toBe("bottom-to-top");
+            expect(r.data.startPos).toBe(0);
+            expect(r.data.endPos).toBe(0.5);
+            expect(r.data.startIntensity).toBe(16);
+            expect(r.data.endIntensity).toBe(0);
         }
     });
 
-    it("accepts progressive with end > start", () => {
+    it("accepts progressive with valid band + non-zero intensity", () => {
         const r = blurParamsSchema.safeParse({
             mode: "progressive",
-            start: 0,
-            end: 12,
+            startPos: 0.2,
+            endPos: 0.8,
+            startIntensity: 0,
+            endIntensity: 12,
             direction: "top-to-bottom",
         });
         expect(r.success).toBe(true);
     });
 
-    it("rejects progressive with end <= start", () => {
+    it("rejects progressive with degenerate band", () => {
         const r = blurParamsSchema.safeParse({
             mode: "progressive",
-            start: 8,
-            end: 8,
+            startPos: 0.5,
+            endPos: 0.5,
+            startIntensity: 0,
+            endIntensity: 12,
+        });
+        expect(r.success).toBe(false);
+    });
+
+    it("rejects progressive with zero intensity on both ends", () => {
+        const r = blurParamsSchema.safeParse({
+            mode: "progressive",
+            startPos: 0,
+            endPos: 0.5,
+            startIntensity: 0,
+            endIntensity: 0,
         });
         expect(r.success).toBe(false);
     });

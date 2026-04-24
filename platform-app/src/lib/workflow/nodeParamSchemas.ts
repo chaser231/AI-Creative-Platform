@@ -72,30 +72,43 @@ export const addReflectionParamsSchema = z.object({
 });
 
 /**
- * Mask — linear alpha gradient with two control points (Figma-style).
- * `start` is the alpha at the start of `direction`, `end` is the alpha at
- * the end. Linear interpolation between them. Multiplies into the source
- * RGBA's alpha channel; opaque RGB inputs get an alpha channel added.
+ * Mask — Figma-style linear alpha gradient with explicit start/end *positions*
+ * along `direction` (0..1). Outside the [startPos, endPos] range the alpha is
+ * clamped to `startAlpha` / `endAlpha` (so only the delimited band actually
+ * participates in the gradient, the rest stays constant).
+ *
+ * Example (bottom-to-top, startPos=0, endPos=0.5, startAlpha=0, endAlpha=1):
+ *   - Bottom 0..50% of image: alpha fades 0 → 1 (reflection fade-out zone)
+ *   - Top 50..100%: alpha = 1 (product stays fully visible)
  */
-export const maskParamsSchema = z.object({
-    direction: z
-        .enum([
-            "top-to-bottom",
-            "bottom-to-top",
-            "left-to-right",
-            "right-to-left",
-        ])
-        .default("bottom-to-top"),
-    start: z.number().min(0).max(1).default(0),
-    end: z.number().min(0).max(1).default(0.4),
-});
+export const maskParamsSchema = z
+    .object({
+        direction: z
+            .enum([
+                "top-to-bottom",
+                "bottom-to-top",
+                "left-to-right",
+                "right-to-left",
+            ])
+            .default("bottom-to-top"),
+        startPos: z.number().min(0).max(1).default(0),
+        endPos: z.number().min(0).max(1).default(0.5),
+        startAlpha: z.number().min(0).max(1).default(0),
+        endAlpha: z.number().min(0).max(1).default(1),
+    })
+    .refine((d) => d.endPos > d.startPos, {
+        message: "Конец области должен быть больше начала",
+        path: ["endPos"],
+    });
 
 /**
  * Blur — Figma-style Layer Blur with two modes.
- * - `uniform`: constant `intensity` (px) across the whole image.
- * - `progressive`: blur radius interpolates linearly from `start` (px) at the
- *   start of `direction` to `end` (px) at the end, implemented as a 2-layer
- *   composite (blurred-end masked over blurred-start).
+ * - `uniform`: constant `intensity` (px) Gaussian blur over the whole image.
+ * - `progressive`: blur radius interpolates from `startIntensity` (px) at
+ *   `startPos` to `endIntensity` (px) at `endPos` along `direction`. Outside
+ *   that band the blur is clamped to the nearest endpoint (Figma parity).
+ *   Implementation: two blurred copies of the source are composited through
+ *   an alpha-gradient mask matching the same start/end positions.
  */
 export const blurParamsSchema = z
     .object({
@@ -109,15 +122,20 @@ export const blurParamsSchema = z
                 "right-to-left",
             ])
             .default("bottom-to-top"),
-        start: z.number().min(0).max(50).default(0),
-        end: z.number().min(0).max(50).default(12),
+        startPos: z.number().min(0).max(1).default(0),
+        endPos: z.number().min(0).max(1).default(0.5),
+        startIntensity: z.number().min(0).max(50).default(16),
+        endIntensity: z.number().min(0).max(50).default(0),
     })
     .refine(
         (d) =>
-            d.mode === "uniform" ? d.intensity > 0 : d.start >= 0 && d.end > d.start,
+            d.mode === "uniform"
+                ? d.intensity > 0
+                : d.endPos > d.startPos &&
+                  Math.max(d.startIntensity, d.endIntensity) > 0,
         {
             message:
-                "Progressive: end должен быть больше start. Uniform: intensity должен быть > 0.",
+                "Progressive: endPos > startPos и хотя бы одна интенсивность > 0. Uniform: intensity > 0.",
             path: ["mode"],
         },
     );

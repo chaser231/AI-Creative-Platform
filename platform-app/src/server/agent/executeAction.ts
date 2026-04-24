@@ -1116,9 +1116,11 @@ ${templateStyleSuffix ? `- Additional style: ${templateStyleSuffix}` : ""}
     case "apply_mask": {
       const imageUrl = params.imageUrl as string;
       const direction =
-        (params.direction as LinearDirection | undefined) ?? "top-to-bottom";
-      const start = clampUnit(params.start, 1);
-      const end = clampUnit(params.end, 0);
+        (params.direction as LinearDirection | undefined) ?? "bottom-to-top";
+      const startPos = clampUnit(params.startPos, 0);
+      const endPos = clampUnit(params.endPos, 0.5);
+      const startAlpha = clampUnit(params.startAlpha, 0);
+      const endAlpha = clampUnit(params.endAlpha, 1);
 
       if (!imageUrl || typeof imageUrl !== "string") {
         return { success: false, type: "error", content: "imageUrl обязателен" };
@@ -1134,7 +1136,13 @@ ${templateStyleSuffix ? `- Additional style: ${templateStyleSuffix}` : ""}
 
       try {
         const { buffer } = await fetchImageBuffer(imageUrl);
-        const out = await applyMask(buffer, { direction, start, end });
+        const out = await applyMask(buffer, {
+          direction,
+          startPos,
+          endPos,
+          startAlpha,
+          endAlpha,
+        });
         const { s3Url } = await uploadBufferToS3(out, "image/png", {
           workspaceId: context.workspaceId,
         });
@@ -1173,9 +1181,11 @@ ${templateStyleSuffix ? `- Additional style: ${templateStyleSuffix}` : ""}
             ? await applyBlur(buffer, {
                 mode: "progressive",
                 direction:
-                  (params.direction as LinearDirection | undefined) ?? "top-to-bottom",
-                start: clampPx(params.start, 0),
-                end: clampPx(params.end, 8),
+                  (params.direction as LinearDirection | undefined) ?? "bottom-to-top",
+                startPos: clampUnit(params.startPos, 0),
+                endPos: clampUnit(params.endPos, 0.5),
+                startIntensity: clampPx(params.startIntensity, 16),
+                endIntensity: clampPx(params.endIntensity, 0),
               })
             : await applyBlur(buffer, {
                 mode: "uniform",

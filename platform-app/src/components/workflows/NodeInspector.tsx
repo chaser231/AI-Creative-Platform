@@ -28,12 +28,17 @@ const PARAM_LABELS: Record<string, string> = {
     model: "Модель",
     name: "Название",
     folder: "Папка",
-    // mask + blur
+    prompt: "Промпт",
+    // mask + blur — direction + band + endpoint values
     direction: "Направление",
-    start: "Старт",
-    end: "Конец",
+    startPos: "Начало области",
+    endPos: "Конец области",
+    startAlpha: "Прозрачность в начале",
+    endAlpha: "Прозрачность в конце",
+    startIntensity: "Блюр в начале (px)",
+    endIntensity: "Блюр в конце (px)",
     mode: "Режим",
-    intensity: "Интенсивность",
+    intensity: "Интенсивность (px)",
 };
 
 /**
