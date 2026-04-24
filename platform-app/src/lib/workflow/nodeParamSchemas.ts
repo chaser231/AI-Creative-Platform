@@ -21,7 +21,11 @@ export const imageInputParamsSchema = z
     })
     .refine(
         (d) => {
-            if (d.source === "asset" || d.source === "upload") return !!d.assetId;
+            // "asset" requires a library pick; "url" and "upload" both store
+            // the resolved location in sourceUrl (uploads run through
+            // uploadForAI which returns a public S3 URL — no Asset row is
+            // created until the workflow executor runs assetOutput).
+            if (d.source === "asset") return !!d.assetId;
             return !!d.sourceUrl;
         },
         {
