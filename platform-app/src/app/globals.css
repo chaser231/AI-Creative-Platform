@@ -265,6 +265,11 @@ h3 {
   /* Green 50 -> Green 100 */
 }
 
+.gradient-card-pink {
+  background: linear-gradient(145deg, #FDF2F8 0%, #FCE7F3 100%);
+  /* Pink 50 -> Pink 100 */
+}
+
 /* Dark mode gradient cards */
 .dark .gradient-card-purple {
   background: linear-gradient(145deg, #1E1530 0%, #2A1C40 100%);
@@ -280,6 +285,10 @@ h3 {
 
 .dark .gradient-card-green {
   background: linear-gradient(145deg, #152A1E 0%, #1C2A12 100%);
+}
+
+.dark .gradient-card-pink {
+  background: linear-gradient(145deg, #2A1525 0%, #401C30 100%);
 }
 
 /* Dialog animations */

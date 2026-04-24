@@ -3,7 +3,7 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Plus, ImageIcon, Type, Camera, Video, Search, HelpCircle, LayoutTemplate, ArrowRight, Star, Loader2, X, FolderKanban, Image as ImageLibIcon } from "lucide-react";
+import { Plus, ImageIcon, Type, Camera, Video, Search, HelpCircle, LayoutTemplate, ArrowRight, Star, Loader2, X, FolderKanban, Image as ImageLibIcon, Workflow } from "lucide-react";
 import { AppShell } from "@/components/layout/AppShell";
 import { TopBar } from "@/components/layout/TopBar";
 import { Button } from "@/components/ui/Button";
@@ -102,6 +102,14 @@ const generationTypes = [
     iconBg: "bg-emerald-100 text-emerald-600 dark:bg-emerald-500/20 dark:text-emerald-400",
     image: "/cards/video.png",
   },
+  {
+    id: "workflows" as const,
+    icon: <Workflow size={20} strokeWidth={1.5} />,
+    label: "AI\nWorkflows",
+    gradient: "gradient-card-pink",
+    iconBg: "bg-pink-100 text-pink-600 dark:bg-pink-500/20 dark:text-pink-400",
+    image: "/cards/workflows.png",
+  },
 ];
 
 type ProjectTab = "all" | "banner" | "photo" | "video" | "assets";
@@ -185,8 +193,13 @@ export default function DashboardPage() {
           });
         }
         break;
+      case "workflows":
+        // Workflows is workspace-scoped (not per-project), so the card jumps
+        // straight to the list page where the user picks/creates one.
+        router.push("/workflows");
+        break;
     }
-  }, [workspaceId, createProjectMutation]);
+  }, [workspaceId, createProjectMutation, router]);
 
   // Auto-hide toast
   useEffect(() => {
@@ -248,7 +261,7 @@ export default function DashboardPage() {
       <div className="flex-1 overflow-y-auto">
         {/* Generation type cards */}
         <div className="px-6 pt-6 pb-2">
-          <div className="grid grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
             {generationTypes.map((type) => (
               <button
                 key={type.id}
