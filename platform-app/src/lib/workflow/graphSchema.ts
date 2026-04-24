@@ -21,6 +21,7 @@ const workflowNodeTypeSchema = z.enum([
     "addReflection",
     "mask",
     "blur",
+    "preview",
     "assetOutput",
 ]) satisfies z.ZodType<WorkflowNodeType>;
 

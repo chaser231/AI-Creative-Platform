@@ -15,6 +15,7 @@ export type WorkflowNodeType =
     | "addReflection"
     | "mask"
     | "blur"
+    | "preview"
     | "assetOutput";
 
 export type PortType = "image" | "mask" | "text" | "number" | "any";
@@ -54,7 +55,7 @@ export interface WorkflowGraph {
 }
 
 export type NodeExecutor =
-    | { kind: "client"; handler: "imageInput" | "assetOutput" }
+    | { kind: "client"; handler: "imageInput" | "assetOutput" | "preview" }
     | {
           kind: "server";
           actionId:
@@ -128,6 +129,16 @@ export const NODE_REGISTRY: Record<WorkflowNodeType, NodeDefinition> = {
         outputs: [{ id: "image-out", type: "image", label: "Изображение" }],
         defaultParams: { mode: "uniform", intensity: 4, direction: "top-to-bottom", start: 0, end: 8 },
         execute: { kind: "server", actionId: "apply_blur" },
+    },
+    preview: {
+        type: "preview",
+        displayName: "Превью",
+        description: "Отображает изображение без сохранения в ассеты.",
+        category: "output",
+        inputs: [{ id: "image-in", type: "image", label: "Изображение", required: true }],
+        outputs: [{ id: "image-out", type: "image", label: "Изображение" }],
+        defaultParams: {},
+        execute: { kind: "client", handler: "preview" },
     },
     assetOutput: {
         type: "assetOutput",

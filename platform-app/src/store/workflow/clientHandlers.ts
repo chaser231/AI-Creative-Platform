@@ -80,6 +80,11 @@ export interface AssetOutputResult {
     name: string;
 }
 
+/** Resolved output of a preview node — just passes the upstream URL. */
+export interface PreviewResult {
+    url: string;
+}
+
 /**
  * Persist the upstream image as a workspace-level Asset.
  *
@@ -111,4 +116,14 @@ export async function assetOutput(
     });
 
     return { assetId: created.id, url: upstreamUrl, name: params.name };
+}
+
+/**
+ * Preview node handler. Just passes the upstream image URL downstream.
+ */
+export async function preview(
+    rawParams: unknown,
+    upstreamUrl: string,
+): Promise<PreviewResult> {
+    return { url: upstreamUrl };
 }

@@ -20,6 +20,7 @@ import { NODE_PARAM_SCHEMAS } from "@/lib/workflow/nodeParamSchemas";
 import {
     assetOutput as assetOutputHandler,
     imageInput as imageInputHandler,
+    preview as previewHandler,
     type ClientHandlerDeps,
 } from "./clientHandlers";
 
@@ -201,6 +202,11 @@ async function runOne(
             if (def.execute.handler === "imageInput") {
                 const out = await imageInputHandler(node.data.params, deps);
                 result = { url: out.url, assetId: out.assetId ?? undefined };
+            } else if (def.execute.handler === "preview") {
+                const upstream = inputs["image-in"]?.imageUrl;
+                if (!upstream) throw new Error("preview: нет входного изображения");
+                const out = await previewHandler(node.data.params, upstream);
+                result = { url: out.url };
             } else {
                 // assetOutput — needs the upstream image url
                 const upstream = inputs["image-in"]?.imageUrl;

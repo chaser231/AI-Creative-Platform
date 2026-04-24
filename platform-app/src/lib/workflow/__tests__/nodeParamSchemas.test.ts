@@ -163,6 +163,7 @@ describe("NODE_PARAM_SCHEMAS", () => {
                 "blur",
                 "imageInput",
                 "mask",
+                "preview",
                 "removeBackground",
             ].sort(),
         );

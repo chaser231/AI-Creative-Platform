@@ -30,6 +30,10 @@ export function BlurNode({ id, selected }: NodeProps) {
     return <BaseNode id={id} type="blur" selected={selected} />;
 }
 
+export function PreviewNode({ id, selected }: NodeProps) {
+    return <BaseNode id={id} type="preview" selected={selected} />;
+}
+
 export function AssetOutputNode({ id, selected }: NodeProps) {
     return <BaseNode id={id} type="assetOutput" selected={selected} />;
 }
@@ -40,5 +44,6 @@ export const nodeTypes = {
     addReflection: AddReflectionNode,
     mask: MaskNode,
     blur: BlurNode,
+    preview: PreviewNode,
     assetOutput: AssetOutputNode,
 } as const;

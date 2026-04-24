@@ -77,7 +77,11 @@ export function BaseNode({ id, type, selected }: BaseNodeProps) {
                 <img
                     src={result.url}
                     alt=""
-                    className="mt-2 h-12 w-full rounded border border-border-primary object-cover"
+                    className={
+                        type === "preview"
+                            ? "mt-2 w-full max-w-[300px] rounded border border-border-primary object-contain"
+                            : "mt-2 h-12 w-full rounded border border-border-primary object-cover"
+                    }
                 />
             )}
 

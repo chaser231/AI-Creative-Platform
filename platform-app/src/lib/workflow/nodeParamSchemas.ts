@@ -132,12 +132,15 @@ export const assetOutputParamsSchema = z.object({
  * `z.ZodTypeAny` (not a parameterised mapped type) keeps the table flat;
  * each schema is statically typed at its declaration site above.
  */
+export const previewParamsSchema = z.object({});
+
 export const NODE_PARAM_SCHEMAS: Record<WorkflowNodeType, z.ZodTypeAny> = {
     imageInput: imageInputParamsSchema,
     removeBackground: removeBackgroundParamsSchema,
     addReflection: addReflectionParamsSchema,
     mask: maskParamsSchema,
     blur: blurParamsSchema,
+    preview: previewParamsSchema,
     assetOutput: assetOutputParamsSchema,
 };
 
@@ -146,4 +149,5 @@ export type RemoveBackgroundParams = z.infer<typeof removeBackgroundParamsSchema
 export type AddReflectionParams = z.infer<typeof addReflectionParamsSchema>;
 export type MaskParams = z.infer<typeof maskParamsSchema>;
 export type BlurParams = z.infer<typeof blurParamsSchema>;
+export type PreviewParams = z.infer<typeof previewParamsSchema>;
 export type AssetOutputParams = z.infer<typeof assetOutputParamsSchema>;
