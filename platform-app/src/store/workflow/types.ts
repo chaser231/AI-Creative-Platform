@@ -13,6 +13,7 @@ import type {
     WorkflowNode,
     WorkflowNodeType,
 } from "@/server/workflow/types";
+import type { WorkflowScenarioConfig } from "@/lib/workflow/scenarioConfig";
 
 export type NodeRunStatus = "idle" | "running" | "done" | "error" | "blocked";
 
@@ -25,6 +26,8 @@ export interface GraphSlice {
     name: string;
     /** Optional description — Phase 2 does not expose it in UI yet. */
     description: string;
+    /** Optional scenario metadata for launching this workflow from banner/photo surfaces. */
+    scenarioConfig: WorkflowScenarioConfig;
     /**
      * True when in-memory state has diverged from the last `hydrate(...)` or
      * the last confirmed save. Auto-save hook watches this flag.
@@ -34,6 +37,7 @@ export interface GraphSlice {
     // Actions ──────────────────────────────────────────
     setName: (name: string) => void;
     setDescription: (description: string) => void;
+    setScenarioConfig: (scenarioConfig: WorkflowScenarioConfig) => void;
     addNode: (type: WorkflowNodeType, position: { x: number; y: number }) => string;
     updateNodePosition: (id: string, position: { x: number; y: number }) => void;
     updateNodeParams: (id: string, patch: Record<string, unknown>) => void;
@@ -43,7 +47,12 @@ export interface GraphSlice {
     /** Convert in-memory state to the persistable graph shape. */
     serialize: () => WorkflowGraph;
     /** Replace in-memory state from a persisted graph. Clears `dirty`. */
-    hydrate: (payload: { name?: string; description?: string; graph: WorkflowGraph }) => void;
+    hydrate: (payload: {
+        name?: string;
+        description?: string;
+        scenarioConfig?: WorkflowScenarioConfig;
+        graph: WorkflowGraph;
+    }) => void;
     /** Mark state as saved (called by auto-save hook on success). */
     markSaved: () => void;
 }

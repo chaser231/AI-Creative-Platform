@@ -15,6 +15,12 @@ import type { PrismaClient } from "@prisma/client";
 import type { AgentStep } from "../agent/types";
 import { assertProjectAccess, assertTemplateAccess, assertWorkspaceAccess } from "../authz/guards";
 import { workflowGraphSchema } from "@/lib/workflow/graphSchema";
+import {
+  normalizeWorkflowScenarioConfig,
+  workflowScenarioConfigSchema,
+  workflowScenarioInputKindSchema,
+  workflowScenarioSurfaceSchema,
+} from "@/lib/workflow/scenarioConfig";
 import type { WorkflowGraph } from "@/server/workflow/types";
 
 /**
@@ -104,6 +110,7 @@ export const workflowRouter = createTRPCRouter({
           description: true,
           steps: true,
           graph: true,
+          scenarioConfig: true,
           isTemplate: true,
           createdAt: true,
           updatedAt: true,
@@ -218,6 +225,7 @@ export const workflowRouter = createTRPCRouter({
         workflowId: z.string().optional(),
         name: z.string().min(1).max(200),
         description: z.string().optional(),
+        scenarioConfig: workflowScenarioConfigSchema.optional(),
         graph: workflowGraphSchema,
       }),
     )
@@ -241,6 +249,9 @@ export const workflowRouter = createTRPCRouter({
             name: input.name,
             description: input.description ?? "",
             graph: input.graph as unknown as Prisma.InputJsonValue,
+            ...(input.scenarioConfig !== undefined
+              ? { scenarioConfig: input.scenarioConfig as unknown as Prisma.InputJsonValue }
+              : {}),
           },
           select: { id: true },
         });
@@ -253,6 +264,9 @@ export const workflowRouter = createTRPCRouter({
           description: input.description ?? "",
           steps: [] as unknown as Prisma.InputJsonValue,
           graph: input.graph as unknown as Prisma.InputJsonValue,
+          scenarioConfig: input.scenarioConfig
+            ? input.scenarioConfig as unknown as Prisma.InputJsonValue
+            : Prisma.JsonNull,
           workspaceId: input.workspaceId,
           createdById: ctx.user.id,
         },
@@ -278,6 +292,7 @@ export const workflowRouter = createTRPCRouter({
           name: true,
           description: true,
           graph: true,
+          scenarioConfig: true,
           isTemplate: true,
           updatedAt: true,
           workspaceId: true,
@@ -293,10 +308,78 @@ export const workflowRouter = createTRPCRouter({
         name: workflow.name,
         description: workflow.description,
         graph: (workflow.graph as WorkflowGraph | null) ?? null,
+        scenarioConfig: workflow.scenarioConfig,
         isTemplate: workflow.isTemplate,
         updatedAt: workflow.updatedAt,
         workspaceId: workflow.workspaceId,
       };
+    }),
+
+  /**
+   * List graph workflows exposed as reusable AI scenarios for a given surface.
+   * Filtering happens after fetch because scenarioConfig is JSONB and we want
+   * the Zod parser to be the contract gate, not ad-hoc JSON path checks.
+   */
+  listScenarios: protectedProcedure
+    .input(
+      z.object({
+        workspaceId: z.string(),
+        surface: workflowScenarioSurfaceSchema,
+        inputKind: workflowScenarioInputKindSchema.optional(),
+      }),
+    )
+    .query(async ({ ctx, input }) => {
+      await assertWorkspaceAccess(ctx, input.workspaceId, "USER");
+
+      const workflows = await ctx.prisma.aIWorkflow.findMany({
+        where: {
+          workspaceId: input.workspaceId,
+          graph: { not: Prisma.DbNull },
+          OR: [{ createdById: ctx.user.id }, { isTemplate: true }],
+        },
+        orderBy: [{ isTemplate: "desc" }, { updatedAt: "desc" }],
+        select: {
+          id: true,
+          name: true,
+          description: true,
+          graph: true,
+          scenarioConfig: true,
+          isTemplate: true,
+          updatedAt: true,
+        },
+      });
+
+      return workflows
+        .map((workflow) => {
+          const config = normalizeWorkflowScenarioConfig(
+            workflow.scenarioConfig,
+            workflow.name,
+          );
+          return { workflow, config };
+        })
+        .filter(({ config }) => {
+          if (!config.enabled) return false;
+          if (!config.surfaces.includes(input.surface)) return false;
+          if (input.inputKind && config.input.kind !== input.inputKind) return false;
+          return true;
+        })
+        .map(({ workflow, config }) => {
+          const graphParse = workflowGraphSchema.safeParse(workflow.graph);
+          return {
+            id: workflow.id,
+            name: workflow.name,
+            description: workflow.description,
+            isTemplate: workflow.isTemplate,
+            updatedAt: workflow.updatedAt,
+            scenarioConfig: config,
+            runnable: graphParse.success && graphParse.data.nodes.length > 0,
+            disabledReason: graphParse.success
+              ? graphParse.data.nodes.length > 0
+                ? undefined
+                : "В сценарии нет нод"
+              : "Граф сценария поврежден",
+          };
+        });
     }),
 
   /**

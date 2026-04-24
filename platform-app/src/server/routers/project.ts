@@ -266,6 +266,7 @@ export const projectRouter = createTRPCRouter({
           artboardProps: z.any().optional(),
           canvasWidth: z.number().optional(),
           canvasHeight: z.number().optional(),
+          palette: z.any().optional(),
         }),
         thumbnail: z.string().nullable().optional(),
         expectedVersion: z.number().int().nonnegative().optional(),

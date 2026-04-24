@@ -1,4 +1,5 @@
 import { v4 as uuid } from "uuid";
+import { extractRequiredFonts } from "@/utils/fontUtils";
 import type {
     Project,
     MasterComponent,
@@ -14,6 +15,7 @@ import type {
     TemplateTag,
     TemplateVisibility,
     TemplateEditPermission,
+    TemplatePalette,
 } from "@/types";
 import { DEFAULT_PALETTE } from "@/types";
 import type { RequiredFont } from "@/utils/fontUtils";
@@ -33,6 +35,12 @@ export interface TemplatePack {
     layerTree?: SerializedLayerNode[];
     /** v1.2+: fonts required by this template (family + weights) */
     requiredFonts?: RequiredFont[];
+    /** v1.3+: optional raw canvas-state fields for palette-aware templates */
+    layers?: Layer[];
+    artboardProps?: Record<string, unknown>;
+    palette?: TemplatePalette;
+    canvasWidth?: number;
+    canvasHeight?: number;
 }
 
 /* ─── Template Pack V2 (with full catalogization) ───────── */
@@ -66,12 +74,17 @@ export function serializeTemplate(
     masters: MasterComponent[],
     resizes: ResizeFormat[],
     instances?: ComponentInstance[],
-    layers?: Layer[]
+    layers?: Layer[],
+    extras?: {
+        artboardProps?: Record<string, unknown>;
+        palette?: TemplatePalette;
+        canvasWidth?: number;
+        canvasHeight?: number;
+    },
 ): TemplatePack {
     // Extract required fonts from layers if available
     let requiredFonts: RequiredFont[] | undefined;
     if (layers && layers.length > 0) {
-        const { extractRequiredFonts } = require("@/utils/fontUtils") as typeof import("@/utils/fontUtils");
         requiredFonts = extractRequiredFonts(layers);
     }
 
@@ -80,13 +93,18 @@ export function serializeTemplate(
         version: "1.2.0",
         name: project.name || "Untitled Template",
         description: "Exported from AI Creative Platform",
-        baseWidth: 1080,
-        baseHeight: 1080,
+        baseWidth: extras?.canvasWidth ?? 1080,
+        baseHeight: extras?.canvasHeight ?? 1080,
         masterComponents: masters,
         componentInstances: instances,
         resizes: resizes.filter(r => r.id !== "master"),
+        layers: layers ? layers.map((layer) => ({ ...layer })) : undefined,
         layerTree: layers ? buildLayerTree(layers) : undefined,
         requiredFonts,
+        artboardProps: extras?.artboardProps,
+        palette: extras?.palette,
+        canvasWidth: extras?.canvasWidth,
+        canvasHeight: extras?.canvasHeight,
     };
 }
 

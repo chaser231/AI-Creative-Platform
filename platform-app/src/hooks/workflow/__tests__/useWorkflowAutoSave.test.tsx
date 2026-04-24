@@ -13,6 +13,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { useWorkflowStore } from "@/store/workflow/useWorkflowStore";
+import { defaultWorkflowScenarioConfig } from "@/lib/workflow/scenarioConfig";
 
 function resetStore() {
     useWorkflowStore.setState({
@@ -20,6 +21,7 @@ function resetStore() {
         edges: [],
         name: "",
         description: "",
+        scenarioConfig: defaultWorkflowScenarioConfig(),
         dirty: false,
         viewport: { x: 0, y: 0, zoom: 1 },
         runState: {},

@@ -141,6 +141,27 @@ const SAMPLE_CANVAS = {
   layers: [{ id: "l1", type: "rect", x: 0, y: 0, width: 10, height: 10 }],
 };
 
+const SAMPLE_CANVAS_WITH_PALETTE = {
+  ...SAMPLE_CANVAS,
+  palette: {
+    colors: [{ id: "c1", type: "color", name: "Brand", value: "#FFCC00" }],
+    backgrounds: [
+      {
+        id: "bg1",
+        type: "background",
+        name: "Hero",
+        value: {
+          kind: "image",
+          src: "https://storage.yandexcloud.net/acp-assets/templates/bg.png",
+          fit: "cover",
+          focusX: 0.5,
+          focusY: 0.5,
+        },
+      },
+    ],
+  },
+};
+
 // Context shape expected by TRPCContext. The real one adds NextAuth session
 // and request headers — for router-level tests we only need the three fields
 // the procedures actually touch (`prisma`, `user`, `session`). `headers` is
@@ -259,6 +280,28 @@ describe("project.saveState (MF-3 optimistic locking)", () => {
     };
     const callArg = updateMock.mock.calls.at(-1)?.[0];
     expect(callArg?.where).toEqual({ id: "p1" });
+  });
+
+  it("persists palette data instead of stripping it from canvasState", async () => {
+    const { prisma, row } = makePrismaMock({
+      id: "p1",
+      workspaceId: "w1",
+      createdById: "u1",
+      version: 2,
+      canvasState: { layers: [] },
+      updatedAt: new Date("2026-04-22T00:00:00Z"),
+      thumbnail: null,
+      status: "DRAFT",
+    });
+    const caller = makeCaller(makeCtx(prisma, "u1"));
+
+    await caller.saveState({
+      id: "p1",
+      canvasState: SAMPLE_CANVAS_WITH_PALETTE,
+      expectedVersion: 2,
+    });
+
+    expect(row.canvasState).toEqual(SAMPLE_CANVAS_WITH_PALETTE);
   });
 });
 

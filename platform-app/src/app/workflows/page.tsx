@@ -1,11 +1,11 @@
 "use client";
 
 /**
- * /workflows — список графовых workflow'ов текущего workspace.
+ * /workflows — список workflow'ов текущего workspace.
  *
- * Phase 2: простая сетка карточек + «Создать». Skeleton пока workspace
- * грузится. Legacy чат-workflow'ы здесь не показаны — `list` по умолчанию
- * фильтрует `graph IS NULL`.
+ * Показываем и новые graph-workflow'ы, и старые chat/steps workflow'ы,
+ * чтобы после перехода на node editor сохранённые записи не выглядели
+ * потерянными.
  */
 
 import Link from "next/link";
@@ -22,7 +22,7 @@ export default function WorkflowsListPage() {
 
     const workspaceId = currentWorkspace?.id;
     const listQuery = trpc.workflow.list.useQuery(
-        { workspaceId: workspaceId ?? "", includeLegacy: false },
+        { workspaceId: workspaceId ?? "", includeLegacy: true },
         { enabled: Boolean(workspaceId) },
     );
 
@@ -78,39 +78,49 @@ export default function WorkflowsListPage() {
                         </div>
                     ) : (
                         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                            {listQuery.data.map((wf) => (
-                                <Link
-                                    key={wf.id}
-                                    href={`/workflows/${wf.id}`}
-                                    className="group flex flex-col rounded-xl border border-neutral-200 bg-white p-4 transition hover:border-neutral-400 hover:shadow-sm dark:border-neutral-800 dark:bg-neutral-900 dark:hover:border-neutral-600"
-                                >
-                                    <div className="flex items-start justify-between">
-                                        <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-neutral-100 group-hover:bg-neutral-200 dark:bg-neutral-800 dark:group-hover:bg-neutral-700">
-                                            <WorkflowIcon className="h-5 w-5 text-neutral-600 dark:text-neutral-300" />
+                            {listQuery.data.map((wf) => {
+                                const isLegacy = wf.graph === null;
+                                return (
+                                    <Link
+                                        key={wf.id}
+                                        href={`/workflows/${wf.id}`}
+                                        className="group flex flex-col rounded-xl border border-neutral-200 bg-white p-4 transition hover:border-neutral-400 hover:shadow-sm dark:border-neutral-800 dark:bg-neutral-900 dark:hover:border-neutral-600"
+                                    >
+                                        <div className="flex items-start justify-between gap-2">
+                                            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-neutral-100 group-hover:bg-neutral-200 dark:bg-neutral-800 dark:group-hover:bg-neutral-700">
+                                                <WorkflowIcon className="h-5 w-5 text-neutral-600 dark:text-neutral-300" />
+                                            </div>
+                                            <div className="flex flex-wrap justify-end gap-1.5">
+                                                {isLegacy && (
+                                                    <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">
+                                                        Старый формат
+                                                    </span>
+                                                )}
+                                                {wf.isTemplate && (
+                                                    <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">
+                                                        Шаблон
+                                                    </span>
+                                                )}
+                                            </div>
                                         </div>
-                                        {wf.isTemplate && (
-                                            <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">
-                                                Шаблон
-                                            </span>
-                                        )}
-                                    </div>
-                                    <h3 className="mt-3 truncate text-base font-medium text-neutral-900 dark:text-neutral-100">
-                                        {wf.name}
-                                    </h3>
-                                    {wf.description && (
+                                        <h3 className="mt-3 truncate text-base font-medium text-neutral-900 dark:text-neutral-100">
+                                            {wf.name}
+                                        </h3>
                                         <p className="mt-1 line-clamp-2 text-sm text-neutral-500">
-                                            {wf.description}
+                                            {wf.description || (isLegacy
+                                                ? "Сохранён в старом AI-chat формате; новый node editor откроет предупреждение."
+                                                : "Graph workflow")}
                                         </p>
-                                    )}
-                                    <div className="mt-4 text-xs text-neutral-400">
-                                        {new Date(wf.updatedAt).toLocaleDateString("ru-RU", {
-                                            day: "numeric",
-                                            month: "short",
-                                            year: "numeric",
-                                        })}
-                                    </div>
-                                </Link>
-                            ))}
+                                        <div className="mt-4 text-xs text-neutral-400">
+                                            {new Date(wf.updatedAt).toLocaleDateString("ru-RU", {
+                                                day: "numeric",
+                                                month: "short",
+                                                year: "numeric",
+                                            })}
+                                        </div>
+                                    </Link>
+                                );
+                            })}
                         </div>
                     )}
                 </div>

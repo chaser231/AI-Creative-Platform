@@ -10,6 +10,7 @@ import {
     LayoutTemplate,
     Sparkles,
     Magnet,
+    Workflow,
 } from "lucide-react";
 import { useCanvasStore } from "@/store/canvasStore";
 import { useShallow } from "zustand/react/shallow";
@@ -30,6 +31,7 @@ const TOOLS: { id: ToolType; icon: React.ReactNode; label: string }[] = [
 
 interface ToolbarProps {
     onOpenTemplates?: () => void;
+    onOpenAIScenarios?: () => void;
     onToggleAI?: () => void;
     aiActive?: boolean;
     /**
@@ -41,7 +43,13 @@ interface ToolbarProps {
     projectId?: string;
 }
 
-export function Toolbar({ onOpenTemplates, onToggleAI, aiActive, projectId }: ToolbarProps) {
+export function Toolbar({
+    onOpenTemplates,
+    onOpenAIScenarios,
+    onToggleAI,
+    aiActive,
+    projectId,
+}: ToolbarProps) {
     const {
         activeTool,
         setActiveTool,
@@ -180,6 +188,16 @@ export function Toolbar({ onOpenTemplates, onToggleAI, aiActive, projectId }: To
                         className="p-2 text-text-secondary hover:text-text-primary hover:bg-bg-secondary rounded-[var(--radius-lg)] transition-colors"
                     >
                         <LayoutTemplate size={20} />
+                    </button>
+                )}
+
+                {onOpenAIScenarios && (
+                    <button
+                        onClick={onOpenAIScenarios}
+                        title="AI сценарии"
+                        className="p-2 text-text-secondary hover:text-text-primary hover:bg-bg-secondary rounded-[var(--radius-lg)] transition-colors"
+                    >
+                        <Workflow size={20} />
                     </button>
                 )}
 

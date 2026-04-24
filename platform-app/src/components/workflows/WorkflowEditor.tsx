@@ -38,6 +38,7 @@ import type { WorkflowEdge, WorkflowNode, WorkflowNodeType } from "@/server/work
 import { NodePalette } from "./NodePalette";
 import { NodeTopbar } from "./NodeTopbar";
 import { NodeInspector } from "./NodeInspector";
+import { WorkflowScenarioSettingsModal } from "./WorkflowScenarioSettingsModal";
 import { nodeTypes } from "./nodes";
 
 function toRFNode(n: WorkflowNode): Node {
@@ -67,13 +68,15 @@ function toRFEdge(e: WorkflowEdge): Edge {
  */
 function useResolvedColorMode(): "light" | "dark" {
     const theme = useThemeStore((s) => s.theme);
-    const [systemDark, setSystemDark] = useState(false);
+    const [systemDark, setSystemDark] = useState(() => {
+        if (typeof window === "undefined") return false;
+        return window.matchMedia("(prefers-color-scheme: dark)").matches;
+    });
 
     useEffect(() => {
         if (theme !== "system") return;
         if (typeof window === "undefined") return;
         const mq = window.matchMedia("(prefers-color-scheme: dark)");
-        setSystemDark(mq.matches);
         const handler = (e: MediaQueryListEvent) => setSystemDark(e.matches);
         mq.addEventListener("change", handler);
         return () => mq.removeEventListener("change", handler);
@@ -258,6 +261,7 @@ function EditorCanvas({
 export function WorkflowEditor({ workflowId }: { workflowId: string }) {
     const name = useWorkflowStore((s) => s.name);
     const setName = useWorkflowStore((s) => s.setName);
+    const scenarioEnabled = useWorkflowStore((s) => s.scenarioConfig.enabled);
     const { currentWorkspace } = useWorkspace();
     const { status, saveNow } = useWorkflowAutoSave({
         workflowId,
@@ -267,6 +271,7 @@ export function WorkflowEditor({ workflowId }: { workflowId: string }) {
     // Selection lives in editor scope, not in zustand: it's purely a UI
     // concern (which inspector tab to show) and shouldn't survive serialization.
     const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+    const [scenarioSettingsOpen, setScenarioSettingsOpen] = useState(false);
     const colorMode = useResolvedColorMode();
     const runError = useWorkflowStore((s) => s.runError);
     const { runAll, isRunning, validationIssues, canRun } = useWorkflowRun({
@@ -286,6 +291,8 @@ export function WorkflowEditor({ workflowId }: { workflowId: string }) {
                 isRunning={isRunning}
                 runError={runError}
                 runDisabledReason={validationIssues[0]?.message}
+                scenarioEnabled={scenarioEnabled}
+                onOpenScenarioSettings={() => setScenarioSettingsOpen(true)}
             />
             <div className="flex min-h-0 flex-1">
                 <ReactFlowProvider>
@@ -301,6 +308,10 @@ export function WorkflowEditor({ workflowId }: { workflowId: string }) {
                     <NodeInspector selectedNodeId={selectedNodeId} />
                 </ReactFlowProvider>
             </div>
+            <WorkflowScenarioSettingsModal
+                open={scenarioSettingsOpen}
+                onClose={() => setScenarioSettingsOpen(false)}
+            />
         </div>
     );
 }
