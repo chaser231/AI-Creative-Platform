@@ -3,6 +3,7 @@ import {
     addReflectionParamsSchema,
     assetOutputParamsSchema,
     blurParamsSchema,
+    imageGenerationParamsSchema,
     imageInputParamsSchema,
     maskParamsSchema,
     NODE_PARAM_SCHEMAS,
@@ -35,6 +36,25 @@ describe("imageInputParamsSchema", () => {
 
     it("rejects malformed url", () => {
         const r = imageInputParamsSchema.safeParse({ source: "url", sourceUrl: "not-a-url" });
+        expect(r.success).toBe(false);
+    });
+});
+
+describe("imageGenerationParamsSchema", () => {
+    it("accepts prompt with default image generation controls", () => {
+        const r = imageGenerationParamsSchema.safeParse({
+            prompt: "Premium product photo on a clean studio background",
+        });
+        expect(r.success).toBe(true);
+        if (r.success) {
+            expect(r.data.model).toBe("flux-schnell");
+            expect(r.data.style).toBe("photo");
+            expect(r.data.aspectRatio).toBe("1:1");
+        }
+    });
+
+    it("rejects an empty prompt", () => {
+        const r = imageGenerationParamsSchema.safeParse({ prompt: "" });
         expect(r.success).toBe(false);
     });
 });
@@ -201,6 +221,7 @@ describe("NODE_PARAM_SCHEMAS", () => {
                 "addReflection",
                 "assetOutput",
                 "blur",
+                "imageGeneration",
                 "imageInput",
                 "mask",
                 "preview",

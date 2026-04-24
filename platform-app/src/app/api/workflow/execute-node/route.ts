@@ -11,6 +11,7 @@ import type { ExecuteNodeRequest, ServerActionId } from "@/server/workflow/types
 export const maxDuration = 300;
 
 const ALLOWED_ACTIONS: ReadonlySet<string> = new Set<ServerActionId>([
+    "generate_image",
     "remove_background",
     "add_reflection",
     "apply_mask",
@@ -112,6 +113,9 @@ export async function POST(req: NextRequest) {
         const imageInput = inputs["image-in"];
         const actionParams = {
             ...(params ?? {}),
+            ...(actionId === "generate_image" && typeof params?.prompt === "string"
+                ? { subject: params.prompt }
+                : {}),
             imageUrl: imageInput?.imageUrl,
         };
 

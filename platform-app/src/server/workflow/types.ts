@@ -11,6 +11,7 @@
 
 export type WorkflowNodeType =
     | "imageInput"
+    | "imageGeneration"
     | "removeBackground"
     | "addReflection"
     | "mask"
@@ -59,6 +60,7 @@ export type NodeExecutor =
     | {
           kind: "server";
           actionId:
+              | "generate_image"
               | "remove_background"
               | "add_reflection"
               | "apply_mask"
@@ -86,6 +88,21 @@ export const NODE_REGISTRY: Record<WorkflowNodeType, NodeDefinition> = {
         outputs: [{ id: "image-out", type: "image", label: "Изображение" }],
         defaultParams: { source: "asset" },
         execute: { kind: "client", handler: "imageInput" },
+    },
+    imageGeneration: {
+        type: "imageGeneration",
+        displayName: "Генерация изображения",
+        description: "Создаёт новое изображение по текстовому промпту.",
+        category: "ai",
+        inputs: [],
+        outputs: [{ id: "image-out", type: "image", label: "Изображение" }],
+        defaultParams: {
+            prompt: "",
+            style: "photo",
+            model: "flux-schnell",
+            aspectRatio: "1:1",
+        },
+        execute: { kind: "server", actionId: "generate_image" },
     },
     removeBackground: {
         type: "removeBackground",
@@ -168,6 +185,7 @@ export const NODE_REGISTRY: Record<WorkflowNodeType, NodeDefinition> = {
 
 /** Action ids that the /api/workflow/execute-node endpoint accepts. */
 export type ServerActionId =
+    | "generate_image"
     | "remove_background"
     | "add_reflection"
     | "apply_mask"

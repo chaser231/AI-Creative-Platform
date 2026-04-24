@@ -141,4 +141,43 @@ describe("POST /api/workflow/execute-node", () => {
         expect(res.status).toBe(502);
         expect(json.code).toBe("PROVIDER_FAILED");
     });
+
+    it("allows generate_image and maps workflow prompt to action subject", async () => {
+        mockExecuteAction.mockResolvedValue({
+            success: true,
+            type: "image",
+            content: "https://s3/generated.png",
+            metadata: { model: "flux-schnell" },
+        });
+
+        const res = await POST(
+            makeRequest({
+                actionId: "generate_image",
+                inputs: {},
+                params: {
+                    prompt: "Studio product photo",
+                    style: "photo",
+                    model: "flux-schnell",
+                    aspectRatio: "1:1",
+                },
+                workspaceId: "ws_1",
+            }) as never,
+        );
+        const json = await res.json();
+
+        expect(res.status).toBe(200);
+        expect(json.imageUrl).toBe("https://s3/generated.png");
+        expect(mockExecuteAction).toHaveBeenCalledWith(
+            "generate_image",
+            expect.objectContaining({
+                prompt: "Studio product photo",
+                subject: "Studio product photo",
+                style: "photo",
+                model: "flux-schnell",
+                aspectRatio: "1:1",
+                imageUrl: undefined,
+            }),
+            expect.objectContaining({ workspaceId: "ws_1" }),
+        );
+    });
 });

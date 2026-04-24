@@ -17,6 +17,7 @@ import type {
 
 const workflowNodeTypeSchema = z.enum([
     "imageInput",
+    "imageGeneration",
     "removeBackground",
     "addReflection",
     "mask",

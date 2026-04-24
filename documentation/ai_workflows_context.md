@@ -508,6 +508,15 @@ P1.6 Image generation node:
   - executor sends correct action;
   - preview resolves from result.
 
+Status:
+
+- Done 2026-04-25:
+  - added `imageGeneration` workflow node with prompt/style/model/aspect-ratio params and image output;
+  - node is registered in graph schema, node registry, param schemas, React Flow node map, palette grouping, and inspector labels;
+  - workflow execute-node route now allows `generate_image` and maps workflow `prompt` to the existing action `subject`;
+  - `generate_image` now accepts `prompt` as an alias and forwards `aspectRatio` / `scale` to the provider layer;
+  - tests cover param validation, selected/full executor dispatch, API route mapping, and existing workflow graph behavior.
+
 P1.7 Text generation node:
 
 - Add text result support before or together with text nodes:

@@ -134,7 +134,10 @@ export async function executeAction(
     }
 
     case "generate_image": {
-      const subject = params.subject as string;
+      const subject = (params.subject ?? params.prompt) as string | undefined;
+      if (!subject || typeof subject !== "string") {
+        return { success: false, type: "error", content: "Промпт для генерации изображения обязателен" };
+      }
       const style = (params.style as string) || "photo";
 
       // Build an English prompt for the image model
@@ -214,6 +217,8 @@ RULES:
           prompt: resolveRefTags(cleanPrompt, selectedModel),
           type: "image",
           model: selectedModel,
+          aspectRatio: params.aspectRatio as string | undefined,
+          scale: params.scale as string | undefined,
           referenceImages: hasActualRefs ? referenceImages : undefined,
         });
 
@@ -497,12 +502,17 @@ RULES:
       // Scan all three possible data formats: layerTree, masterComponents, and raw layers[]
       const td = templateData as Record<string, unknown>;
       if (td.layerTree) scanLayers(td.layerTree as TemplateNode[]);
-      if (td.masterComponents) {
-        for (const mc of td.masterComponents as any[]) {
+      if (Array.isArray(td.masterComponents)) {
+        for (const mc of td.masterComponents as Array<Record<string, unknown>>) {
           // Check both MC-level slotId and nested props.slotId
-          const mcSlotId = mc.slotId || mc.props?.slotId;
-          if (mcSlotId && mcSlotId !== "none") {
-            slots.push({ id: mc.id || "", type: mc.type || "", slotId: mcSlotId });
+          const props = mc.props as Record<string, unknown> | undefined;
+          const mcSlotId = mc.slotId || props?.slotId;
+          if (typeof mcSlotId === "string" && mcSlotId !== "none") {
+            slots.push({
+              id: typeof mc.id === "string" ? mc.id : "",
+              type: typeof mc.type === "string" ? mc.type : "",
+              slotId: mcSlotId,
+            });
           }
         }
       }
