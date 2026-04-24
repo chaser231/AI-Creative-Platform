@@ -15,6 +15,9 @@ function resetStore() {
         dirty: false,
         viewport: { x: 0, y: 0, zoom: 1 },
         runState: {},
+        runResults: {},
+        runError: null,
+        isRunning: false,
     });
 }
 
@@ -98,6 +101,12 @@ describe("useWorkflowStore — graph slice", () => {
 
     it("hydrate replaces nodes/edges and clears dirty", () => {
         useWorkflowStore.getState().addNode("imageInput", { x: 0, y: 0 });
+        useWorkflowStore.setState({
+            runState: { stale: "done" },
+            runResults: { stale: { url: "https://old/stale.png" } },
+            runError: { nodeId: "stale", message: "old error" },
+            isRunning: true,
+        });
         expect(useWorkflowStore.getState().dirty).toBe(true);
 
         const graph: WorkflowGraph = {
@@ -118,6 +127,10 @@ describe("useWorkflowStore — graph slice", () => {
         expect(state.nodes).toHaveLength(1);
         expect(state.nodes[0].id).toBe("n-hydrated");
         expect(state.name).toBe("From DB");
+        expect(state.runState).toEqual({});
+        expect(state.runResults).toEqual({});
+        expect(state.runError).toBeNull();
+        expect(state.isRunning).toBe(false);
         expect(state.dirty).toBe(false);
     });
 
@@ -153,5 +166,107 @@ describe("useWorkflowStore — graph slice", () => {
 
         expect(useWorkflowStore.getState().scenarioConfig.enabled).toBe(true);
         expect(useWorkflowStore.getState().dirty).toBe(true);
+    });
+
+    it("invalidates cached results for a changed node and its downstream branch", () => {
+        const inputId = useWorkflowStore
+            .getState()
+            .addNode("imageInput", { x: 0, y: 0 });
+        const transformId = useWorkflowStore
+            .getState()
+            .addNode("removeBackground", { x: 100, y: 0 });
+        const outputId = useWorkflowStore
+            .getState()
+            .addNode("assetOutput", { x: 200, y: 0 });
+        const unrelatedId = useWorkflowStore
+            .getState()
+            .addNode("preview", { x: 0, y: 100 });
+
+        useWorkflowStore.getState().connect({
+            source: inputId,
+            sourceHandle: "image-out",
+            target: transformId,
+            targetHandle: "image-in",
+        });
+        useWorkflowStore.getState().connect({
+            source: transformId,
+            sourceHandle: "image-out",
+            target: outputId,
+            targetHandle: "image-in",
+        });
+        useWorkflowStore.setState({
+            runState: {
+                [inputId]: "done",
+                [transformId]: "done",
+                [outputId]: "done",
+                [unrelatedId]: "done",
+            },
+            runResults: {
+                [inputId]: { url: "https://cache/input.png" },
+                [transformId]: { url: "https://cache/transform.png" },
+                [outputId]: { url: "https://cache/output.png" },
+                [unrelatedId]: { url: "https://cache/unrelated.png" },
+            },
+        });
+
+        useWorkflowStore.getState().updateNodeParams(transformId, {
+            model: "replicate-rembg",
+        });
+
+        const state = useWorkflowStore.getState();
+        expect(state.runState[inputId]).toBe("done");
+        expect(state.runState[transformId]).toBe("idle");
+        expect(state.runState[outputId]).toBe("idle");
+        expect(state.runState[unrelatedId]).toBe("done");
+        expect(state.runResults).toEqual({
+            [inputId]: { url: "https://cache/input.png" },
+            [unrelatedId]: { url: "https://cache/unrelated.png" },
+        });
+    });
+
+    it("invalidates cached results for connection topology changes", () => {
+        const inputId = useWorkflowStore
+            .getState()
+            .addNode("imageInput", { x: 0, y: 0 });
+        const transformId = useWorkflowStore
+            .getState()
+            .addNode("removeBackground", { x: 100, y: 0 });
+        const outputId = useWorkflowStore
+            .getState()
+            .addNode("assetOutput", { x: 200, y: 0 });
+        const edgeId = useWorkflowStore.getState().connect({
+            source: inputId,
+            sourceHandle: "image-out",
+            target: transformId,
+            targetHandle: "image-in",
+        });
+        useWorkflowStore.getState().connect({
+            source: transformId,
+            sourceHandle: "image-out",
+            target: outputId,
+            targetHandle: "image-in",
+        });
+        useWorkflowStore.setState({
+            runState: {
+                [inputId]: "done",
+                [transformId]: "done",
+                [outputId]: "done",
+            },
+            runResults: {
+                [inputId]: { url: "https://cache/input.png" },
+                [transformId]: { url: "https://cache/transform.png" },
+                [outputId]: { url: "https://cache/output.png" },
+            },
+        });
+
+        useWorkflowStore.getState().disconnect(edgeId);
+
+        const state = useWorkflowStore.getState();
+        expect(state.runState[inputId]).toBe("done");
+        expect(state.runState[transformId]).toBe("idle");
+        expect(state.runState[outputId]).toBe("idle");
+        expect(state.runResults).toEqual({
+            [inputId]: { url: "https://cache/input.png" },
+        });
     });
 });

@@ -13,12 +13,21 @@
  */
 
 import { useCallback, useRef, useState } from "react";
-import { Image as ImageIcon, Link2, Loader2, Upload, X } from "lucide-react";
+import {
+    AlertCircle,
+    Image as ImageIcon,
+    Link2,
+    Loader2,
+    RotateCcw,
+    Upload,
+    X,
+} from "lucide-react";
 import { useWorkspace } from "@/providers/WorkspaceProvider";
 import {
     AssetPickerModal,
     type AssetPickerSelection,
 } from "@/components/assets/AssetPickerModal";
+import { SegmentedControl, type SegmentOption } from "@/components/ui/SegmentedControl";
 import { compressImageFile, uploadForAI } from "@/utils/imageUpload";
 import type { ImageInputParams } from "@/lib/workflow/nodeParamSchemas";
 
@@ -30,6 +39,24 @@ export interface ImageSourceInputProps {
 
 type Tab = NonNullable<ImageInputParams["source"]>;
 
+export const MAX_WORKFLOW_IMAGE_UPLOAD_BYTES = 20 * 1024 * 1024;
+
+const SOURCE_OPTIONS: SegmentOption<Tab>[] = [
+    { value: "asset", label: "Библиотека", icon: <ImageIcon size={12} /> },
+    { value: "url", label: "URL", icon: <Link2 size={12} /> },
+    { value: "upload", label: "Файл", icon: <Upload size={12} /> },
+];
+
+export function validateWorkflowImageFile(file: File): string | null {
+    if (!file.type.startsWith("image/")) {
+        return "Выберите файл изображения";
+    }
+    if (file.size > MAX_WORKFLOW_IMAGE_UPLOAD_BYTES) {
+        return "Файл больше 20 МБ";
+    }
+    return null;
+}
+
 export function ImageSourceInput({ value, onChange, error }: ImageSourceInputProps) {
     const { currentWorkspace } = useWorkspace();
     const workspaceId = currentWorkspace?.id ?? "";
@@ -37,13 +64,19 @@ export function ImageSourceInput({ value, onChange, error }: ImageSourceInputPro
     const [pickerOpen, setPickerOpen] = useState(false);
     const [uploading, setUploading] = useState(false);
     const [uploadError, setUploadError] = useState<string | null>(null);
+    const [canRetryUpload, setCanRetryUpload] = useState(false);
+    const [dragActive, setDragActive] = useState(false);
     const [pickedFilename, setPickedFilename] = useState<string | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const lastFileRef = useRef<File | null>(null);
 
     const tab: Tab = value.source ?? "asset";
 
     const setTab = useCallback(
         (next: Tab) => {
+            setUploadError(null);
+            setDragActive(false);
+            setCanRetryUpload(false);
             // Switching tabs clears the now-irrelevant fields so the validator
             // doesn't get tripped up by stale data from the previous mode.
             if (next === "asset") {
@@ -70,24 +103,51 @@ export function ImageSourceInput({ value, onChange, error }: ImageSourceInputPro
     const handleFile = useCallback(
         async (file: File) => {
             setUploadError(null);
+            lastFileRef.current = file;
+            setCanRetryUpload(true);
+            const validationError = validateWorkflowImageFile(file);
+            if (validationError) {
+                setUploadError(validationError);
+                return;
+            }
+
             setUploading(true);
             try {
                 const base64 = await compressImageFile(file, 2000);
-                const url = await uploadForAI(base64, "workflow-input");
+                const url = await uploadForAI(base64, "tmp");
                 if (!url || url === base64) {
                     setUploadError("Не удалось загрузить файл");
                     return;
                 }
                 onChange({ source: "upload", sourceUrl: url, assetId: undefined });
                 setPickedFilename(file.name);
+                lastFileRef.current = null;
+                setCanRetryUpload(false);
             } catch (err) {
                 setUploadError(err instanceof Error ? err.message : "Ошибка загрузки");
             } finally {
                 setUploading(false);
+                setDragActive(false);
             }
         },
         [onChange],
     );
+
+    const handleDrop = useCallback(
+        (event: React.DragEvent<HTMLButtonElement>) => {
+            event.preventDefault();
+            event.stopPropagation();
+            setDragActive(false);
+            const file = event.dataTransfer.files?.[0];
+            if (file) void handleFile(file);
+        },
+        [handleFile],
+    );
+
+    const retryUpload = useCallback(() => {
+        const file = lastFileRef.current;
+        if (file) void handleFile(file);
+    }, [handleFile]);
 
     return (
         <div className="flex flex-col gap-2">
@@ -95,12 +155,14 @@ export function ImageSourceInput({ value, onChange, error }: ImageSourceInputPro
                 Источник изображения
             </span>
 
-            {/* Tabs */}
-            <div className="flex items-center gap-1 rounded-md bg-bg-tertiary p-1">
-                <TabButton active={tab === "asset"} onClick={() => setTab("asset")} icon={<ImageIcon size={12} />} label="Из библиотеки" />
-                <TabButton active={tab === "url"} onClick={() => setTab("url")} icon={<Link2 size={12} />} label="По URL" />
-                <TabButton active={tab === "upload"} onClick={() => setTab("upload")} icon={<Upload size={12} />} label="Загрузить" />
-            </div>
+            <SegmentedControl
+                value={tab}
+                onChange={setTab}
+                options={SOURCE_OPTIONS}
+                size="sm"
+                fullWidth
+                className="w-full [&>button]:flex-1"
+            />
 
             {/* Tab body */}
             {tab === "asset" && (
@@ -109,17 +171,24 @@ export function ImageSourceInput({ value, onChange, error }: ImageSourceInputPro
                         <PreviewBox
                             url={value.sourceUrl}
                             label={pickedFilename ?? value.assetId}
-                            onClear={() => onChange({ source: "asset" })}
+                            onClear={() => {
+                                setPickedFilename(null);
+                                onChange({
+                                    source: "asset",
+                                    assetId: undefined,
+                                    sourceUrl: undefined,
+                                });
+                            }}
                         />
                     ) : (
                         <button
                             type="button"
                             onClick={() => setPickerOpen(true)}
                             disabled={!workspaceId}
-                            className="flex h-9 items-center justify-center gap-2 rounded-md border border-dashed border-border-secondary bg-bg-surface px-3 text-xs text-text-secondary hover:bg-bg-tertiary disabled:opacity-50"
+                            className="flex min-h-11 items-center justify-center gap-2 rounded-[var(--radius-md)] border border-dashed border-border-secondary bg-bg-surface px-3 text-xs text-text-secondary transition hover:bg-bg-tertiary disabled:opacity-50"
                         >
                             <ImageIcon size={14} />
-                            Выбрать из библиотеки
+                            {workspaceId ? "Выбрать из библиотеки" : "Нет активного воркспейса"}
                         </button>
                     )}
                     <AssetPickerModal
@@ -132,32 +201,89 @@ export function ImageSourceInput({ value, onChange, error }: ImageSourceInputPro
             )}
 
             {tab === "url" && (
-                <input
-                    type="url"
-                    value={value.sourceUrl ?? ""}
-                    onChange={(e) => onChange({ source: "url", sourceUrl: e.target.value || undefined })}
-                    placeholder="https://example.com/image.png"
-                    className="h-9 w-full rounded-md border border-border-primary bg-bg-surface px-2.5 text-sm text-text-primary focus:border-border-focus focus:outline-none focus:ring-2 focus:ring-border-focus/40"
-                />
+                <div className="flex flex-col gap-2">
+                    <input
+                        type="url"
+                        value={value.sourceUrl ?? ""}
+                        onChange={(e) => onChange({ source: "url", sourceUrl: e.target.value || undefined })}
+                        placeholder="https://example.com/image.png"
+                        className="h-9 w-full rounded-[var(--radius-md)] border border-border-primary bg-bg-surface px-2.5 text-sm text-text-primary focus:border-border-focus focus:outline-none focus:ring-2 focus:ring-border-focus/40"
+                    />
+                    {value.sourceUrl && (
+                        <PreviewBox
+                            url={value.sourceUrl}
+                            label="Изображение по URL"
+                            onClear={() => onChange({ source: "url", sourceUrl: undefined })}
+                        />
+                    )}
+                </div>
             )}
 
             {tab === "upload" && (
                 <div className="flex flex-col gap-2">
                     {value.sourceUrl && !value.assetId ? (
-                        <PreviewBox
-                            url={value.sourceUrl}
-                            label={pickedFilename ?? "Загруженный файл"}
-                            onClear={() => onChange({ source: "upload" })}
-                        />
+                        <div className="flex flex-col gap-2">
+                            <PreviewBox
+                                url={value.sourceUrl}
+                                label={pickedFilename ?? "Загруженный файл"}
+                                onClear={() => {
+                                    setUploadError(null);
+                                    setCanRetryUpload(false);
+                                    setPickedFilename(null);
+                                    lastFileRef.current = null;
+                                    onChange({
+                                        source: "upload",
+                                        sourceUrl: undefined,
+                                        assetId: undefined,
+                                    });
+                                }}
+                            />
+                            <button
+                                type="button"
+                                onClick={() => fileInputRef.current?.click()}
+                                disabled={uploading}
+                                className="flex h-8 items-center justify-center gap-2 rounded-[var(--radius-md)] border border-border-primary bg-bg-surface px-3 text-xs text-text-secondary transition hover:bg-bg-tertiary hover:text-text-primary disabled:opacity-50"
+                            >
+                                <Upload size={13} />
+                                Заменить файл
+                            </button>
+                        </div>
                     ) : (
                         <button
                             type="button"
                             onClick={() => fileInputRef.current?.click()}
                             disabled={uploading}
-                            className="flex h-9 items-center justify-center gap-2 rounded-md border border-dashed border-border-secondary bg-bg-surface px-3 text-xs text-text-secondary hover:bg-bg-tertiary disabled:opacity-50"
+                            onDragEnter={(event) => {
+                                event.preventDefault();
+                                setDragActive(true);
+                            }}
+                            onDragOver={(event) => {
+                                event.preventDefault();
+                                event.dataTransfer.dropEffect = "copy";
+                                setDragActive(true);
+                            }}
+                            onDragLeave={() => setDragActive(false)}
+                            onDrop={handleDrop}
+                            className={[
+                                "flex min-h-24 flex-col items-center justify-center gap-2 rounded-[var(--radius-md)] border border-dashed px-3 py-4 text-center text-xs transition disabled:opacity-50",
+                                dragActive
+                                    ? "border-border-focus bg-accent-lime/10 text-text-primary"
+                                    : "border-border-secondary bg-bg-surface text-text-secondary hover:bg-bg-tertiary",
+                            ].join(" ")}
                         >
-                            {uploading ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
-                            {uploading ? "Загрузка..." : "Выбрать файл"}
+                            {uploading ? (
+                                <Loader2 size={16} className="animate-spin" />
+                            ) : (
+                                <Upload size={16} />
+                            )}
+                            <span className="font-medium">
+                                {uploading ? "Загрузка..." : "Перетащите изображение сюда"}
+                            </span>
+                            {!uploading && (
+                                <span className="text-[11px] text-text-tertiary">
+                                    или выберите файл до 20 МБ
+                                </span>
+                            )}
                         </button>
                     )}
                     <input
@@ -172,7 +298,26 @@ export function ImageSourceInput({ value, onChange, error }: ImageSourceInputPro
                         }}
                     />
                     {uploadError && (
-                        <span className="text-xs text-red-500">{uploadError}</span>
+                        <div
+                            className="flex items-center justify-between gap-2 rounded-[var(--radius-md)] border border-red-500/30 bg-red-500/10 px-2.5 py-2 text-xs text-red-500"
+                            role="alert"
+                        >
+                            <span className="flex min-w-0 items-center gap-1.5">
+                                <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+                                <span className="truncate">{uploadError}</span>
+                            </span>
+                            {canRetryUpload && (
+                                <button
+                                    type="button"
+                                    onClick={retryUpload}
+                                    disabled={uploading}
+                                    className="flex shrink-0 items-center gap-1 rounded-[var(--radius-sm)] px-1.5 py-1 text-[11px] font-medium hover:bg-red-500/10 disabled:opacity-50"
+                                >
+                                    <RotateCcw className="h-3 w-3" />
+                                    Повторить
+                                </button>
+                            )}
+                        </div>
                     )}
                 </div>
             )}
@@ -186,33 +331,6 @@ export function ImageSourceInput({ value, onChange, error }: ImageSourceInputPro
     );
 }
 
-function TabButton({
-    active,
-    onClick,
-    icon,
-    label,
-}: {
-    active: boolean;
-    onClick: () => void;
-    icon: React.ReactNode;
-    label: string;
-}) {
-    return (
-        <button
-            type="button"
-            onClick={onClick}
-            className={`flex h-7 flex-1 items-center justify-center gap-1 rounded text-xs font-medium transition-colors ${
-                active
-                    ? "bg-bg-surface text-text-primary shadow-sm"
-                    : "text-text-secondary hover:text-text-primary"
-            }`}
-        >
-            {icon}
-            {label}
-        </button>
-    );
-}
-
 function PreviewBox({
     url,
     label,
@@ -223,12 +341,12 @@ function PreviewBox({
     onClear: () => void;
 }) {
     return (
-        <div className="flex items-center gap-2 rounded-md border border-border-primary bg-bg-secondary p-1.5">
+        <div className="flex items-center gap-2 rounded-[var(--radius-md)] border border-border-primary bg-bg-secondary p-1.5">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
                 src={url}
                 alt={label}
-                className="h-12 w-12 flex-shrink-0 rounded object-cover"
+                className="h-12 w-12 flex-shrink-0 rounded-[var(--radius-sm)] object-cover"
             />
             <span className="flex-1 truncate text-xs text-text-primary">
                 {label}
@@ -236,7 +354,7 @@ function PreviewBox({
             <button
                 type="button"
                 onClick={onClear}
-                className="rounded p-1 text-text-secondary hover:bg-bg-tertiary hover:text-text-primary"
+                className="rounded-[var(--radius-sm)] p-1 text-text-secondary hover:bg-bg-tertiary hover:text-text-primary"
                 aria-label="Очистить"
             >
                 <X size={14} />

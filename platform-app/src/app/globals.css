@@ -172,6 +172,125 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* AI Workflows canvas chrome */
+.workflow-flow {
+  --workflow-grid: color-mix(in srgb, var(--border-secondary) 58%, transparent);
+  --workflow-edge: color-mix(in srgb, var(--text-tertiary) 74%, transparent);
+  --workflow-edge-selected: var(--accent-lime-hover);
+  --workflow-handle: var(--accent-primary);
+  background:
+    radial-gradient(circle at 18% 12%, color-mix(in srgb, var(--accent-ai-start) 10%, transparent), transparent 28%),
+    radial-gradient(circle at 86% 78%, color-mix(in srgb, var(--accent-lime) 14%, transparent), transparent 24%),
+    linear-gradient(180deg, var(--bg-secondary), var(--bg-canvas));
+}
+
+.dark .workflow-flow {
+  --workflow-grid: color-mix(in srgb, var(--border-secondary) 70%, transparent);
+  --workflow-edge: color-mix(in srgb, var(--text-tertiary) 82%, transparent);
+  --workflow-handle: var(--accent-lime-hover);
+  background:
+    radial-gradient(circle at 20% 8%, color-mix(in srgb, var(--accent-ai-mid) 18%, transparent), transparent 30%),
+    radial-gradient(circle at 82% 80%, color-mix(in srgb, var(--accent-lime) 8%, transparent), transparent 28%),
+    linear-gradient(180deg, var(--bg-secondary), var(--bg-canvas));
+}
+
+.workflow-flow .react-flow__pane {
+  cursor: grab;
+}
+
+.workflow-flow .react-flow__pane:active {
+  cursor: grabbing;
+}
+
+.workflow-flow .react-flow__controls {
+  overflow: hidden;
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-xl);
+  background: color-mix(in srgb, var(--bg-surface) 88%, transparent);
+  box-shadow: var(--shadow-lg);
+  backdrop-filter: blur(16px);
+}
+
+.workflow-flow .react-flow__controls-button {
+  width: 36px;
+  height: 36px;
+  border-bottom: 1px solid var(--border-primary);
+  background: transparent;
+  color: var(--text-secondary);
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.workflow-flow .react-flow__controls-button:last-child {
+  border-bottom: 0;
+}
+
+.workflow-flow .react-flow__controls-button:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.workflow-flow .react-flow__controls-button svg {
+  fill: currentColor;
+}
+
+.workflow-flow .react-flow__minimap {
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+}
+
+.workflow-flow .workflow-handle {
+  border-radius: var(--radius-full);
+}
+
+.workflow-flow .workflow-handle::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 11px;
+  height: 11px;
+  border: 2px solid var(--bg-surface);
+  border-radius: var(--radius-full);
+  background: var(--workflow-handle);
+  box-shadow: 0 0 0 1px var(--border-primary), 0 4px 12px rgba(15, 23, 42, 0.16);
+  transform: translate(-50%, -50%);
+  transition: box-shadow var(--transition-fast), background var(--transition-fast);
+}
+
+.workflow-flow .workflow-handle:hover::before,
+.workflow-flow .workflow-handle.connectingfrom::before,
+.workflow-flow .workflow-handle.connectingto::before {
+  box-shadow:
+    0 0 0 4px color-mix(in srgb, var(--accent-lime) 28%, transparent),
+    0 4px 12px rgba(15, 23, 42, 0.16);
+}
+
+.workflow-flow .react-flow__connection-path {
+  stroke: var(--workflow-edge-selected);
+  stroke-width: 2.5;
+}
+
+.workflow-transparent-bg {
+  background-color: color-mix(in srgb, var(--bg-secondary) 92%, var(--text-primary) 8%);
+  background-image:
+    linear-gradient(45deg, color-mix(in srgb, var(--text-primary) 8%, transparent) 25%, transparent 25%),
+    linear-gradient(-45deg, color-mix(in srgb, var(--text-primary) 8%, transparent) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, color-mix(in srgb, var(--text-primary) 8%, transparent) 75%),
+    linear-gradient(-45deg, transparent 75%, color-mix(in srgb, var(--text-primary) 8%, transparent) 75%);
+  background-position: 0 0, 0 9px, 9px -9px, -9px 0;
+  background-size: 18px 18px;
+}
+
+.dark .workflow-transparent-bg {
+  background-color: color-mix(in srgb, var(--bg-primary) 72%, white 4%);
+  background-image:
+    linear-gradient(45deg, rgba(255, 255, 255, 0.035) 25%, transparent 25%),
+    linear-gradient(-45deg, rgba(255, 255, 255, 0.035) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, rgba(255, 255, 255, 0.035) 75%),
+    linear-gradient(-45deg, transparent 75%, rgba(255, 255, 255, 0.035) 75%);
+}
+
 /* ─────────────────────────────────────────────────────────────
  * Contrast safety net for solid "always-light" surfaces.
  * Because lime / white backgrounds don't invert in dark mode,

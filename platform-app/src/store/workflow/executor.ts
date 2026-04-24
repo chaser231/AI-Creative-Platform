@@ -53,6 +53,16 @@ export interface ExecuteGraphParams {
     edges: WorkflowEdge[];
     workspaceId: string;
     workflowId?: string;
+    /** When set, execute only this node plus its upstream ancestors. */
+    targetNodeId?: string;
+    /**
+     * Target execution strategy. `cached-inputs` runs only the target node when
+     * every required incoming port has a cached upstream result; otherwise it
+     * falls back to the default ancestor run.
+     */
+    targetRunMode?: TargetRunMode;
+    /** Last successful node results used by `cached-inputs` target runs. */
+    cachedResults?: Record<string, NodeRunResult>;
     deps: ExecutorDeps;
     callbacks?: ExecutorCallbacks;
 }
@@ -61,6 +71,32 @@ export interface ExecuteGraphResult {
     success: boolean;
     results: Record<string, NodeRunResult>;
     error?: { nodeId: string; message: string };
+}
+
+export interface ExecutionSlice {
+    nodes: WorkflowNode[];
+    edges: WorkflowEdge[];
+    nodeIds: Set<string>;
+}
+
+export type TargetRunMode = "ancestors" | "cached-inputs";
+
+export type ResolvedRunMode = "full" | TargetRunMode;
+
+export interface ExecutionPlan extends ExecutionSlice {
+    /** Edges used only for shaping input payloads during node execution. */
+    inputEdges: WorkflowEdge[];
+    /** Pre-existing upstream results available to this execution plan. */
+    initialResults: Record<string, NodeRunResult>;
+    /** The effective mode after cache availability/fallback is resolved. */
+    mode: ResolvedRunMode;
+}
+
+export interface ValidateBeforeRunOptions {
+    /** Validate only this node plus its upstream ancestors. */
+    targetNodeId?: string;
+    targetRunMode?: TargetRunMode;
+    cachedResults?: Record<string, NodeRunResult>;
 }
 
 /**
@@ -81,6 +117,155 @@ export function buildGraph(nodes: WorkflowNode[], edges: WorkflowEdge[]): Graph 
     return g;
 }
 
+export function getAncestorNodeIds(
+    targetNodeId: string,
+    nodes: WorkflowNode[],
+    edges: WorkflowEdge[],
+): string[] {
+    const knownNodeIds = new Set(nodes.map((node) => node.id));
+    if (!knownNodeIds.has(targetNodeId)) return [];
+
+    const visited = new Set<string>([targetNodeId]);
+    const ancestors: string[] = [];
+    const stack = [targetNodeId];
+
+    while (stack.length > 0) {
+        const current = stack.pop()!;
+        for (const edge of edges) {
+            if (edge.target !== current) continue;
+            if (!knownNodeIds.has(edge.source) || visited.has(edge.source)) continue;
+            visited.add(edge.source);
+            ancestors.push(edge.source);
+            stack.push(edge.source);
+        }
+    }
+
+    return ancestors;
+}
+
+export function buildExecutionSlice({
+    targetNodeId,
+    nodes,
+    edges,
+}: {
+    targetNodeId: string;
+    nodes: WorkflowNode[];
+    edges: WorkflowEdge[];
+}): ExecutionSlice {
+    if (!nodes.some((node) => node.id === targetNodeId)) {
+        return { nodes: [], edges: [], nodeIds: new Set() };
+    }
+
+    const nodeIds = new Set([
+        targetNodeId,
+        ...getAncestorNodeIds(targetNodeId, nodes, edges),
+    ]);
+    return {
+        nodes: nodes.filter((node) => nodeIds.has(node.id)),
+        edges: edges.filter((edge) => nodeIds.has(edge.source) && nodeIds.has(edge.target)),
+        nodeIds,
+    };
+}
+
+export function buildExecutionPlan({
+    targetNodeId,
+    targetRunMode = "ancestors",
+    nodes,
+    edges,
+    cachedResults = {},
+}: {
+    targetNodeId?: string;
+    targetRunMode?: TargetRunMode;
+    nodes: WorkflowNode[];
+    edges: WorkflowEdge[];
+    cachedResults?: Record<string, NodeRunResult>;
+}): ExecutionPlan {
+    if (!targetNodeId) {
+        return {
+            nodes,
+            edges,
+            inputEdges: edges,
+            nodeIds: new Set(nodes.map((node) => node.id)),
+            initialResults: {},
+            mode: "full",
+        };
+    }
+
+    const targetNode = nodes.find((node) => node.id === targetNodeId);
+    if (!targetNode) {
+        return {
+            nodes: [],
+            edges: [],
+            inputEdges: [],
+            nodeIds: new Set(),
+            initialResults: {},
+            mode: targetRunMode,
+        };
+    }
+
+    if (targetRunMode === "cached-inputs") {
+        const cachedPlan = buildCachedInputPlan({
+            targetNode,
+            nodes,
+            edges,
+            cachedResults,
+        });
+        if (cachedPlan) return cachedPlan;
+    }
+
+    const slice = buildExecutionSlice({ targetNodeId, nodes, edges });
+    return {
+        ...slice,
+        inputEdges: slice.edges,
+        initialResults: {},
+        mode: "ancestors",
+    };
+}
+
+function buildCachedInputPlan({
+    targetNode,
+    nodes,
+    edges,
+    cachedResults,
+}: {
+    targetNode: WorkflowNode;
+    nodes: WorkflowNode[];
+    edges: WorkflowEdge[];
+    cachedResults: Record<string, NodeRunResult>;
+}): ExecutionPlan | null {
+    const knownNodeIds = new Set(nodes.map((node) => node.id));
+    const incomingEdges = edges.filter(
+        (edge) => edge.target === targetNode.id && knownNodeIds.has(edge.source),
+    );
+    const cachedInputEdges = incomingEdges.filter(
+        (edge) => Boolean(cachedResults[edge.source]?.url),
+    );
+    const definition = NODE_REGISTRY[targetNode.type];
+
+    for (const port of definition.inputs) {
+        if (!port.required) continue;
+        const hasCachedInput = cachedInputEdges.some(
+            (edge) => edge.targetHandle === port.id,
+        );
+        if (!hasCachedInput) return null;
+    }
+
+    const initialResults: Record<string, NodeRunResult> = {};
+    for (const edge of cachedInputEdges) {
+        const cached = cachedResults[edge.source];
+        if (cached) initialResults[edge.source] = cached;
+    }
+
+    return {
+        nodes: [targetNode],
+        edges: [],
+        inputEdges: cachedInputEdges,
+        nodeIds: new Set([targetNode.id]),
+        initialResults,
+        mode: "cached-inputs",
+    };
+}
+
 /**
  * Pre-run validation: cycles, missing required input edges, invalid params.
  * Returns an empty array iff the graph is safe to execute.
@@ -88,16 +273,30 @@ export function buildGraph(nodes: WorkflowNode[], edges: WorkflowEdge[]): Graph 
 export function validateBeforeRun(
     nodes: WorkflowNode[],
     edges: WorkflowEdge[],
+    options: ValidateBeforeRunOptions = {},
 ): ValidationIssue[] {
     const issues: ValidationIssue[] = [];
-    const g = buildGraph(nodes, edges);
+    const targetNodeId = options.targetNodeId;
+    if (targetNodeId && !nodes.some((node) => node.id === targetNodeId)) {
+        return [{ nodeId: targetNodeId, message: "Выбранная нода не найдена." }];
+    }
+
+    const executionPlan = buildExecutionPlan({
+        targetNodeId,
+        targetRunMode: options.targetRunMode,
+        nodes,
+        edges,
+        cachedResults: options.cachedResults,
+    });
+
+    const g = buildGraph(executionPlan.nodes, executionPlan.edges);
 
     if (hasCycle(g)) {
         issues.push({ nodeId: "", message: "Граф содержит цикл — выполнение невозможно." });
         return issues;
     }
 
-    for (const n of nodes) {
+    for (const n of executionPlan.nodes) {
         const def = NODE_REGISTRY[n.type];
         const schema = NODE_PARAM_SCHEMAS[n.type];
 
@@ -111,7 +310,7 @@ export function validateBeforeRun(
 
         for (const port of def.inputs) {
             if (!port.required) continue;
-            const hasIncoming = edges.some(
+            const hasIncoming = executionPlan.inputEdges.some(
                 (e) => e.target === n.id && e.targetHandle === port.id,
             );
             if (!hasIncoming) {
@@ -134,9 +333,28 @@ export function validateBeforeRun(
 export async function executeGraph(
     params: ExecuteGraphParams,
 ): Promise<ExecuteGraphResult> {
-    const { nodes, edges, workspaceId, workflowId, deps, callbacks } = params;
+    const {
+        workspaceId,
+        workflowId,
+        targetNodeId,
+        targetRunMode,
+        cachedResults,
+        deps,
+        callbacks,
+    } = params;
+    const executionPlan = buildExecutionPlan({
+        targetNodeId,
+        targetRunMode,
+        nodes: params.nodes,
+        edges: params.edges,
+        cachedResults,
+    });
 
-    const issues = validateBeforeRun(nodes, edges);
+    const issues = validateBeforeRun(params.nodes, params.edges, {
+        targetNodeId,
+        targetRunMode,
+        cachedResults,
+    });
     if (issues.length > 0) {
         const first = issues[0];
         return {
@@ -146,16 +364,28 @@ export async function executeGraph(
         };
     }
 
+    const { nodes, edges, inputEdges, initialResults, nodeIds } = executionPlan;
     const g = buildGraph(nodes, edges);
     const generations = topologicalGenerations(g) as string[][];
     const nodesById = new Map(nodes.map((n) => [n.id, n]));
-    const results: Record<string, NodeRunResult> = {};
+    const results: Record<string, NodeRunResult> = { ...initialResults };
 
     for (let i = 0; i < generations.length; i += 1) {
         const gen = generations[i];
 
         const settled = await Promise.allSettled(
-            gen.map((nodeId) => runOne(nodeId, nodesById, edges, results, workspaceId, workflowId, deps, callbacks)),
+            gen.map((nodeId) =>
+                runOne(
+                    nodeId,
+                    nodesById,
+                    inputEdges,
+                    results,
+                    workspaceId,
+                    workflowId,
+                    deps,
+                    callbacks,
+                ),
+            ),
         );
 
         const failedIdx = settled.findIndex((s) => s.status === "rejected");
@@ -166,7 +396,7 @@ export async function executeGraph(
             for (const id of remainingGens) callbacks?.onNodeBlocked?.(id);
             return {
                 success: false,
-                results,
+                results: pickExecutedResults(results, nodeIds),
                 error: {
                     nodeId: failedNodeId,
                     message: failed.reason instanceof Error ? failed.reason.message : String(failed.reason),
@@ -175,7 +405,18 @@ export async function executeGraph(
         }
     }
 
-    return { success: true, results };
+    return { success: true, results: pickExecutedResults(results, nodeIds) };
+}
+
+function pickExecutedResults(
+    results: Record<string, NodeRunResult>,
+    nodeIds: Set<string>,
+): Record<string, NodeRunResult> {
+    const picked: Record<string, NodeRunResult> = {};
+    for (const [nodeId, result] of Object.entries(results)) {
+        if (nodeIds.has(nodeId)) picked[nodeId] = result;
+    }
+    return picked;
 }
 
 async function runOne(

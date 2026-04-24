@@ -10,10 +10,24 @@
  */
 
 import { Handle, Position } from "@xyflow/react";
-import { AlertCircle, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Check, Loader2, MinusCircle } from "lucide-react";
+import type { MouseEvent } from "react";
+import {
+    AlertCircle,
+    ArrowDown,
+    ArrowLeft,
+    ArrowRight,
+    ArrowUp,
+    Check,
+    Image as ImageIcon,
+    Loader2,
+    MinusCircle,
+    Play,
+} from "lucide-react";
 import { NODE_REGISTRY, type WorkflowNodeType } from "@/server/workflow/types";
 import { useWorkflowStore } from "@/store/workflow/useWorkflowStore";
 import type { NodeRunStatus } from "@/store/workflow/types";
+import { useWorkflowRunControls } from "../WorkflowRunControlsContext";
+import { getWorkflowNodePreview, type WorkflowNodePreview } from "./preview";
 
 interface BaseNodeProps {
     id: string;
@@ -27,23 +41,35 @@ type LinearDir =
     | "left-to-right"
     | "right-to-left";
 
-const CATEGORY_ACCENT: Record<"input" | "ai" | "transform" | "output", string> = {
-    input: "border-l-emerald-400",
-    ai: "border-l-violet-400",
-    transform: "border-l-sky-400",
-    output: "border-l-amber-400",
+const CATEGORY_META: Record<
+    "input" | "ai" | "transform" | "output",
+    { label: string; dot: string }
+> = {
+    input: {
+        label: "Источник",
+        dot: "bg-status-published",
+    },
+    ai: {
+        label: "AI",
+        dot: "bg-status-review",
+    },
+    transform: {
+        label: "Трансформ",
+        dot: "bg-status-progress",
+    },
+    output: {
+        label: "Выход",
+        dot: "bg-status-draft",
+    },
 };
 
 const STATUS_RING: Record<NodeRunStatus, string> = {
     idle: "",
     running: "ring-2 ring-status-progress",
-    done: "ring-2 ring-status-published",
+    done: "",
     error: "ring-2 ring-red-500",
     blocked: "ring-2 ring-text-tertiary opacity-60",
 };
-
-const CHECKERBOARD_BG =
-    "url('data:image/svg+xml;utf8,<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"16\" height=\"16\"><rect width=\"8\" height=\"8\" fill=\"%23e5e7eb\"/><rect x=\"8\" y=\"8\" width=\"8\" height=\"8\" fill=\"%23e5e7eb\"/></svg>')";
 
 function StatusBadge({ status }: { status: NodeRunStatus }) {
     if (status === "running")
@@ -59,7 +85,7 @@ function StatusBadge({ status }: { status: NodeRunStatus }) {
 
 export function BaseNode({ id, type, selected }: BaseNodeProps) {
     const definition = NODE_REGISTRY[type];
-    const accent = CATEGORY_ACCENT[definition.category];
+    const category = CATEGORY_META[definition.category];
     const status = useWorkflowStore((s) => s.runState[id] ?? "idle");
     const result = useWorkflowStore((s) => s.runResults[id]);
     const params = useWorkflowStore(
@@ -69,50 +95,92 @@ export function BaseNode({ id, type, selected }: BaseNodeProps) {
     );
     const runError = useWorkflowStore((s) => s.runError);
     const errorMessage = runError?.nodeId === id ? runError.message : undefined;
+    const preview = getWorkflowNodePreview(type, params, result);
+    const hasParamPreview = type === "mask" || type === "blur";
+    const runControls = useWorkflowRunControls();
+    const nodeRunDisabledReason = runControls?.getNodeRunDisabledReason(id);
+    const canRunNode = Boolean(runControls && !nodeRunDisabledReason);
+
+    const runSelectedNode = (event: MouseEvent<HTMLButtonElement>) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!canRunNode) return;
+        void runControls?.runNode(id);
+    };
 
     return (
         <div
             className={[
-                "min-w-[180px] rounded-md border border-border-primary border-l-4 bg-bg-surface px-3 py-2 text-text-primary shadow-sm transition",
-                accent,
+                "group relative min-w-[230px] max-w-[300px] overflow-visible rounded-[var(--radius-lg)] border border-border-primary bg-bg-surface/95 text-text-primary shadow-[var(--shadow-md)] backdrop-blur transition duration-200 hover:border-border-secondary hover:shadow-[var(--shadow-lg)]",
                 STATUS_RING[status],
-                selected && status === "idle" ? "ring-2 ring-border-focus" : "",
+                selected && (status === "idle" || status === "done")
+                    ? "ring-2 ring-border-focus/80"
+                    : "",
             ].join(" ")}
             title={errorMessage}
         >
-            <div className="flex items-center justify-between gap-2">
-                <div className="text-[11px] uppercase tracking-wide text-text-tertiary">
-                    {definition.category}
+            <div className="px-3 py-3">
+                <div className="flex items-center justify-between gap-2">
+                    <div className="flex min-w-0 items-center gap-1.5 text-[10px] font-medium uppercase tracking-wide text-text-tertiary">
+                        <span className={`h-1.5 w-1.5 rounded-full ${category.dot}`} />
+                        <span className="truncate">{category.label}</span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                        <StatusBadge status={status} />
+                        {runControls && (
+                            <button
+                                type="button"
+                                onClick={runSelectedNode}
+                                onPointerDown={(event) => event.stopPropagation()}
+                                disabled={!canRunNode}
+                                tabIndex={selected ? 0 : -1}
+                                title={
+                                    nodeRunDisabledReason ??
+                                    `Запустить «${definition.displayName}»`
+                                }
+                                aria-label={`Запустить ноду «${definition.displayName}»`}
+                                className={[
+                                    "nodrag nopan flex h-7 w-7 items-center justify-center rounded-[var(--radius-md)] border border-border-primary bg-bg-surface text-text-secondary shadow-[var(--shadow-sm)] transition duration-150 hover:border-border-secondary hover:bg-bg-tertiary hover:text-text-primary focus:outline-none focus:ring-2 focus:ring-border-focus/50 disabled:cursor-not-allowed disabled:opacity-40",
+                                    selected ? "opacity-100" : "opacity-0 group-hover:opacity-100",
+                                ].join(" ")}
+                            >
+                                {status === "running" ? (
+                                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                ) : (
+                                    <Play className="h-3.5 w-3.5" />
+                                )}
+                            </button>
+                        )}
+                    </div>
                 </div>
-                <StatusBadge status={status} />
-            </div>
-            <div className="mt-0.5 text-sm font-medium">
-                {definition.displayName}
+                <div className="mt-1 truncate text-sm font-semibold">
+                    {definition.displayName}
+                </div>
+                {definition.description && (
+                    <p className="mt-1 line-clamp-2 text-[11px] leading-4 text-text-secondary">
+                        {definition.description}
+                    </p>
+                )}
             </div>
 
-            {type === "mask" && <MaskPreview params={params} />}
-            {type === "blur" && <BlurPreview params={params} />}
-
-            {result?.url && (
-                /* eslint-disable-next-line @next/next/no-img-element */
-                <img
-                    src={result.url}
-                    alt=""
-                    className={
-                        type === "preview"
-                            ? "mt-2 w-full max-w-[300px] rounded border border-border-primary object-contain"
-                            : "mt-2 h-12 w-full rounded border border-border-primary object-cover"
-                    }
-                    style={
-                        type === "preview"
-                            ? {
-                                  backgroundImage: CHECKERBOARD_BG,
-                                  backgroundRepeat: "repeat",
-                              }
-                            : undefined
-                    }
-                />
-            )}
+            <div className="px-3 pb-3">
+                {type === "mask" && <MaskPreview params={params} />}
+                {type === "blur" && <BlurPreview params={params} />}
+                {(!hasParamPreview || preview) && (
+                    <NodeImagePreview preview={preview} type={type} />
+                )}
+                {type === "assetOutput" && result?.assetId && (
+                    <div className="mt-2 rounded-[var(--radius-md)] border border-border-primary bg-bg-secondary px-2.5 py-2 text-[11px] text-text-secondary">
+                        Сохранено в библиотеку:{" "}
+                        <span className="font-mono text-text-primary">{result.assetId}</span>
+                    </div>
+                )}
+                {errorMessage && (
+                    <div className="mt-2 rounded-[var(--radius-md)] border border-red-500/30 bg-red-500/10 px-2.5 py-2 text-[11px] text-red-500">
+                        {errorMessage}
+                    </div>
+                )}
+            </div>
 
             {definition.inputs.map((port, idx) => (
                 <Handle
@@ -120,8 +188,16 @@ export function BaseNode({ id, type, selected }: BaseNodeProps) {
                     type="target"
                     position={Position.Left}
                     id={port.id}
+                    className="workflow-handle"
                     data-port-type={port.type}
-                    style={{ top: `${30 + idx * 16}px`, background: "#6366f1" }}
+                    title={port.label}
+                    style={{
+                        top: `${58 + idx * 18}px`,
+                        background: "transparent",
+                        border: 0,
+                        height: 24,
+                        width: 24,
+                    }}
                 />
             ))}
 
@@ -131,10 +207,60 @@ export function BaseNode({ id, type, selected }: BaseNodeProps) {
                     type="source"
                     position={Position.Right}
                     id={port.id}
+                    className="workflow-handle"
                     data-port-type={port.type}
-                    style={{ top: `${30 + idx * 16}px`, background: "#6366f1" }}
+                    title={port.label}
+                    style={{
+                        top: `${58 + idx * 18}px`,
+                        background: "transparent",
+                        border: 0,
+                        height: 24,
+                        width: 24,
+                    }}
                 />
             ))}
+        </div>
+    );
+}
+
+function NodeImagePreview({
+    preview,
+    type,
+}: {
+    preview: WorkflowNodePreview | null;
+    type: WorkflowNodeType;
+}) {
+    const large = type === "imageInput" || type === "preview";
+    const heightClass = large ? "h-36" : "h-24";
+    const alt =
+        preview?.source === "input"
+            ? "Выбранное изображение для workflow"
+            : "Последний результат узла workflow";
+
+    return (
+        <div
+            className={`workflow-transparent-bg relative mt-2 overflow-hidden rounded-[var(--radius-md)] border border-border-primary ${heightClass}`}
+        >
+            {preview ? (
+                <>
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                        src={preview.url}
+                        alt={alt}
+                        className="h-full w-full object-contain"
+                    />
+                    <div className="absolute left-2 top-2 rounded-[var(--radius-full)] border border-border-primary bg-bg-surface/90 px-2 py-0.5 text-[10px] font-medium text-text-secondary shadow-[var(--shadow-sm)] backdrop-blur">
+                        {preview.source === "input" ? "Источник" : "Результат"}
+                    </div>
+                </>
+            ) : (
+                <div className="flex h-full flex-col items-center justify-center gap-2 bg-bg-secondary/80 text-text-tertiary">
+                    <ImageIcon className="h-5 w-5" />
+                    <span className="text-[11px]">
+                        {type === "imageInput" ? "Выберите изображение" : "Нет результата"}
+                    </span>
+                </div>
+            )}
         </div>
     );
 }

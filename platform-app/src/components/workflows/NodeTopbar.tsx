@@ -53,6 +53,42 @@ function SaveStatusBadge({ status }: { status: SaveStatus }) {
     return null;
 }
 
+function RunFeedback({
+    canRun,
+    isRunning,
+    runError,
+    runDisabledReason,
+}: {
+    canRun: boolean;
+    isRunning: boolean;
+    runError: { nodeId: string; message: string } | null;
+    runDisabledReason?: string;
+}) {
+    let message = "";
+    let tone = "text-text-tertiary";
+
+    if (runError) {
+        message = runError.message;
+        tone = "text-red-500";
+    } else if (isRunning) {
+        message = "Выполняем workflow…";
+        tone = "text-text-secondary";
+    } else if (!canRun && runDisabledReason) {
+        message = runDisabledReason;
+        tone = "text-text-tertiary";
+    }
+
+    return (
+        <span
+            className={`hidden min-h-4 w-[260px] max-w-[28vw] truncate text-right text-[11px] leading-4 md:block ${tone}`}
+            title={message}
+            aria-live="polite"
+        >
+            {message || "\u00A0"}
+        </span>
+    );
+}
+
 export function NodeTopbar({
     name,
     onNameChange,
@@ -67,30 +103,35 @@ export function NodeTopbar({
     onOpenScenarioSettings,
 }: NodeTopbarProps) {
     return (
-        <header className="flex h-12 shrink-0 items-center justify-between border-b border-border-primary bg-bg-surface px-4">
-            <div className="flex items-center gap-3">
+        <header className="flex h-14 shrink-0 items-center justify-between gap-4 border-b border-border-primary bg-bg-surface/95 px-4 backdrop-blur">
+            <div className="flex min-w-0 items-center gap-3">
                 <Link
                     href="/workflows"
-                    className="flex h-8 w-8 items-center justify-center rounded-md text-text-secondary hover:bg-bg-tertiary"
+                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[var(--radius-md)] text-text-secondary transition hover:bg-bg-tertiary hover:text-text-primary focus:outline-none focus:ring-2 focus:ring-border-focus/50"
                     aria-label="Назад к списку workflow'ов"
                 >
                     <ArrowLeft className="h-4 w-4" />
                 </Link>
-                <input
-                    type="text"
-                    value={name}
-                    onChange={(e) => onNameChange(e.target.value)}
-                    className="h-8 w-[320px] rounded-md border border-transparent bg-transparent px-2 text-sm font-medium text-text-primary hover:border-border-primary focus:border-border-focus focus:outline-none"
-                    aria-label="Название workflow"
-                />
-                <SaveStatusBadge status={saveStatus} />
+                <div className="min-w-0">
+                    <input
+                        type="text"
+                        value={name}
+                        onChange={(e) => onNameChange(e.target.value)}
+                        className="h-8 w-80 max-w-[36vw] rounded-[var(--radius-md)] border border-transparent bg-transparent px-2 text-sm font-medium text-text-primary transition hover:border-border-primary focus:border-border-focus focus:outline-none"
+                        aria-label="Название workflow"
+                    />
+                    <div className="h-4 px-2">
+                        <SaveStatusBadge status={saveStatus} />
+                    </div>
+                </div>
             </div>
-            <div className="flex items-center gap-2">
-                {runError && (
-                    <span className="max-w-[280px] truncate text-xs text-red-500" title={runError.message}>
-                        {runError.message}
-                    </span>
-                )}
+            <div className="flex shrink-0 items-center gap-2">
+                <RunFeedback
+                    canRun={canRun}
+                    isRunning={isRunning}
+                    runError={runError}
+                    runDisabledReason={runDisabledReason}
+                />
                 <Button variant="ghost" size="sm" onClick={onSave} disabled={isRunning}>
                     <Save className="mr-1.5 h-4 w-4" />
                     Сохранить
@@ -109,7 +150,13 @@ export function NodeTopbar({
                     size="sm"
                     onClick={onRun}
                     disabled={!canRun}
-                    title={!canRun ? runDisabledReason : "Запустить workflow"}
+                    title={
+                        isRunning
+                            ? "Workflow выполняется"
+                            : !canRun
+                              ? runDisabledReason
+                              : "Запустить workflow"
+                    }
                 >
                     {isRunning ? (
                         <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
