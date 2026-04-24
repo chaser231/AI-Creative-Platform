@@ -11,7 +11,7 @@
  *   - useWorkflowAutoSave hook bound to workflowId/workspaceId.
  */
 
-import { useCallback, useMemo, useRef } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import {
     Background,
     Controls,
@@ -37,6 +37,7 @@ import { isValidConnection as validateWorkflowConnection } from "@/lib/workflow/
 import type { WorkflowEdge, WorkflowNode, WorkflowNodeType } from "@/server/workflow/types";
 import { NodePalette } from "./NodePalette";
 import { NodeTopbar } from "./NodeTopbar";
+import { NodeInspector } from "./NodeInspector";
 import { nodeTypes } from "./nodes";
 
 function toRFNode(n: WorkflowNode): Node {
@@ -58,7 +59,13 @@ function toRFEdge(e: WorkflowEdge): Edge {
     };
 }
 
-function EditorCanvas() {
+function EditorCanvas({
+    selectedNodeId,
+    onSelectNode,
+}: {
+    selectedNodeId: string | null;
+    onSelectNode: (id: string | null) => void;
+}) {
     const nodes = useWorkflowStore((s) => s.nodes);
     const edges = useWorkflowStore((s) => s.edges);
     const addNode = useWorkflowStore((s) => s.addNode);
@@ -68,7 +75,14 @@ function EditorCanvas() {
     const wrapperRef = useRef<HTMLDivElement>(null);
     const { screenToFlowPosition } = useReactFlow();
 
-    const rfNodes = useMemo(() => nodes.map(toRFNode), [nodes]);
+    const rfNodes = useMemo(
+        () =>
+            nodes.map((n) => ({
+                ...toRFNode(n),
+                selected: n.id === selectedNodeId,
+            })),
+        [nodes, selectedNodeId],
+    );
     const rfEdges = useMemo(() => edges.map(toRFEdge), [edges]);
 
     const onNodesChange = useCallback((changes: NodeChange[]) => {
@@ -158,6 +172,8 @@ function EditorCanvas() {
                 onEdgesChange={onEdgesChange}
                 onConnect={onConnect}
                 isValidConnection={isValidConn}
+                onNodeClick={(_e, n) => onSelectNode(n.id)}
+                onPaneClick={() => onSelectNode(null)}
                 onMove={onMove}
                 onDrop={onDrop}
                 onDragOver={onDragOver}
@@ -182,6 +198,10 @@ export function WorkflowEditor({ workflowId }: { workflowId: string }) {
         workspaceId: currentWorkspace?.id,
     });
 
+    // Selection lives in editor scope, not in zustand: it's purely a UI
+    // concern (which inspector tab to show) and shouldn't survive serialization.
+    const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+
     return (
         <div className="flex h-screen w-full flex-col bg-neutral-50 dark:bg-neutral-950">
             <NodeTopbar
@@ -194,8 +214,12 @@ export function WorkflowEditor({ workflowId }: { workflowId: string }) {
                 <ReactFlowProvider>
                     <NodePalette />
                     <div className="min-w-0 flex-1">
-                        <EditorCanvas />
+                        <EditorCanvas
+                            selectedNodeId={selectedNodeId}
+                            onSelectNode={setSelectedNodeId}
+                        />
                     </div>
+                    <NodeInspector selectedNodeId={selectedNodeId} />
                 </ReactFlowProvider>
             </div>
         </div>
