@@ -233,7 +233,10 @@ export default function EditorPage({ params }: EditorPageProps) {
     // No toast yet — we only log; UI polish is a follow-up.
     const handleVersionConflict = useCallback(() => {
         if (isTemplateMode) return;
-        console.error(`[editor] version conflict on project ${id} — refetching canvas state`);
+        // Recoverable: refetch will re-hydrate the canvas from the
+        // server's canonical state. `warn` so the Next.js dev overlay
+        // doesn't flash red on an expected race.
+        console.warn(`[editor] version conflict on project ${id} — refetching canvas state`);
         void refetchCanvas();
     }, [isTemplateMode, id, refetchCanvas]);
     const { isSaving, getUnsavedState, saveNowSync } = useCanvasAutoSave(
