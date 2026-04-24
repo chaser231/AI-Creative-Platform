@@ -8,10 +8,14 @@
 
 import { NODE_REGISTRY } from "@/server/workflow/types";
 import type { WorkflowNodeType, NodeDefinition } from "@/server/workflow/types";
+import Link from "next/link";
 import { useEffect, useMemo, useRef, useState, type ComponentType } from "react";
 import {
+    Boxes,
     Image as ImageIcon,
+    ImageOff,
     Layers3,
+    LibraryBig,
     Move3D,
     Plus,
     Search,
@@ -19,6 +23,11 @@ import {
     X,
     Workflow,
 } from "lucide-react";
+import {
+    WORKFLOW_PRESET_CATALOG,
+    getWorkflowPresetCreateHref,
+    type WorkflowPresetId,
+} from "@/lib/workflow/presets";
 
 const CATEGORY_LABELS: Record<NodeDefinition["category"], string> = {
     input: "Источники",
@@ -61,6 +70,7 @@ const CATEGORY_META: Record<
 };
 
 type PaletteFilter = "all" | NodeDefinition["category"];
+type OpenPanel = "nodes" | "presets" | null;
 
 interface PaletteBoundary {
     contains(target: unknown): boolean;
@@ -77,6 +87,15 @@ const RAIL_ITEMS: Array<{
     { filter: "transform", label: CATEGORY_LABELS.transform, icon: Move3D },
     { filter: "output", label: CATEGORY_LABELS.output, icon: Layers3 },
 ];
+
+const PRESET_ICONS: Record<
+    WorkflowPresetId,
+    ComponentType<{ className?: string }>
+> = {
+    "product-reflection-pipeline": Boxes,
+    "remove-background-preview": ImageOff,
+    "asset-transform-save": LibraryBig,
+};
 
 function onDragStart(event: React.DragEvent, type: WorkflowNodeType) {
     event.dataTransfer.setData("application/reactflow", type);
@@ -110,36 +129,46 @@ export function shouldClosePaletteForPointerTarget(
     return !root.contains(target);
 }
 
+export function getWorkflowPresetPaletteItems() {
+    return WORKFLOW_PRESET_CATALOG.map((preset) => ({
+        ...preset,
+        href: getWorkflowPresetCreateHref(preset.id),
+    }));
+}
+
 export function NodePalette({
     onCreateNode,
 }: {
     onCreateNode?: (type: WorkflowNodeType) => void;
 }) {
     const paletteRef = useRef<HTMLDivElement>(null);
-    const [open, setOpen] = useState(false);
+    const [openPanel, setOpenPanel] = useState<OpenPanel>(null);
     const [activeFilter, setActiveFilter] = useState<PaletteFilter>("all");
     const [query, setQuery] = useState("");
+    const nodeMenuOpen = openPanel === "nodes";
+    const presetMenuOpen = openPanel === "presets";
 
     const grouped = useMemo(() => {
         return getNodePaletteGroups({ activeFilter, query });
     }, [activeFilter, query]);
+    const presetItems = useMemo(() => getWorkflowPresetPaletteItems(), []);
 
     const openMenu = (filter: PaletteFilter) => {
         setActiveFilter(filter);
-        setOpen(true);
+        setOpenPanel("nodes");
     };
 
     const createNode = (type: WorkflowNodeType) => {
         onCreateNode?.(type);
-        setOpen(false);
+        setOpenPanel(null);
         setQuery("");
     };
 
     useEffect(() => {
-        if (!open) return;
+        if (!openPanel) return;
 
         const closeMenu = () => {
-            setOpen(false);
+            setOpenPanel(null);
             setQuery("");
         };
 
@@ -158,7 +187,7 @@ export function NodePalette({
             document.removeEventListener("pointerdown", onPointerDown, true);
             document.removeEventListener("keydown", onKeyDown);
         };
-    }, [open]);
+    }, [openPanel]);
 
     return (
         <div ref={paletteRef} className="contents">
@@ -169,7 +198,7 @@ export function NodePalette({
                 <div className="flex flex-1 flex-col items-center gap-2">
                     {RAIL_ITEMS.map((item, index) => {
                         const Icon = item.icon;
-                        const active = open && activeFilter === item.filter;
+                        const active = nodeMenuOpen && activeFilter === item.filter;
                         return (
                             <button
                                 key={item.filter}
@@ -197,13 +226,22 @@ export function NodePalette({
                 </div>
 
                 <div className="mt-3 border-t border-border-primary pt-3">
-                    <div className="flex h-11 w-11 items-center justify-center rounded-[var(--radius-lg)] border border-border-primary bg-bg-secondary text-text-tertiary">
+                    <button
+                        type="button"
+                        onClick={() => setOpenPanel(presetMenuOpen ? null : "presets")}
+                        className={[
+                            "flex h-11 w-11 items-center justify-center rounded-[var(--radius-lg)] border border-border-primary bg-bg-secondary text-text-tertiary transition duration-150 hover:bg-bg-tertiary hover:text-text-primary focus:outline-none focus:ring-2 focus:ring-border-focus/50",
+                            presetMenuOpen ? "bg-bg-tertiary text-text-primary" : "",
+                        ].join(" ")}
+                        aria-label="Шаблоны workflow"
+                        aria-pressed={presetMenuOpen}
+                    >
                         <Workflow className="h-5 w-5" />
-                    </div>
+                    </button>
                 </div>
             </aside>
 
-            {open && (
+            {nodeMenuOpen && (
                 <div className="pointer-events-auto absolute left-[88px] top-4 z-30 flex max-h-[calc(100%-2rem)] w-[380px] max-w-[calc(100vw-7rem)] flex-col overflow-hidden rounded-[var(--radius-xl)] border border-border-primary bg-bg-surface/95 shadow-[var(--shadow-xl)] backdrop-blur-xl">
                     <header className="flex h-14 shrink-0 items-center gap-2 border-b border-border-primary px-4">
                         <Search className="h-4 w-4 shrink-0 text-text-tertiary" />
@@ -217,7 +255,7 @@ export function NodePalette({
                         />
                         <button
                             type="button"
-                            onClick={() => setOpen(false)}
+                            onClick={() => setOpenPanel(null)}
                             className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[var(--radius-md)] text-text-secondary transition hover:bg-bg-tertiary hover:text-text-primary focus:outline-none focus:ring-2 focus:ring-border-focus/50"
                             aria-label="Закрыть меню узлов"
                         >
@@ -282,6 +320,61 @@ export function NodePalette({
                                 );
                             })
                         )}
+                    </div>
+                </div>
+            )}
+
+            {presetMenuOpen && (
+                <div className="pointer-events-auto absolute left-[88px] bottom-4 z-30 flex w-[380px] max-w-[calc(100vw-7rem)] flex-col overflow-hidden rounded-[var(--radius-xl)] border border-border-primary bg-bg-surface/95 shadow-[var(--shadow-xl)] backdrop-blur-xl">
+                    <header className="flex h-14 shrink-0 items-center justify-between gap-2 border-b border-border-primary px-4">
+                        <div className="min-w-0">
+                            <div className="text-[10px] font-medium uppercase tracking-wide text-text-tertiary">
+                                Шаблоны
+                            </div>
+                            <h3 className="truncate text-sm font-semibold text-text-primary">
+                                Готовые workflow
+                            </h3>
+                        </div>
+                        <button
+                            type="button"
+                            onClick={() => setOpenPanel(null)}
+                            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[var(--radius-md)] text-text-secondary transition hover:bg-bg-tertiary hover:text-text-primary focus:outline-none focus:ring-2 focus:ring-border-focus/50"
+                            aria-label="Закрыть меню шаблонов"
+                        >
+                            <X className="h-4 w-4" />
+                        </button>
+                    </header>
+                    <div className="space-y-1 p-3">
+                        {presetItems.map((preset) => {
+                            const Icon = PRESET_ICONS[preset.id];
+                            return (
+                                <Link
+                                    key={preset.id}
+                                    href={preset.href}
+                                    onClick={() => setOpenPanel(null)}
+                                    className="group flex items-start gap-3 rounded-[var(--radius-lg)] border border-transparent px-3 py-2.5 text-left text-text-primary transition duration-150 hover:border-border-primary hover:bg-bg-secondary focus:outline-none focus:ring-2 focus:ring-border-focus/50"
+                                >
+                                    <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-[var(--radius-md)] border border-border-primary bg-bg-secondary text-text-secondary group-hover:bg-bg-tertiary group-hover:text-text-primary">
+                                        <Icon className="h-4 w-4" />
+                                    </span>
+                                    <span className="min-w-0 flex-1">
+                                        <span className="truncate text-xs font-semibold">
+                                            {preset.name}
+                                        </span>
+                                        <span className="mt-1 line-clamp-2 block text-[11px] leading-4 text-text-secondary">
+                                            {preset.description}
+                                        </span>
+                                    </span>
+                                </Link>
+                            );
+                        })}
+                        <Link
+                            href="/workflows/new"
+                            onClick={() => setOpenPanel(null)}
+                            className="mt-2 flex h-9 items-center justify-center rounded-[var(--radius-md)] border border-border-primary text-xs font-medium text-text-secondary transition hover:bg-bg-tertiary hover:text-text-primary focus:outline-none focus:ring-2 focus:ring-border-focus/50"
+                        >
+                            Пустой workflow
+                        </Link>
                     </div>
                 </div>
             )}

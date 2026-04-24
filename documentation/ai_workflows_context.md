@@ -40,7 +40,7 @@ Data model:
 Main routes:
 
 - `/workflows`: workspace workflow list, graph workflows only by default.
-- `/workflows/new`: creates an empty graph workflow via `workflow.saveGraph`.
+- `/workflows/new`: creates an empty graph workflow or a preset graph from `?preset=...` via `workflow.saveGraph`.
 - `/workflows/[id]`: loads `WorkflowEditorShell`, then dynamically imports the xyflow editor client-side.
 
 Key files:
@@ -491,7 +491,9 @@ Status:
   - `/workflows/new?preset=...` now creates a prefilled graph with preset name/description;
   - supported IDs: `product-reflection-pipeline`, `remove-background-preview`, `asset-transform-save`;
   - unknown preset IDs still create the empty default workflow;
-  - tests cover schema-valid preset graphs, stable ids, executable defaults after user image input injection, and unknown fallback.
+  - `/workflows` now exposes compact preset cards plus a separate empty workflow action;
+  - the workflow editor left rail opens a preset flyout from the bottom workflow button;
+  - tests cover schema-valid preset graphs, stable ids, executable defaults after user image input injection, unknown fallback, and preset entrypoint links.
 
 P1.6 Image generation node:
 

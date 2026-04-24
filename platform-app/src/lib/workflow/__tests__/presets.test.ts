@@ -2,14 +2,29 @@ import { describe, expect, it } from "vitest";
 import { workflowGraphSchema, emptyWorkflowGraph } from "@/lib/workflow/graphSchema";
 import { NODE_PARAM_SCHEMAS } from "@/lib/workflow/nodeParamSchemas";
 import {
+    WORKFLOW_PRESET_CATALOG,
     WORKFLOW_PRESET_IDS,
     createWorkflowGraphForPreset,
     createWorkflowPresetDraft,
+    getWorkflowPresetCreateHref,
 } from "@/lib/workflow/presets";
 import { validateBeforeRun } from "@/store/workflow/executor";
 import type { WorkflowGraph, WorkflowNode } from "@/server/workflow/types";
 
 describe("workflow presets", () => {
+    it("exposes ordered catalog metadata and create links for UI entrypoints", () => {
+        expect(WORKFLOW_PRESET_CATALOG.map((item) => item.id)).toEqual([
+            ...WORKFLOW_PRESET_IDS,
+        ]);
+        for (const item of WORKFLOW_PRESET_CATALOG) {
+            expect(item.name).toBeTruthy();
+            expect(item.description).toBeTruthy();
+            expect(getWorkflowPresetCreateHref(item.id)).toBe(
+                `/workflows/new?preset=${item.id}`,
+            );
+        }
+    });
+
     it("creates a schema-valid graph for every system preset", () => {
         for (const presetId of WORKFLOW_PRESET_IDS) {
             const draft = createWorkflowPresetDraft(presetId);

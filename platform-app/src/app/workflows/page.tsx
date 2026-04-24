@@ -9,13 +9,31 @@
  */
 
 import Link from "next/link";
-import { Plus, Loader2, Workflow as WorkflowIcon } from "lucide-react";
+import {
+    Boxes,
+    ImageOff,
+    LibraryBig,
+    Loader2,
+    Plus,
+    Workflow as WorkflowIcon,
+} from "lucide-react";
 import { AppShell } from "@/components/layout/AppShell";
 import { TopBar } from "@/components/layout/TopBar";
 import { Button } from "@/components/ui/Button";
 import { trpc } from "@/lib/trpc";
 import { useWorkspace } from "@/providers/WorkspaceProvider";
 import { WorkspaceOnboarding } from "@/components/workspace/WorkspaceOnboarding";
+import {
+    WORKFLOW_PRESET_CATALOG,
+    getWorkflowPresetCreateHref,
+    type WorkflowPresetId,
+} from "@/lib/workflow/presets";
+
+const PRESET_ICONS: Record<WorkflowPresetId, typeof Boxes> = {
+    "product-reflection-pipeline": Boxes,
+    "remove-background-preview": ImageOff,
+    "asset-transform-save": LibraryBig,
+};
 
 export default function WorkflowsListPage() {
     const { currentWorkspace, needsOnboarding, isLoading: wsLoading } = useWorkspace();
@@ -51,6 +69,51 @@ export default function WorkflowsListPage() {
                             </Button>
                         </Link>
                     </div>
+
+                    <section className="mb-6">
+                        <div className="mb-3 flex items-center justify-between gap-4">
+                            <div>
+                                <h2 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
+                                    Создать из шаблона
+                                </h2>
+                                <p className="mt-0.5 text-xs text-neutral-500">
+                                    Готовые графы для частых image workflow
+                                </p>
+                            </div>
+                            <Link
+                                href="/workflows/new"
+                                className="text-xs font-medium text-neutral-500 transition hover:text-neutral-900 dark:hover:text-neutral-100"
+                            >
+                                Пустой workflow
+                            </Link>
+                        </div>
+                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                            {WORKFLOW_PRESET_CATALOG.map((preset) => {
+                                const Icon = PRESET_ICONS[preset.id];
+                                return (
+                                    <Link
+                                        key={preset.id}
+                                        href={getWorkflowPresetCreateHref(preset.id)}
+                                        className="group flex min-h-28 flex-col rounded-xl border border-neutral-200 bg-white p-4 transition hover:border-neutral-400 hover:shadow-sm dark:border-neutral-800 dark:bg-neutral-900 dark:hover:border-neutral-600"
+                                    >
+                                        <div className="flex items-start gap-3">
+                                            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-neutral-100 text-neutral-600 transition group-hover:bg-neutral-200 dark:bg-neutral-800 dark:text-neutral-300 dark:group-hover:bg-neutral-700">
+                                                <Icon className="h-5 w-5" />
+                                            </div>
+                                            <div className="min-w-0">
+                                                <h3 className="line-clamp-1 text-sm font-semibold text-neutral-900 dark:text-neutral-100">
+                                                    {preset.name}
+                                                </h3>
+                                                <p className="mt-1 line-clamp-2 text-xs leading-5 text-neutral-500">
+                                                    {preset.description}
+                                                </p>
+                                            </div>
+                                        </div>
+                                    </Link>
+                                );
+                            })}
+                        </div>
+                    </section>
 
                     {wsLoading || listQuery.isLoading ? (
                         <div className="flex items-center justify-center py-24 text-neutral-400">

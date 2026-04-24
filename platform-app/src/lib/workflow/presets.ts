@@ -22,6 +22,12 @@ export interface WorkflowPresetDraft {
     graph: WorkflowGraph;
 }
 
+export interface WorkflowPresetCatalogItem {
+    id: WorkflowPresetId;
+    name: string;
+    description: string;
+}
+
 interface NodeSpec {
     id: string;
     type: WorkflowNodeType;
@@ -54,6 +60,16 @@ const WORKFLOW_PRESET_META: Record<
             "Берёт ассет, применяет базовую AI-трансформацию и сохраняет результат в библиотеку.",
     },
 };
+
+export const WORKFLOW_PRESET_CATALOG: WorkflowPresetCatalogItem[] =
+    WORKFLOW_PRESET_IDS.map((id) => ({
+        id,
+        ...WORKFLOW_PRESET_META[id],
+    }));
+
+export function getWorkflowPresetCreateHref(presetId: WorkflowPresetId): string {
+    return `/workflows/new?preset=${encodeURIComponent(presetId)}`;
+}
 
 const WORKFLOW_PRESET_BUILDERS: Record<WorkflowPresetId, () => WorkflowGraph> = {
     "product-reflection-pipeline": () =>
