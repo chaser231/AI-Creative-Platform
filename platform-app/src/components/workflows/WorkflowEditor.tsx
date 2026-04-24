@@ -33,6 +33,7 @@ import "@xyflow/react/dist/style.css";
 import { useWorkflowStore } from "@/store/workflow/useWorkflowStore";
 import { useWorkspace } from "@/providers/WorkspaceProvider";
 import { useWorkflowAutoSave } from "@/hooks/workflow/useWorkflowAutoSave";
+import { isValidConnection as validateWorkflowConnection } from "@/lib/workflow/connectionValidator";
 import type { WorkflowEdge, WorkflowNode, WorkflowNodeType } from "@/server/workflow/types";
 import { NodePalette } from "./NodePalette";
 import { NodeTopbar } from "./NodeTopbar";
@@ -134,6 +135,19 @@ function EditorCanvas() {
         [addNode, screenToFlowPosition],
     );
 
+    const isValidConn = useCallback(
+        (edgeOrConnection: Edge | Connection) => {
+            const c: Connection = {
+                source: edgeOrConnection.source,
+                target: edgeOrConnection.target,
+                sourceHandle: edgeOrConnection.sourceHandle ?? null,
+                targetHandle: edgeOrConnection.targetHandle ?? null,
+            };
+            return validateWorkflowConnection(c, useWorkflowStore.getState().nodes);
+        },
+        [],
+    );
+
     return (
         <div ref={wrapperRef} className="h-full w-full">
             <ReactFlow
@@ -143,6 +157,7 @@ function EditorCanvas() {
                 onNodesChange={onNodesChange}
                 onEdgesChange={onEdgesChange}
                 onConnect={onConnect}
+                isValidConnection={isValidConn}
                 onMove={onMove}
                 onDrop={onDrop}
                 onDragOver={onDragOver}
