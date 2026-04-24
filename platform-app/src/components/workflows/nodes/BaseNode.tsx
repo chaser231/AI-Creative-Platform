@@ -166,8 +166,12 @@ export function BaseNode({ id, type, selected }: BaseNodeProps) {
             <div className="px-3 pb-3">
                 {type === "mask" && <MaskPreview params={params} />}
                 {type === "blur" && <BlurPreview params={params} />}
-                {(!hasParamPreview || preview) && (
-                    <NodeImagePreview preview={preview} type={type} />
+                {type === "textGeneration" ? (
+                    <NodeTextPreview text={preview?.text} />
+                ) : (
+                    (!hasParamPreview || preview) && (
+                        <NodeImagePreview preview={preview} type={type} />
+                    )
                 )}
                 {type === "assetOutput" && result?.assetId && (
                     <div className="mt-2 rounded-[var(--radius-md)] border border-border-primary bg-bg-secondary px-2.5 py-2 text-[11px] text-text-secondary">
@@ -245,7 +249,7 @@ function NodeImagePreview({
                 <>
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
-                        src={preview.url}
+                        src={preview.url ?? ""}
                         alt={alt}
                         className="h-full w-full object-contain"
                     />
@@ -261,6 +265,24 @@ function NodeImagePreview({
                     </span>
                 </div>
             )}
+        </div>
+    );
+}
+
+function NodeTextPreview({ text }: { text: string | undefined }) {
+    return (
+        <div className="mt-2 rounded-[var(--radius-md)] border border-border-primary bg-bg-secondary px-3 py-3">
+            <div className="mb-1 text-[10px] font-medium uppercase tracking-wide text-text-tertiary">
+                {text ? "Результат" : "Текст"}
+            </div>
+            <p
+                className={[
+                    "line-clamp-5 whitespace-pre-wrap text-xs leading-5",
+                    text ? "text-text-primary" : "text-text-tertiary",
+                ].join(" ")}
+            >
+                {text ?? "Нет результата"}
+            </p>
         </div>
     );
 }

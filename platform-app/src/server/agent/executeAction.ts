@@ -133,6 +133,51 @@ export async function executeAction(
       };
     }
 
+    case "generate_text": {
+      const prompt = params.prompt as string | undefined;
+      if (!prompt || typeof prompt !== "string") {
+        return { success: false, type: "error", content: "Промпт для генерации текста обязателен" };
+      }
+
+      const mode = (params.mode as string) || "headline";
+      const tone = (params.tone as string) || "bold";
+      const toneMap: Record<string, string> = {
+        bold: "Коротко, уверенно, энергично.",
+        playful: "Легко, живо, с дружелюбной интонацией.",
+        formal: "Деловой, спокойный, профессиональный стиль.",
+        urgent: "С ощущением срочности, но без кликбейта.",
+        neutral: "Нейтрально и ясно.",
+      };
+      const modeRule: Record<string, string> = {
+        headline: "Напиши один рекламный заголовок на 3-7 слов.",
+        subtitle: "Напиши один подзаголовок или CTA на 10-20 слов.",
+        freeform: "Напиши короткий рекламный текст до 40 слов.",
+      };
+
+      const response = await callLLM([
+        {
+          role: "system",
+          content: `Ты — копирайтер для AI Creative Platform.
+
+ПРАВИЛА:
+- ${modeRule[mode] || modeRule.freeform}
+- Тон: ${toneMap[tone] || toneMap.bold}
+- Без кавычек вокруг ответа
+- Без пояснений и вариантов
+- Пиши на языке пользовательского запроса`,
+        },
+        { role: "user", content: prompt },
+      ]);
+
+      const text = response.trim().replace(/^["«]|["»]$/g, "").replace(/\.$/, "");
+      return {
+        success: true,
+        type: "text",
+        content: text,
+        metadata: { role: mode, tone },
+      };
+    }
+
     case "generate_image": {
       const subject = (params.subject ?? params.prompt) as string | undefined;
       if (!subject || typeof subject !== "string") {

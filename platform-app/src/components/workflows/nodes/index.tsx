@@ -18,6 +18,10 @@ export function ImageGenerationNode({ id, selected }: NodeProps) {
     return <BaseNode id={id} type="imageGeneration" selected={selected} />;
 }
 
+export function TextGenerationNode({ id, selected }: NodeProps) {
+    return <BaseNode id={id} type="textGeneration" selected={selected} />;
+}
+
 export function RemoveBackgroundNode({ id, selected }: NodeProps) {
     return <BaseNode id={id} type="removeBackground" selected={selected} />;
 }
@@ -45,6 +49,7 @@ export function AssetOutputNode({ id, selected }: NodeProps) {
 export const nodeTypes = {
     imageInput: ImageInputNode,
     imageGeneration: ImageGenerationNode,
+    textGeneration: TextGenerationNode,
     removeBackground: RemoveBackgroundNode,
     addReflection: AddReflectionNode,
     mask: MaskNode,

@@ -180,4 +180,43 @@ describe("POST /api/workflow/execute-node", () => {
             expect.objectContaining({ workspaceId: "ws_1" }),
         );
     });
+
+    it("allows generate_text and returns a text response", async () => {
+        mockExecuteAction.mockResolvedValue({
+            success: true,
+            type: "text",
+            content: "Весна начинается здесь",
+            metadata: { role: "headline" },
+        });
+
+        const res = await POST(
+            makeRequest({
+                actionId: "generate_text",
+                inputs: {},
+                params: {
+                    prompt: "Заголовок для весенней распродажи",
+                    mode: "headline",
+                    tone: "bold",
+                },
+                workspaceId: "ws_1",
+            }) as never,
+        );
+        const json = await res.json();
+
+        expect(res.status).toBe(200);
+        expect(json.success).toBe(true);
+        expect(json.type).toBe("text");
+        expect(json.text).toBe("Весна начинается здесь");
+        expect(json.metadata.role).toBe("headline");
+        expect(mockExecuteAction).toHaveBeenCalledWith(
+            "generate_text",
+            expect.objectContaining({
+                prompt: "Заголовок для весенней распродажи",
+                mode: "headline",
+                tone: "bold",
+                imageUrl: undefined,
+            }),
+            expect.objectContaining({ workspaceId: "ws_1" }),
+        );
+    });
 });

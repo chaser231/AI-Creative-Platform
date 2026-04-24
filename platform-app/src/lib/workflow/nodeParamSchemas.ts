@@ -56,6 +56,16 @@ export const imageGenerationParamsSchema = z.object({
         .default("1:1"),
 });
 
+export const textGenerationParamsSchema = z.object({
+    prompt: z.string().trim().min(3, "Опишите, какой текст нужен").max(1200),
+    mode: z
+        .enum(["headline", "subtitle", "freeform"])
+        .default("headline"),
+    tone: z
+        .enum(["bold", "playful", "formal", "urgent", "neutral"])
+        .default("bold"),
+});
+
 /**
  * Background-removal models. Birefnet (fal) is default — it preserves shadows
  * and reflections better than Bria, which strips everything but the product
@@ -177,6 +187,7 @@ export const previewParamsSchema = z.object({});
 export const NODE_PARAM_SCHEMAS: Record<WorkflowNodeType, z.ZodTypeAny> = {
     imageInput: imageInputParamsSchema,
     imageGeneration: imageGenerationParamsSchema,
+    textGeneration: textGenerationParamsSchema,
     removeBackground: removeBackgroundParamsSchema,
     addReflection: addReflectionParamsSchema,
     mask: maskParamsSchema,
@@ -187,6 +198,7 @@ export const NODE_PARAM_SCHEMAS: Record<WorkflowNodeType, z.ZodTypeAny> = {
 
 export type ImageInputParams = z.infer<typeof imageInputParamsSchema>;
 export type ImageGenerationParams = z.infer<typeof imageGenerationParamsSchema>;
+export type TextGenerationParams = z.infer<typeof textGenerationParamsSchema>;
 export type RemoveBackgroundParams = z.infer<typeof removeBackgroundParamsSchema>;
 export type AddReflectionParams = z.infer<typeof addReflectionParamsSchema>;
 export type MaskParams = z.infer<typeof maskParamsSchema>;

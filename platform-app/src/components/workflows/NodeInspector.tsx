@@ -34,6 +34,7 @@ const PARAM_LABELS: Record<string, string> = {
     prompt: "Промпт",
     style: "Стиль",
     aspectRatio: "Формат",
+    tone: "Тон",
     // mask + blur — direction + band + endpoint values
     direction: "Направление",
     startPos: "Начало области",
@@ -95,8 +96,18 @@ const ENUM_OPTION_LABELS: Record<string, Record<string, string>> = {
         "right-to-left": "Справа налево",
     },
     mode: {
+        headline: "Заголовок",
+        subtitle: "Подзаголовок",
+        freeform: "Свободный текст",
         uniform: "Однородный",
         progressive: "Прогрессивный",
+    },
+    tone: {
+        bold: "Уверенный",
+        playful: "Игривый",
+        formal: "Деловой",
+        urgent: "Срочный",
+        neutral: "Нейтральный",
     },
 };
 

@@ -4,7 +4,8 @@ import type { NodeResult } from "@/store/workflow/types";
 export type WorkflowNodePreviewSource = "input" | "result";
 
 export interface WorkflowNodePreview {
-    url: string;
+    url?: string;
+    text?: string;
     source: WorkflowNodePreviewSource;
 }
 
@@ -20,6 +21,10 @@ export function getWorkflowNodePreview(
 
     if (typeof result?.url === "string" && result.url.length > 0) {
         return { url: result.url, source: "result" };
+    }
+
+    if (typeof result?.text === "string" && result.text.length > 0) {
+        return { text: result.text, source: "result" };
     }
 
     return null;

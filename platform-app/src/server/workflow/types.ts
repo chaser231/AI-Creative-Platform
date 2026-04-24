@@ -12,6 +12,7 @@
 export type WorkflowNodeType =
     | "imageInput"
     | "imageGeneration"
+    | "textGeneration"
     | "removeBackground"
     | "addReflection"
     | "mask"
@@ -60,6 +61,7 @@ export type NodeExecutor =
     | {
           kind: "server";
           actionId:
+              | "generate_text"
               | "generate_image"
               | "remove_background"
               | "add_reflection"
@@ -103,6 +105,20 @@ export const NODE_REGISTRY: Record<WorkflowNodeType, NodeDefinition> = {
             aspectRatio: "1:1",
         },
         execute: { kind: "server", actionId: "generate_image" },
+    },
+    textGeneration: {
+        type: "textGeneration",
+        displayName: "Генерация текста",
+        description: "Создаёт заголовок, подзаголовок или короткий текст по задаче.",
+        category: "ai",
+        inputs: [],
+        outputs: [{ id: "text-out", type: "text", label: "Текст" }],
+        defaultParams: {
+            prompt: "",
+            mode: "headline",
+            tone: "bold",
+        },
+        execute: { kind: "server", actionId: "generate_text" },
     },
     removeBackground: {
         type: "removeBackground",
@@ -185,6 +201,7 @@ export const NODE_REGISTRY: Record<WorkflowNodeType, NodeDefinition> = {
 
 /** Action ids that the /api/workflow/execute-node endpoint accepts. */
 export type ServerActionId =
+    | "generate_text"
     | "generate_image"
     | "remove_background"
     | "add_reflection"
@@ -195,7 +212,7 @@ export type ServerActionId =
 export interface ExecuteNodeRequest {
     actionId: ServerActionId;
     params: Record<string, unknown>;
-    inputs: Record<string, { imageUrl: string }>;
+    inputs: Record<string, { imageUrl?: string; text?: string }>;
     workspaceId: string;
     /** Reserved for future cost-tracking per-run; ignored in Phase 1 (D-02). */
     workflowId?: string;
@@ -203,11 +220,13 @@ export interface ExecuteNodeRequest {
 
 export interface ExecuteNodeSuccess {
     success: true;
-    type: "image";
-    imageUrl: string;
+    type: "image" | "text";
+    imageUrl?: string;
+    text?: string;
     metadata?: {
         provider?: string;
         costUsd?: number;
+        role?: string;
     };
     requestId: string;
 }

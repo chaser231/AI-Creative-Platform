@@ -38,6 +38,11 @@ const validImageGeneration = {
     model: "flux-schnell" as const,
     aspectRatio: "1:1" as const,
 };
+const validTextGeneration = {
+    prompt: "Заголовок для весенней распродажи",
+    mode: "headline" as const,
+    tone: "bold" as const,
+};
 const validAssetOutput = { name: "Out" };
 const validReflection = { style: "subtle" as const, intensity: 0.3 };
 
@@ -84,6 +89,11 @@ describe("validateBeforeRun", () => {
         ];
         const issues = validateBeforeRun(nodes, [e("e1", "gen", "preview")]);
         expect(issues).toEqual([]);
+    });
+
+    it("accepts a text generation node as a root text producer", () => {
+        const nodes = [n("text", "textGeneration", validTextGeneration)];
+        expect(validateBeforeRun(nodes, [])).toEqual([]);
     });
 
     it("validates only selected node ancestors when targetNodeId is provided", () => {
@@ -443,6 +453,35 @@ describe("executeGraph", () => {
             expect.objectContaining({
                 actionId: "generate_image",
                 params: validImageGeneration,
+                inputs: {},
+            }),
+        );
+    });
+
+    it("executes textGeneration as a server text producer", async () => {
+        const nodes = [n("text", "textGeneration", validTextGeneration)];
+        const deps = makeDeps({
+            executeServerAction: vi.fn(async () => ({
+                success: true as const,
+                type: "text" as const,
+                text: "Весна начинается здесь",
+                requestId: "rid",
+            })),
+        });
+
+        const result = await executeGraph({
+            nodes,
+            edges: [],
+            workspaceId: "ws",
+            deps,
+        });
+
+        expect(result.success).toBe(true);
+        expect(result.results.text).toEqual({ text: "Весна начинается здесь" });
+        expect(deps.executeServerAction).toHaveBeenCalledWith(
+            expect.objectContaining({
+                actionId: "generate_text",
+                params: validTextGeneration,
                 inputs: {},
             }),
         );

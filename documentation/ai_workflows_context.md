@@ -529,6 +529,17 @@ P1.7 Text generation node:
   - server response mapping for text;
   - node preview for text output.
 
+Status:
+
+- Done 2026-04-25:
+  - `NodeRunResult` / store `NodeResult` now support `text`;
+  - workflow executor collects generic inputs (`imageUrl` or `text`) and maps text server responses into run results;
+  - added workflow-only `generate_text` action with headline/subtitle/freeform modes;
+  - execute-node route now allows `generate_text` and returns `type: "text"` with `text`;
+  - added `textGeneration` node with prompt/mode/tone params and `text-out` port;
+  - node cards render text result previews instead of image placeholders;
+  - tests cover text param validation, executor dispatch, route response mapping, and text preview resolution.
+
 P1.8 Later node contracts:
 
 - Layer editor node:
