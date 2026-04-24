@@ -91,12 +91,12 @@ export function ImageSourceInput({ value, onChange, error }: ImageSourceInputPro
 
     return (
         <div className="flex flex-col gap-2">
-            <span className="text-xs font-medium text-neutral-700 dark:text-neutral-300">
+            <span className="text-xs font-medium text-text-primary">
                 Источник изображения
             </span>
 
             {/* Tabs */}
-            <div className="flex items-center gap-1 rounded-md bg-neutral-100 p-1 dark:bg-neutral-900">
+            <div className="flex items-center gap-1 rounded-md bg-bg-tertiary p-1">
                 <TabButton active={tab === "asset"} onClick={() => setTab("asset")} icon={<ImageIcon size={12} />} label="Из библиотеки" />
                 <TabButton active={tab === "url"} onClick={() => setTab("url")} icon={<Link2 size={12} />} label="По URL" />
                 <TabButton active={tab === "upload"} onClick={() => setTab("upload")} icon={<Upload size={12} />} label="Загрузить" />
@@ -116,7 +116,7 @@ export function ImageSourceInput({ value, onChange, error }: ImageSourceInputPro
                             type="button"
                             onClick={() => setPickerOpen(true)}
                             disabled={!workspaceId}
-                            className="flex h-9 items-center justify-center gap-2 rounded-md border border-dashed border-neutral-300 px-3 text-xs text-neutral-600 hover:bg-neutral-50 disabled:opacity-50 dark:border-neutral-700 dark:text-neutral-400 dark:hover:bg-neutral-900"
+                            className="flex h-9 items-center justify-center gap-2 rounded-md border border-dashed border-border-secondary bg-bg-surface px-3 text-xs text-text-secondary hover:bg-bg-tertiary disabled:opacity-50"
                         >
                             <ImageIcon size={14} />
                             Выбрать из библиотеки
@@ -137,7 +137,7 @@ export function ImageSourceInput({ value, onChange, error }: ImageSourceInputPro
                     value={value.sourceUrl ?? ""}
                     onChange={(e) => onChange({ source: "url", sourceUrl: e.target.value || undefined })}
                     placeholder="https://example.com/image.png"
-                    className="h-9 w-full rounded-md border border-neutral-300 bg-white px-2.5 text-sm text-neutral-900 focus:outline-none focus:ring-2 focus:ring-blue-500/30 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100"
+                    className="h-9 w-full rounded-md border border-border-primary bg-bg-surface px-2.5 text-sm text-text-primary focus:border-border-focus focus:outline-none focus:ring-2 focus:ring-border-focus/40"
                 />
             )}
 
@@ -154,7 +154,7 @@ export function ImageSourceInput({ value, onChange, error }: ImageSourceInputPro
                             type="button"
                             onClick={() => fileInputRef.current?.click()}
                             disabled={uploading}
-                            className="flex h-9 items-center justify-center gap-2 rounded-md border border-dashed border-neutral-300 px-3 text-xs text-neutral-600 hover:bg-neutral-50 disabled:opacity-50 dark:border-neutral-700 dark:text-neutral-400 dark:hover:bg-neutral-900"
+                            className="flex h-9 items-center justify-center gap-2 rounded-md border border-dashed border-border-secondary bg-bg-surface px-3 text-xs text-text-secondary hover:bg-bg-tertiary disabled:opacity-50"
                         >
                             {uploading ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
                             {uploading ? "Загрузка..." : "Выбрать файл"}
@@ -203,8 +203,8 @@ function TabButton({
             onClick={onClick}
             className={`flex h-7 flex-1 items-center justify-center gap-1 rounded text-xs font-medium transition-colors ${
                 active
-                    ? "bg-white text-neutral-900 shadow-sm dark:bg-neutral-800 dark:text-neutral-100"
-                    : "text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-200"
+                    ? "bg-bg-surface text-text-primary shadow-sm"
+                    : "text-text-secondary hover:text-text-primary"
             }`}
         >
             {icon}
@@ -223,20 +223,20 @@ function PreviewBox({
     onClear: () => void;
 }) {
     return (
-        <div className="flex items-center gap-2 rounded-md border border-neutral-200 bg-neutral-50 p-1.5 dark:border-neutral-800 dark:bg-neutral-900">
+        <div className="flex items-center gap-2 rounded-md border border-border-primary bg-bg-secondary p-1.5">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
                 src={url}
                 alt={label}
                 className="h-12 w-12 flex-shrink-0 rounded object-cover"
             />
-            <span className="flex-1 truncate text-xs text-neutral-700 dark:text-neutral-300">
+            <span className="flex-1 truncate text-xs text-text-primary">
                 {label}
             </span>
             <button
                 type="button"
                 onClick={onClear}
-                className="rounded p-1 text-neutral-500 hover:bg-neutral-200 hover:text-neutral-900 dark:hover:bg-neutral-800 dark:hover:text-neutral-100"
+                className="rounded p-1 text-text-secondary hover:bg-bg-tertiary hover:text-text-primary"
                 aria-label="Очистить"
             >
                 <X size={14} />

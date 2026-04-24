@@ -13,6 +13,8 @@ export type WorkflowNodeType =
     | "imageInput"
     | "removeBackground"
     | "addReflection"
+    | "mask"
+    | "blur"
     | "assetOutput";
 
 export type PortType = "image" | "mask" | "text" | "number" | "any";
@@ -53,13 +55,20 @@ export interface WorkflowGraph {
 
 export type NodeExecutor =
     | { kind: "client"; handler: "imageInput" | "assetOutput" }
-    | { kind: "server"; actionId: "remove_background" | "add_reflection" };
+    | {
+          kind: "server";
+          actionId:
+              | "remove_background"
+              | "add_reflection"
+              | "apply_mask"
+              | "apply_blur";
+      };
 
 export interface NodeDefinition {
     type: WorkflowNodeType;
     displayName: string;
     description: string;
-    category: "input" | "ai" | "output";
+    category: "input" | "ai" | "transform" | "output";
     inputs: Port[];
     outputs: Port[];
     defaultParams: Record<string, unknown>;
@@ -80,22 +89,45 @@ export const NODE_REGISTRY: Record<WorkflowNodeType, NodeDefinition> = {
     removeBackground: {
         type: "removeBackground",
         displayName: "Удалить фон",
-        description: "AI-модель удаляет фон, оставляя альфа-канал.",
+        description: "AI-модель удаляет фон, оставляя альфа-канал. Birefnet сохраняет тени и отражения.",
         category: "ai",
         inputs: [{ id: "image-in", type: "image", label: "Изображение", required: true }],
         outputs: [{ id: "image-out", type: "image", label: "Без фона (RGBA)" }],
-        defaultParams: { model: "fal-bria" },
+        defaultParams: { model: "fal-birefnet" },
         execute: { kind: "server", actionId: "remove_background" },
     },
     addReflection: {
         type: "addReflection",
         displayName: "Добавить отражение",
-        description: "AI-генерация мягкого отражения под продуктом.",
+        description: "AI-генерация чёткого зеркального отражения под продуктом без эффектов.",
         category: "ai",
-        inputs: [{ id: "image-in", type: "image", label: "Изображение (RGBA)", required: true }],
+        inputs: [{ id: "image-in", type: "image", label: "Изображение", required: true }],
         outputs: [{ id: "image-out", type: "image", label: "С отражением" }],
-        defaultParams: { style: "subtle", intensity: 0.3 },
+        defaultParams: {
+            model: "nano-banana-2",
+            prompt: "Выдели продукт из фото, размести его на изолированном однотонном фоне, создай от него идеально ровно неискаженное физически корректное отражение, как будто он стоит на зеркале.",
+        },
         execute: { kind: "server", actionId: "add_reflection" },
+    },
+    mask: {
+        type: "mask",
+        displayName: "Маска (градиент)",
+        description: "Линейный градиент альфа-канала с двумя точками контроля. Применяется поверх RGBA.",
+        category: "transform",
+        inputs: [{ id: "image-in", type: "image", label: "Изображение (RGBA)", required: true }],
+        outputs: [{ id: "image-out", type: "image", label: "Изображение (RGBA)" }],
+        defaultParams: { direction: "top-to-bottom", start: 1, end: 0 },
+        execute: { kind: "server", actionId: "apply_mask" },
+    },
+    blur: {
+        type: "blur",
+        displayName: "Блюр",
+        description: "Uniform или progressive блюр (как в Figma) с настраиваемым направлением.",
+        category: "transform",
+        inputs: [{ id: "image-in", type: "image", label: "Изображение", required: true }],
+        outputs: [{ id: "image-out", type: "image", label: "Изображение" }],
+        defaultParams: { mode: "uniform", intensity: 4, direction: "top-to-bottom", start: 0, end: 8 },
+        execute: { kind: "server", actionId: "apply_blur" },
     },
     assetOutput: {
         type: "assetOutput",
@@ -110,7 +142,11 @@ export const NODE_REGISTRY: Record<WorkflowNodeType, NodeDefinition> = {
 };
 
 /** Action ids that the /api/workflow/execute-node endpoint accepts. */
-export type ServerActionId = "remove_background" | "add_reflection";
+export type ServerActionId =
+    | "remove_background"
+    | "add_reflection"
+    | "apply_mask"
+    | "apply_blur";
 
 /** Request body for POST /api/workflow/execute-node (D-04: client-resolved inputs). */
 export interface ExecuteNodeRequest {

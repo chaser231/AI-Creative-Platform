@@ -11,7 +11,7 @@
  *   - useWorkflowAutoSave hook bound to workflowId/workspaceId.
  */
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
     Background,
     Controls,
@@ -19,8 +19,6 @@ import {
     ReactFlow,
     ReactFlowProvider,
     addEdge,
-    applyEdgeChanges,
-    applyNodeChanges,
     useReactFlow,
     type Connection,
     type Edge,
@@ -32,7 +30,9 @@ import {
 import "@xyflow/react/dist/style.css";
 import { useWorkflowStore } from "@/store/workflow/useWorkflowStore";
 import { useWorkspace } from "@/providers/WorkspaceProvider";
+import { useThemeStore } from "@/store/themeStore";
 import { useWorkflowAutoSave } from "@/hooks/workflow/useWorkflowAutoSave";
+import { useWorkflowRun } from "@/hooks/workflow/useWorkflowRun";
 import { isValidConnection as validateWorkflowConnection } from "@/lib/workflow/connectionValidator";
 import type { WorkflowEdge, WorkflowNode, WorkflowNodeType } from "@/server/workflow/types";
 import { NodePalette } from "./NodePalette";
@@ -59,12 +59,41 @@ function toRFEdge(e: WorkflowEdge): Edge {
     };
 }
 
+/**
+ * Resolves the effective light/dark mode for xyflow's `colorMode` prop.
+ * The store holds 'system'|'light'|'dark'; xyflow needs a concrete value.
+ * We mirror ThemeProvider's resolution so the canvas chrome (Background,
+ * Controls, MiniMap) follows the global theme correctly.
+ */
+function useResolvedColorMode(): "light" | "dark" {
+    const theme = useThemeStore((s) => s.theme);
+    const [systemDark, setSystemDark] = useState(false);
+
+    useEffect(() => {
+        if (theme !== "system") return;
+        if (typeof window === "undefined") return;
+        const mq = window.matchMedia("(prefers-color-scheme: dark)");
+        setSystemDark(mq.matches);
+        const handler = (e: MediaQueryListEvent) => setSystemDark(e.matches);
+        mq.addEventListener("change", handler);
+        return () => mq.removeEventListener("change", handler);
+    }, [theme]);
+
+    if (theme === "dark") return "dark";
+    if (theme === "light") return "light";
+    return systemDark ? "dark" : "light";
+}
+
 function EditorCanvas({
     selectedNodeId,
     onSelectNode,
+    colorMode,
+    locked,
 }: {
     selectedNodeId: string | null;
     onSelectNode: (id: string | null) => void;
+    colorMode: "light" | "dark";
+    locked: boolean;
 }) {
     const nodes = useWorkflowStore((s) => s.nodes);
     const edges = useWorkflowStore((s) => s.edges);
@@ -86,30 +115,45 @@ function EditorCanvas({
     const rfEdges = useMemo(() => edges.map(toRFEdge), [edges]);
 
     const onNodesChange = useCallback((changes: NodeChange[]) => {
+        // Only persist changes that affect our serialized graph (position,
+        // remove). React Flow also emits internal-only changes like
+        // `dimensions` and `select`; if we round-tripped those through our
+        // narrow WorkflowNode shape we'd strip the measurements RF needs to
+        // actually paint the node, which is why nodes disappeared before.
         const state = useWorkflowStore.getState();
-        const nextRF = applyNodeChanges(changes, state.nodes.map(toRFNode));
-        const byId = new Map(state.nodes.map((n) => [n.id, n]));
-        const nextNodes: WorkflowNode[] = nextRF
-            .map((rf) => {
-                const orig = byId.get(rf.id);
-                if (!orig) return null;
-                return { ...orig, position: rf.position };
-            })
-            .filter((n): n is WorkflowNode => n !== null);
-        useWorkflowStore.setState({ nodes: nextNodes, dirty: true });
+        let nextNodes = state.nodes;
+        let mutated = false;
+        for (const ch of changes) {
+            if (ch.type === "position" && ch.position) {
+                nextNodes = nextNodes.map((n) =>
+                    n.id === ch.id ? { ...n, position: ch.position! } : n,
+                );
+                mutated = true;
+            } else if (ch.type === "remove") {
+                nextNodes = nextNodes.filter((n) => n.id !== ch.id);
+                mutated = true;
+            }
+        }
+        if (mutated) {
+            useWorkflowStore.setState({ nodes: nextNodes, dirty: true });
+        }
     }, []);
 
     const onEdgesChange = useCallback((changes: EdgeChange[]) => {
+        // Same narrow round-trip rule as onNodesChange — only persist
+        // remove/select-driven structural changes.
         const state = useWorkflowStore.getState();
-        const nextRF = applyEdgeChanges(changes, state.edges.map(toRFEdge));
-        const nextEdges: WorkflowEdge[] = nextRF.map((e) => ({
-            id: e.id,
-            source: e.source,
-            sourceHandle: e.sourceHandle ?? "",
-            target: e.target,
-            targetHandle: e.targetHandle ?? "",
-        }));
-        useWorkflowStore.setState({ edges: nextEdges, dirty: true });
+        let nextEdges = state.edges;
+        let mutated = false;
+        for (const ch of changes) {
+            if (ch.type === "remove") {
+                nextEdges = nextEdges.filter((e) => e.id !== ch.id);
+                mutated = true;
+            }
+        }
+        if (mutated) {
+            useWorkflowStore.setState({ edges: nextEdges, dirty: true });
+        }
     }, []);
 
     const onConnect = useCallback((params: Connection) => {
@@ -163,7 +207,12 @@ function EditorCanvas({
     );
 
     return (
-        <div ref={wrapperRef} className="h-full w-full">
+        <div
+            ref={wrapperRef}
+            className="h-full w-full"
+            onDrop={onDrop}
+            onDragOver={onDragOver}
+        >
             <ReactFlow
                 nodes={rfNodes}
                 edges={rfEdges}
@@ -175,15 +224,32 @@ function EditorCanvas({
                 onNodeClick={(_e, n) => onSelectNode(n.id)}
                 onPaneClick={() => onSelectNode(null)}
                 onMove={onMove}
-                onDrop={onDrop}
-                onDragOver={onDragOver}
                 defaultViewport={viewport}
                 fitView
+                colorMode={colorMode}
+                nodesDraggable={!locked}
+                nodesConnectable={!locked}
+                elementsSelectable={!locked}
                 proOptions={{ hideAttribution: true }}
             >
-                <Background gap={16} />
+                <Background
+                    gap={16}
+                    color={colorMode === "dark" ? "#27282D" : "#E2E8F0"}
+                />
                 <Controls />
-                <MiniMap pannable zoomable />
+                <MiniMap
+                    pannable
+                    zoomable
+                    maskColor={
+                        colorMode === "dark"
+                            ? "rgba(11,12,16,0.6)"
+                            : "rgba(241,245,249,0.6)"
+                    }
+                    style={{
+                        background: colorMode === "dark" ? "#18191E" : "#FFFFFF",
+                        border: `1px solid ${colorMode === "dark" ? "#27282D" : "#E2E8F0"}`,
+                    }}
+                />
             </ReactFlow>
         </div>
     );
@@ -201,14 +267,25 @@ export function WorkflowEditor({ workflowId }: { workflowId: string }) {
     // Selection lives in editor scope, not in zustand: it's purely a UI
     // concern (which inspector tab to show) and shouldn't survive serialization.
     const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+    const colorMode = useResolvedColorMode();
+    const runError = useWorkflowStore((s) => s.runError);
+    const { runAll, isRunning, validationIssues, canRun } = useWorkflowRun({
+        workspaceId: currentWorkspace?.id,
+        workflowId,
+    });
 
     return (
-        <div className="flex h-screen w-full flex-col bg-neutral-50 dark:bg-neutral-950">
+        <div className="flex h-screen w-full flex-col bg-bg-primary text-text-primary">
             <NodeTopbar
                 name={name}
                 onNameChange={setName}
                 onSave={saveNow}
                 saveStatus={status}
+                onRun={runAll}
+                canRun={canRun}
+                isRunning={isRunning}
+                runError={runError}
+                runDisabledReason={validationIssues[0]?.message}
             />
             <div className="flex min-h-0 flex-1">
                 <ReactFlowProvider>
@@ -217,6 +294,8 @@ export function WorkflowEditor({ workflowId }: { workflowId: string }) {
                         <EditorCanvas
                             selectedNodeId={selectedNodeId}
                             onSelectNode={setSelectedNodeId}
+                            colorMode={colorMode}
+                            locked={isRunning}
                         />
                     </div>
                     <NodeInspector selectedNodeId={selectedNodeId} />

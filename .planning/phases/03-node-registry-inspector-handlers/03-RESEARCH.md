@@ -2,123 +2,181 @@
 
 **Spawned by:** /gsd-plan-phase
 **Date:** 2026-04-24
-**Domain:** Node-editor UX layer (Zod-driven inspector + xyflow connection validation + asset modal extract + client handlers)
-**Confidence:** HIGH (most claims verified against project source; Zod v4 / xyflow v12 confirmed against vendored type definitions in `node_modules/`)
+**Researcher:** gsd-phase-researcher
+**Confidence:** HIGH (95% read directly from project source; only Zod-v4 introspection details and xyflow `isValidConnection` semantics involved doc reading)
 
 ---
 
-## Summary
+## TL;DR for the planner
 
-Phase 3 wires the **UX layer** on top of the empty Phase 2 canvas: an auto-generated Zod-driven inspector, port-type-aware connection validation, three-mode `ImageInput` UX, an `AssetOutput` client handler, and (bonus) a fifth "AI Workflows" homepage card. The phase touches **8 net-new files** and **modifies 7 existing files**, with one **Wave 1 blocker** that must land before any inspector work: extracting the project-coupled `AssetLibraryModal` into a workspace-scoped `AssetPickerModal` consumable by both the existing canvas editor and the new workflow inspector.
-
-The biggest sharp edges:
-
-1. **`AssetLibraryModal` is project-scoped** (`projectId` required, internally derives `workspaceId` from `project.getById`). Workflows are **workspace-scoped**, not project-scoped — so the extract is not cosmetic. It needs a real API redesign.
-2. **Zod v4 introspection differs from v3**: the discriminator is `_zod.def.type` (string literals like `"string"`, `"number"`, `"enum"`, `"optional"`), NOT v3's `_def.typeName` enum. Numeric constraints live on `_zod.bag.{minimum,maximum}` (a `LoosePartial` populated by `.min()`/`.max()` checks). `ZodEnum.def.entries` is the runtime source of truth for option lists.
-3. **No `@testing-library/react` / `jsdom`** in the project — confirmed against `package.json`. Component-level tests stay manual; pure helpers (validator, Zod→form mapping, client handlers) get vitest unit tests like Phase 2 did for the slice.
-4. The existing `presign` flow and `/api/upload` routes already cover the upload backend — no new server endpoints required for `D-15` upload mode.
-
-**Primary recommendation:** Wave 1 = `AssetLibraryModal` extract + per-node Zod schemas + connection validator (parallelisable, all small, all unit-testable). Waves 2–3 = inspector renderer + ImageInput tabs + AssetOutput handler. Wave 4 = bonus homepage card. Defer all visual polish to a Phase 5 follow-up.
+1. **AssetLibraryModal has exactly ONE consumer** (`platform-app/src/app/editor/[id]/page.tsx:1011`). The "shared extract" task in D-16 is much smaller than the roadmap risk implies. Recommended: introduce a *new* `AssetPickerModal` with a slim "single-select with onSelect callback" API; **leave the existing `AssetLibraryModal` alone**. They have fundamentally different responsibilities (browse-and-act-on-canvas vs. pick-one-asset-and-return).
+2. **Zod v4 introspection is `schema._zod.def.type`**, NOT `_def.typeName` (that was Zod v3). Wrappers (`optional`, `default`, `nullable`) expose the inner schema via `def.innerType`. Number constraints live in `_zod.def.checks[]` with `def.check === "greater_than" | "less_than"` (and `inclusive` flag), or — much simpler — on `_zod.bag.minimum / .maximum` after `.min()/.max()` calls.
+3. **xyflow `isValidConnection` signature** (`@xyflow/react@12.10.2`): `(edge: EdgeBase | Connection) => boolean`. Receives `Connection` with `sourceHandle: string | null` and `targetHandle: string | null`. Slot it as a single new prop on `<ReactFlow>` in `WorkflowEditor.tsx:139`. Default visual feedback (red stroke during drag, no edge created on drop) is industry-standard and matches D-18.
+4. **`asset.createFromUrl` does NOT exist.** Closest fit is `asset.attachUrlToProject` (`asset.ts:229`), but it requires `projectId` — `AIWorkflow` belongs to a *workspace*, not a project, so this won't work as-is. Phase 3 must add a new workspace-scoped procedure (recommended name: `asset.createFromUrl`) or repurpose `attachUrlToProject` with optional `projectId`. **This is a Phase-3 server deliverable not currently called out in CONTEXT.**
+5. **`NewProjectModal.tsx` does NOT mirror the homepage card grid.** It has a goal-icon grid (banner/text/photo/video) inside a `Modal`. Adding a "Workflow" card there *as an icon-tile that navigates instead of creating* changes its semantics — recommended: leave NewProjectModal alone for Phase 3, add the card only on `/page.tsx` and (if applicable) `/projects/page.tsx`. CONTEXT D-19 left this provisional with "yes" — research recommends switching that to "no" for Phase 3 to keep blast radius minimal.
+6. **Image upload contract** (`utils/imageUpload.ts`) returns a public S3 URL only — does **not** auto-create an `Asset` row when `skipAssetRecord: true` is passed (which the workflow upload should). Workflow upload mode must call `asset.attachUrlToProject` (or new `createFromUrl`) explicitly to register the result. Two-step: `uploadImageToS3()` → returns S3 URL → `asset.createFromUrl()` → returns `assetId`.
+7. **No `@testing-library/react` is installed** (confirmed against current `platform-app/package.json` — `vitest@4.1.4`, `@vitest/coverage-v8@4.1.4` only). Phase 3 component-level UI tests are NOT feasible without adding `@testing-library/react` + `jsdom`. Recommended: keep all UI verification manual; unit-test only the pure `connectionValidator`, `clientHandlers`, and Zod-introspection helpers.
 
 ---
 
-## Architectural Responsibility Map
+<phase_requirements>
+## Phase Requirements
 
-| Capability | Primary Tier | Secondary Tier | Rationale |
-|------------|-------------|----------------|-----------|
-| Per-node Zod param schemas | Shared (lib) | — | `src/lib/workflow/graphSchema.ts` already lives shared between client & server (D-08 from Phase 2). New per-node schemas slot here so future server-side validation reuses them. |
-| Inspector form rendering | Browser/Client | — | Reads from Zustand `useWorkflowStore`, writes via `updateNodeParams`. Pure React. No SSR (the `/workflows/[id]` route is `next/dynamic({ssr:false})` per D-13). |
-| `isValidConnection` validator | Browser/Client | — | xyflow callback runs in-browser during edge drag. Pure function over `NODE_REGISTRY`. |
-| `imageInput` client handler | Browser/Client | API (tRPC `asset.getById`) | Resolves params → `{ imageUrl }`. Client-only because Phase 4 executor runs in the browser. |
-| `assetOutput` client handler | Browser/Client | API (tRPC `asset.attachUrlToProject`) | Pushes a finished image into the workspace asset library. Server-side mutation for persistence. |
-| Image upload (D-15 mode 3) | Browser/Client | API (`/api/upload/presign` → S3 PUT) | Existing `imageUpload.ts` helpers run in-browser; presign route + S3 PUT handle persistence. |
-| Asset library picker | Browser/Client | API (tRPC `asset.list`/`listByWorkspace`) | Refactored modal stays a client React component; same tRPC backends as today. |
-| Homepage workflow card | Frontend Server (RSC layout) → Client (interactive button) | — | `src/app/page.tsx` is `"use client"`. Card is presentational; navigation via `next/navigation` `useRouter`. |
+| ID | Description | Research Support |
+|----|-------------|------------------|
+| REQ-11 (P0) | Типизированные соединения / `isValidConnection` blocks bad edges | Section D below — `IsValidConnection = (edge: EdgeBase \| Connection) => boolean`; slot in `WorkflowEditor.tsx:139`; pure validator in `src/lib/workflow/connectionValidator.ts` per CONTEXT spec |
+| REQ-12 (P0) | Inspector автогенерация формы from Zod schema (text / number / enum / boolean) | Section B below — Zod v4 introspection via `schema._zod.def.type`; per-node schemas live in `graphSchema.ts` extension or new `nodeParamSchemas.ts` |
+| REQ-13 (P0, P2+P3) | Node palette polish (Russian display names, descriptions) | Phase 2 already shipped palette infra; Phase 3 enriches `NODE_REGISTRY.displayName` / `.description` (D-20 Russian inline copy) |
+| REQ-14 (P1) | Per-node UX русификация (display names, params, errors) | Russian labels live inline in `NODE_REGISTRY` and inspector field-label maps (D-20) |
+</phase_requirements>
 
-**No tier mis-assignments expected.** Everything stays on the side it already lives on; Phase 3 only extends.
+<user_constraints>
+## User Constraints (from CONTEXT.md)
+
+### Locked Decisions
+
+- **D-14** Inspector form library: hand-rolled switch (`switch` on `ZodString | ZodNumber | ZodEnum | ZodBoolean`). NO `react-hook-form`, NO `@autoform/zod`. Validation via Zod `safeParse` on every change; invalid → inline error, not pushed to `updateNodeParams`.
+- **D-15** ImageInput supports three modes: library pick (assetId) / URL paste / upload. Upload mode resolves to `assetId` at submit time. Inspector exposes three radio-tabs ("Из библиотеки" / "По URL" / "Загрузить файл").
+- **D-16** Extract `AssetLibraryModal` to shared component **in Wave 1** before inspector consumes it. Output: `src/components/assets/AssetPickerModal.tsx` with `{ open, onClose, onSelect(assetId), workspaceId, multiSelect?: false }`.
+- **D-17** Client handlers `src/store/workflow/clientHandlers.ts`:
+  - `imageInput({ params, ctx })` → `{ imageUrl }`. assetId → `asset.getById`; sourceUrl → direct; throws on neither.
+  - `assetOutput({ inputs, params, ctx })` → calls tRPC `asset.createFromUrl` (CONTEXT itself flags this as "research needs to confirm exact endpoint" — see Section C3 below, **endpoint does NOT exist**).
+  - Phase 3 ships handlers + unit tests but does NOT invoke them; Run button stays disabled.
+- **D-18** Connection validation: `isValidConnection` only (no rich coloring, no tooltips). Validator in `src/lib/workflow/connectionValidator.ts`. xyflow's default invalid-drop visual is sufficient.
+- **D-19** "AI Workflows" homepage card. New `gradient-card-pink` class in globals.css. Image at `public/cards/workflows.png` (already in repo, 16,954 bytes). Click navigates to `/workflows` (does NOT trigger `createProjectMutation`).
+- **D-20** Russian strings inline in `NODE_REGISTRY` and JSX. No i18n setup in v1.0.
+
+### Claude's Discretion
+
+- Exact field-render component split (one file with switch vs. one file per type) — D-14 prescribes inline switch in `NodeInspector.tsx` or sibling.
+- Inspector layout details (header style, footer button placement) — CONTEXT prescribes ~320 px right panel, definition.displayName + category badge header, "Сбросить параметры" button at footer.
+- Exact extract approach for AssetLibraryModal — research recommends new `AssetPickerModal` (do NOT rename existing) — see Section A5.
+- Whether to add the Workflow card to `NewProjectModal` — research recommends NO (see Section E3).
+
+### Deferred Ideas (OUT OF SCOPE)
+
+- Run button enable / DAG executor → Phase 4
+- Preset library + `?preset=` resolution → Phase 5
+- Inspector advanced inputs (color picker, JSON editor, code mirror, file drop on non-image nodes) → Phase 5+
+- i18n infrastructure (translation files, locale switcher) → only when second locale arrives
+- Rich port-type-aware connection coloring (highlight all compatible handles during drag) → Phase 5 visual polish
+- Tooltip-on-invalid-drop explanation → Phase 5 visual polish
+- AssetLibraryModal multi-select → only if a future node demands it
+- Node grouping / sub-graphs → out of v1.0
+</user_constraints>
 
 ---
 
-## A. AssetLibraryModal extract (D-16) — HIGHEST PRIORITY
+## A. AssetLibraryModal extract — HIGHEST PRIORITY (Wave 1 blocker)
 
 ### A1. Current location
 
-- File: `platform-app/src/components/editor/AssetLibraryModal.tsx` (429 lines).
-- Default export: named `AssetLibraryModal`.
-- Imports from `@/store/canvasStore` and `@/store/canvas/types` directly — i.e., it is **not** a generic asset picker; it is a canvas-editor-coupled asset manager.
+**File:** `platform-app/src/components/editor/AssetLibraryModal.tsx`
+**Size:** 430 lines
+**Phase author:** preexisting (created during the canvas/editor work, not Phase 1/2 of this milestone).
+
+Component signature (lines 17–29):
+
+```17:29:platform-app/src/components/editor/AssetLibraryModal.tsx
+interface AssetLibraryModalProps {
+    projectId: string;
+    open: boolean;
+    onClose: () => void;
+}
+
+type SortBy = "createdAt" | "filename" | "sizeBytes";
+type SortOrder = "asc" | "desc";
+type Scope = "project" | "workspace";
+
+// ─── Component ──────────────────────────────────────────────────────────────
+
+export function AssetLibraryModal({ projectId, open, onClose }: AssetLibraryModalProps) {
+```
 
 ### A2. Consumers inventory
 
-Single consumer in the entire repo (verified via project-wide grep):
+Grep across `platform-app/src/` for `AssetLibraryModal` returns **exactly one consumer**:
 
-| Caller | Path | Props passed | Selection callback |
-|--------|------|--------------|--------------------|
-| Banner editor page | `platform-app/src/app/editor/[id]/page.tsx:1011-1015` | `projectId={id}`, `open={assetLibraryOpen}`, `onClose={…}` | **None.** Selection result flows directly into `useCanvasStore` via `addImageLayer(asset.url, 400, 400)` (`AssetLibraryModal.tsx:135-140`) and `updateLayer(selectedImageLayer.id, { src: asset.url })` (`AssetLibraryModal.tsx:147-153`). The modal *owns* the side-effect on the canvas store. |
+| Caller | Line | Props passed | Selection callback | Coupling |
+|--------|-----:|--------------|-------------------:|----------|
+| `platform-app/src/app/editor/[id]/page.tsx` | 1011 | `projectId={id}`, `open={assetLibraryOpen}`, `onClose={() => setAssetLibraryOpen(false)}` | **None — modal acts on canvas via `useCanvasStore` directly** (no `onSelect` prop) | Hard-coupled to `useCanvasStore` (lines 37–53, 135–153): mutates `addImageLayer` / `updateLayer` directly |
 
-**Coupling diagnosis (ranked from worst to best):**
+The modal is currently **action-oriented, not pick-oriented**:
+- "На холст" button → adds selected assets as new image layers via `useCanvasStore.addImageLayer`
+- "Применить к выделению" button → replaces `src` of the canvas's currently-selected `ImageLayer` via `updateLayer`
+- "Экспорт" button → triggers browser download
+- "Удалить" button → calls `asset.deleteMany`
 
-1. **Direct `useCanvasStore` import** (`AssetLibraryModal.tsx:12`). The modal calls `addImageLayer`, `updateLayer`, reads `selectedLayerIds`, `layers`. **Hard-blocks reuse** for any consumer that doesn't have a `useCanvasStore` (the workflow editor doesn't).
-2. **`projectId` required** (`AssetLibraryModal.tsx:17-21`). Modal queries `trpc.project.getById` to derive `workspaceId` (`L56-60`) just to power the "Whole library" tab. Workflows have no `projectId` — they're owned by `workspaceId` directly.
-3. **No `onSelect` callback at all.** All actions (add to canvas, replace selection, export, delete) are baked into the modal's footer (`L370-416`). A workflow inspector needs `onSelect(assetId)` and that's it.
-4. **Action buttons are canvas-specific.** "На холст" (add to canvas), "Применить к выделению" (replace canvas layer src) — neither makes sense in the workflow context.
-5. **Tightly-baked delete + export.** Both also live in the footer — but those are reusable across asset-management contexts.
+There is **no `onSelect(assetId)` callback** — the modal performs the action itself. This is a fundamentally different flow from what Phase 3's inspector needs.
 
-### A3. Recommended shared API
+### A3. Recommended target shared API
 
-Extract a new component `src/components/assets/AssetPickerModal.tsx` with this surface:
+The workflow inspector needs a strict pick-one-and-return picker. The existing browse-and-act modal does too much.
+
+**Proposed `AssetPickerModal` (new file `platform-app/src/components/assets/AssetPickerModal.tsx`):**
 
 ```typescript
-// src/components/assets/AssetPickerModal.tsx
 interface AssetPickerModalProps {
-  open: boolean;
-  onClose: () => void;
-
-  // Workspace is the source of truth — use this when no projectId is available.
-  workspaceId: string;
-
-  // Optional project filter. When set, the modal opens on the "Этот проект" tab.
-  // When omitted (e.g. workflow editor), only the "Вся библиотека" tab is shown.
-  projectId?: string;
-
-  // Required selection callback — modal closes itself on confirm.
-  onSelect: (asset: AssetSelection) => void;
-
-  // Filter to image-only by default (only image consumers exist today).
-  type?: "IMAGE" | "VIDEO" | "AUDIO" | "FONT" | "LOGO" | "OTHER";
-
-  // Single-select v1.0; multiSelect deferred (per D-16 implication).
-  multiSelect?: false;
+    open: boolean;
+    onClose: () => void;
+    /** Called with the picked asset (full row, not just id, so caller has url). */
+    onSelect: (asset: AssetRow) => void;
+    workspaceId: string;
+    /** Optional project scope; when provided, default tab is "project". */
+    projectId?: string;
+    /** Future-proofing; default false. */
+    multiSelect?: false;
+    /** Override default title. */
+    title?: string; // default "Выбрать изображение"
+    /** Restrict to a single asset type. Default: "IMAGE". */
+    assetType?: "IMAGE" | "VIDEO" | "AUDIO";
 }
 
-interface AssetSelection {
-  id: string;
-  url: string;
-  filename: string;
-  mimeType: string;
+interface AssetRow {
+    id: string;
+    url: string;
+    filename: string;
+    sizeBytes: number;
+    mimeType: string;
+    createdAt: Date;
 }
 ```
 
-**Justified deviations from the current modal:**
-
-- **`onSelect` instead of internal canvas mutation** — pushes the side-effect to the caller. The banner editor wraps this with its existing `addImageLayer` / `updateLayer` logic in `editor/[id]/page.tsx`.
-- **`workspaceId` becomes required** — eliminates the internal `trpc.project.getById` query when the caller already knows the workspace. The current `projectQuery` round-trip (`AssetLibraryModal.tsx:56-60`) is an avoidable extra fetch even for the editor case (the editor already loads the project; it can pass `workspaceId` directly).
-- **`projectId` becomes optional** — the workflow editor passes only `workspaceId`. When `projectId` is omitted, the "Этот проект" tab is hidden (only `listByWorkspace` is queryable).
-- **Footer actions become slot-based or removed in v1.0** — for Phase 3, just keep "Выбрать" (single-action footer when `onSelect` is set). Delete/export can move to a separate `<AssetActionsBar />` reused only by the editor caller. Or stay as optional render-props on the new modal. **Recommendation:** simplest path is to keep delete/export inside the new modal (they only fire if `selectedIds.size > 0` AND `projectId` is set), and add a primary "Выбрать" button when `onSelect` is provided. This minimises diff for the editor.
+**Differences from existing `AssetLibraryModal`:**
+- `onSelect(asset)` replaces all "actions" (no canvas mutation, no delete, no export, no replace).
+- `workspaceId` becomes a required prop (current modal derives it from `project.getById`); the inspector knows its own workspace via `useWorkspace()`.
+- `projectId` is optional — workflow inspector won't have one for v1.0.
+- Selection model: single-select with click-to-pick (no checkboxes, no bulk actions). Click an asset → `onSelect(asset)` → `onClose()` automatically.
+- No "Apply to selection" path (canvas-store-coupled — irrelevant outside the editor).
+- Reuses the same tRPC queries (`asset.listByWorkspace`, optionally `asset.listByProject`).
+- Reuses same scope tabs ("Этот проект" / "Вся библиотека") only when `projectId` is provided; else just shows workspace assets.
 
 ### A4. Migration cost
 
-- **Breaking-call-site count: 1.** Only `editor/[id]/page.tsx` imports the current modal. Migration is mechanical: pass `workspaceId` (already available via `useWorkspace().currentWorkspace?.id`), wrap the existing `addImageLayer`/`updateLayer` in an `onSelect` callback.
-- **Tests touched: 0.** No tests exist for `AssetLibraryModal` (verified via `grep -r "AssetLibraryModal" platform-app/src/**/__tests__/` — zero matches).
-- **Cost classification: trivial-to-medium.** The diff is ~30 lines in the editor page + ~50 lines moved/refactored in the modal. Only risk is regressions in the canvas-side flow ("На холст" / "Применить к выделению"); cover with a manual smoke pass on the banner editor before declaring Wave 1 done.
+| Item | Cost | Notes |
+|------|-----:|-------|
+| Create new `AssetPickerModal.tsx` (~250 lines, derived from existing 430) | Medium | ~60% code reuse from existing modal; strip canvas/action code |
+| Update `editor/[id]/page.tsx` consumer | **None** | Existing `AssetLibraryModal` stays as-is for the canvas editor |
+| Tests for `AssetPickerModal` | None feasible | No `@testing-library/react`; manual verification only |
+| Update `editor/[id]/page.tsx` import | **None** | No change |
+
+**Total blast radius: 1 new file. Zero changes to existing code.**
+
+This is dramatically smaller than the CONTEXT.md D-16 risk implied. The extract was framed as "refactor existing modal into a shared component" — research found it's better to **fork the simplified picker**, not refactor the full-featured one. Roadmap note about "AssetLibraryModal coupling — if hard to reuse, extract minimal sub-modal" was prescient.
 
 ### A5. Naming recommendation
 
-**Recommended:** rename the file/component to `AssetPickerModal` and place it under `src/components/assets/` (a new directory; `src/components/editor/` stays for canvas-editor-specific UI). The old import path is updated in the single consumer.
+**Recommended: Add new `AssetPickerModal.tsx` alongside existing `AssetLibraryModal.tsx`. Do NOT rename.**
 
-**Rejected alternatives:**
+Rationale:
+- The existing modal is a *workflow library manager* (browse + bulk actions on canvas). Renaming it `AssetPickerModal` would mislead future readers — that name should mean "single pick, returns asset".
+- Forking instead of extracting avoids touching `editor/[id]/page.tsx` at all (zero risk to the canvas editor).
+- Future evolution: if a third consumer needs the same picker, it reuses `AssetPickerModal`. If a third needs the full library, it reuses `AssetLibraryModal`. Clear separation.
+- The 60% code overlap is acceptable for v1.0 — both files are <500 lines. Deduplication can land in Phase 5+ when patterns crystallize.
 
-- *Keep `AssetLibraryModal`, add a thin `AssetPickerModal` wrapper* — leaves the core component still coupled to `useCanvasStore`, defeats the point of D-16.
-- *Two modals (one for editor, one for workflow)* — duplicates ~300 lines of grid/sort/search UI; explicitly rejected by D-16 ("Build a separate workflow-only picker — duplicates UI logic, drifts from the rest of the app").
+**Alternative considered & rejected:** Extract the grid + search/sort UI into a `AssetGrid` component shared by both modals. **Rejected** because it triples the surface area and adds a "what does this prop mean again?" tax for v1.0. Land it later if both modals diverge along the same lines.
+
+**File location:** `platform-app/src/components/assets/AssetPickerModal.tsx` (CONTEXT D-16 prescribes this folder; the folder doesn't exist yet — create it).
 
 ---
 
@@ -126,327 +184,400 @@ interface AssetSelection {
 
 ### B1. Zod v4 introspection mechanics
 
-**Confirmed against vendored types** (`platform-app/node_modules/zod/v4/core/schemas.d.ts`):
+**Critical correction to common Zod-v3-era knowledge:** Zod v4 abandoned `_def.typeName`. The new discriminant is `schema._zod.def.type` (a string union).
 
-- The runtime discriminator is the **`type` string literal** on `def`. From `schemas.d.ts:31`:
-  ```typescript
-  type: "string" | "number" | "int" | "boolean" | "bigint" | "symbol" | "null" | "undefined" | "void"
-      | "never" | "any" | "unknown" | "date" | "object" | "record" | "file" | "array" | "tuple"
-      | "union" | "intersection" | "map" | "set" | "enum" | "literal" | "nullable" | "optional"
-      | "nonoptional" | "success" | "transform" | "default" | "prefault" | "catch" | "nan"
-      | "pipe" | "readonly" | "template_literal" | "promise" | "lazy" | "function" | "custom";
-  ```
-- Access path on a schema instance: `schema._zod.def.type` (the public `_zod` internals namespace replaces v3's `_def`). Confirmed at `schemas.d.ts:101` (`type: "string"`), `:361` (`type: "number"`), `:393` (`type: "boolean"`), `:768` (`type: "enum"`), `:836` (`type: "optional"`), `:879` (`type: "default"`).
-- The `classic/schemas.d.ts:7` **also** exposes a public alias `def: Internals["def"]` (and a back-compat `_def`) on every `ZodType`, so reading `schema.def.type` works without diving into `_zod`. **Recommended discriminant: `schema._zod.def.type`** (matches what Zod docs show; e.g. https://v4.zod.dev/json-schema `override` callback example uses `ctx.zodSchema._zod.def`).
+Verified directly from `platform-app/node_modules/zod/v4/core/schemas.d.ts:31`:
 
-**Important:** `.default(value)` wraps the schema in a `ZodDefault` whose `def.type === "default"`. The inspector renderer must **unwrap `default` and `optional` first**, then dispatch on the inner type:
+```31:31:platform-app/node_modules/zod/v4/core/schemas.d.ts
+    type: "string" | "number" | "int" | "boolean" | "bigint" | "symbol" | "null" | "undefined" | "void" | "never" | "any" | "unknown" | "date" | "object" | "record" | "file" | "array" | "tuple" | "union" | "intersection" | "map" | "set" | "enum" | "literal" | "nullable" | "optional" | "nonoptional" | "success" | "transform" | "default" | "prefault" | "catch" | "nan" | "pipe" | "readonly" | "template_literal" | "promise" | "lazy" | "function" | "custom";
+```
+
+The discriminator function for the inspector switch:
 
 ```typescript
-function unwrap(schema: z.ZodType): z.ZodType {
-  let s = schema;
-  while (s._zod.def.type === "optional" || s._zod.def.type === "default" || s._zod.def.type === "nullable") {
-    s = (s._zod.def as { innerType: z.ZodType }).innerType;
-  }
-  return s;
+import type { z } from "zod";
+
+type Kind =
+    | "string"
+    | "number"
+    | "boolean"
+    | "enum"
+    | "optional-string"
+    | "optional-number"
+    | "optional-boolean"
+    | "optional-enum"
+    | "unsupported";
+
+function detectKind(schema: z.ZodTypeAny): Kind {
+    // Cast to `any` to reach the runtime _zod metadata; Zod's TS types intentionally hide it.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const def = (schema as any)._zod?.def;
+    if (!def) return "unsupported";
+
+    if (def.type === "optional" || def.type === "default" || def.type === "nullable") {
+        const inner = detectKind(def.innerType);
+        return inner === "unsupported" ? "unsupported" : (`optional-${inner}` as Kind);
+    }
+
+    switch (def.type) {
+        case "string": return "string";
+        case "number": case "int": return "number";
+        case "boolean": return "boolean";
+        case "enum": return "enum";
+        default: return "unsupported";
+    }
 }
 ```
 
-[VERIFIED: `platform-app/node_modules/zod/v4/core/schemas.d.ts:837-838, 880-881, 863-864`] — `optional`/`default`/`nullable` all have `innerType: T` on their def.
+**Source / verification:**
+- `platform-app/node_modules/zod/v4/core/schemas.d.ts:360–406` — `$ZodNumberDef.type === "number"`, `$ZodBooleanDef.type === "boolean"`
+- `platform-app/node_modules/zod/v4/core/schemas.d.ts:767–784` — `$ZodEnumDef.type === "enum"`, `def.entries: T` carries the enum members
+- `platform-app/node_modules/zod/v4/core/schemas.d.ts:835–850` — `$ZodOptionalDef.type === "optional"`, `def.innerType` is the wrapped schema
+
+`[VERIFIED: read from platform-app/node_modules/zod/v4/core/schemas.d.ts on 2026-04-24]`
 
 ### B2. Number range detection
 
-`ZodNumber` checks (`.min()`, `.max()`, etc.) populate **`_zod.bag`**, a `LoosePartial<{ minimum, maximum, exclusiveMinimum, exclusiveMaximum, format, pattern }>`. From `schemas.d.ts:370-377`:
+Two routes — **prefer route 2 for the inspector, since it's a single property read.**
 
+**Route 1 — read the checks array:**
 ```typescript
-bag: util.LoosePartial<{
-    minimum: number;
-    maximum: number;
-    exclusiveMinimum: number;
-    exclusiveMaximum: number;
-    format: string;
-    pattern: RegExp;
-}>;
+// schema._zod.def.checks: Array<{ _zod: { def: { check: "greater_than" | "less_than", value: number, inclusive: boolean } } }>
 ```
+Verified at `platform-app/node_modules/zod/v4/core/checks.d.ts:24–49`:
 
-Read pattern in renderer:
-
-```typescript
-function getNumberBounds(schema: z.ZodNumber): { min?: number; max?: number } {
-  const bag = schema._zod.bag as { minimum?: number; maximum?: number };
-  return { min: bag.minimum, max: bag.maximum };
+```24:49:platform-app/node_modules/zod/v4/core/checks.d.ts
+export interface $ZodCheckLessThanDef extends $ZodCheckDef {
+    check: "less_than";
+    value: util.Numeric;
+    inclusive: boolean;
+}
+export interface $ZodCheckLessThanInternals<T extends util.Numeric = util.Numeric> extends $ZodCheckInternals<T> {
+    def: $ZodCheckLessThanDef;
+    issc: errors.$ZodIssueTooBig<T>;
+}
+export interface $ZodCheckLessThan<T extends util.Numeric = util.Numeric> extends $ZodCheck<T> {
+    _zod: $ZodCheckLessThanInternals<T>;
+}
+export declare const $ZodCheckLessThan: core.$constructor<$ZodCheckLessThan>;
+export interface $ZodCheckGreaterThanDef extends $ZodCheckDef {
+    check: "greater_than";
+    value: util.Numeric;
+    inclusive: boolean;
 }
 ```
 
-**Decision rule (from D-14 + REQ-12 acceptance):**
-- If both `min` and `max` are defined AND `(max - min) <= 100` AND fractional default values likely → render `<input type="range">` (slider with inline value display).
-- Otherwise → render `<input type="number" min={min} max={max}>`.
-- For `addReflection.intensity` (`min(0).max(1)`) → slider with `step={0.05}` is the right call; for an unbounded `z.number()` → number input.
+**Route 2 — read the bag (recommended):**
+```typescript
+// schema._zod.bag: { minimum?: number, maximum?: number, exclusiveMinimum?: number, exclusiveMaximum?: number, ... }
+```
+Verified at `platform-app/node_modules/zod/v4/core/schemas.d.ts:370–377`:
+
+```370:377:platform-app/node_modules/zod/v4/core/schemas.d.ts
+    bag: util.LoosePartial<{
+        minimum: number;
+        maximum: number;
+        exclusiveMinimum: number;
+        exclusiveMaximum: number;
+        format: string;
+        pattern: RegExp;
+    }>;
+```
+
+**Helper:**
+```typescript
+function getNumberRange(schema: z.ZodTypeAny): { min?: number; max?: number } {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const bag = (schema as any)._zod?.bag ?? {};
+    return { min: bag.minimum, max: bag.maximum };
+}
+```
+
+**Slider vs. number-input rule:** render slider when both `min` and `max` are defined AND `(max - min) <= 100`; otherwise render a number input. (Inspector's UX heuristic — not enforced by Zod.)
 
 ### B3. Enum value extraction
 
-`ZodEnum.def.entries` is the runtime source of truth (Zod v4 stores entries on the def, not as a separate property). From `schemas.d.ts:767-770`:
+`$ZodEnumDef.entries` is the source of truth (lines 767–770). For `z.enum(["a","b","c"])` it's `{ a: "a", b: "b", c: "c" }`:
 
 ```typescript
-export interface $ZodEnumDef<T extends util.EnumLike = util.EnumLike> extends $ZodTypeDef {
-    type: "enum";
-    entries: T;  // For z.enum(["a","b","c"]) → { a: "a", b: "b", c: "c" }
+function getEnumOptions(schema: z.ZodTypeAny): string[] {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const entries = (schema as any)._zod?.def?.entries;
+    if (!entries) return [];
+    return Object.values(entries) as string[];
 }
 ```
 
-The user-facing API also exposes `schema.enum` (an enum-like object) per Zod docs: https://v4.zod.dev/api?id=enums (`FishEnum.enum` → `{ Salmon: "Salmon", Tuna: "Tuna", Trout: "Trout" }`). For dropdown rendering use:
+**Russian-label mapping (D-20):** the inspector renders raw enum values for now (e.g. `"subtle"` / `"strong"` / `"mirror"`). Per-enum Russian labels can live in a per-node `enumLabels: Record<string, string>` map next to the schema, or be deferred to a Phase 5 polish pass. Recommended: **add the labels inline next to the schema in Phase 3**, since CONTEXT.specifics already shows Russian-friendly enum values like `"subtle"|"strong"|"mirror"`. Example:
 
 ```typescript
-function getEnumOptions(schema: z.ZodEnum): string[] {
-  return Object.values(schema._zod.def.entries) as string[];
-}
-```
+export const addReflectionParamsSchema = z.object({
+    style: z.enum(["subtle", "strong", "mirror"]).default("subtle"),
+    intensity: z.number().min(0).max(1).default(0.3),
+    prompt: z.string().max(500).optional(),
+});
 
-(Returns the runtime values in insertion order — what the `<select>` needs.)
+export const addReflectionLabels = {
+    style: "Стиль отражения",
+    intensity: "Интенсивность",
+    prompt: "Доп. подсказка",
+} as const;
+
+export const addReflectionEnumLabels = {
+    style: { subtle: "Мягкое", strong: "Сильное", mirror: "Зеркало" },
+} as const;
+```
 
 ### B4. Optional vs required
 
-Detection rule:
+Detection: `def.type === "optional"` OR `def.type === "default"` OR `def.type === "nullable"` → not required. Inner type via `def.innerType`.
 
-- Schema is **optional** if traversing the unwrap chain hits a `def.type === "optional"` OR `"default"` OR `"nullable"` node.
-- Schema is **required** if no such wrapper appears.
+UI:
+- **Required** → label gets a red `*` suffix; field error if empty after blur.
+- **Optional** → label without `*`; empty value is valid and removed from the params patch (`updateNodeParams(id, { foo: undefined })` — but the Zustand spread will keep the key; recommended: special-case empty optional values to use `delete patch.foo` semantics).
 
-Renderer behaviour:
-
-- Required field → label gets a red asterisk `<span className="text-red-500">*</span>`.
-- Optional → no asterisk.
-- Validation: `safeParse` on the **original (wrapped) schema** so `optional()` correctly accepts `undefined` and `default()` substitutes the default.
+`.default(...)` participates in detection (it counts as not-required because Zod will fill the default). The inspector should **read** the default value when an unmounted node first renders, but writes happen only when the user touches the field.
 
 ### B5. Error display strategy
 
-**Recommendation: field-level inline errors**, displayed beneath each input in red text (`text-xs text-red-500 mt-1`).
+**Recommendation: field-level inline errors below each input.**
 
-**Justification from existing patterns:**
-- `platform-app/src/app/settings/profile/page.tsx` shows save status (`saveStatus: "idle" | "saving" | "saved"`) inline next to the input — the codebase prefers per-field, low-key feedback over modal/toast errors.
-- `AssetLibraryModal` uses a `ConfirmDialog` for destructive actions but inline messaging for filter/sort feedback.
-- Header summary errors would conflict with the inspector's compact 320 px width.
+Existing form pattern in `platform-app/src/components/ui/Input.tsx:8` already supports an `error?: string` prop and renders it below the input as `<p className="text-xs text-red-500">{error}</p>` (line 47). Match this convention.
 
-Renderer pattern:
+Profile page (`platform-app/src/app/settings/profile/page.tsx`) uses a "save status" pattern but no field-level validation today — there's no precedent for header summaries in the codebase. Field-level is the only existing pattern.
 
-```typescript
-const result = paramSchema.safeParse(localDraft);
-const errorsByPath = result.success ? {} : indexZodErrorsByPath(result.error);
-// In JSX, beneath each field:
-{errorsByPath[fieldName] && (
-  <p className="mt-1 text-xs text-red-500">{errorsByPath[fieldName]}</p>
-)}
-```
-
-**Push-to-store rule (D-14 implication):** Only push to `updateNodeParams` when `result.success === true`. Invalid drafts stay local (`useState`), so the canvas doesn't re-render with bad data and auto-save doesn't fire on garbage.
+**For enums (Select)** — error renders below the trigger; `Select` (`platform-app/src/components/ui/Select.tsx:66–126`) doesn't support an `error` prop today, so the inspector wrapper will render the error string below itself in a `<p className="text-xs text-red-500">`.
 
 ### B6. Refinement / cross-field validation
 
-The `imageInput` schema in CONTEXT.md uses `.refine(d => d.assetId || d.sourceUrl, "Выберите источник")`. In Zod v4, `.refine` errors arrive in `result.error.issues` with **empty `path: []`** (object-level error, not field-level).
+`imageInput` schema has `.refine(d => d.assetId || d.sourceUrl, { message: "Выберите изображение" })`. Field-level rendering can't show a refine error at any single field's location.
 
-Surfacing recommendation: render an **inline header error strip** *only* for object-level `path: []` issues, while still using field-level errors for everything else. Pattern:
+**Recommendation:** render refine/object-level errors at the **top of the inspector body, above the fields**, in a small banner:
 
-```typescript
-const objectLevelErrors = (result.error?.issues ?? []).filter(i => i.path.length === 0);
-// At top of inspector body:
-{objectLevelErrors.length > 0 && (
-  <div className="mb-3 rounded-md border border-red-300 bg-red-50 p-2 text-xs text-red-700 dark:bg-red-950/30 dark:text-red-300">
-    {objectLevelErrors.map((e, i) => <p key={i}>{e.message}</p>)}
-  </div>
+```tsx
+{topLevelErrors.length > 0 && (
+    <div className="mb-3 rounded-md border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-700/40 dark:bg-red-900/20 dark:text-red-300">
+        {topLevelErrors[0]}
+    </div>
 )}
 ```
 
-For `imageInput` specifically: the radio-tab UI (D-15) makes the refine almost-impossible to violate (each tab has its own input that writes the right field). Treat this as defence-in-depth, not the primary UX control.
+`safeParse(params).error?.issues` contains issues; filter by `issue.path.length === 0` for object-level errors.
+
+**Special case for ImageInput:** since the radio-tabs UI splits the schema into mutually-exclusive modes ("library" / "url" / "upload"), the refine error effectively means "you switched to 'library' tab but didn't pick anything". The inspector can suppress the refine error until the user attempts a save (mark the form as "submitted" once any field is touched, or use the existing dirty-flag plumbing).
 
 ### B7. Controlled-component subtlety
 
-Two locations of state:
+Architecture facts:
+- `updateNodeParams(id, patch)` (`createGraphSlice.ts:50–57`) does a shallow spread merge: `{ ...n.data.params, ...patch }`.
+- Setting `dirty: true` triggers `useWorkflowAutoSave` (`hooks/workflow/useWorkflowAutoSave.ts:67–90`), which debounces save by 2000 ms.
 
-1. **`useWorkflowStore.nodes[].data.params`** — the canonical, persisted shape. Updated via `updateNodeParams(id, patch)` (`createGraphSlice.ts:50-57`), which **shallow-merges** the patch into existing params. Confirmed by inspecting the slice: `data: { params: { ...n.data.params, ...patch } }`.
-2. **Inspector local draft** — `useState<Record<string, unknown>>` initialised from the selected node's params on selection-change.
+**Recommended update strategy:**
+1. Inspector keeps a **local controlled-input state** (`useState`) for each field — updates immediately on every keystroke.
+2. After `safeParse` succeeds AND value differs from current `node.data.params[fieldName]`, call `updateNodeParams(id, { [fieldName]: value })`.
+3. **Do NOT debounce inside the inspector.** The store's auto-save already debounces. Sending param patches on every keystroke costs nothing (it's a synchronous Zustand `set`).
+4. **For numeric sliders / range inputs**: this gives smooth dragging (50+ updates/sec into the store, but only one save after 2s of idle).
 
-**Recommendation:**
-- Inspector mounts/remounts on `selectedNodeId` change (key the component by node id) — clean draft state per node, no stale residue.
-- On every input change: update local draft, run `safeParse`, **only on success** call `updateNodeParams` with the changed key (the slice already shallow-merges, so passing only `{intensity: 0.7}` is correct).
-- **No debouncing in the inspector itself.** `useWorkflowAutoSave` already debounces saves at 2 s (D-10, see `useWorkflowAutoSave.ts:38-90`). Adding inspector-level debounce would double-debounce typing and cause the canvas re-render to lag behind the input cursor.
-- **Performance escape hatch:** If rapid typing in a `text` field causes visible re-render lag (canvas re-renders the BaseNode subtree on every store change), wrap `BaseNode` in `React.memo` and/or use `React.useDeferredValue` on the input. v1.0 is unlikely to need this with 4 nodes on screen — defer until measured.
+**Performance note:** `updateNodeParams` recreates the entire `nodes` array via `state.nodes.map(...)` each time. For 100+ nodes this becomes expensive. v1.0 won't hit this scale (4-node typical workflow), but flag it as a Phase-5+ optimization (use a Map<id, node> if it ever matters).
+
+**No need for `useDeferredValue` / `useTransition`** at v1.0 scale. Re-renders are cheap.
 
 ---
 
 ## C. Image upload integration (D-15)
 
-### C1. Existing upload contract
+### C1. Upload contract (read from current code)
 
-**`/api/upload/presign` (GET)** — `platform-app/src/app/api/upload/presign/route.ts:54-99`:
-
-| Aspect | Value |
-|--------|-------|
-| Method | GET |
-| Auth | `auth()` session check (`L56-58`); throws 401 if missing |
-| Query params | `mimeType` (default `"image/png"`), `projectId` (default `"tmp"`) |
-| Allowed MIME | `image/png`, `image/jpeg`, `image/webp`, `image/gif`, `image/svg+xml` (set at `L46-52`) |
-| Output | `{ uploadUrl, publicUrl, key }` — `uploadUrl` valid 10 min (`expiresIn: 600`, `L92`) |
-| ACL check | If `projectId !== "tmp"`, calls `requireSessionAndProjectAccess(userId, projectId, "write")` (`L65-72`) |
-| Object key shape | `canvas-images/${projectId}/${uuid}.${ext}` (`L83-84`) |
-
-**`/api/upload` (POST)** — `platform-app/src/app/api/upload/route.ts:51-75`:
+#### `platform-app/src/utils/imageUpload.ts` (`uploadImageToS3`, lines 86–130)
 
 | Aspect | Value |
 |--------|-------|
-| Method | POST JSON |
-| Auth | Same `auth()` check |
-| Body | `{ base64?, url?, mimeType?, projectId?, skipAssetRecord? }` |
-| `url` mode | Server-side fetches via `safeFetch` (SSRF-guarded), re-uploads to S3 (`L80-100`) |
-| `base64` mode | Decodes base64 and PUTs to S3 directly |
-| Asset record | If `projectId && !skipAssetRecord`, **creates an `Asset` row** under that project (`L154-171`). Otherwise just returns `{ url }`. |
+| Input | `base64: string` (data: URI or raw base64), `projectId: string`, `mimeType?: string = "image/png"` |
+| Output | `Promise<string \| null>` — public S3 URL or `null` on failure |
+| Asset DB row | **NOT created** when `skipAssetRecord: true`. The function uses `getPresignedUrl` (direct S3 PUT) on the happy path, which never touches the DB. The legacy fallback path at `imageUpload.ts:136–158` posts to `/api/upload` with `skipAssetRecord: true` (line 149), so still no DB row. |
+| Error modes | Returns `null` on any failure. CORS errors flip a session-wide kill switch (`presignDisabled`, line 25) so subsequent calls skip presign. |
+| Allowed MIME types | `image/png`, `image/jpeg`, `image/webp`, `image/gif`, `image/svg+xml` (per `presign/route.ts:46–52`). |
+| Caching | Yes — `uploadCache` at `imageUpload.ts:19` keyed on `base64.slice(0,64)+length`. |
+| Progress reporting | **None** — no progress callbacks. The `fetch(...)` call is fire-and-forget. |
+| Auth | Yes — `presign/route.ts:56` checks `auth()`; rejects unauth'd. |
+| Project access | If `projectId !== "tmp"`, `requireSessionAndProjectAccess(userId, projectId, "write")` is enforced (`presign/route.ts:65–72`). |
 
-**`src/utils/imageUpload.ts:86-130`** (`uploadImageToS3`):
-- Tries presigned PUT first, falls back to `/api/upload` legacy proxy.
-- Has a **session-wide kill switch** (`presignDisabled`, `L25`) that flips after the first CORS/network failure to avoid retrying expensive preflights.
-- Returns `string | null` (the public URL or `null` on failure).
-- Caches by base64 prefix to avoid re-uploading the same image (`L19, L91-93`).
+#### `compressImageFile(file: File, maxDim = 2000)` — `imageUpload.ts:343–383`
+Returns a base64 data URL (WebP, quality 0.82). Use this to compress an uploaded `File` before calling `uploadImageToS3`.
 
-### C2. Recommended upload UX flow for `ImageInput` inspector
+#### `platform-app/src/app/api/upload/presign/route.ts`
 
-For the **"Загрузить файл"** tab inside the inspector:
+GET endpoint, query params `mimeType` + `projectId`. Returns `{ uploadUrl, publicUrl, key }`. `uploadUrl` valid 10 minutes.
 
+### C2. Recommended inspector upload UX flow
+
+**Component layout** for the "upload" tab of `imageInput` inspector:
+
+1. **File input + drag-drop zone** — a single area that accepts both. Use a hidden `<input type="file" accept="image/*">` and a styled label/dropzone wrapping it. The dropzone catches `onDragOver` / `onDrop` and forwards the file to the same handler.
+2. **Preview thumbnail** — once a file is selected, show an inline preview (use `URL.createObjectURL(file)` for instant preview before upload completes; revoke on unmount).
+3. **Upload state** — three states:
+   - `idle` → "Перетащите файл или нажмите для выбора"
+   - `uploading` → spinner + "Загрузка..." (no progress bar — the util doesn't expose progress)
+   - `success` → preview + small green checkmark; assetId is now in params
+   - `error` → red text + retry button
+4. **No progress bar** — the existing util doesn't expose upload progress. Adding it would require XHR (not fetch) — out of scope for v1.0. Show indeterminate spinner instead.
+5. **Compression**: call `compressImageFile(file, 2000)` BEFORE `uploadImageToS3()`. This matches existing canvas-editor convention and prevents 10 MB JSON payloads.
+
+**On-success behavior:**
+1. Get the S3 URL back from `uploadImageToS3()`.
+2. **Call `asset.createFromUrl` (NEW endpoint, see C3) or `asset.attachUrlToProject` (existing, but needs projectId)** to register an Asset row.
+3. Get back the new `assetId`.
+4. `updateNodeParams(nodeId, { assetId, sourceUrl: undefined, source: "upload" })`.
+5. Switch the radio-tab to "library" mode for the user's next interaction (visual confirmation).
+
+**Why prefer assetId over sourceUrl:** D-15 specifies precedence "assetId wins", and storing the assetId persists the upload to the workspace asset library (visible elsewhere in the app). Storing only `sourceUrl` would orphan the upload — it would be on S3 but invisible in the library.
+
+### C3. New tRPC procedure needed: `asset.createFromUrl`
+
+**Status: DOES NOT EXIST** — confirmed via grep across `platform-app/src/server/routers/asset.ts`. The closest match is:
+
+```229:277:platform-app/src/server/routers/asset.ts
+  attachUrlToProject: protectedProcedure
+    .input(
+      z.object({
+        projectId: z.string(),
+        url: z.string().url(),
+        filename: z.string().optional(),
+        mimeType: z.string().default("image/png"),
+        sizeBytes: z.number().int().nonnegative().default(0),
+        source: z.string().default("upload"),
+        width: z.number().optional(),
+        height: z.number().optional(),
+        type: z
+          .enum(["IMAGE", "VIDEO", "AUDIO", "FONT", "LOGO", "OTHER"])
+          .default("IMAGE"),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const { project } = await assertProjectAccess(ctx, input.projectId, "USER");
+      ...
 ```
-┌──────────────────────────────────────────┐
-│ [Из библиотеки] [По URL] [Загрузить]     │
-├──────────────────────────────────────────┤
-│ ┌──────────────────────────────────────┐ │
-│ │      Drag-drop zone or click         │ │
-│ │   📤  Перетащите PNG / JPG / WEBP   │ │
-│ │      или нажмите для выбора файла    │ │
-│ └──────────────────────────────────────┘ │
-│ Macro state: idle → uploading → done     │
-└──────────────────────────────────────────┘
-```
 
-- **Single drop zone, also click-to-open.** No separate file-input button — the dropzone IS the file input (`<label>` wrapping a hidden `<input type="file" accept="image/png,image/jpeg,image/webp,image/gif">`).
-- **Progress indicator:** simple spinner + "Загрузка…" text. The existing `uploadImageToS3` doesn't expose a progress callback (it uses `fetch` PUT, not XHR), and adding one is out of scope — accept binary "uploading | done | failed" UX.
-- **Compression:** call `compressImageFile(file, 2000)` from `imageUpload.ts:343` BEFORE upload to keep payload reasonable (existing helper, returns webp data URL).
+`attachUrlToProject` requires a `projectId` — but **`AIWorkflow` belongs to a `workspaceId`, not a `projectId`** (per `prisma/schema.prisma:410–427`). Asset rows have `projectId: String?` (optional, line 328 of schema). So the procedure could be reused if a fallback path (workspace-only, no projectId) is added.
 
-**On success:**
-- Persist via `uploadImageToS3(base64, "tmp", mimeType)` → returns S3 `publicUrl`.
-- Then call `trpc.asset.attachUrlToProject` with `projectId: "tmp"`? **No — workflows don't have a project.** Use a **new mutation** `asset.attachToWorkspace` OR write the raw `sourceUrl` into params and skip Asset row creation.
-- **Recommendation:** for v1.0, write `sourceUrl: <S3 publicUrl>` into params — the file is still on our S3, the workflow doesn't strictly need an Asset row, and it dodges the "no project context" problem. Document this as a known limitation: uploaded images won't appear in the workspace asset library; if the user wants that, they should pre-upload via the canvas editor and pick from "Из библиотеки".
+**Two implementation options for Phase 3:**
 
-### C3. New tRPC procedures needed
-
-**`asset.createFromUrl`** is mentioned in `ROADMAP.md:151` for the `assetOutput` handler but **does not exist** in `src/server/routers/asset.ts`. The closest existing procedures:
-
-- `saveGeneratedImage` (`asset.ts:169-217`) — requires `projectId`, persists with `metadata.source = "photo-generation"` by default.
-- `attachUrlToProject` (`asset.ts:229-277`) — requires `projectId`, idempotent per (projectId, url).
-
-**Both are project-scoped.** The workflow `assetOutput` node has only a workspaceId.
-
-**Recommendation: add a new procedure** `asset.attachToWorkspace` in `src/server/routers/asset.ts`:
-
+**Option A — Add a new procedure `asset.createFromUrl` (RECOMMENDED).**
+Cleaner semantically — the workflow flow is workspace-scoped. New procedure takes:
 ```typescript
-attachToWorkspace: protectedProcedure
+asset.createFromUrl: protectedProcedure
   .input(z.object({
-    workspaceId: z.string(),
-    url: z.string().url(),
-    filename: z.string().optional(),
-    mimeType: z.string().default("image/png"),
-    sizeBytes: z.number().int().nonnegative().default(0),
-    source: z.string().default("workflow-output"),
-    width: z.number().optional(),
-    height: z.number().optional(),
+      workspaceId: z.string(),
+      url: z.string().url(),
+      filename: z.string().optional(),
+      mimeType: z.string().default("image/png"),
+      sizeBytes: z.number().int().nonnegative().default(0),
+      source: z.string().default("workflow-output"),
+      width: z.number().optional(),
+      height: z.number().optional(),
   }))
   .mutation(async ({ ctx, input }) => {
-    await assertWorkspaceAccess(ctx, input.workspaceId, "CREATOR");
-    // Idempotent per (workspaceId, url)
-    const existing = await ctx.prisma.asset.findFirst({
-      where: { workspaceId: input.workspaceId, url: input.url, projectId: null },
-      select: { id: true },
-    });
-    if (existing) return existing;
-
-    const filename = input.filename ?? `${input.source}-${Date.now()}.${input.mimeType.split("/")[1] ?? "png"}`;
-    return ctx.prisma.asset.create({
-      data: {
-        type: "IMAGE",
-        filename, url: input.url, mimeType: input.mimeType, sizeBytes: input.sizeBytes,
-        metadata: { source: input.source, ...(input.width && { width: input.width }), ...(input.height && { height: input.height }) },
-        workspaceId: input.workspaceId,
-        uploadedById: ctx.user.id,
-        projectId: null,  // ⚠️ verify Asset.projectId is nullable in schema before relying on this
-      },
-      select: { id: true },
-    });
-  }),
+      await assertWorkspaceAccess(ctx, input.workspaceId, "CREATOR");
+      // Idempotency: check existing by (workspaceId, url) WITHOUT projectId.
+      const existing = await ctx.prisma.asset.findFirst({
+          where: { workspaceId: input.workspaceId, url: input.url, projectId: null },
+          select: { id: true },
+      });
+      if (existing) return existing;
+      // ...create...
+  });
 ```
 
-**⚠️ Validation step before adopting:** confirm `Asset.projectId` is nullable in `prisma/schema.prisma`. Quick check from `WorkspaceAssetGrid.tsx` and `attachUrlToProject` shows `projectId` is always passed; the planner should `Read prisma/schema.prisma:311` (Asset model) and confirm. If it's `String` not `String?`, this is a Wave 1 schema migration — add to plan.
+**Option B — Extend `attachUrlToProject` to make `projectId` optional.**
+More backward-compatible but mangles the procedure name (it no longer "attaches to a project"). Rejected.
 
-This adds a new server-side deliverable to Phase 3 (small but real). Document it in the plan.
+**Phase 3 server deliverable:** Add `asset.createFromUrl` in Wave 2 (alongside the per-node Zod schemas), unit-test it (workspace access guard, idempotency, missing workspace 404). This is **NOT explicitly called out in CONTEXT D-17**, but it's required to ship the `assetOutput` client handler. Flag this to the planner as an additional task.
+
+**Workflow upload flow needs `attachUrlToProject` only if the workflow is opened with a `?projectId=xxx` query param** — which v1.0 doesn't support (workflows are workspace-only). For the upload mode of `imageInput`, the same `asset.createFromUrl` is used.
 
 ---
 
 ## D. Connection validator (D-18, REQ-11)
 
-### D1. xyflow `isValidConnection` API (v12)
+### D1. xyflow `isValidConnection` API
 
-**Confirmed against vendored types** (`@xyflow/react@12.10.2`):
+Verified directly from project's installed `@xyflow/react@12.10.2`:
 
-- Signature (`@xyflow/react/dist/esm/types/general.d.ts:178`): `IsValidConnection<EdgeType extends Edge = Edge> = (edge: EdgeType | Connection) => boolean`
-- Props location (`@xyflow/react/dist/esm/types/component-props.d.ts:600-607`): `<ReactFlow isValidConnection={...}>`
-- Invocation timing: called **during connection drag** (every tick that the cursor enters a candidate target handle). The xyflow runtime uses the return value to set the `connectionStatus` data attribute on the edge to `"valid"` or `"invalid"` (per `edges.d.ts:207-208`), which xyflow's default styles then colour green/red. Returning `false` prevents the drop from creating an edge.
-- Underlying `system` type (`@xyflow/system/dist/esm/types/general.d.ts:109`): `IsValidConnection = (edge: EdgeBase | Connection) => boolean`. The handle-level alternative is **explicitly deprecated in favour of the ReactFlow-prop version for performance reasons** (`component-props.d.ts:603-606`).
+`platform-app/node_modules/@xyflow/system/dist/esm/types/general.d.ts:109`:
+```typescript
+export type IsValidConnection = (edge: EdgeBase | Connection) => boolean;
+```
 
-This matches CONTEXT.md D-18 verbatim — no surprises.
+`platform-app/node_modules/@xyflow/react/dist/esm/types/general.d.ts:178`:
+```typescript
+export type IsValidConnection<EdgeType extends Edge = Edge> = (edge: EdgeType | Connection) => boolean;
+```
+
+Slot in `<ReactFlow>` per `platform-app/node_modules/@xyflow/react/dist/esm/types/store.d.ts:82` and the docstring at `handles.d.ts:46–51`:
+
+> Called when a connection is dragged to this handle. You can use this callback to perform some custom validation logic based on the connection target and source, for example. Where possible, we recommend you move this logic to the `isValidConnection` prop on the main ReactFlow component for performance reasons. **connection becomes an edge if isValidConnection returns true**
+
+**When invoked:** xyflow calls `isValidConnection` continuously as the user drags a candidate edge over potential targets — the function drives the in-drag visual state (handles glow / line stroke red on `false`). On drop, if the function returned `true` for the final target, the edge is created via the `onConnect` handler; if `false`, no edge is created.
+
+**Default visual feedback:** xyflow renders the in-progress connection line in red when `isValidConnection` returns `false`. No edge is created on drop. Matches D-18 ("xyflow's default invalid-connection UX").
+
+`[VERIFIED: read from platform-app/node_modules/@xyflow/system/dist/esm/types/general.d.ts on 2026-04-24]`
 
 ### D2. `Connection` type fields
 
-`Connection` (xyflow v12) carries:
+`platform-app/node_modules/@xyflow/system/dist/esm/types/general.d.ts:64–73`:
 
 ```typescript
-{
-  source: string;          // source node id, never null
-  target: string;          // target node id, never null
-  sourceHandle: string | null;  // ⚠ nullable
-  targetHandle: string | null;  // ⚠ nullable
-}
+export type Connection = {
+    /** The id of the node this connection originates from. */
+    source: string;
+    /** The id of the node this connection terminates at. */
+    target: string;
+    /** When not `null`, the id of the handle on the source node that this connection originates from. */
+    sourceHandle: string | null;
+    /** When not `null`, the id of the handle on the target node that this connection terminates at. */
+    targetHandle: string | null;
+};
 ```
 
-**Reliability:** `sourceHandle` / `targetHandle` are passed reliably **only when the source/target node has multiple handles**. With a single handle, xyflow may pass `null` (it falls back to the implicit handle). For our case, **all four nodes use explicit handle IDs (`"image-in"`, `"image-out"`)** — see `BaseNode.tsx:46-72` where every Handle gets `id={port.id}`. So in practice these are non-null, but the validator MUST defensively handle the `null` case (return `false`).
+`sourceHandle` and `targetHandle` are **`string | null`**. Validator must handle the `null` case (treat as invalid — Phase 2's nodes always specify handle ids per `BaseNode.tsx:51,66`, so `null` only happens with mis-configured nodes).
 
-### D3. Test strategy
+### D3. Recommended test strategy
 
-Pure-function unit tests in `src/lib/workflow/__tests__/connectionValidator.test.ts`. Cover the full port-type matrix:
+**Pure-function unit test** (`src/lib/workflow/__tests__/connectionValidator.test.ts`).
 
-| Source port type | Target port type | Expected |
-|------------------|------------------|----------|
-| image | image | true |
-| image | mask | false |
-| image | text | false |
-| image | number | false |
-| image | any | true |
-| any | image | true |
-| any | any | true |
-| text | text | true |
-| (missing source node) | * | false |
-| (missing source handle id) | * | false |
-| `null` sourceHandle | image-in | false |
+Build a small test matrix covering every `PortType` pairing. PortType union is `"image" | "mask" | "text" | "number" | "any"` (`server/workflow/types.ts:18`):
 
-Plus integration cases using actual `NODE_REGISTRY` entries:
+| Source | Target | Expected | Reason |
+|--------|--------|---------:|--------|
+| image  | image  | true     | exact match |
+| image  | mask   | false    | type mismatch |
+| image  | text   | false    | type mismatch |
+| image  | number | false    | type mismatch |
+| image  | any    | true     | any wildcard |
+| mask   | image  | false    | type mismatch |
+| any    | image  | true     | any wildcard |
+| any    | any    | true     | wildcard both sides |
+| (missing source node) | * | false | guard |
+| (missing source handle id) | * | false | guard |
+| (sourceHandle === null) | * | false | guard |
 
-- `imageInput.image-out` → `removeBackground.image-in` → `true`
-- `imageInput.image-out` → `imageInput.image-in` → false (no inputs on imageInput)
-- `removeBackground.image-out` → `addReflection.image-in` → true
-- `addReflection.image-out` → `assetOutput.image-in` → true
+Plus integration touching the Phase-2 NODE_REGISTRY:
+- `imageInput.image-out` → `removeBackground.image-in` → true
+- `imageInput.image-out` → `assetOutput.image-in` → true
+- `assetOutput` has no outputs → trying to drag from it is impossible (no source handle) — verify by trying `target=assetOutput, source=...` instead
 
-This mirrors the Phase 2 graphSlice test pattern (vitest, no DOM, pure logic). 11–15 cases in one file.
+Existing test infra: pure Vitest, no jsdom needed (validator is a pure function over plain objects). Pattern matches `platform-app/src/store/workflow/__tests__/graphSlice.test.ts`.
 
 ---
 
-## E. Homepage card integration (D-19)
+## E. Homepage card integration (D-19) — bonus
 
-### E1. `page.tsx` cards array — verbatim
+### E1. Cards array in `page.tsx`
 
-`platform-app/src/app/page.tsx:72-105`:
+Verbatim from `platform-app/src/app/page.tsx:72–105`:
 
-```typescript
+```72:105:platform-app/src/app/page.tsx
 const generationTypes = [
   {
     id: "banner" as const,
@@ -483,41 +614,43 @@ const generationTypes = [
 ];
 ```
 
-Insertion point: **append a fifth entry** after the `video` card. The render loop (`page.tsx:251-276`) uses `grid-cols-4` — adding a fifth tile means **also updating the grid to `grid-cols-5`** OR moving to `grid-cols-2 md:grid-cols-3 lg:grid-cols-5` for responsive sanity. **Recommendation:** `grid-cols-2 md:grid-cols-3 lg:grid-cols-5` — preserves desktop density while not breaking small screens. Coordinate the change with the design-system rule `.cursor/rules/design-system-contrast.mdc`.
-
-The new card entry:
+**Insertion point:** push a new entry at the end of the array (after `video`). New entry:
 
 ```typescript
 {
-  id: "workflow" as const,
-  icon: <Workflow size={20} strokeWidth={1.5} />,  // import from "lucide-react"
-  label: "AI\nWorkflows",
-  gradient: "gradient-card-pink",
-  iconBg: "bg-pink-100 text-pink-600 dark:bg-pink-500/20 dark:text-pink-400",
-  image: "/cards/workflows.png",
-},
+    id: "workflow" as const,
+    icon: <Workflow size={20} strokeWidth={1.5} />,
+    label: "AI\nWorkflows",
+    gradient: "gradient-card-pink",
+    iconBg: "bg-pink-100 text-pink-600 dark:bg-pink-500/20 dark:text-pink-400",
+    image: "/cards/workflows.png",
+}
 ```
 
-### E2. `globals.css` — gradient block
+Don't forget to import `Workflow` from `lucide-react` (extend the existing import on line 6).
 
-Existing pattern at `src/app/globals.css:248-283`:
+**Grid layout consideration:** the current grid uses `grid-cols-4` (line 251 of page.tsx, inside the cards row). Adding a fifth card breaks the symmetric layout — it'll render 4-and-1 on the second row. Recommended: change to `grid-cols-5` for v1.0 (the new fixed layout with 5 cards is what the user intended per D-19). Alternative: `grid-cols-2 sm:grid-cols-3 lg:grid-cols-5` for responsive — matches the rest of the app's tendency.
 
-```css
+### E2. `gradient-card-pink` CSS
+
+Verbatim existing rule template from `platform-app/src/app/globals.css:248–251`:
+
+```248:251:platform-app/src/app/globals.css
 .gradient-card-purple {
   background: linear-gradient(145deg, #F5F3FF 0%, #EDE9FE 100%);
+  /* Violet 50 -> Violet 100 */
 }
-.gradient-card-blue { background: linear-gradient(145deg, #F0F9FF 0%, #E0F2FE 100%); }
-.gradient-card-peach { background: linear-gradient(145deg, #FFF7ED 0%, #FFEDD5 100%); }
-.gradient-card-green { background: linear-gradient(145deg, #F0FDF4 0%, #DCFCE7 100%); }
-
-/* Dark mode gradient cards */
-.dark .gradient-card-purple { background: linear-gradient(145deg, #1E1530 0%, #2A1C40 100%); }
-.dark .gradient-card-blue   { background: linear-gradient(145deg, #1A1C30 0%, #1C2535 100%); }
-.dark .gradient-card-peach  { background: linear-gradient(145deg, #2A1E15 0%, #302018 100%); }
-.dark .gradient-card-green  { background: linear-gradient(145deg, #152A1E 0%, #1C2A12 100%); }
 ```
 
-**New rules to add (CONTEXT D-19 spec, verbatim):**
+And dark mode pair from `globals.css:269–271`:
+
+```269:271:platform-app/src/app/globals.css
+.dark .gradient-card-purple {
+  background: linear-gradient(145deg, #1E1530 0%, #2A1C40 100%);
+}
+```
+
+**Proposed `gradient-card-pink` block** (insert after `.gradient-card-green` at line 266 and after `.dark .gradient-card-green` at line 283):
 
 ```css
 .gradient-card-pink {
@@ -525,742 +658,755 @@ Existing pattern at `src/app/globals.css:248-283`:
   /* Pink 50 -> Pink 100 */
 }
 
-/* Then in the dark block: */
+/* (after dark green) */
 .dark .gradient-card-pink {
   background: linear-gradient(145deg, #2A1525 0%, #3A1830 100%);
 }
 ```
 
-Insertion: append `.gradient-card-pink` after `.gradient-card-green` (line ~267) and `.dark .gradient-card-pink` after `.dark .gradient-card-green` (line ~283).
+Colors taken verbatim from CONTEXT D-19. Tailwind palette reference: Pink-50 = `#FDF2F8`, Pink-100 = `#FCE7F3`.
 
-### E3. `NewProjectModal.tsx` — secondary call site
+### E3. `NewProjectModal.tsx` — does NOT mirror page.tsx grid
 
-**Reality check vs CONTEXT.md:** `NewProjectModal.tsx` does **not** mirror `page.tsx`'s cards array. It has a different data structure called `goals` (`NewProjectModal.tsx:20-50`) — a list of project-creation type buttons rendered as a 4-column grid (`L148`). The `goals` array entries have shape `{ value, label, description, icon }` — **no `image`, no `gradient`** — they're small icon-and-label tiles, not full gradient cards.
+**Important finding contrary to CONTEXT.md note:** `NewProjectModal.tsx` does **not** have a card grid that mirrors the homepage. It has a `goals` array (`NewProjectModal.tsx:20–50`) of 4 small icon-tile buttons (banner, photo, video, text — each a `<button>` with a 2×2 grid layout, line 148: `grid grid-cols-4 gap-2`). These tiles act as a *form input* — clicking sets a local `goal` state; the actual project creation runs on the "Создать" button.
 
-**Recommendation:** Do **NOT** add the workflow card to `NewProjectModal`. The modal is specifically a "create project" wizard; workflows have a separate creation flow at `/workflows/new`. Adding it would be confusing — clicking "AI Workflows" inside "Новый проект" wouldn't actually create a project. The user-facing entry point for workflows should be:
+**Adding a "Workflow" tile here would change the modal's semantics:** the modal is for creating a `Project`, but the Workflow flow doesn't create a project — it navigates to `/workflows`. Inserting a Workflow tile would either:
+1. (a) act as a navigation hijack (click sets goal=workflow → triggers `router.push("/workflows")` instead of `createOnBackend`), or
+2. (b) be a non-functional decorative entry.
 
-1. The new homepage card → routes to `/workflows`.
-2. The "Создать новый workflow" button on `/workflows` page (Phase 2 deliverable, already exists).
+**Recommendation:** **Do NOT add the Workflow card to `NewProjectModal.tsx` for Phase 3.** The modal's purpose is project creation, not navigation. CONTEXT D-19 left this provisional with "yes" — research advises switching that to **no**.
 
-**Override CONTEXT D-19's "provisionally yes" stance** with: "After inspecting the modal, the cards array doesn't exist there — the modal uses a `goals` array tied to project creation, not generic generation tiles. Adding a workflow entry would create a non-functional click target. Skip the modal change."
+If a future phase wants a unified "What do you want to create?" launcher, it can either:
+- Replace NewProjectModal with a hybrid project-or-workflow launcher (Phase 5+ scope)
+- Add the Workflow card to a different surface (a sidebar, e.g.)
 
-This is a research finding that contradicts an inline CONTEXT assumption — flagged for planner & user.
+Phase 3 ships:
+- New card on `/page.tsx` (homepage top row)
+- Optionally also on `/projects/page.tsx` if such a page exists with the same top-row pattern (verify presence before assuming)
 
 ### E4. Click semantics
 
-The current `handleTileClick` (`page.tsx:170-189`) branches by `tileId`: `"banner"` opens the modal, `"photo"` triggers `createProjectMutation`, `"text"`/`"video"` show a toast.
+The existing cards trigger different behaviors via `handleTileClick(tileId)` (`page.tsx:170–189`):
+- `banner` → `setModalOpen(true)` (opens NewProjectModal)
+- `text` / `video` → toast "В разработке"
+- `photo` → calls `createProjectMutation` directly
 
-**Cleanest expression of the workflow card's nav:** add another case to the switch:
+The Workflow card needs `router.push("/workflows")`. Three implementation options:
 
+**Option 1 — Add a case to `handleTileClick`:**
 ```typescript
 case "workflow":
-  router.push("/workflows");
-  break;
+    router.push("/workflows");
+    break;
+```
+Smallest diff. **Recommended.**
+
+**Option 2 — Add an optional `onClick` field to each card object:**
+```typescript
+{
+    id: "workflow",
+    onClick: () => router.push("/workflows"),
+    // ...
+}
+```
+Then `<button onClick={type.onClick ?? (() => handleTileClick(type.id))}>`. More flexible but introduces a parallel control path.
+
+**Option 3 — Add an optional `href` field and change the wrapping element to `<Link>` when present:**
+Mixes two element types; introduces SSR-render concerns and a11y differences.
+
+**Recommended: Option 1.** Keeps the existing pattern (single `handleTileClick` switch) and adds one case.
+
+### E5. Image asset — verified
+
+```bash
+$ ls -la platform-app/public/cards/
+-rw-r--r--  1 ...  71635 Apr 13 11:38 banner.png
+-rw-r--r--  1 ...  79439 Apr 13 11:38 photo.png
+-rw-r--r--  1 ...  91116 Apr 13 11:38 text.png
+-rw-r--r--  1 ...  77317 Apr 13 11:38 video.png
+-rw-r--r--  1 ...  16954 Apr 24 02:37 workflows.png
 ```
 
-`router` is already in scope (`page.tsx:110`). No new field on the card definition needed — the `id`-based switch is the established pattern. **Rejected alternatives:**
-- Adding `href` to each card definition — would force refactoring the existing four cards for a single new case.
-- Adding `onClick` per card — same issue, plus inconsistent with existing structure.
-
-### E5. Image asset
-
-✅ Confirmed: `platform-app/public/cards/workflows.png` exists (16,954 bytes, modified 2026-04-24 02:37). The other four card images (`banner.png`, `text.png`, `photo.png`, `video.png`) are siblings in the same directory. Path reference `/cards/workflows.png` is correct (Next.js serves `public/` at the root).
+`workflows.png` exists, 16,954 bytes (matches the ~17 KB CONTEXT note). Path `"/cards/workflows.png"` is correct (Next.js serves `public/` at root). The file is currently in `git status` as untracked — Phase 3 must commit it.
 
 ---
 
-## F. Test infrastructure
+## F. Test infrastructure (cross-cutting)
 
-### F1. Phase 2 Zustand test pattern
+### F1. Phase 2 Zustand-slice test pattern
 
-`platform-app/src/store/workflow/__tests__/graphSlice.test.ts:1-135` shows the pattern:
-
-- Direct `useWorkflowStore.getState()` calls — no React rendering.
-- Manual `resetStore()` helper in `beforeEach` (Zustand v5 stores are module-singletons, state persists across tests).
-- Vitest `describe`/`it`/`expect` only.
-- Schema round-trip verified via `workflowGraphSchema.safeParse(serialized)`.
-
-This pattern applies directly to:
-- `src/store/workflow/__tests__/clientHandlers.test.ts` (mock `trpc.asset.getById` via `vi.mock` and assert handler outputs).
-- `src/lib/workflow/__tests__/connectionValidator.test.ts` (pure function, no mocks needed).
-- `src/lib/workflow/__tests__/perNodeSchemas.test.ts` (Zod schema validity, default value coverage).
-- `src/components/workflows/__tests__/inspectorIntrospection.test.ts` (test the `unwrap` / `getEnumOptions` / `getNumberBounds` helpers as pure functions, decoupled from React rendering).
-
-### F2. Component-level testing
-
-**Confirmed via `package.json:61-76`:** no `@testing-library/react`, no `jsdom`, no `happy-dom`. Phase 2's `useWorkflowAutoSave.test.tsx` (mentioned in `02-SUMMARY.md:117`) sidesteps this by **re-implementing the scheduling loop in the test file** — a deliberate fragility documented at `useWorkflowAutoSave.ts:17-21`.
-
-**Recommendation:** **Do not add jsdom in Phase 3.** The component-level surface (inspector form, ImageInput tabs) stays manual-only via the dev server. Pure helpers extracted from the components ARE testable and SHOULD be tested. Wave 5 of the plan should include a manual smoke-test checklist (open each node type → tweak each input → verify auto-save status → reload → verify persistence).
-
-### F3. Per-deliverable test plan
-
-| Deliverable | Test type | Notes |
-|-------------|-----------|-------|
-| Per-node Zod schemas | Unit | Default values valid; required fields reject empties; enum values match `NODE_REGISTRY` |
-| `connectionValidator` | Unit | Full port-type matrix + missing-handle defensive cases |
-| `clientHandlers.imageInput` | Unit | Mock `asset.getById`; assert `{imageUrl}` resolution paths (assetId, sourceUrl, neither-throws) |
-| `clientHandlers.assetOutput` | Unit | Mock `asset.attachToWorkspace`; assert returned `assetId` |
-| Inspector introspection helpers | Unit | `unwrap`, `getEnumOptions`, `getNumberBounds` over fixture schemas |
-| `AssetPickerModal` | Manual | Smoke pass via existing editor + new workflow inspector |
-| `NodeInspector` rendering | Manual | Per-node param edit roundtrip in dev server |
-| `ImageInput` three tabs | Manual | Each tab → smoke test the source resolution end-to-end |
-| Homepage card | Manual | Visual inspection (light + dark theme) + click → navigates to /workflows |
-
----
-
-## G. Risk register
-
-### G1. Net-new risks introduced by Phase 3
-
-| # | Risk | Mitigation | Early signal |
-|---|------|------------|--------------|
-| R-3.1 | **Zod v4 introspection breaks for an edge case** (e.g. `.refine` wrappers, `z.coerce.number()`, `z.preprocess`). Our renderer assumes a small set of `def.type` values; a future schema using `pipe`/`transform` would not render. | Document supported types explicitly. The renderer's `default` branch shows a "Unsupported field type: X" warning rather than crashing. Unit tests cover the supported set explicitly. | Console warning fires in dev; QA notices empty inspector field. |
-| R-3.2 | **`AssetPickerModal` extract regresses banner editor flow** (lost canvas-store mutation, broken delete/export). | Migration is a single call site; manual smoke checklist before declaring Wave 1 done (open banner editor → select layer → open library → add to canvas → replace src → delete → export). Keep delete/export inside the modal to minimise diff. | Banner editor test feedback in dev session. |
-| R-3.3 | **Inspector re-render thrash on text typing.** Every keystroke updates Zustand → BaseNode subtree re-renders → input cursor lags. | Inspector keeps invalid drafts local; only valid changes flow to store. Wrap `BaseNode` in `React.memo`. If still slow, use `useDeferredValue` on text inputs. | Visible cursor lag in dev when typing fast in `assetOutput.name`. |
-| R-3.4 | **No `Asset.workspaceId`-only support today** — all asset creation procedures require `projectId`. The new `attachToWorkspace` mutation needs `Asset.projectId` to be nullable in Prisma schema. | Wave 1 task: read `prisma/schema.prisma` Asset model. If non-nullable, schema migration required (`npx prisma migrate dev --name asset-projectid-nullable`). | Discovered at the moment the planner reads the schema file. |
-| R-3.5 | **Upload-mode flow may not produce a library-visible asset** for workflow-uploaded files (no projectId). User expectation might differ. | Document: uploaded files via the workflow `ImageInput.upload` tab are S3-persistent but won't show in the workspace library. To get library visibility, upload via the canvas editor first, then pick from "Из библиотеки". Add an inline help tooltip in the upload tab. | User feedback during D-15 manual test. |
-| R-3.6 | **Presign CORS kill switch (`presignDisabled` in `imageUpload.ts:25`)** could fire silently in dev if S3 CORS isn't configured. The fallback `/api/upload` legacy path still works but hits the server. | Document in plan. If CORS errors appear in console during dev, configure the bucket — but the code-path is resilient. | Console error `[imageUpload] Direct-to-S3 upload disabled for this session …`. |
-| R-3.7 | **Pink gradient contrast may fail WCAG AA** for the icon over the light pink background (`#FDF2F8` → text-pink-600 `#DB2777`). | Run a contrast check during dev — `.cursor/rules/design-system-contrast.mdc` requires AA. If failing, switch icon to `text-pink-700` (`#BE185D`) on light. | Lighthouse / contrastometer report after Wave 4. |
-| R-3.8 | **`grid-cols-4` → `grid-cols-5` change** on the homepage may push the cards too narrow on medium-width screens. | Use responsive `grid-cols-2 md:grid-cols-3 lg:grid-cols-5` instead of bare `grid-cols-5`. | Manual visual check at viewport widths 768, 1024, 1280, 1440. |
-| R-3.9 | **The CONTEXT.md "provisionally yes" for `NewProjectModal` card** is wrong (Section E3 finding). Adding it would create a non-functional click target. | Skip the modal modification entirely. Document in Wave 4 deliverables: "do NOT modify NewProjectModal — its data shape is unrelated to the homepage cards array." | Already discovered during research; planner should not retry. |
-| R-3.10 | **xyflow's default invalid-connection styling** may not be obvious enough at our colour palette (the default red is fairly subtle). | Acceptable for v1.0 per D-18 ("xyflow's default `isValidConnection` UX is industry-standard"). If user testing flags it, post-v1.0 polish. | Manual UX review after Wave 1. |
-
----
-
-## Standard Stack (additions for Phase 3)
-
-### Already available — no installs
-
-| Library | Version | Purpose | Why standard |
-|---------|---------|---------|--------------|
-| `@xyflow/react` | `^12.10.2` | Canvas + `isValidConnection` prop | Phase 2 dep (`package.json:40`) |
-| `zod` | `^4.3.6` | Per-node param schemas + introspection | Already in use (`package.json:58`) |
-| `lucide-react` | `^0.563.0` | `Workflow` icon for D-19 card | Already in use (`package.json:48`) |
-| `@radix-ui/react-tabs` | `^1.1.13` | Three-tab UI for `ImageInput` source | Already in use (`package.json:31`) |
-| `vitest` | `^4.1.4` | Unit tests for validator + handlers + helpers | Already in use (`package.json:75`) |
-
-### Not installed, NOT recommended
-
-- ❌ `react-hook-form` + `@hookform/resolvers/zod` — explicitly rejected by D-14.
-- ❌ `@autoform/zod`, `@auto-form/zod` — unproven Zod v4 compatibility.
-- ❌ `jsdom` / `happy-dom` / `@testing-library/react` — Phase 2 explicitly avoided these (`02-SUMMARY.md:117-122`); not adding them in Phase 3.
-
----
-
-## Architecture Patterns
-
-### System architecture diagram
-
-```
-                                  ┌──────────────────────────────┐
-   ┌─────────────────┐            │   /workflows/[id] page       │
-   │ NODE_REGISTRY   │            │  (next/dynamic ssr:false)    │
-   │ types.ts        │◀──reads───┤                              │
-   │                 │            │  ┌─────────────────────────┐ │
-   │ + perNodeParams │◀──reads───┤  │  WorkflowEditor          │ │
-   │   Zod schemas   │            │  │  (ReactFlowProvider)     │ │
-   │ (NEW — graphSchema.ts        │  │                          │ │
-   └─────────────────┘            │  │  ┌──────┐ ┌─────────┐    │ │
-                                  │  │  │ React│ │ NodeInsp│◀───┼─┼──── selectedNode
-                                  │  │  │ Flow │ │ ector   │    │ │     (from Zustand)
-                                  │  │  │      │ │ (NEW)   │    │ │
-                                  │  │  └──┬───┘ └────┬────┘    │ │
-                                  │  │     │          │          │ │
-                                  │  │     ▼          ▼          │ │
-                                  │  │ isValidConnection   updateNodeParams
-                                  │  │  (NEW pure fn)         │  │
-                                  │  └─────────────────────────┘  │
-                                  └──────────────┬───────────────┘
-                                                 │
-                                ┌────────────────┼────────────────────┐
-                                ▼                ▼                    ▼
-                       ┌──────────────┐  ┌──────────────┐    ┌──────────────────┐
-                       │ useWorkflow  │  │ AssetPicker  │    │ clientHandlers   │
-                       │ Store        │  │ Modal (NEW   │    │ (NEW)            │
-                       │ (Zustand)    │  │ extracted    │    │ - imageInput()   │
-                       │              │  │ from Asset   │    │ - assetOutput()  │
-                       │ + dirty flag │  │ LibraryModal)│    │                  │
-                       └──────┬───────┘  └──────┬───────┘    └─────┬────────────┘
-                              │                 │                  │
-                              ▼                 ▼                  ▼
-                       useWorkflowAuto     trpc.asset.list,   trpc.asset.getById,
-                       Save (debounce      listByWorkspace    trpc.asset.attachToWorkspace
-                       2s) → trpc                              (NEW server proc)
-                       .workflow                                       │
-                       .saveGraph                                      ▼
-                                                              prisma.asset.create
-                                                              workspaceId, projectId: null
-
-(Phase 4 future addition: executor.ts dispatches per-node;
- client handlers above already shipped & tested.)
-```
-
-### Recommended file additions / moves
-
-```
-platform-app/src/
-├── components/
-│   ├── assets/                          # NEW directory
-│   │   └── AssetPickerModal.tsx         # NEW — extracted from editor/AssetLibraryModal
-│   ├── editor/
-│   │   └── AssetLibraryModal.tsx        # ⚠ DELETED (consumer migrated to AssetPickerModal)
-│   └── workflows/
-│       ├── NodeInspector.tsx            # NEW — selected-node form renderer
-│       ├── inspector/                   # NEW directory
-│       │   ├── renderField.tsx          # NEW — switch over def.type
-│       │   ├── introspection.ts         # NEW — unwrap/getEnumOptions/getNumberBounds helpers
-│       │   ├── ImageInputInspector.tsx  # NEW — three-tab UI for imageInput node
-│       │   └── __tests__/
-│       │       └── introspection.test.ts # NEW — pure-helper unit tests
-│       └── WorkflowEditor.tsx           # MODIFIED — pass isValidConnection prop, mount NodeInspector
-├── lib/
-│   └── workflow/
-│       ├── connectionValidator.ts       # NEW — pure isValidConnection function
-│       ├── perNodeSchemas.ts            # NEW — Zod schemas keyed by WorkflowNodeType
-│       ├── graphSchema.ts               # MODIFIED — use perNodeSchemas inside workflowNodeSchema
-│       └── __tests__/
-│           ├── connectionValidator.test.ts # NEW
-│           └── perNodeSchemas.test.ts      # NEW
-├── store/
-│   └── workflow/
-│       ├── clientHandlers.ts            # NEW — imageInput + assetOutput handlers
-│       ├── useWorkflowStore.ts          # MODIFIED — add `selectedNodeId` slice + setter
-│       └── __tests__/
-│           └── clientHandlers.test.ts   # NEW
-├── server/
-│   ├── routers/
-│   │   └── asset.ts                     # MODIFIED — add attachToWorkspace mutation
-│   └── workflow/
-│       └── types.ts                     # MODIFIED — enrich defaultParams per node
-└── app/
-    ├── page.tsx                         # MODIFIED — add 5th card + grid-cols update
-    ├── editor/[id]/page.tsx             # MODIFIED — migrate AssetLibraryModal → AssetPickerModal
-    └── globals.css                      # MODIFIED — add .gradient-card-pink (light + dark)
-```
-
-### Pattern 1: Auto-rendering form from Zod schema (renderField switch)
+Pattern from `platform-app/src/store/workflow/__tests__/graphSlice.test.ts:7–17`:
 
 ```typescript
-// src/components/workflows/inspector/renderField.tsx
-import { z } from "zod";
-import { unwrap, getEnumOptions, getNumberBounds } from "./introspection";
-
-interface RenderFieldArgs {
-  fieldName: string;
-  schema: z.ZodType;
-  value: unknown;
-  onChange: (next: unknown) => void;
-  error?: string;
-}
-
-export function renderField({ fieldName, schema, value, onChange, error }: RenderFieldArgs) {
-  const inner = unwrap(schema);
-  const type = inner._zod.def.type;
-
-  switch (type) {
-    case "string":
-      return (
-        <input
-          type="text"
-          value={(value as string) ?? ""}
-          onChange={(e) => onChange(e.target.value)}
-          className="w-full rounded-md border border-neutral-300 px-2 py-1.5 text-sm dark:border-neutral-700 dark:bg-neutral-900"
-        />
-      );
-    case "number": {
-      const { min, max } = getNumberBounds(inner as z.ZodNumber);
-      const isSlider = min != null && max != null && (max - min) <= 100;
-      return isSlider ? (
-        <input type="range" min={min} max={max} step={(max - min) / 100} value={Number(value ?? min)} onChange={(e) => onChange(Number(e.target.value))} className="w-full" />
-      ) : (
-        <input type="number" min={min} max={max} value={Number(value ?? min ?? 0)} onChange={(e) => onChange(Number(e.target.value))} className="w-full rounded-md border border-neutral-300 px-2 py-1.5 text-sm dark:border-neutral-700 dark:bg-neutral-900" />
-      );
-    }
-    case "enum": {
-      const options = getEnumOptions(inner as z.ZodEnum);
-      return (
-        <select value={(value as string) ?? options[0]} onChange={(e) => onChange(e.target.value)} className="w-full rounded-md border border-neutral-300 px-2 py-1.5 text-sm dark:border-neutral-700 dark:bg-neutral-900">
-          {options.map((opt) => <option key={opt} value={opt}>{opt}</option>)}
-        </select>
-      );
-    }
-    case "boolean":
-      return <input type="checkbox" checked={Boolean(value)} onChange={(e) => onChange(e.target.checked)} />;
-    default:
-      console.warn(`[NodeInspector] Unsupported Zod type: ${type}`);
-      return <p className="text-xs text-amber-600">Unsupported field: {type}</p>;
-  }
-  // error display handled by caller
+function resetStore() {
+    useWorkflowStore.setState({
+        nodes: [],
+        edges: [],
+        name: "",
+        description: "",
+        dirty: false,
+        viewport: { x: 0, y: 0, zoom: 1 },
+        runState: {},
+    });
 }
 ```
 
-### Pattern 2: Connection validator (verbatim from CONTEXT.md, with defensive nulls)
+Each test calls `resetStore()` in `beforeEach`. Direct `getState()` + assertion calls, no React rendering. Phase 3 should reuse this exact pattern for any new state-shape tests (none expected — the store API doesn't change, only consumers).
 
-```typescript
-// src/lib/workflow/connectionValidator.ts
-import { NODE_REGISTRY } from "@/server/workflow/types";
-import type { WorkflowNode } from "@/server/workflow/types";
-import type { Connection } from "@xyflow/react";
+### F2. Component test feasibility
 
-export function isValidConnection(connection: Connection, nodes: WorkflowNode[]): boolean {
-  // Defensive: xyflow may pass null handles when a node has a single implicit handle.
-  // We always set explicit ids, so null here means a developer mistake or a misconfigured node.
-  if (!connection.source || !connection.target || !connection.sourceHandle || !connection.targetHandle) {
-    return false;
-  }
+`package.json` confirms (verified 2026-04-24):
+- `vitest@^4.1.4` ✅
+- `@vitest/coverage-v8@^4.1.4` ✅
+- `@testing-library/react` ❌ NOT installed
+- `jsdom` / `happy-dom` ❌ NOT installed
 
-  const source = nodes.find((n) => n.id === connection.source);
-  const target = nodes.find((n) => n.id === connection.target);
-  if (!source || !target) return false;
+**Component-level tests of the inspector / picker / upload UI are NOT feasible in Phase 3 without adding `@testing-library/react` + `jsdom`.** This matches Phase 2's note in `02-SUMMARY.md:117–122`. Adding these dependencies is a meaningful detour and out of D-14..D-20 scope.
 
-  const sourcePort = NODE_REGISTRY[source.type].outputs.find((p) => p.id === connection.sourceHandle);
-  const targetPort = NODE_REGISTRY[target.type].inputs.find((p) => p.id === connection.targetHandle);
-  if (!sourcePort || !targetPort) return false;
+### F3. Per-deliverable test plan recommendation
 
-  if (sourcePort.type === "any" || targetPort.type === "any") return true;
-  return sourcePort.type === targetPort.type;
-}
-```
-
-### Pattern 3: Client handler contract (D-17)
-
-```typescript
-// src/store/workflow/clientHandlers.ts
-import type { TRPCClient } from "@/lib/trpc"; // adjust to actual export
-
-export interface ClientHandlerCtx {
-  workspaceId: string;
-  trpc: TRPCClient;
-}
-
-export async function imageInput(
-  { params }: { params: { source: "asset" | "url" | "upload"; assetId?: string; sourceUrl?: string }; ctx: ClientHandlerCtx },
-): Promise<{ imageUrl: string }> {
-  if (params.assetId) {
-    const asset = await ctx.trpc.asset.getById.query({ id: params.assetId });
-    return { imageUrl: asset.url };
-  }
-  if (params.sourceUrl) return { imageUrl: params.sourceUrl };
-  throw new Error("ImageInput requires either assetId or sourceUrl");
-}
-
-export async function assetOutput(
-  { inputs, params, ctx }: {
-    inputs: { "image-in": { imageUrl: string } };
-    params: { name: string; folder?: string };
-    ctx: ClientHandlerCtx;
-  },
-): Promise<{ assetId: string }> {
-  const { id } = await ctx.trpc.asset.attachToWorkspace.mutate({
-    workspaceId: ctx.workspaceId,
-    url: inputs["image-in"].imageUrl,
-    filename: params.name,
-    source: "workflow-output",
-  });
-  return { assetId: id };
-}
-```
-
-### Anti-patterns to avoid
-
-- **❌ Using `(schema as any)._def.typeName`** (Zod v3 idiom) — Zod v4 dropped this. Always use `_zod.def.type`.
-- **❌ Calling `updateNodeParams` on every keystroke even when invalid** — leaks bad state to canvas + auto-save. Buffer in local state, only push valid updates.
-- **❌ Adding `useDeferredValue` proactively** — measure first; with 4 nodes the canvas re-render is cheap.
-- **❌ Reusing the canvas-coupled `AssetLibraryModal` directly** — the `useCanvasStore` import (`AssetLibraryModal.tsx:12`) will break compilation in any non-canvas context.
-- **❌ Passing `projectId="tmp"` to `asset.saveGeneratedImage` from the workflow upload flow** — that procedure requires a real project for ACL; use the new `attachToWorkspace` mutation instead.
+| Deliverable | Test type | Justification |
+|-------------|-----------|---------------|
+| `connectionValidator.ts` | Unit (Vitest, full port matrix) | Pure function, easy to verify, REQ-11 critical |
+| `clientHandlers.ts` (`imageInput`, `assetOutput`) | Unit (Vitest, mocked tRPC) | Pure logic + mocks; D-17 explicitly mandates "full unit-test coverage" |
+| Per-node Zod schemas | Unit (Vitest, `safeParse` matrix) | Easy to test, catches schema drift |
+| Zod-introspection helpers (`detectKind`, `getNumberRange`, `getEnumOptions`) | Unit (Vitest) | Pure functions, easy to verify, prevent regressions when Zod patches |
+| `NodeInspector.tsx` rendering | **Manual** | No `@testing-library/react`; manual smoke (drop each node type, verify form renders) |
+| `AssetPickerModal.tsx` | **Manual** | Same constraint |
+| ImageInput inspector with library/url/upload tabs | **Manual** | Same constraint; verify in dev server |
+| `isValidConnection` integration with xyflow | **Manual** | Drag invalid edge, verify red stroke + no edge |
+| Homepage card click → `/workflows` | **Manual** | Trivial; verify in dev server |
+| Russian copy correctness | **Manual** | Native-speaker eyeball pass |
 
 ---
 
-## Don't Hand-Roll
-
-| Problem | Don't build | Use instead | Why |
-|---------|-------------|-------------|-----|
-| Form-from-schema generation | A general Zod→form library | A bespoke 4-case switch on `def.type` (D-14) | Only 4 primitive types; v1.0 doesn't need extensibility |
-| Edge validation visualisation | Custom edge-color logic | xyflow's built-in `connectionStatus` data attribute → CSS | Industry-standard UX (D-18); custom theming can come later |
-| Connection-drag preview line | Custom drag handlers | xyflow's built-in `<ConnectionLine>` | Comes free with `<ReactFlow>` |
-| Modal primitives | Custom dialog | Existing `src/components/ui/Modal.tsx` (Radix-based) | Already used by `NewProjectModal` |
-| Tab UI | Custom radio-button group | `@radix-ui/react-tabs` (already a dep) | Accessible, keyboard-navigable |
-| Image upload pipeline | New presign/PUT logic | Existing `src/utils/imageUpload.ts:86-130` (`uploadImageToS3`) | Has CORS kill switch + fallback already |
-| File compression | sharp/Pica integration | Existing `compressImageFile()` (`imageUpload.ts:343-383`) | Returns webp, ≤2000 px max dim |
-| Asset deduplication | Manual cache | Existing `attachUrlToProject` idempotency (`asset.ts:248-253`) — add same pattern to new `attachToWorkspace` | Proven idempotency pattern |
-| Drag-drop file zones | A library | Native `onDragOver` + `onDrop` + `<input type="file">` (mirrors `WorkflowEditor.tsx:117-135` palette drag pattern) | <30 LOC; no dep |
-
----
-
-## Common Pitfalls
-
-### Pitfall 1: Stale draft state when switching selected node
-
-**What goes wrong:** User selects node A, edits a field, switches to node B without committing → the inspector shows node A's draft on top of node B's params.
-
-**How to avoid:** Key the inspector component by selected node id (`<NodeInspector key={selectedNodeId} ... />`). React unmounts/remounts on key change, resetting all `useState` cleanly.
-
-### Pitfall 2: Unbounded slider for unbounded number
-
-**What goes wrong:** A future node defines `z.number()` (no `.min`/`.max`). The renderer's `getNumberBounds` returns `{ min: undefined, max: undefined }`; rendering a `<input type="range">` requires concrete bounds.
-
-**How to avoid:** Render slider **only if** both bounds are defined. Otherwise fall back to `<input type="number">` (browsers handle unbounded number input fine).
-
-### Pitfall 3: `default()` masking required-ness
-
-**What goes wrong:** A schema like `z.string().default("")` looks "required" because the inner `def.type === "string"`, but actually accepts `undefined` (substitutes `""`). The inspector would show a red asterisk for a field that doesn't need it.
-
-**How to avoid:** Treat `default` and `optional` as the same un-required wrapper (per Section B4). The asterisk reflects whether the schema would reject `undefined`.
-
-### Pitfall 4: SSRF guard rejection on data URLs
-
-**What goes wrong:** User pastes `data:image/png;base64,…` into the URL tab. Phase 4 executor will pass this to `safeFetch` which **may** reject it depending on policy.
-
-**How to avoid:** Verify the SSRF guard's data: URL handling. Per `REQUIREMENTS.md REQ-23`: "data-URL → success (для drag-drop base64)" — confirmed allowed. Phase 3 only stores the URL; Phase 4 invokes `safeFetch`. Document for the executor author that data: URLs are expected.
-
-### Pitfall 5: Zod v4 enum ordering not guaranteed cross-runtime
-
-**What goes wrong:** `Object.values(schema._zod.def.entries)` relies on JS object insertion order (guaranteed since ES2015 for string keys). Numeric keys order before string keys, which would scramble dropdown options.
-
-**How to avoid:** Per Zod docs, `z.enum([...])` always uses string entries → safe. Don't pass numeric-string keys (`z.enum(["1","2","3"])`) — those would sort numerically. Our four schemas only use natural-language string enums; safe.
-
-### Pitfall 6: `crypto.randomUUID` unavailability in tests
-
-**What goes wrong:** Phase 2's `makeId` (`createGraphSlice.ts:11-15`) deliberately avoids `crypto.randomUUID()` for jsdom/Node compat. New code should follow suit if generating ids client-side.
-
-**How to avoid:** Reuse the existing `makeId` pattern or import from a shared util if extracted later. The `attachToWorkspace` mutation generates filenames server-side via `Date.now()` (matches existing `saveGeneratedImage`/`attachUrlToProject` patterns).
-
-### Pitfall 7: `selectedNodeId` not yet in store
-
-**What goes wrong:** Phase 2 store doesn't expose `selectedNodeId`. The inspector needs to know which node is selected to render. Adding selection state requires a small slice extension.
-
-**How to avoid:** Add `selectedNodeId: string | null` + `setSelectedNodeId(id)` to the graph slice (or a new `selectionSlice`). xyflow's `onSelectionChange` callback on `<ReactFlow>` provides this; mirror to the store. Keep the existing `selected` boolean on `NodeProps` (xyflow-managed) for visual styling — the store mirror is purely for inspector mounting.
-
----
-
-## Code Examples
-
-### Example: Per-node Zod schemas (D-14 minimum surface)
-
-```typescript
-// src/lib/workflow/perNodeSchemas.ts
-import { z } from "zod";
-import type { WorkflowNodeType } from "@/server/workflow/types";
-
-export const imageInputParamsSchema = z.object({
-  source: z.enum(["asset", "url", "upload"]).default("asset"),
-  assetId: z.string().optional(),
-  sourceUrl: z.string().url().optional(),
-}).refine(
-  (d) => Boolean(d.assetId) || Boolean(d.sourceUrl),
-  { message: "Выберите изображение из библиотеки, по URL или загрузите файл" },
-);
-
-export const removeBackgroundParamsSchema = z.object({
-  model: z.enum(["fal-bria", "replicate-bria-cutout", "replicate-rembg"]).default("fal-bria"),
-});
-
-export const addReflectionParamsSchema = z.object({
-  style: z.enum(["subtle", "strong", "mirror"]).default("subtle"),
-  intensity: z.number().min(0).max(1).default(0.3),
-  prompt: z.string().max(500).optional(),
-});
-
-export const assetOutputParamsSchema = z.object({
-  name: z.string().min(1).max(120).default("Workflow output"),
-  folder: z.string().optional(),
-});
-
-export const PER_NODE_PARAM_SCHEMAS: Record<WorkflowNodeType, z.ZodType<Record<string, unknown>>> = {
-  imageInput: imageInputParamsSchema,
-  removeBackground: removeBackgroundParamsSchema,
-  addReflection: addReflectionParamsSchema,
-  assetOutput: assetOutputParamsSchema,
-};
-```
-
-### Example: NodeInspector skeleton
-
-```typescript
-// src/components/workflows/NodeInspector.tsx
-"use client";
-import { useMemo, useState, useEffect } from "react";
-import { z } from "zod";
-import { useWorkflowStore } from "@/store/workflow/useWorkflowStore";
-import { NODE_REGISTRY } from "@/server/workflow/types";
-import { PER_NODE_PARAM_SCHEMAS } from "@/lib/workflow/perNodeSchemas";
-import { renderField } from "./inspector/renderField";
-
-export function NodeInspector() {
-  const selectedNodeId = useWorkflowStore((s) => s.selectedNodeId);
-  const node = useWorkflowStore((s) => s.nodes.find((n) => n.id === selectedNodeId) ?? null);
-  const updateNodeParams = useWorkflowStore((s) => s.updateNodeParams);
-
-  if (!selectedNodeId || !node) {
-    return (
-      <aside className="w-80 shrink-0 border-l border-neutral-200 bg-neutral-50 p-4 text-sm text-neutral-500 dark:border-neutral-800 dark:bg-neutral-950">
-        Выберите узел, чтобы редактировать параметры.
-      </aside>
-    );
-  }
-
-  const definition = NODE_REGISTRY[node.type];
-  const schema = PER_NODE_PARAM_SCHEMAS[node.type] as z.ZodObject<z.ZodRawShape>;
-  return <NodeInspectorBody key={selectedNodeId} node={node} definition={definition} schema={schema} updateNodeParams={updateNodeParams} />;
-}
-
-function NodeInspectorBody({ node, definition, schema, updateNodeParams }) {
-  const [draft, setDraft] = useState(node.data.params);
-  const result = schema.safeParse(draft);
-  const errorsByPath: Record<string, string> = {};
-  const objectLevelErrors: string[] = [];
-  if (!result.success) {
-    for (const issue of result.error.issues) {
-      if (issue.path.length === 0) objectLevelErrors.push(issue.message);
-      else errorsByPath[String(issue.path[0])] = issue.message;
-    }
-  }
-  // Push valid changes to store; invalid drafts stay local.
-  useEffect(() => { if (result.success) updateNodeParams(node.id, result.data); /* eslint-disable-line react-hooks/exhaustive-deps */ }, [JSON.stringify(draft)]);
-
-  const fields = Object.entries(schema.shape);
-  return (
-    <aside className="w-80 shrink-0 overflow-y-auto border-l border-neutral-200 bg-neutral-50 p-4 dark:border-neutral-800 dark:bg-neutral-950">
-      <h3 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">{definition.displayName}</h3>
-      <p className="mb-3 text-xs text-neutral-500">{definition.description}</p>
-      {objectLevelErrors.length > 0 && (
-        <div className="mb-3 rounded-md border border-red-300 bg-red-50 p-2 text-xs text-red-700 dark:bg-red-950/30 dark:text-red-300">
-          {objectLevelErrors.map((e, i) => <p key={i}>{e}</p>)}
-        </div>
-      )}
-      <div className="space-y-3">
-        {fields.map(([name, fieldSchema]) => (
-          <div key={name}>
-            <label className="mb-1 block text-xs font-medium text-neutral-700 dark:text-neutral-300">{name}</label>
-            {renderField({
-              fieldName: name,
-              schema: fieldSchema as z.ZodType,
-              value: draft[name],
-              onChange: (v) => setDraft({ ...draft, [name]: v }),
-              error: errorsByPath[name],
-            })}
-            {errorsByPath[name] && <p className="mt-1 text-xs text-red-500">{errorsByPath[name]}</p>}
-          </div>
-        ))}
-      </div>
-      <button
-        onClick={() => { setDraft(definition.defaultParams); updateNodeParams(node.id, definition.defaultParams); }}
-        className="mt-4 text-xs text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300"
-      >
-        Сбросить параметры
-      </button>
-    </aside>
-  );
-}
-```
-
-(The above is a sketch — planner refines, but the **lifecycle (key by selectedNodeId, local draft, valid-only push)** is the contract.)
-
----
-
-## State of the Art
-
-| Old (Zod v3) | Current (Zod v4.3.6) | When changed | Impact |
-|--------------|---------------------|--------------|--------|
-| `schema._def.typeName === ZodFirstPartyTypeKind.ZodString` | `schema._zod.def.type === "string"` | Zod 4.0 | All inspector introspection differs from Zod v3 tutorials |
-| `schema._def.checks.find(c => c.kind === "min")?.value` | `schema._zod.bag.minimum` | Zod 4.0 | Number bound extraction simpler in v4 |
-| `schema.options` on `ZodEnum` | `schema._zod.def.entries` (or public `schema.enum`) | Zod 4.0 | Enum option extraction differs |
-| `schema._def.innerType` for `optional` | `schema._zod.def.innerType` (same shape, new namespace) | Zod 4.0 | Cosmetic |
-
-**Deprecated/outdated patterns to avoid:**
-- ❌ `ZodFirstPartyTypeKind` enum — gone in Zod v4. Use string discriminator.
-- ❌ `(schema as any)._def.typeName` — gone in Zod v4.
-- ❌ `schema.options` on ZodEnum — replaced by `def.entries` in v4 internals (the public `.enum` property still works).
-
----
-
-## Validation Architecture
-
-### Test framework
-
-| Property | Value |
-|----------|-------|
-| Framework | `vitest@^4.1.4` |
-| Config file | None at project root visible — vitest default config used. Confirmed by Phase 2 test files importing only `vitest`. |
-| Quick run command | `npx vitest run src/lib/workflow src/store/workflow` |
-| Full suite command | `npm test` (runs `vitest run`) |
-
-### Phase requirements → test map
-
-| Req ID | Behavior | Test type | Automated command | File exists? |
-|--------|----------|-----------|-------------------|--------------|
-| REQ-11 | `isValidConnection` blocks incompatible drops | unit | `npx vitest run src/lib/workflow/__tests__/connectionValidator.test.ts` | ❌ Wave 0 — file to create |
-| REQ-11 | Visual feedback during drag | manual | dev server smoke | n/a |
-| REQ-12 | Form fields render per Zod type | unit (helpers) + manual (rendering) | `npx vitest run src/components/workflows/inspector/__tests__/introspection.test.ts` + manual smoke | ❌ Wave 0 |
-| REQ-12 | Invalid input shows error and is not saved | unit (validate-only-push logic) + manual | covered by introspection tests + manual | ❌ Wave 0 |
-| REQ-13 (full) | All 4 nodes have Russian display names + descriptions | unit (NODE_REGISTRY shape) | `npx vitest run src/server/workflow/__tests__/nodeRegistry.test.ts` (NEW) | ❌ Wave 0 |
-| REQ-14 | Russian copy across NODE_REGISTRY + components | code review + manual | n/a | n/a |
-| D-17 contract | clientHandlers resolve correctly | unit | `npx vitest run src/store/workflow/__tests__/clientHandlers.test.ts` | ❌ Wave 0 |
-
-### Sampling rate
-
-- **Per task commit:** `npx vitest run` (entire test suite — currently ~113 tests; Phase 3 adds ~20 more, still under 5 s).
-- **Per wave merge:** `npx tsc --noEmit && npx vitest run && next build` (matches Phase 2 verification gates).
-- **Phase gate:** Full suite green + manual smoke checklist.
-
-### Wave 0 gaps
-
-- [ ] `src/lib/workflow/__tests__/connectionValidator.test.ts` — covers REQ-11
-- [ ] `src/lib/workflow/__tests__/perNodeSchemas.test.ts` — covers per-node schema integrity
-- [ ] `src/components/workflows/inspector/__tests__/introspection.test.ts` — covers Zod helpers
-- [ ] `src/store/workflow/__tests__/clientHandlers.test.ts` — covers D-17 contract
-- [ ] (Optional) `src/server/workflow/__tests__/nodeRegistry.test.ts` — sanity check display names + execute kinds
-
-No framework install needed — vitest already available.
-
----
-
-## Security Domain
-
-### Applicable ASVS categories
-
-| ASVS Category | Applies | Standard control |
-|---------------|---------|-----------------|
-| V2 Authentication | yes | Existing `auth()` session check on all server routes; no Phase 3 changes |
-| V3 Session Management | no | No new session surface |
-| V4 Access Control | yes | New `attachToWorkspace` mutation MUST call `assertWorkspaceAccess(ctx, workspaceId, "CREATOR")` (matches existing patterns in `asset.ts:184` etc.) |
-| V5 Input Validation | yes | All inspector inputs validated through per-node Zod schemas; tRPC input schemas validate server-side |
-| V6 Cryptography | no | No new crypto |
-
-### Known threat patterns for this stack
-
-| Pattern | STRIDE | Standard mitigation |
-|---------|--------|---------------------|
-| Cross-workspace asset write via spoofed `workspaceId` | Tampering | `assertWorkspaceAccess` check on `attachToWorkspace` (already required); REQ-24 enforced |
-| Malicious URL paste in ImageInput | Tampering / SSRF | Phase 3 only stores the URL; SSRF check happens in Phase 4 executor's `safeFetch` (existing helper). Do NOT fetch URLs in Phase 3. |
-| Oversized file upload (DoS) | DoS | Existing `compressImageFile` caps at 2000 px; presigned URL has no server-side size check at the moment — relies on browser-side compression. Acceptable for v1.0; document as known. |
-| Inspector input XSS | Spoofing | All renders use React (auto-escapes); no `dangerouslySetInnerHTML` planned |
-| Open redirect via D-19 router.push | Tampering | Hard-coded `"/workflows"` route; no user input in nav target — safe |
-
----
-
-## Environment Availability
-
-| Dependency | Required by | Available | Version | Fallback |
-|------------|-------------|-----------|---------|----------|
-| Node.js | Build & test | ✓ | (project std) | — |
-| `@xyflow/react` | Editor | ✓ | 12.10.2 | — |
-| `zod` | Schema introspection | ✓ | 4.3.6 | — |
-| Yandex S3 + bucket CORS | Upload tab | ⚠ partial | — | Legacy `/api/upload` proxy fallback already wired (`imageUpload.ts:25-39`) |
-| `lucide-react` `Workflow` icon | Card | ✓ | 0.563.0 | — |
-| `prisma` (for `attachToWorkspace` mutation) | Server | ✓ | 6.19.2 | If `Asset.projectId` is non-nullable, requires migration (R-3.4) |
-
-**Missing dependencies with no fallback:** none.
-
-**Missing dependencies with fallback:** S3 CORS may need bucket-side configuration in dev; existing fallback to legacy upload proxy means features still work, just with a server hop (acceptable for dev).
-
----
-
-## Project Constraints (from .cursor/rules/)
-
-`.cursor/rules/design-system-contrast.mdc` — must be followed for:
-- Inspector text/background contrast (WCAG AA).
-- New `.gradient-card-pink` light + dark text contrast for the icon and label.
-- Slider/input borders in dark mode must remain visible on `bg-neutral-950`.
-
-`.cursor/rules/deploy-pipeline.mdc` — read for any deployment-affecting changes (none expected; Phase 3 is application-layer only).
-
----
-
-## Sources
-
-### Primary (HIGH confidence)
-- **Project source code** (read directly):
-  - `platform-app/src/server/workflow/types.ts` (NODE_REGISTRY, ports, executor kinds)
-  - `platform-app/src/lib/workflow/graphSchema.ts` (current schema shape)
-  - `platform-app/src/store/workflow/createGraphSlice.ts` (`updateNodeParams` semantics)
-  - `platform-app/src/store/workflow/types.ts` (slice composition)
-  - `platform-app/src/hooks/workflow/useWorkflowAutoSave.ts` (debounce contract)
-  - `platform-app/src/components/workflows/WorkflowEditor.tsx` (`isValidConnection` slot)
-  - `platform-app/src/components/workflows/{NodePalette,nodes/BaseNode,nodes/index}.tsx` (visual baselines)
-  - `platform-app/src/components/editor/AssetLibraryModal.tsx` (extract source)
-  - `platform-app/src/utils/imageUpload.ts` + `src/app/api/upload{,/presign}/route.ts` (upload contract)
-  - `platform-app/src/server/routers/asset.ts` (existing asset procedures)
-  - `platform-app/src/app/page.tsx` (homepage cards)
-  - `platform-app/src/components/dashboard/NewProjectModal.tsx` (cards-array contradiction)
-  - `platform-app/src/app/globals.css` (gradient class pattern)
-  - `platform-app/package.json` (dep manifest — confirmed no `@testing-library/react`/jsdom)
-- **Vendored type definitions** (read directly):
-  - `platform-app/node_modules/zod/v4/core/schemas.d.ts` — Zod v4 `def.type` discriminator + `bag.minimum`/`maximum`
-  - `platform-app/node_modules/zod/v4/classic/schemas.d.ts` — public `.def`/`_def` aliases + `.min()`/`.max()` signatures
-  - `platform-app/node_modules/@xyflow/react/dist/esm/types/{component-props,general,store,edges}.d.ts` — `IsValidConnection` signature + invocation timing
-  - `platform-app/node_modules/@xyflow/system/dist/esm/types/general.d.ts` — base `IsValidConnection` type
-
-### Secondary (MEDIUM confidence)
-- Zod v4 official docs (https://v4.zod.dev/) — confirmed `_zod.def.type` access pattern via the JSON Schema override example; confirmed `.enum`/`.options` semantics. Cross-checked against vendored types.
-- xyflow v12 docs implicit via the inline JSDoc on the vendored `.d.ts` files (HIGH confidence — these ARE the official typings shipped with the package).
-
-### Tertiary (LOW confidence — flagged for validation)
-- None. All claims grounded in either local source or vendored types.
-
----
-
-## Assumptions Log
-
-| # | Claim | Section | Risk if wrong |
-|---|-------|---------|---------------|
-| A1 | `Asset.projectId` is nullable in `prisma/schema.prisma` (required for the `attachToWorkspace` mutation to set `projectId: null`) | C3, R-3.4 | Wave 1 needs a Prisma migration, slight schedule slip |
-| A2 | Adding a workflow card to `NewProjectModal` is the wrong choice (CONTEXT says provisionally yes; Section E3 contradicts) | E3, R-3.9 | Minor scope debate with user/PM; either way takes <30 min to revisit |
-| A3 | Zod v4 dropdown enum ordering will always preserve insertion order for our string-key enums | Pitfall 5 | Dropdowns might render in unexpected order; quick fix once spotted |
-| A4 | Inspector re-render performance is acceptable without memoisation at 4 nodes | B7, R-3.3 | Need to add `React.memo` post-hoc if measured slow |
-| A5 | Manual smoke testing is sufficient for component-level UI (no jsdom install in Phase 3) | F2 | Bugs slip through; mitigated by 4-node small surface area |
-
----
-
-## Open Questions
-
-1. **Should the `Asset` table store `workspaceId`-only rows (projectId null) or do we need a parallel `WorkspaceAsset` model?**
-   - What we know: existing `Asset` has both `workspaceId` and `projectId` columns; `WorkspaceAssetGrid` queries `listByWorkspace` which uses `workspaceId` filter alone (server-side accepts it).
-   - What's unclear: whether `projectId` is nullable. Need to read `prisma/schema.prisma:311` to confirm.
-   - Recommendation: read schema as the FIRST task of Wave 1; if non-nullable, write a small migration before the new mutation. Either way, no architectural change.
-
-2. **Should the upload tab in `ImageInput` create a workspace-scoped Asset row, or just persist the S3 URL into `params.sourceUrl`?**
-   - What we know: persisting the URL is simpler; creating an Asset row gives library visibility.
-   - What's unclear: user expectation. Current recommendation in C2 is "persist URL only, document the limitation."
-   - Recommendation: ship the simpler path in v1.0; if users complain in feedback, add the `attachToWorkspace` call from the upload success handler.
-
-3. **Should `selectedNodeId` live in a new `selectionSlice` or inside `GraphSlice`?**
-   - What we know: Phase 2's slice composition follows `canvasStore` convention.
-   - What's unclear: whether selection deserves its own slice or stays inside graph.
-   - Recommendation: extend `GraphSlice` with `selectedNodeId` for v1.0 (single field, no need for a slice); split later if `selectionSlice` grows multi-select / hover state in Phase 5+.
+## G. Risk register — net-new for Phase 3
+
+### G1. Risk: Zod v4 introspection differs from training data
+- **What goes wrong:** Inspector reads `_def.typeName` (Zod v3) instead of `_zod.def.type` (Zod v4) — types come back undefined, every field renders as "unsupported".
+- **Probability:** Medium (Zod v4 was released late 2024 / 2025; training data still leans v3).
+- **Mitigation:** Confirm with the discriminator helper in B1 immediately on first inspector commit; use `console.log(schema._zod?.def)` during development on a known-good `z.string()` to verify.
+- **Early signal:** Form renders nothing for any field; "unsupported" badge appears for everything.
+
+### G2. Risk: `AssetLibraryModal` extract triggers a chain reaction
+- **What goes wrong:** Researcher missed a consumer; renaming or refactoring breaks the canvas editor.
+- **Probability:** **Very low** — research found exactly one consumer, and the recommended path leaves it untouched (fork pattern).
+- **Mitigation:** Don't touch `AssetLibraryModal.tsx`. Create a new `AssetPickerModal.tsx`. Run `tsc --noEmit` before committing to catch any accidental import drift.
+- **Early signal:** TypeScript errors on existing canvas-editor files; visual regression in `/editor/[id]` asset library.
+
+### G3. Risk: Inspector re-render performance on rapid typing
+- **What goes wrong:** Every keystroke triggers `updateNodeParams` → re-renders all nodes via `applyNodeChanges` round-trip.
+- **Probability:** Low at v1.0 scale (4-node typical workflow).
+- **Mitigation:** None for v1.0. Selector-based subscription (`useWorkflowStore((s) => s.nodes)`) already keeps the editor canvas re-renders bounded. If observed, switch inspector to React Hook Form's uncontrolled-input pattern.
+- **Early signal:** Visible input lag when typing in a `prompt` field on a 10+ node graph.
+
+### G4. Risk: Upload flow + presign env-var mismatch in dev
+- **What goes wrong:** S3 credentials missing or CORS not configured; presign returns 500 or PUT fails. The util has a session-wide kill switch (`presignDisabled` at `imageUpload.ts:25`) that disables presign on first failure → fallback to legacy `/api/upload` path → that path also requires S3 creds.
+- **Probability:** Medium for fresh dev env; low if creds were already set up for canvas editor uploads.
+- **Mitigation:** Document required env vars in plan: `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `S3_ENDPOINT` (defaults to Yandex), `S3_BUCKET` (defaults `acp-assets`). Verify by uploading once via the existing canvas editor before working on workflow upload.
+- **Early signal:** Browser console: "Direct-to-S3 upload disabled for this session (CORS / network)" logged from `imageUpload.ts:34`.
+
+### G5. Risk: Missing `asset.createFromUrl` endpoint blocks `assetOutput` handler
+- **What goes wrong:** D-17 unit-tests can't be written until the endpoint exists.
+- **Probability:** **High** — research confirms endpoint does not exist (Section C3).
+- **Mitigation:** Add `asset.createFromUrl` as a Phase 3 server deliverable (Wave 2 alongside per-node schemas, BEFORE the `clientHandlers.ts` task). This is **NOT in CONTEXT** — flag it to the planner explicitly.
+- **Early signal:** Tests for `assetOutput` handler fail with "asset.createFromUrl is not a function" / typecheck error in `trpc.asset.createFromUrl.useMutation`.
+
+### G6. Risk: Selection state not flowing to the inspector
+- **What goes wrong:** The current store doesn't track `selected` state — `applyNodeChanges` produces it but `onNodesChange` strips it out via the `toRFNode` round-trip (`WorkflowEditor.tsx:73–85`).
+- **Probability:** **High** — verified by reading the store + editor.
+- **Mitigation:** Two options:
+  1. **`onSelectionChange` prop** on `<ReactFlow>` (verified at `node_modules/@xyflow/react/dist/esm/components/SelectionListener/index.d.ts`): `onSelectionChange={({nodes}) => setSelectedNodeId(nodes[0]?.id ?? null)}`. Inspector reads `selectedNodeId` from a new slice or local state in `WorkflowEditor`. **Recommended.**
+  2. Extend `onNodesChange` in `WorkflowEditor.tsx:73-85` to preserve `selected` on each WorkflowNode — but that pollutes the persisted graph shape.
+- **Early signal:** Inspector always shows empty state; `selected` never propagates from canvas click.
+
+### G7. Risk: Bonus card increases scope ambiguity
+- **What goes wrong:** D-19 mixes a UX feature (homepage card) into a phase about node editor UX. If anything goes wrong during card integration (e.g. grid-cols change breaks responsive layout), it eats time from the actual REQ-11/12/13/14 deliverables.
+- **Probability:** Low; the card change is small.
+- **Mitigation:** Make the card task its own wave in the plan (last wave, after main deliverables work). If the card causes regressions, it can be reverted independently.
+- **Early signal:** Visual regression on `/` or `/projects` after Wave 5.
+
+### G8. Risk: Russian copy drift between NODE_REGISTRY and inspector labels
+- **What goes wrong:** D-20 puts strings inline; if the plan splits "node display names" (NODE_REGISTRY) from "inspector field labels" (per-schema labels file), copy can drift (e.g. "Удалить фон" in registry, "Удаление фона" in inspector header).
+- **Probability:** Low (small surface).
+- **Mitigation:** Single source of truth — inspector reads `definition.displayName` for the header. Per-schema label maps cover *field* names only. Document this in the plan.
+- **Early signal:** UAT reveals inconsistent terminology; manual eyeball pass catches it.
 
 ---
 
 ## Implementation hints for the planner
 
-A bullet list of concrete pointers to feed into `03-PLAN.md`:
+A condensed list of concrete pointers — feed these into 03-PLAN.md as task-level guidance:
 
-1. **Wave 0 — schema check:** Before touching anything, read `platform-app/prisma/schema.prisma:311` (the `Asset` model) and confirm `projectId` is nullable. If not, add a `npx prisma migrate dev --name asset-projectid-nullable` task to Wave 1.
-2. **Wave 1 must be parallelisable:** `AssetPickerModal extract`, `connectionValidator + tests`, `perNodeSchemas + tests`, and the (conditional) Prisma migration are independent. Run them concurrently.
-3. **`AssetLibraryModal` migration is a single-consumer rename** — only `src/app/editor/[id]/page.tsx:1011-1015` needs updating. Pass `workspaceId` from `useWorkspace()` and wrap `addImageLayer` in an `onSelect` callback.
-4. **Add `selectedNodeId: string | null`** to `GraphSlice` in `src/store/workflow/types.ts` + `createGraphSlice.ts` (mirror xyflow `onSelectionChange` from `<ReactFlow>` into the store). Keep xyflow's `selected` boolean prop on `NodeProps` for visual styling.
-5. **NodeInspector mounts via `key={selectedNodeId}`** — this is the cleanest way to discard stale draft state on selection change.
-6. **Renderer dispatches on `_zod.def.type` after unwrap** — Zod v4 idiom; do NOT use v3 `_def.typeName`. Concretely: `function unwrap(s) { while (s._zod.def.type === "optional" || ... === "default" || ... === "nullable") s = s._zod.def.innerType; return s; }`.
-7. **Number bounds:** `(schema as ZodNumber)._zod.bag.minimum` / `.maximum`. Render slider only if both defined AND `(max-min) <= 100`.
-8. **Enum options:** `Object.values(schema._zod.def.entries)` (string-key enums only — our four schemas are safe).
-9. **Validation push rule:** `safeParse` on every change; only call `updateNodeParams` if `result.success`. Object-level errors (`path: []`) render in a small header strip; field-level errors render under the field.
-10. **`isValidConnection` wiring:** add `isValidConnection={(c) => connValidator(c, useWorkflowStore.getState().nodes)}` as a prop on `<ReactFlow>` in `WorkflowEditor.tsx:139`. The function reads `nodes` from `getState()` to avoid re-creating the callback on every render.
-11. **Three-tab UI for ImageInput** uses `@radix-ui/react-tabs` (already a dep). Tabs map 1:1 to the `source` enum value; switching tabs writes `params.source` to the store.
-12. **Upload flow:** `compressImageFile(file, 2000)` → `uploadImageToS3(base64, "tmp", mimeType)` → write returned URL to `params.sourceUrl`. Mark `params.source = "upload"` (still used for routing through the inspector tabs; the runtime resolution sees only `sourceUrl`).
-13. **`asset.attachToWorkspace`:** new tRPC mutation in `src/server/routers/asset.ts` — copy idempotency pattern from `attachUrlToProject:248-253`. Use `assertWorkspaceAccess(ctx, workspaceId, "CREATOR")`.
-14. **D-17 client handlers** are pure functions accepting `{params, ctx}` / `{inputs, params, ctx}`. Phase 3 ships them with unit tests and **does NOT call them** anywhere — Phase 4 wires the executor.
-15. **Homepage card:** modify `src/app/page.tsx:72-105` (append fifth card), `:170-189` (add `case "workflow"`), `:251` (responsive grid `grid-cols-2 md:grid-cols-3 lg:grid-cols-5`). Add `Workflow` to the lucide imports at `:6`. Add `.gradient-card-pink` rules at `globals.css:267, :283`. **Do NOT touch `NewProjectModal`** (research finding contradicts CONTEXT.md provisional yes).
+1. **Where `isValidConnection` slots in:** `platform-app/src/components/workflows/WorkflowEditor.tsx:139` — add `isValidConnection={validateConnection}` next to `onConnect`. The validator is a pure function in a new file `platform-app/src/lib/workflow/connectionValidator.ts`. Use the snippet in CONTEXT `<specifics>` verbatim.
+
+2. **Where the inspector mounts:** The `WorkflowEditor` returns a flex layout `<div className="flex min-h-0 flex-1">` at line 178. Currently `<NodePalette />` (left) + `<EditorCanvas />` (center). Add `<NodeInspector selectedNodeId={selectedId} />` (right) — wrap the existing canvas in `min-w-0 flex-1` (already there). Add `selectedId` state via `onSelectionChange` on `<ReactFlow>`.
+
+3. **`onSelectionChange` wiring:** Add `onSelectionChange={({ nodes }) => setSelectedNodeId(nodes[0]?.id ?? null)}` to `<ReactFlow>` at line 139. Empty selection → null → inspector renders empty state.
+
+4. **Per-node schemas live separately, not in `graphSchema.ts`:** `graphSchema.ts` is the *graph* schema (nodes/edges shape). Per-node param schemas should go in a new file `platform-app/src/lib/workflow/nodeParamSchemas.ts`, exported as `nodeParamSchemas: Record<WorkflowNodeType, z.ZodTypeAny>` and `nodeFieldLabels: Record<WorkflowNodeType, Record<string, string>>` and `nodeEnumLabels: Record<WorkflowNodeType, Record<string, Record<string, string>>>`. The inspector imports this map and renders `nodeParamSchemas[node.type]`.
+
+5. **Update `NODE_REGISTRY.defaultParams`:** `platform-app/src/server/workflow/types.ts:69–110` — currently most nodes have `{}` defaults. Per Section B and CONTEXT specifics, update to:
+   - `imageInput: { source: "asset" }`
+   - `removeBackground: { model: "fal-bria" }`
+   - `addReflection: { style: "subtle", intensity: 0.3 }` (already correct)
+   - `assetOutput: { name: "Workflow output" }`
+   These must match the schema `.default(...)` calls so newly-dropped nodes pass validation immediately.
+
+6. **Russian display names update:** Same file (`server/workflow/types.ts`), update `displayName` and `description` per REQ-14:
+   - `imageInput`: "Изображение" / "Источник изображения из библиотеки или URL"
+   - `removeBackground`: "Удалить фон" / "AI-удаление фона с alpha-каналом"
+   - `addReflection`: "Добавить отражение" / "Сгенерировать мягкое отражение под продуктом"
+   - `assetOutput`: "Сохранить в библиотеку" / "Сохранить результат как ассет"
+
+7. **`asset.createFromUrl` endpoint to add (Phase 3 deliverable):** `platform-app/src/server/routers/asset.ts` — add new `createFromUrl` procedure (workspace-scoped, idempotent on `(workspaceId, url, projectId: null)`). See Section C3 Option A for the signature. Test in `platform-app/src/server/routers/__tests__/asset.test.ts` (file may need creating).
+
+8. **Wave 1 = AssetPickerModal extract** — single new file `platform-app/src/components/assets/AssetPickerModal.tsx`. Don't touch existing `AssetLibraryModal.tsx`. Manual verification: drop the picker into a temporary test page or use Storybook-style throwaway route.
+
+9. **Inspector input components:** Reuse `Input` (`platform-app/src/components/ui/Input.tsx`) for text/number, `Select` (`platform-app/src/components/ui/Select.tsx`) for enum, plain `<input type="checkbox">` for boolean, `<input type="range">` for sliders (no existing slider component). For radio-tabs in ImageInput inspector, consider `SegmentedControl` (`platform-app/src/components/ui/SegmentedControl.tsx`).
+
+10. **Inspector update strategy:** call `useWorkflowStore.getState().updateNodeParams(nodeId, { [field]: value })` synchronously on every valid input change. The store's auto-save debounce handles the network throttling. Do NOT add an inspector-level debounce.
+
+11. **ImageInput refine error placement:** render at the top of the inspector body in a small banner (not at any field), since the constraint is cross-field. Use `safeParse(params).error?.issues.filter(i => i.path.length === 0)`.
+
+12. **xyflow Connection.sourceHandle is `string | null`:** validator must early-return `false` when either handle id is null (Section D2).
+
+13. **Homepage card grid breaks symmetry:** changing `grid-cols-4` to `grid-cols-5` at `page.tsx:251` is the cleanest fix. Or use `grid-cols-2 sm:grid-cols-3 lg:grid-cols-5` for responsive.
+
+14. **`Workflow` icon:** `lucide-react` exports `Workflow`. Add to the existing import at `page.tsx:6`.
+
+15. **NewProjectModal does NOT need updating** — see Section E3. CONTEXT D-19 allows research to recommend; research recommends NO.
+
+16. **`useWorkspace()` hook gives the workspaceId** for the AssetPickerModal — usage already established in `WorkflowEditor.tsx:164`.
+
+17. **No new package installs required** — all needed deps (`zod`, `@xyflow/react`, `lucide-react`, `@radix-ui/react-select`) are present in `package.json`. Do NOT add `@testing-library/react` for Phase 3.
+
+18. **xyflow visual feedback on invalid drop:** xyflow renders the in-progress connection line in red automatically when `isValidConnection` returns false; no edge is created. No CSS work required to satisfy REQ-11. (REQ-11 acceptance mentions "зелёная подсветка для совместимых, красная для несовместимых" — D-18 explicitly defers the GREEN highlight to Phase 5+. The red is xyflow default.)
+
+---
+
+## Architectural Responsibility Map
+
+| Capability | Primary Tier | Secondary Tier | Rationale |
+|------------|-------------|----------------|-----------|
+| Node parameter schemas (Zod) | Browser / Client | API (validation only) | Inspector renders forms, validates inline. Server validates same schemas at save time via `workflowGraphSchema` (Phase 2 already does this). |
+| Connection validation | Browser / Client | — | Pure UX concern; xyflow drives in-drag state. Server already has its own constraints in `workflowGraphSchema`. |
+| AssetPickerModal | Browser / Client | API (`asset.listByWorkspace`) | Pick UX is client; data fetched via tRPC. |
+| Image upload flow | Browser / Client | Backend (presign + S3 PUT + asset registration) | Browser drives upload; server signs and registers. |
+| `imageInput` client handler | Browser / Client | API (`asset.getById`) | Resolves params at runtime; server only provides asset lookup. |
+| `assetOutput` client handler | Browser / Client | API (`asset.createFromUrl` — NEW) | Posts result URL to workspace asset library. |
+| Homepage card | Browser / Client (Next.js client component) | — | Pure navigation tile in `"use client"` page. |
+| Russian copy | Browser / Client (inline strings) | — | D-20 explicitly defers i18n. |
+
+**No tier-misassignment risks identified** — all Phase 3 work is client-side rendering and a single new server procedure that is correctly placed in the asset router (workspace-scoped).
+
+---
+
+## Standard Stack
+
+### Core (already installed — no new deps)
+
+| Library | Version | Purpose | Why Standard |
+|---------|---------|---------|--------------|
+| `@xyflow/react` | `^12.10.2` | Canvas, IsValidConnection prop, useReactFlow, NodeProps | Phase 2 chose it; it's the de facto React node-editor. |
+| `zod` | `^4.3.6` | Per-node param schemas, runtime introspection for inspector | Already used; v4-specific introspection covered in B1. |
+| `lucide-react` | `^0.563.0` | `Workflow` icon for homepage card | Same icon set already used by all other cards. |
+| `@radix-ui/react-select` | `^2.2.6` | Enum dropdown via existing `Select` component | Already in use across the app. |
+| `@trpc/react-query` | `^11.13.0` | `asset.getById`, `asset.createFromUrl`, `asset.listByWorkspace` calls from client handlers and picker | Standard data layer. |
+
+### Supporting (use as-is — no need to add)
+
+| Library | Version | Purpose | When to Use |
+|---------|---------|---------|-------------|
+| `clsx` / `tailwind-merge` | latest | `cn()` helper at `lib/cn.ts` | All component class composition |
+| `class-variance-authority` | `^0.7.1` | `Select` already uses it | Don't introduce for Phase 3 forms — keep them simple |
+
+### Alternatives Considered & Rejected
+
+| Instead of | Could Use | Tradeoff |
+|------------|-----------|----------|
+| Hand-rolled Zod-switch | `react-hook-form` + `@hookform/resolvers/zod` | Extra deps + 1500-LOC validation lib for 4 primitive types. **Rejected by D-14.** |
+| Hand-rolled Zod-switch | `@autoform/zod`, `react-jsonschema-form` | Unproven Zod-v4 compat; opinionated styling. **Rejected by D-14.** |
+| Zod introspection via `_zod.def.type` | `z.toJSONSchema()` (Zod v4 built-in) → render JSONSchema | Could be cleaner but adds a translation layer; D-14 prescribes direct switch. |
+| Fork `AssetPickerModal` | Refactor existing `AssetLibraryModal` | Refactor risks breaking canvas editor; fork is zero-risk (Section A4). |
+
+---
+
+## Code Examples
+
+### Connection validator (per CONTEXT specifics, verbatim) — drop into `src/lib/workflow/connectionValidator.ts`
+
+```typescript
+// src/lib/workflow/connectionValidator.ts
+import type { Connection } from "@xyflow/react";
+import { NODE_REGISTRY } from "@/server/workflow/types";
+import type { WorkflowNode } from "@/server/workflow/types";
+
+export function isValidConnection(
+    connection: Connection,
+    nodes: WorkflowNode[],
+): boolean {
+    if (!connection.sourceHandle || !connection.targetHandle) return false;
+    const source = nodes.find((n) => n.id === connection.source);
+    const target = nodes.find((n) => n.id === connection.target);
+    if (!source || !target) return false;
+    const sourcePort = NODE_REGISTRY[source.type].outputs.find(
+        (p) => p.id === connection.sourceHandle,
+    );
+    const targetPort = NODE_REGISTRY[target.type].inputs.find(
+        (p) => p.id === connection.targetHandle,
+    );
+    if (!sourcePort || !targetPort) return false;
+    if (sourcePort.type === "any" || targetPort.type === "any") return true;
+    return sourcePort.type === targetPort.type;
+}
+```
+
+Wire-up in `WorkflowEditor.tsx`:
+```typescript
+const validateConnection = useCallback(
+    (conn: Connection | Edge) => {
+        // xyflow's `IsValidConnection` accepts `EdgeBase | Connection`; Edge has source/target/handles.
+        return isValidConnection(conn as Connection, useWorkflowStore.getState().nodes);
+    },
+    [],
+);
+// ...
+<ReactFlow ... isValidConnection={validateConnection} />
+```
+
+### Zod-discriminator helper (Section B1)
+
+```typescript
+// src/lib/workflow/zodIntrospection.ts
+import type { z } from "zod";
+
+export type FieldKind = "string" | "number" | "boolean" | "enum";
+
+export interface FieldDescriptor {
+    kind: FieldKind;
+    optional: boolean;
+    defaultValue?: unknown;
+    min?: number;
+    max?: number;
+    enumOptions?: string[];
+}
+
+export function describeField(schema: z.ZodTypeAny): FieldDescriptor | null {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const root = (schema as any)._zod;
+    if (!root?.def) return null;
+
+    let optional = false;
+    let defaultValue: unknown;
+    let inner = root;
+
+    while (inner.def.type === "optional" || inner.def.type === "default" || inner.def.type === "nullable") {
+        if (inner.def.type === "optional" || inner.def.type === "nullable") optional = true;
+        if (inner.def.type === "default" && "defaultValue" in inner.def) {
+            defaultValue = typeof inner.def.defaultValue === "function"
+                ? inner.def.defaultValue()
+                : inner.def.defaultValue;
+        }
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        inner = (inner.def.innerType as any)._zod;
+    }
+
+    switch (inner.def.type) {
+        case "string":
+            return { kind: "string", optional, defaultValue };
+        case "number":
+        case "int": {
+            const bag = inner.bag ?? {};
+            return {
+                kind: "number",
+                optional,
+                defaultValue,
+                min: bag.minimum,
+                max: bag.maximum,
+            };
+        }
+        case "boolean":
+            return { kind: "boolean", optional, defaultValue };
+        case "enum": {
+            const entries = inner.def.entries ?? {};
+            return {
+                kind: "enum",
+                optional,
+                defaultValue,
+                enumOptions: Object.values(entries) as string[],
+            };
+        }
+        default:
+            return null; // unsupported (object, array, refine-only, etc.)
+    }
+}
+```
+
+`[VERIFIED: Zod v4 internals confirmed in platform-app/node_modules/zod/v4/core/schemas.d.ts and checks.d.ts]`
+
+### Per-node schema map sketch — `src/lib/workflow/nodeParamSchemas.ts`
+
+```typescript
+import { z } from "zod";
+import type { WorkflowNodeType } from "@/server/workflow/types";
+
+export const imageInputParamsSchema = z
+    .object({
+        source: z.enum(["asset", "url", "upload"]).default("asset"),
+        assetId: z.string().optional(),
+        sourceUrl: z.string().url().optional(),
+    })
+    .refine((d) => !!d.assetId || !!d.sourceUrl, {
+        message: "Выберите изображение",
+    });
+
+export const removeBackgroundParamsSchema = z.object({
+    model: z.enum(["fal-bria", "replicate-bria-cutout", "replicate-rembg"]).default("fal-bria"),
+});
+
+export const addReflectionParamsSchema = z.object({
+    style: z.enum(["subtle", "strong", "mirror"]).default("subtle"),
+    intensity: z.number().min(0).max(1).default(0.3),
+    prompt: z.string().max(500).optional(),
+});
+
+export const assetOutputParamsSchema = z.object({
+    name: z.string().min(1).max(120).default("Workflow output"),
+    folder: z.string().optional(),
+});
+
+export const nodeParamSchemas: Record<WorkflowNodeType, z.ZodTypeAny> = {
+    imageInput: imageInputParamsSchema,
+    removeBackground: removeBackgroundParamsSchema,
+    addReflection: addReflectionParamsSchema,
+    assetOutput: assetOutputParamsSchema,
+};
+
+export const nodeFieldLabels: Record<WorkflowNodeType, Record<string, string>> = {
+    imageInput: {
+        source: "Источник",
+        assetId: "Из библиотеки",
+        sourceUrl: "URL изображения",
+    },
+    removeBackground: {
+        model: "Модель",
+    },
+    addReflection: {
+        style: "Стиль отражения",
+        intensity: "Интенсивность",
+        prompt: "Доп. подсказка",
+    },
+    assetOutput: {
+        name: "Имя ассета",
+        folder: "Папка (опц.)",
+    },
+};
+```
+
+### Client handler signatures — `src/store/workflow/clientHandlers.ts`
+
+```typescript
+import type { trpc } from "@/lib/trpc";
+
+interface ImageInputParams {
+    source?: "asset" | "url" | "upload";
+    assetId?: string;
+    sourceUrl?: string;
+}
+
+interface ImageInputCtx {
+    trpcClient: ReturnType<typeof trpc.useUtils>;
+}
+
+export async function imageInput(args: {
+    params: ImageInputParams;
+    ctx: ImageInputCtx;
+}): Promise<{ imageUrl: string }> {
+    const { params, ctx } = args;
+    if (params.assetId) {
+        const asset = await ctx.trpcClient.asset.getById.fetch({ id: params.assetId });
+        return { imageUrl: asset.url };
+    }
+    if (params.sourceUrl) {
+        return { imageUrl: params.sourceUrl };
+    }
+    throw new Error("imageInput: нужен assetId или sourceUrl");
+}
+
+interface AssetOutputParams {
+    name: string;
+    folder?: string;
+}
+
+interface AssetOutputCtx {
+    workspaceId: string;
+    trpcClient: ReturnType<typeof trpc.useUtils>;
+}
+
+export async function assetOutput(args: {
+    inputs: { image?: { imageUrl: string } };
+    params: AssetOutputParams;
+    ctx: AssetOutputCtx;
+}): Promise<{ assetId: string }> {
+    const url = args.inputs.image?.imageUrl;
+    if (!url) throw new Error("assetOutput: вход 'image' пуст");
+    const asset = await args.ctx.trpcClient.asset.createFromUrl.fetch({
+        workspaceId: args.ctx.workspaceId,
+        url,
+        filename: args.params.name,
+        source: "workflow-output",
+    });
+    return { assetId: asset.id };
+}
+```
+
+(Adjust to `mutate` instead of `fetch` for tRPC mutations — sketch only.)
+
+---
+
+## Common Pitfalls
+
+### Pitfall 1: Reading `_def` instead of `_zod.def`
+- **What goes wrong:** Inspector renders nothing for any field.
+- **Why it happens:** Zod v3 used `schema._def.typeName`. Zod v4 changed to `schema._zod.def.type`.
+- **How to avoid:** Use the `describeField` helper from this research; never reach into `_def` directly.
+- **Warning signs:** All `detectKind` results are "unsupported" or undefined.
+
+### Pitfall 2: Stripping `selected` state in `onNodesChange`
+- **What goes wrong:** Inspector never sees a selected node — clicking a node does nothing.
+- **Why it happens:** `WorkflowEditor.tsx:73-85`'s `onNodesChange` re-builds nodes from `byId` map without preserving the `selected` field that `applyNodeChanges` puts on RF nodes.
+- **How to avoid:** Use `onSelectionChange` prop on `<ReactFlow>` to track selection separately (don't pollute the persisted graph).
+- **Warning signs:** `selectedNodeId` never updates; inspector shows empty state forever.
+
+### Pitfall 3: Calling `asset.createFromUrl` before adding the procedure
+- **What goes wrong:** Compile error or runtime "is not a function".
+- **Why it happens:** Procedure doesn't exist (Section C3).
+- **How to avoid:** Add the procedure FIRST in Wave 2 of the plan, before the `clientHandlers.ts` task.
+- **Warning signs:** TS error: "Property 'createFromUrl' does not exist on type 'CreateTRPCReact<assetRouter,...>'".
+
+### Pitfall 4: Inspector debounces saves on top of the existing auto-save debounce
+- **What goes wrong:** First few keystrokes are lost; values appear to "snap back".
+- **Why it happens:** Adding a 200 ms inspector debounce that calls `updateNodeParams`, on top of a 2000 ms auto-save debounce, creates a race when user types-then-clicks-save.
+- **How to avoid:** Inspector calls `updateNodeParams` synchronously on every keystroke. Auto-save handles debouncing.
+- **Warning signs:** Save button click misses recent edits.
+
+### Pitfall 5: Refine errors disappear when switching radio-tabs
+- **What goes wrong:** ImageInput refine error "Выберите изображение" appears, user switches mode, error stays visible (or disappears unpredictably).
+- **Why it happens:** `safeParse` returns the same refine error regardless of which mode is active — until either `assetId` or `sourceUrl` is set.
+- **How to avoid:** Render refine errors only after the user has interacted with the form (track a `submitted`/`touched` flag). Or scope the validation to the active mode and re-validate on tab switch.
+- **Warning signs:** User reports "the error is yelling at me before I've done anything".
+
+### Pitfall 6: Forgetting to add `Workflow` icon import
+- **What goes wrong:** Build fails with "Workflow is not defined".
+- **How to avoid:** Add `Workflow` to the existing `lucide-react` import at `page.tsx:6`.
+
+### Pitfall 7: Grid-cols-4 stays after adding a fifth card
+- **What goes wrong:** Cards wrap to a new row 4-and-1, looks broken.
+- **How to avoid:** Change to `grid-cols-5` at `page.tsx:251`.
+
+---
+
+## Don't Hand-Roll
+
+| Problem | Don't Build | Use Instead | Why |
+|---------|-------------|-------------|-----|
+| Drag-drop file zone | Custom drop handler with browser quirks | `<input type="file" accept="image/*">` + label, plus a small `onDragOver`/`onDrop` wrapper | Native `input` handles a11y and OS file dialogs for free |
+| File-to-base64 conversion | `FileReader` boilerplate | `compressImageFile()` from `utils/imageUpload.ts:343` | Already battle-tested with WebP compression |
+| Image upload | Custom `XMLHttpRequest` with CORS dance | `uploadImageToS3()` from `utils/imageUpload.ts:86` | Includes presign + fallback + caching |
+| Modal infrastructure | Custom backdrop / escape-key / focus-trap | Existing `AssetLibraryModal` pattern (the visual structure, not the actions) | Already styled, animated, accessible |
+| Select dropdown | Native `<select>` | `Select` component at `components/ui/Select.tsx` | Already styled, supports same prop pattern |
+| Confirmation dialog | Custom modal | `ConfirmDialog` at `components/ui/ConfirmDialog.tsx` | Standard pattern |
+
+---
+
+## Validation Architecture
+
+> `.planning/config.json` not located in this research; assuming nyquist_validation enabled per default.
+
+### Test Framework
+| Property | Value |
+|----------|-------|
+| Framework | `vitest@4.1.4` |
+| Config file | `platform-app/vitest.config.*` (verify exists; Phase 2 used it) |
+| Quick run command | `npx vitest run --no-coverage` |
+| Full suite command | `npx vitest run` |
+
+### Phase Requirements → Test Map
+
+| Req ID | Behavior | Test Type | Automated Command | File Exists? |
+|--------|----------|-----------|-------------------|-------------|
+| REQ-11 | `isValidConnection` blocks bad type pairs | unit | `npx vitest run src/lib/workflow/__tests__/connectionValidator.test.ts` | ❌ Wave 0 — NEW |
+| REQ-12 | Inspector renders correct field for each Zod kind | unit (helper test) + manual (inspector render) | `npx vitest run src/lib/workflow/__tests__/zodIntrospection.test.ts` | ❌ Wave 0 — NEW |
+| REQ-12 | Per-node schemas accept default params | unit | `npx vitest run src/lib/workflow/__tests__/nodeParamSchemas.test.ts` | ❌ Wave 0 — NEW |
+| REQ-12 | `clientHandlers.imageInput` resolves assetId/sourceUrl correctly | unit (mocked tRPC) | `npx vitest run src/store/workflow/__tests__/clientHandlers.test.ts` | ❌ Wave 0 — NEW |
+| REQ-12 | `clientHandlers.assetOutput` calls `asset.createFromUrl` | unit (mocked tRPC) | same file as above | ❌ Wave 0 — NEW |
+| REQ-12 | Server: `asset.createFromUrl` workspace access + idempotency | integration | `npx vitest run src/server/routers/__tests__/asset.createFromUrl.test.ts` | ❌ Wave 0 — NEW |
+| REQ-13 | Palette renders Russian display names | manual | open `/workflows/new` | n/a |
+| REQ-14 | All user-facing strings in Russian | manual eyeball | dev server | n/a |
+
+### Sampling Rate
+- **Per task commit:** `npx vitest run --no-coverage` (~3-5 s)
+- **Per wave merge:** `npx vitest run` (full suite)
+- **Phase gate:** Full suite green + `tsc --noEmit` clean before `/gsd-verify-work`
+
+### Wave 0 Gaps
+- [ ] `src/lib/workflow/__tests__/connectionValidator.test.ts` — covers REQ-11 (port matrix)
+- [ ] `src/lib/workflow/__tests__/zodIntrospection.test.ts` — covers REQ-12 helper
+- [ ] `src/lib/workflow/__tests__/nodeParamSchemas.test.ts` — covers REQ-12 schemas
+- [ ] `src/store/workflow/__tests__/clientHandlers.test.ts` — covers D-17 unit-test mandate
+- [ ] `src/server/routers/__tests__/asset.createFromUrl.test.ts` — covers new endpoint
+- (No new framework install needed; vitest is already configured.)
+
+---
+
+## Security Domain
+
+### Applicable ASVS Categories
+
+| ASVS Category | Applies | Standard Control |
+|---------------|---------|-----------------|
+| V2 Authentication | yes | NextAuth `auth()` already enforced on tRPC + presign route. No new auth surface in Phase 3. |
+| V3 Session Management | no | Re-uses existing session. |
+| V4 Access Control | yes | New `asset.createFromUrl` MUST call `assertWorkspaceAccess(ctx, workspaceId, "CREATOR")` before insert. Mirror `attachUrlToProject:246`. |
+| V5 Input Validation | yes | All inspector inputs validated client-side via Zod before `updateNodeParams`. Server validates same schemas at save time via `workflowGraphSchema`. |
+| V6 Cryptography | no | No new crypto code; presign uses AWS SDK. |
+| V8 Data Protection | partial | Presign-route already enforces MIME allowlist (`presign/route.ts:46-52`). New `asset.createFromUrl` does NOT need SSRF — the URL is already an S3 URL we just generated, not an attacker-controlled URL. |
+
+### Known Threat Patterns for this stack
+
+| Pattern | STRIDE | Standard Mitigation |
+|---------|--------|---------------------|
+| Cross-workspace asset write | Elevation of Privilege | `assertWorkspaceAccess(ctx, workspaceId, "CREATOR")` on `asset.createFromUrl` |
+| Persisted XSS via Zod refine messages | Tampering | Russian strings are app-defined, not user input — safe |
+| Presign URL leak | Information Disclosure | Existing 10-min TTL on presigned URLs; not changed by Phase 3 |
+| Storing attacker URL as `sourceUrl` in node params | Tampering / SSRF | Phase 3 only stores; SSRF guard fires in Phase 4 (`safeFetch` already in `/api/upload/route.ts:87`). For v1.0 inspector, validate `z.string().url()` only — no fetch happens client-side. |
+| Inspector triggers many `updateNodeParams` → DoS via auto-save | DoS | 2 s debounce in `useWorkflowAutoSave` already throttles. Acceptable. |
+
+---
+
+## Environment Availability
+
+| Dependency | Required By | Available | Version | Fallback |
+|------------|------------|-----------|---------|----------|
+| `node` | All tooling | ✓ (assumed Phase 2 worked) | per package.json `"engines"` not pinned | — |
+| `npm` | Install | ✓ | — | — |
+| `prisma` | Generated client (already generated by Phase 1/2) | ✓ | `^6.19.2` | — |
+| `vitest` | Tests | ✓ | `^4.1.4` | — |
+| `S3 / Yandex Object Storage` | Upload mode | external | — | If unreachable in dev, upload mode fails — fall back to URL-paste during development. Document required env vars: `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `S3_ENDPOINT`, `S3_BUCKET`. |
+
+**No new external dependencies for Phase 3.**
+
+---
+
+## Assumptions Log
+
+| # | Claim | Section | Risk if Wrong |
+|---|-------|---------|---------------|
+| A1 | `AssetLibraryModal` has only one consumer | A2 | Verified by grep across `src/`. Risk only if a consumer was added between research and planning. **Verified 2026-04-24.** |
+| A2 | Zod v4 introspection uses `_zod.def.type` not `_def.typeName` | B1 | Verified directly from `node_modules/zod/v4/core/schemas.d.ts`. **Verified 2026-04-24.** |
+| A3 | `asset.createFromUrl` doesn't exist | C3 | Verified by reading `server/routers/asset.ts`. **Verified 2026-04-24.** |
+| A4 | xyflow renders red stroke on invalid connection automatically | D1 | Documented in `node_modules/@xyflow/system/dist/esm/types/handles.d.ts:46-51` and standard xyflow behavior. **VERIFIED via type defs; visual behavior is xyflow library default — recommend manual verification on first integration.** |
+| A5 | `NewProjectModal` does NOT mirror page.tsx card grid | E3 | Verified by reading `NewProjectModal.tsx` end-to-end. **Verified 2026-04-24.** |
+| A6 | `selected` state on RF nodes is stripped by current `onNodesChange` | G6 | Verified by reading `WorkflowEditor.tsx:73-85`. **Verified 2026-04-24.** |
+| A7 | `@testing-library/react` not installed | F2 | Verified by reading `package.json`. **Verified 2026-04-24.** |
+| A8 | Workflow card image already exists at `public/cards/workflows.png` | E5 | Verified by `ls`. **Verified 2026-04-24.** |
+| A9 | Phase 2 `vitest.config` works without modification | F1 | Inferred from "113/113 pass" in Phase 2 summary. Risk: if config needs jsdom for any reason, that's news. Recommend planner verify on first wave-0 commit. |
+| A10 | `imageUpload.ts` is NOT actually dirty in git tree (CONTEXT note was stale) | C1 | `git diff --stat HEAD` shows no diff. **Verified 2026-04-24.** |
+
+---
+
+## Open Questions
+
+1. **Should the inspector render a "Run this node" preview button (e.g. for ImageInput, show preview thumbnail)?**
+   - What we know: D-17 says Phase 3 ships handlers but doesn't invoke them.
+   - What's unclear: Does "doesn't invoke" forbid even a preview-only invocation in the inspector?
+   - Recommendation: NO. Keep handlers fully unwired in Phase 3. Image preview in ImageInput uses `<img src={resolvedUrl}>` with `assetId` looked up via `asset.getById.useQuery` (read-only, harmless).
+
+2. **Should the inspector show an "Export from registry" preview of `defaultParams` for empty-state debugging?**
+   - Recommendation: NO; not on REQ list.
+
+3. **Folder field on assetOutput — what does "folder" actually mean in v1.0?**
+   - The `Asset` model in Prisma has no folder concept. CONTEXT.specifics lists `folder: z.string().optional()` for assetOutput.
+   - Recommendation: Store as a metadata key on the Asset (`metadata: { source: "workflow-output", folder?: string }`) so it's not lost. UI surfaces "folder" as a virtual category in a future phase. For v1.0, accept the value but don't act on it server-side.
+
+4. **Does an `/projects` page exist with the same card row?**
+   - CONTEXT D-19 says "duplicated in NewProjectModal.tsx (template grid in modal). Both call sites must be updated." But research shows NewProjectModal doesn't have such a grid (Section E3). The CONTEXT may have meant `/projects/page.tsx` instead.
+   - Recommendation: planner verify whether `platform-app/src/app/projects/page.tsx` exists and contains a card grid; if so, mirror the homepage change there.
+
+---
+
+## State of the Art
+
+| Old Approach | Current Approach | When Changed | Impact |
+|--------------|------------------|--------------|--------|
+| Zod v3 `_def.typeName` discriminator | Zod v4 `_zod.def.type` discriminator | Zod 4.0 (mid-2024+) | All Zod-introspecting code must be rewritten; Phase 3 is greenfield so no cost |
+| RF node `data: any` for params | `data: { params: Record<string, unknown> }` (Phase 2 convention) | Phase 2 of this milestone | Inspector reads `node.data.params`, not `node.data` |
+
+**Deprecated/outdated:**
+- Don't use `JSONSchemaGenerator` from Zod core (`zod/v4/core/json-schema-generator.d.ts:7` — explicitly deprecated). Use `toJSONSchema` if a JSONSchema route is ever needed (it isn't for D-14).
+
+---
+
+## Project Constraints (from `.cursor/rules/`)
+
+From `.cursor/rules/design-system-contrast.mdc`:
+- Inspector chrome: don't use `text-text-primary` on solid `bg-accent-lime` / `bg-white` surfaces. Use `text-accent-lime-text` / `text-on-light` instead.
+- New pink card `iconBg: "bg-pink-100 ..."` is a tint (not solid), so theme-aware text tokens are fine.
+- Design system tokens (`bg-bg-surface`, `text-text-primary`, etc.) are the standard for inspector panels — match the existing `Input` / `Select` component style.
+
+From `.cursor/rules/deploy-pipeline.mdc`: not loaded — not relevant to Phase 3 (no deploy work).
+
+---
+
+## Sources
+
+### Primary (HIGH confidence — read directly from project source)
+
+- `platform-app/src/components/editor/AssetLibraryModal.tsx` (430 lines) — Section A
+- `platform-app/src/app/editor/[id]/page.tsx:1011` — Section A2 (sole consumer)
+- `platform-app/src/server/workflow/types.ts` (154 lines) — Section B5 hints, registry shape
+- `platform-app/src/lib/workflow/graphSchema.ts` (52 lines) — Section B per-node schema integration point
+- `platform-app/src/components/workflows/WorkflowEditor.tsx` (189 lines) — Section D1 wire-up site
+- `platform-app/src/store/workflow/createGraphSlice.ts` — Section B7 update strategy
+- `platform-app/src/hooks/workflow/useWorkflowAutoSave.ts` — Section B7 debounce confirmation
+- `platform-app/src/utils/imageUpload.ts` (384 lines) — Section C1 upload contract
+- `platform-app/src/app/api/upload/presign/route.ts` (101 lines) — Section C1 server contract
+- `platform-app/src/app/api/upload/route.ts` (187 lines) — Section C1 fallback contract
+- `platform-app/src/server/routers/asset.ts` (lines 1–510 reviewed) — Section C3 procedure inventory
+- `platform-app/src/app/page.tsx` (439 lines) — Section E1, E4 cards array
+- `platform-app/src/components/dashboard/NewProjectModal.tsx` (220 lines) — Section E3 finding
+- `platform-app/src/app/globals.css:248–283` — Section E2 gradient classes
+- `platform-app/prisma/schema.prisma:410–427, 320–336` — workspace/project relation finding
+- `platform-app/package.json` — Section F2 deps inventory
+- `platform-app/node_modules/zod/v4/core/schemas.d.ts` — Section B1 introspection (lines 31, 360–406, 767–784, 835–850)
+- `platform-app/node_modules/zod/v4/core/checks.d.ts:24–49` — Section B2 check shapes
+- `platform-app/node_modules/@xyflow/system/dist/esm/types/general.d.ts:64–73, 109` — Section D1, D2 Connection + IsValidConnection types
+- `platform-app/node_modules/@xyflow/system/dist/esm/types/handles.d.ts:46–51` — Section D1 docstring
+- `platform-app/node_modules/@xyflow/react/dist/esm/components/SelectionListener/index.d.ts` — Section G6 selection listener
+
+### Secondary (MEDIUM confidence — read via grep)
+
+- `platform-app/src/components/workflows/BaseNode.tsx`, `nodes/index.tsx`, `NodePalette.tsx` — selection plumbing context
+- `platform-app/src/store/workflow/__tests__/graphSlice.test.ts` — Section F1 test pattern
+- `platform-app/src/components/ui/Input.tsx`, `Select.tsx`, `SegmentedControl.tsx` — Section B5, hint #9 component reuse
+
+### Tertiary (LOW confidence — none for this phase)
+
+All findings are verified against project source. No web research was needed because Zod v4 internals and xyflow types are present in `node_modules`.
 
 ---
 
 ## Metadata
 
 **Confidence breakdown:**
-- Standard stack: HIGH — all confirmed against vendored types and `package.json`
-- Architecture: HIGH — directly grounded in existing Phase 2 source
-- Pitfalls: MEDIUM-HIGH — derived from source inspection + Zod v4 docs; performance pitfalls (R-3.3) flagged as needing measurement
-- Asset modal extract: HIGH — single consumer confirmed; migration path mechanical
-- `attachToWorkspace` mutation viability: MEDIUM — depends on A1 (schema nullability check)
+- Standard stack: HIGH — verified package versions and import sites
+- Architecture (consumer inventory, selection plumbing, store API): HIGH — verified file-by-file
+- Zod v4 introspection: HIGH — verified directly from installed `.d.ts`
+- xyflow `isValidConnection` semantics: HIGH for type signature; MEDIUM for visual feedback (recommend first-integration manual confirmation)
+- `asset.createFromUrl` non-existence: HIGH — searched router source
+- `NewProjectModal` finding (no card grid mirror): HIGH — read entire file
+- Pitfalls catalog: HIGH for items 1–5 (derived from verified facts), MEDIUM for items 6–7 (general care items)
 
 **Research date:** 2026-04-24
-**Valid until:** 2026-05-08 (xyflow v12 + Zod v4 stable; project source state captured at this commit)
-
+**Valid until:** 2026-05-24 (1 month — internals stable; Zod 4.4 release could shift introspection slightly)

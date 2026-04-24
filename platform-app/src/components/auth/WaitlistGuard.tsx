@@ -15,6 +15,7 @@ import { useSession } from "next-auth/react";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { confirmAuthSessionMissing } from "@/lib/authClient";
 import { logAuthDiagnostic } from "@/lib/authDiagnostics";
 
 // Routes that bypass the waitlist guard
@@ -33,6 +34,7 @@ export function WaitlistGuard({ children }: { children: ReactNode }) {
     const [freshStatusCheckedForUserId, setFreshStatusCheckedForUserId] = useState<string | null>(null);
     const refreshingUserIdRef = useRef<string | null>(null);
     const previousStatusRef = useRef<string | null>(null);
+    const unauthenticatedProbeRef = useRef(false);
 
     const accountStatus = session?.user?.status;
     const userId = session?.user?.id ?? null;
@@ -109,17 +111,48 @@ export function WaitlistGuard({ children }: { children: ReactNode }) {
 
     useEffect(() => {
         if (isBypassRoute || status !== "unauthenticated") return;
+        if (unauthenticatedProbeRef.current) return;
 
-        queryClient.clear();
-        logAuthDiagnostic("unauthenticated_redirect", {
+        unauthenticatedProbeRef.current = true;
+        logAuthDiagnostic("auth_redirect_probe_started", {
+            reason: "session_status_unauthenticated",
             pathname,
-            callbackUrl: pathname,
         });
 
-        const signInUrl = new URL("/auth/signin", window.location.origin);
-        signInUrl.searchParams.set("callbackUrl", pathname);
-        router.replace(signInUrl.toString());
-    }, [isBypassRoute, pathname, queryClient, router, status]);
+        void confirmAuthSessionMissing()
+            .then((sessionMissing) => {
+                logAuthDiagnostic("auth_redirect_probe_result", {
+                    reason: "session_status_unauthenticated",
+                    pathname,
+                    sessionMissing,
+                });
+
+                if (!sessionMissing) {
+                    setTimeout(() => {
+                        updateSession().catch((err) => {
+                            logAuthDiagnostic("session_refresh_failed", {
+                                pathname,
+                                error: err,
+                            });
+                        });
+                    }, 1_000);
+                    return;
+                }
+
+                queryClient.clear();
+                logAuthDiagnostic("unauthenticated_redirect", {
+                    pathname,
+                    callbackUrl: pathname,
+                });
+
+                const signInUrl = new URL("/auth/signin", window.location.origin);
+                signInUrl.searchParams.set("callbackUrl", pathname);
+                router.replace(signInUrl.toString());
+            })
+            .finally(() => {
+                unauthenticatedProbeRef.current = false;
+            });
+    }, [isBypassRoute, pathname, queryClient, router, status, updateSession]);
 
     useEffect(() => {
         // Skip for bypass routes, unauthenticated users, and loading state

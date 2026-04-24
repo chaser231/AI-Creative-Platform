@@ -53,13 +53,23 @@ export interface ViewportSlice {
     setViewport: (vp: { x: number; y: number; zoom: number }) => void;
 }
 
+export interface NodeResult {
+    url?: string;
+    assetId?: string;
+}
+
 export interface RunStateSlice {
-    /**
-     * Per-node run status. Phase 2: always reads as "idle"; Phase 4 wires
-     * the real executor that flips running → done|error per node.
-     */
     runState: Record<string, NodeRunStatus>;
+    /** Per-node executor result (last successful run). */
+    runResults: Record<string, NodeResult>;
+    /** Last user-facing error, if any. Cleared when a new run starts. */
+    runError: { nodeId: string; message: string } | null;
+    /** True while executor is mid-flight; UI uses this to lock interactions. */
+    isRunning: boolean;
     setNodeRunStatus: (id: string, status: NodeRunStatus) => void;
+    setNodeResult: (id: string, result: NodeResult) => void;
+    setRunError: (err: { nodeId: string; message: string } | null) => void;
+    setIsRunning: (v: boolean) => void;
     resetRunState: () => void;
 }
 

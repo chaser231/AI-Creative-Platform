@@ -13,6 +13,8 @@ export const maxDuration = 300;
 const ALLOWED_ACTIONS: ReadonlySet<string> = new Set<ServerActionId>([
     "remove_background",
     "add_reflection",
+    "apply_mask",
+    "apply_blur",
 ]);
 
 export async function POST(req: NextRequest) {

@@ -10,25 +10,35 @@ import { BaseNode } from "./BaseNode";
  * `node.type` to look up the component.
  */
 
-export function ImageInputNode({ selected }: NodeProps) {
-    return <BaseNode type="imageInput" selected={selected} />;
+export function ImageInputNode({ id, selected }: NodeProps) {
+    return <BaseNode id={id} type="imageInput" selected={selected} />;
 }
 
-export function RemoveBackgroundNode({ selected }: NodeProps) {
-    return <BaseNode type="removeBackground" selected={selected} />;
+export function RemoveBackgroundNode({ id, selected }: NodeProps) {
+    return <BaseNode id={id} type="removeBackground" selected={selected} />;
 }
 
-export function AddReflectionNode({ selected }: NodeProps) {
-    return <BaseNode type="addReflection" selected={selected} />;
+export function AddReflectionNode({ id, selected }: NodeProps) {
+    return <BaseNode id={id} type="addReflection" selected={selected} />;
 }
 
-export function AssetOutputNode({ selected }: NodeProps) {
-    return <BaseNode type="assetOutput" selected={selected} />;
+export function MaskNode({ id, selected }: NodeProps) {
+    return <BaseNode id={id} type="mask" selected={selected} />;
+}
+
+export function BlurNode({ id, selected }: NodeProps) {
+    return <BaseNode id={id} type="blur" selected={selected} />;
+}
+
+export function AssetOutputNode({ id, selected }: NodeProps) {
+    return <BaseNode id={id} type="assetOutput" selected={selected} />;
 }
 
 export const nodeTypes = {
     imageInput: ImageInputNode,
     removeBackground: RemoveBackgroundNode,
     addReflection: AddReflectionNode,
+    mask: MaskNode,
+    blur: BlurNode,
     assetOutput: AssetOutputNode,
 } as const;

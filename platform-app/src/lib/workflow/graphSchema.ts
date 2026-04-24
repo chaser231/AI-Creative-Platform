@@ -19,6 +19,8 @@ const workflowNodeTypeSchema = z.enum([
     "imageInput",
     "removeBackground",
     "addReflection",
+    "mask",
+    "blur",
     "assetOutput",
 ]) satisfies z.ZodType<WorkflowNodeType>;
 

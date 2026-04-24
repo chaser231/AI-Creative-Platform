@@ -12,9 +12,11 @@ import { invokeReplicateModel, invokeFalModel } from "@/lib/ai-providers";
 import {
   tryWithFallback,
   uploadFromExternalUrl,
-  buildReflectionPrompt,
-  postProcessToTransparent,
-  type ReflectionStyle,
+  uploadBufferToS3,
+  fetchImageBuffer,
+  applyMask,
+  applyBlur,
+  type LinearDirection,
 } from "@/server/workflow/helpers";
 
 // ─── Logging helpers ─────────────────────────────────────
@@ -32,6 +34,25 @@ function redactForLog(value: string, maxLen = 2000): string {
   );
   if (stripped.length <= maxLen) return stripped;
   return `${stripped.slice(0, maxLen)}…[+${stripped.length - maxLen} chars]`;
+}
+
+// ─── Workflow node helpers ───────────────────────────────
+
+interface ProviderRecipe {
+  name: string;
+  run: () => Promise<{ output: string; model: string; costUsd: number }>;
+}
+
+function clampUnit(v: unknown, fallback: number): number {
+  return typeof v === "number" && Number.isFinite(v)
+    ? Math.max(0, Math.min(1, v))
+    : fallback;
+}
+
+function clampPx(v: unknown, fallback: number): number {
+  return typeof v === "number" && Number.isFinite(v)
+    ? Math.max(0, Math.min(50, v))
+    : fallback;
 }
 
 // ─── Action Executors ────────────────────────────────────
@@ -937,6 +958,14 @@ ${templateStyleSuffix ? `- Additional style: ${templateStyleSuffix}` : ""}
     // ── Workflow node actions (v1.0 — node-based editor) ──────────────
     case "remove_background": {
       const imageUrl = params.imageUrl as string;
+      const requestedModel =
+        (params.model as
+          | "fal-birefnet"
+          | "fal-bria"
+          | "replicate-bria-cutout"
+          | "replicate-rembg"
+          | undefined) ?? "fal-birefnet";
+
       if (!imageUrl || typeof imageUrl !== "string") {
         return { success: false, type: "error", content: "imageUrl обязателен" };
       }
@@ -949,26 +978,39 @@ ${templateStyleSuffix ? `- Additional style: ${templateStyleSuffix}` : ""}
         throw err;
       }
 
+      // All four providers register under stable names; we order them so the
+      // user's pick runs first, the rest follow as fallbacks. BiRefNet is the
+      // only model that reliably keeps shadows and reflections, so we keep it
+      // ahead of Bria/rembg in the default order.
+      const providers: Record<string, ProviderRecipe> = {
+        "fal-birefnet": {
+          name: "fal:birefnet",
+          run: () => invokeFalModel("fal-birefnet", { image_url: imageUrl }),
+        },
+        "fal-bria": {
+          name: "fal:bria-rmbg",
+          run: () => invokeFalModel("bria-rmbg", { image_url: imageUrl }),
+        },
+        "replicate-bria-cutout": {
+          name: "replicate:bria-product-cutout",
+          run: () => invokeReplicateModel("bria-product-cutout", { image: imageUrl }),
+        },
+        "replicate-rembg": {
+          name: "replicate:rembg-851-labs",
+          run: () => invokeReplicateModel("rembg-851-labs", { image: imageUrl }),
+        },
+      };
+      const order = [
+        requestedModel,
+        ...(["fal-birefnet", "fal-bria", "replicate-bria-cutout", "replicate-rembg"] as const).filter(
+          (k) => k !== requestedModel,
+        ),
+      ];
+
       try {
-        // Cascade: fal.ai primary (faster, cheaper) → Replicate fallbacks.
-        const { result, winner } = await tryWithFallback([
-          {
-            name: "fal:bria-rmbg",
-            run: () => invokeFalModel("bria-rmbg", { image_url: imageUrl }),
-          },
-          {
-            name: "replicate:bria-product-cutout",
-            run: () => invokeReplicateModel("bria-product-cutout", { image: imageUrl }),
-          },
-          {
-            name: "replicate:rembg-851-labs",
-            run: () => invokeReplicateModel("rembg-851-labs", { image: imageUrl }),
-          },
-          {
-            name: "replicate:rembg",
-            run: () => invokeReplicateModel("rembg", { image: imageUrl }),
-          },
-        ]);
+        const { result, winner } = await tryWithFallback(
+          order.map((k) => providers[k]).filter(Boolean),
+        );
         const { s3Url } = await uploadFromExternalUrl(result.output, {
           workspaceId: context.workspaceId,
         });
@@ -990,8 +1032,12 @@ ${templateStyleSuffix ? `- Additional style: ${templateStyleSuffix}` : ""}
 
     case "add_reflection": {
       const imageUrl = params.imageUrl as string;
-      const style = (params.style as ReflectionStyle | undefined) ?? "subtle";
-      const intensity = typeof params.intensity === "number" ? params.intensity : 0.3;
+      const requestedModel =
+        (params.model as
+          | "nano-banana-2"
+          | "bria-product-shot"
+          | "flux-kontext-pro"
+          | undefined) ?? "nano-banana-2";
 
       if (!imageUrl || typeof imageUrl !== "string") {
         return { success: false, type: "error", content: "imageUrl обязателен" };
@@ -1005,49 +1051,148 @@ ${templateStyleSuffix ? `- Additional style: ${templateStyleSuffix}` : ""}
         throw err;
       }
 
-      const prompt = buildReflectionPrompt(style, intensity);
-      try {
-        // Cascade: fal.ai primary → Replicate Bria → Replicate FLUX (opaque, needs rembg).
-        const { result, winner } = await tryWithFallback([
-          {
-            name: "fal:bria-product-shot",
-            run: () => invokeFalModel("bria-product-shot", { image_url: imageUrl, prompt }),
-          },
-          {
-            name: "replicate:bria-product-shadow",
-            run: () => invokeReplicateModel("bria-product-shadow", { image: imageUrl, prompt }),
-          },
-          {
-            name: "replicate:flux-kontext-pro",
-            run: () => invokeReplicateModel("flux-kontext-pro", { image: imageUrl, prompt }),
-          },
-        ]);
+      const prompt = (params.prompt as string) || "Выдели продукт из фото, размести его на изолированном однотонном фоне, создай от него идеально ровно неискаженное физически корректное отражение, как будто он стоит на зеркале.";
 
+      // All three providers go through fal where possible (user pref). The
+      // /edit endpoint is required for nano-banana since we're conditioning
+      // on a reference image, not generating from text alone. flux-kontext is
+      // also available via fal.
+      const providers: Record<string, ProviderRecipe> = {
+        "nano-banana-2": {
+          name: "fal:nano-banana-2/edit",
+          run: () =>
+            invokeFalModel(
+              "nano-banana-2",
+              { prompt, image_urls: [imageUrl], output_format: "png" },
+              { endpoint: "fal-ai/nano-banana-2/edit" },
+            ),
+        },
+        "bria-product-shot": {
+          name: "fal:bria-product-shot",
+          run: () => invokeFalModel("bria-product-shot", { image_url: imageUrl, prompt }),
+        },
+        "flux-kontext-pro": {
+          name: "fal:flux-kontext-pro",
+          run: () =>
+            invokeFalModel("flux-kontext-pro", { image_url: imageUrl, prompt }),
+        },
+      };
+      const order = [
+        requestedModel,
+        ...(["nano-banana-2", "bria-product-shot", "flux-kontext-pro"] as const).filter(
+          (k) => k !== requestedModel,
+        ),
+      ];
+
+      try {
+        const { result, winner } = await tryWithFallback(
+          order.map((k) => providers[k]).filter(Boolean),
+        );
+
+        // No post-rembg pass: we want the raw "product on white with sharp
+        // mirror reflection" output to flow into the user's downstream
+        // removeBackground node, which is responsible for cutting out the
+        // pair while preserving the reflection edges.
         const { s3Url } = await uploadFromExternalUrl(result.output, {
           workspaceId: context.workspaceId,
         });
 
-        // FLUX Kontext returns an opaque image. Re-run bg-removal to guarantee
-        // alpha channel so downstream canvas can place the reflection on any bg.
-        let finalUrl = s3Url;
-        if (winner === "replicate:flux-kontext-pro") {
-          finalUrl = await postProcessToTransparent(s3Url, context);
-        }
-
         return {
           success: true,
           type: "image",
-          content: finalUrl,
+          content: s3Url,
           metadata: {
-            imageUrl: finalUrl,
+            imageUrl: s3Url,
             provider: winner,
             costUsd: result.costUsd,
-            postProcessed: winner === "replicate:flux-kontext-pro",
           },
         };
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         return { success: false, type: "error", content: `add_reflection упал: ${msg}` };
+      }
+    }
+
+    case "apply_mask": {
+      const imageUrl = params.imageUrl as string;
+      const direction =
+        (params.direction as LinearDirection | undefined) ?? "top-to-bottom";
+      const start = clampUnit(params.start, 1);
+      const end = clampUnit(params.end, 0);
+
+      if (!imageUrl || typeof imageUrl !== "string") {
+        return { success: false, type: "error", content: "imageUrl обязателен" };
+      }
+      try {
+        await assertUrlIsSafe(imageUrl, agentAddImagePolicy());
+      } catch (err) {
+        if (err instanceof SsrfBlockedError) {
+          return { success: false, type: "error", content: `URL заблокирован: ${err.reason}` };
+        }
+        throw err;
+      }
+
+      try {
+        const { buffer } = await fetchImageBuffer(imageUrl);
+        const out = await applyMask(buffer, { direction, start, end });
+        const { s3Url } = await uploadBufferToS3(out, "image/png", {
+          workspaceId: context.workspaceId,
+        });
+        return {
+          success: true,
+          type: "image",
+          content: s3Url,
+          metadata: { imageUrl: s3Url, provider: "sharp:mask", costUsd: 0 },
+        };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { success: false, type: "error", content: `apply_mask упал: ${msg}` };
+      }
+    }
+
+    case "apply_blur": {
+      const imageUrl = params.imageUrl as string;
+      const mode = (params.mode as "uniform" | "progressive" | undefined) ?? "uniform";
+
+      if (!imageUrl || typeof imageUrl !== "string") {
+        return { success: false, type: "error", content: "imageUrl обязателен" };
+      }
+      try {
+        await assertUrlIsSafe(imageUrl, agentAddImagePolicy());
+      } catch (err) {
+        if (err instanceof SsrfBlockedError) {
+          return { success: false, type: "error", content: `URL заблокирован: ${err.reason}` };
+        }
+        throw err;
+      }
+
+      try {
+        const { buffer } = await fetchImageBuffer(imageUrl);
+        const out =
+          mode === "progressive"
+            ? await applyBlur(buffer, {
+                mode: "progressive",
+                direction:
+                  (params.direction as LinearDirection | undefined) ?? "top-to-bottom",
+                start: clampPx(params.start, 0),
+                end: clampPx(params.end, 8),
+              })
+            : await applyBlur(buffer, {
+                mode: "uniform",
+                intensity: clampPx(params.intensity, 4),
+              });
+        const { s3Url } = await uploadBufferToS3(out, "image/png", {
+          workspaceId: context.workspaceId,
+        });
+        return {
+          success: true,
+          type: "image",
+          content: s3Url,
+          metadata: { imageUrl: s3Url, provider: `sharp:blur:${mode}`, costUsd: 0 },
+        };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { success: false, type: "error", content: `apply_blur упал: ${msg}` };
       }
     }
 

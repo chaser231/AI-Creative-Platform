@@ -26,11 +26,43 @@ const PARAM_LABELS: Record<string, string> = {
     assetId: "ID ассета",
     sourceUrl: "URL изображения",
     model: "Модель",
-    style: "Стиль",
-    intensity: "Интенсивность",
-    prompt: "Промпт",
     name: "Название",
     folder: "Папка",
+    // mask + blur
+    direction: "Направление",
+    start: "Старт",
+    end: "Конец",
+    mode: "Режим",
+    intensity: "Интенсивность",
+};
+
+/**
+ * Per-enum-value display labels. The schema enum strings are stable IDs
+ * (`fal-birefnet`, `top-to-bottom`, `nano-banana-2`) — these give users
+ * Russian, human-readable choices in the inspector.
+ */
+const ENUM_OPTION_LABELS: Record<string, Record<string, string>> = {
+    model: {
+        // removeBackground
+        "fal-birefnet": "BiRefNet (сохраняет тени и отражения)",
+        "fal-bria": "Bria (fal.ai)",
+        "replicate-bria-cutout": "Bria Cutout (Replicate)",
+        "replicate-rembg": "RemBG (Replicate)",
+        // addReflection
+        "nano-banana-2": "Nano Banana 2",
+        "bria-product-shot": "Bria Product Shot",
+        "flux-kontext-pro": "FLUX Kontext Pro",
+    },
+    direction: {
+        "top-to-bottom": "Сверху вниз",
+        "bottom-to-top": "Снизу вверх",
+        "left-to-right": "Слева направо",
+        "right-to-left": "Справа налево",
+    },
+    mode: {
+        uniform: "Однородный",
+        progressive: "Прогрессивный",
+    },
 };
 
 export interface NodeInspectorProps {
@@ -53,8 +85,8 @@ export function NodeInspector({ selectedNodeId }: NodeInspectorProps) {
 
     if (!node || !definition || !schema) {
         return (
-            <aside className="flex w-72 flex-col border-l border-neutral-200 bg-white px-4 py-6 dark:border-neutral-800 dark:bg-neutral-950">
-                <p className="text-sm text-neutral-500 dark:text-neutral-400">
+            <aside className="flex w-72 flex-col border-l border-border-primary bg-bg-surface px-4 py-6">
+                <p className="text-sm text-text-secondary">
                     Выберите ноду на холсте, чтобы редактировать параметры.
                 </p>
             </aside>
@@ -81,16 +113,16 @@ export function NodeInspector({ selectedNodeId }: NodeInspectorProps) {
     };
 
     return (
-        <aside className="flex w-72 flex-col gap-4 border-l border-neutral-200 bg-white px-4 py-5 dark:border-neutral-800 dark:bg-neutral-950">
+        <aside className="flex w-72 flex-col gap-4 border-l border-border-primary bg-bg-surface px-4 py-5">
             <header className="flex flex-col gap-1">
-                <span className="text-[10px] font-medium uppercase tracking-wide text-neutral-400">
+                <span className="text-[10px] font-medium uppercase tracking-wide text-text-tertiary">
                     Параметры
                 </span>
-                <h3 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
+                <h3 className="text-sm font-semibold text-text-primary">
                     {definition.displayName}
                 </h3>
                 {definition.description && (
-                    <p className="text-xs text-neutral-500 dark:text-neutral-400">
+                    <p className="text-xs text-text-secondary">
                         {definition.description}
                     </p>
                 )}
@@ -113,6 +145,7 @@ export function NodeInspector({ selectedNodeId }: NodeInspectorProps) {
                             schema={fieldSchema as z.ZodTypeAny}
                             value={(node.data.params as Record<string, unknown>)[key]}
                             error={errorByPath.get(key)}
+                            optionLabels={ENUM_OPTION_LABELS[key]}
                             onChange={(next) => handlePatch({ [key]: next })}
                         />
                     ))

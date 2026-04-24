@@ -153,6 +153,8 @@ function makeCtx(
         user,
         session: { user, expires: "" },
         headers: new Headers(),
+        authSessionUnavailable: false,
+        authRecoveryStatus: null,
     };
 }
 

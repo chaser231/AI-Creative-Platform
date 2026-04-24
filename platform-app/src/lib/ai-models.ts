@@ -300,6 +300,18 @@ export const MODEL_REGISTRY: ModelEntry[] = [
         costPerRun: 0.04,
     },
     {
+        // BiRefNet on fal.ai — preserves shadows and reflections during
+        // background removal, unlike Bria/rembg which strip everything but
+        // the product silhouette. Default for the workflow `removeBackground`
+        // node when downstream graph contains a reflection step.
+        id: "fal-birefnet",
+        label: "BiRefNet (fal.ai)",
+        slug: "fal-ai/birefnet/v2",
+        provider: "fal",
+        caps: ["remove-bg"],
+        costPerRun: 0.005,
+    },
+    {
         id: "flux-kontext-pro",
         label: "FLUX Kontext Pro",
         slug: "black-forest-labs/flux-kontext-pro",

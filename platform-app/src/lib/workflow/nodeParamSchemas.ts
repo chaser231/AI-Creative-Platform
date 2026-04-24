@@ -34,17 +34,93 @@ export const imageInputParamsSchema = z
         },
     );
 
+/**
+ * Background-removal models. Birefnet (fal) is default — it preserves shadows
+ * and reflections better than Bria, which strips everything but the product
+ * silhouette. Older Bria/rembg models stay in the enum so existing graphs
+ * still validate after the default flip.
+ */
 export const removeBackgroundParamsSchema = z.object({
     model: z
-        .enum(["fal-bria", "replicate-bria-cutout", "replicate-rembg"])
-        .default("fal-bria"),
+        .enum([
+            "fal-birefnet",
+            "fal-bria",
+            "replicate-bria-cutout",
+            "replicate-rembg",
+        ])
+        .default("fal-birefnet"),
 });
 
+/**
+ * Reflection generation. We add a `prompt` field so the user can control
+ * the exact request sent to the model. The default prompt is optimized for
+ * creating a sharp mirror reflection that downstream `removeBackground` nodes
+ * can easily preserve.
+ *
+ * `model` lets the user pick which provider runs first; the cascade falls back
+ * to the others on failure regardless of choice.
+ */
 export const addReflectionParamsSchema = z.object({
-    style: z.enum(["subtle", "strong", "mirror"]).default("subtle"),
-    intensity: z.number().min(0).max(1).default(0.3),
-    prompt: z.string().max(500).optional(),
+    model: z
+        .enum(["nano-banana-2", "bria-product-shot", "flux-kontext-pro"])
+        .default("nano-banana-2"),
+    prompt: z
+        .string()
+        .default(
+            "Выдели продукт из фото, размести его на изолированном однотонном фоне, создай от него идеально ровно неискаженное физически корректное отражение, как будто он стоит на зеркале.",
+        ),
 });
+
+/**
+ * Mask — linear alpha gradient with two control points (Figma-style).
+ * `start` is the alpha at the start of `direction`, `end` is the alpha at
+ * the end. Linear interpolation between them. Multiplies into the source
+ * RGBA's alpha channel; opaque RGB inputs get an alpha channel added.
+ */
+export const maskParamsSchema = z.object({
+    direction: z
+        .enum([
+            "top-to-bottom",
+            "bottom-to-top",
+            "left-to-right",
+            "right-to-left",
+        ])
+        .default("top-to-bottom"),
+    start: z.number().min(0).max(1).default(1),
+    end: z.number().min(0).max(1).default(0),
+});
+
+/**
+ * Blur — Figma-style Layer Blur with two modes.
+ * - `uniform`: constant `intensity` (px) across the whole image.
+ * - `progressive`: blur radius interpolates linearly from `start` (px) at the
+ *   start of `direction` to `end` (px) at the end, implemented as a 2-layer
+ *   composite (blurred-end masked over blurred-start).
+ */
+export const blurParamsSchema = z
+    .object({
+        mode: z.enum(["uniform", "progressive"]).default("uniform"),
+        intensity: z.number().min(0).max(50).default(4),
+        direction: z
+            .enum([
+                "top-to-bottom",
+                "bottom-to-top",
+                "left-to-right",
+                "right-to-left",
+            ])
+            .default("top-to-bottom"),
+        start: z.number().min(0).max(50).default(0),
+        end: z.number().min(0).max(50).default(8),
+    })
+    .refine(
+        (d) =>
+            d.mode === "uniform" ? d.intensity > 0 : d.start >= 0 && d.end > d.start,
+        {
+            message:
+                "Progressive: end должен быть больше start. Uniform: intensity должен быть > 0.",
+            path: ["mode"],
+        },
+    );
 
 export const assetOutputParamsSchema = z.object({
     name: z.string().min(1).max(120).default("Workflow output"),
@@ -60,10 +136,14 @@ export const NODE_PARAM_SCHEMAS: Record<WorkflowNodeType, z.ZodTypeAny> = {
     imageInput: imageInputParamsSchema,
     removeBackground: removeBackgroundParamsSchema,
     addReflection: addReflectionParamsSchema,
+    mask: maskParamsSchema,
+    blur: blurParamsSchema,
     assetOutput: assetOutputParamsSchema,
 };
 
 export type ImageInputParams = z.infer<typeof imageInputParamsSchema>;
 export type RemoveBackgroundParams = z.infer<typeof removeBackgroundParamsSchema>;
 export type AddReflectionParams = z.infer<typeof addReflectionParamsSchema>;
+export type MaskParams = z.infer<typeof maskParamsSchema>;
+export type BlurParams = z.infer<typeof blurParamsSchema>;
 export type AssetOutputParams = z.infer<typeof assetOutputParamsSchema>;

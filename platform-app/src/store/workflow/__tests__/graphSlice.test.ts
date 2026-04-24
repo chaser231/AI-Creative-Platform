@@ -22,15 +22,15 @@ describe("useWorkflowStore — graph slice", () => {
     });
 
     it("addNode pushes a node with defaultParams from NODE_REGISTRY", () => {
-        const id = useWorkflowStore.getState().addNode("addReflection", { x: 5, y: 10 });
+        const id = useWorkflowStore.getState().addNode("removeBackground", { x: 5, y: 10 });
         const state = useWorkflowStore.getState();
 
         expect(state.nodes).toHaveLength(1);
         expect(state.nodes[0].id).toBe(id);
-        expect(state.nodes[0].type).toBe("addReflection");
+        expect(state.nodes[0].type).toBe("removeBackground");
         expect(state.nodes[0].position).toEqual({ x: 5, y: 10 });
-        // defaultParams for addReflection in NODE_REGISTRY (see types.ts).
-        expect(state.nodes[0].data.params).toEqual({ style: "subtle", intensity: 0.3 });
+        // defaultParams for removeBackground in NODE_REGISTRY (see types.ts).
+        expect(state.nodes[0].data.params).toEqual({ model: "fal-birefnet" });
         expect(state.dirty).toBe(true);
     });
 
@@ -120,11 +120,19 @@ describe("useWorkflowStore — graph slice", () => {
     });
 
     it("updateNodeParams only patches requested keys", () => {
-        const id = useWorkflowStore.getState().addNode("addReflection", { x: 0, y: 0 });
-        useWorkflowStore.getState().updateNodeParams(id, { intensity: 0.7 });
+        const id = useWorkflowStore.getState().addNode("blur", { x: 0, y: 0 });
+        useWorkflowStore.getState().updateNodeParams(id, { intensity: 12 });
 
         const node = useWorkflowStore.getState().nodes.find((n) => n.id === id);
-        expect(node?.data.params).toEqual({ style: "subtle", intensity: 0.7 });
+        // mode/direction/start/end were preserved from defaultParams; only
+        // `intensity` was patched.
+        expect(node?.data.params).toEqual({
+            mode: "uniform",
+            intensity: 12,
+            direction: "top-to-bottom",
+            start: 0,
+            end: 8,
+        });
     });
 
     it("emptyWorkflowGraph round-trips through hydrate → serialize", () => {

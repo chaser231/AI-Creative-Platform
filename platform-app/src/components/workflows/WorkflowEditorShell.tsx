@@ -32,7 +32,7 @@ const WorkflowEditor = dynamic(
 
 function EditorSkeleton({ label }: { label: string }) {
     return (
-        <div className="flex h-screen flex-col items-center justify-center gap-3 bg-neutral-50 text-neutral-500 dark:bg-neutral-950 dark:text-neutral-400">
+        <div className="flex h-screen flex-col items-center justify-center gap-3 bg-bg-primary text-text-secondary">
             <Loader2 className="h-6 w-6 animate-spin" />
             <span className="text-sm">{label}</span>
         </div>

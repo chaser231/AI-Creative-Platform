@@ -8,6 +8,10 @@ export type AuthDiagnosticEvent =
   | "session_refresh_timeout"
   | "unauthenticated_redirect"
   | "unauthorized_response"
+  | "auth_redirect_probe_started"
+  | "auth_redirect_probe_result"
+  | "auth_session_recovered"
+  | "auth_session_unavailable"
   | "logout_started"
   | "trpc_context_resolved"
   | "trpc_unauthorized";

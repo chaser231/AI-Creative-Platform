@@ -18,6 +18,8 @@ export interface RenderFieldProps {
     schema: z.ZodTypeAny;
     value: unknown;
     error?: string;
+    /** For enum fields: human-readable label per option id. */
+    optionLabels?: Record<string, string>;
     onChange: (next: unknown) => void;
 }
 
@@ -27,16 +29,17 @@ export function RenderField({
     schema,
     value,
     error,
+    optionLabels,
     onChange,
 }: RenderFieldProps) {
     const desc: FieldDescriptor = pickFieldKind(schema);
 
     return (
         <label className="flex flex-col gap-1.5">
-            <span className="text-xs font-medium text-neutral-700 dark:text-neutral-300">
+            <span className="text-xs font-medium text-text-primary">
                 {label}
                 {desc.optional && (
-                    <span className="ml-1 text-neutral-400">— необязательно</span>
+                    <span className="ml-1 text-text-tertiary">— необязательно</span>
                 )}
             </span>
 
@@ -82,10 +85,10 @@ export function RenderField({
                         step={(desc.max - desc.min) / 100}
                         value={typeof value === "number" ? value : desc.min}
                         onChange={(e) => onChange(e.target.valueAsNumber)}
-                        className="flex-1 accent-blue-500"
+                        className="flex-1 accent-accent-primary"
                         name={name}
                     />
-                    <span className="w-10 text-right text-xs tabular-nums text-neutral-500">
+                    <span className="w-10 text-right text-xs tabular-nums text-text-secondary">
                         {(typeof value === "number" ? value : desc.min).toFixed(2)}
                     </span>
                 </div>
@@ -100,7 +103,7 @@ export function RenderField({
                 >
                     {desc.options.map((opt) => (
                         <option key={opt} value={opt}>
-                            {opt}
+                            {optionLabels?.[opt] ?? opt}
                         </option>
                     ))}
                 </select>
@@ -111,13 +114,13 @@ export function RenderField({
                     type="checkbox"
                     checked={value === true}
                     onChange={(e) => onChange(e.target.checked)}
-                    className="h-4 w-4 self-start accent-blue-500"
+                    className="h-4 w-4 self-start accent-accent-primary"
                     name={name}
                 />
             )}
 
             {desc.kind === "unsupported" && (
-                <span className="text-xs italic text-neutral-400">
+                <span className="text-xs italic text-text-tertiary">
                     (Поле «{name}» пока не поддерживается)
                 </span>
             )}
@@ -133,11 +136,10 @@ export function RenderField({
 
 function inputClass(hasError: boolean): string {
     return [
-        "h-9 w-full rounded-md border bg-white px-2.5 text-sm text-neutral-900",
-        "focus:outline-none focus:ring-2 focus:ring-blue-500/30",
-        "dark:bg-neutral-900 dark:text-neutral-100",
+        "h-9 w-full rounded-md border bg-bg-surface px-2.5 text-sm text-text-primary",
+        "focus:outline-none focus:ring-2 focus:ring-border-focus/40",
         hasError
             ? "border-red-500 focus:border-red-500"
-            : "border-neutral-300 dark:border-neutral-700",
+            : "border-border-primary focus:border-border-focus",
     ].join(" ");
 }

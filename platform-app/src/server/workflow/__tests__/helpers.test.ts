@@ -32,10 +32,12 @@ vi.mock("@aws-sdk/client-s3", () => {
 
 // Imports resolved AFTER mocks above take effect.
 import {
-    buildReflectionPrompt,
+    applyBlur,
+    applyMask,
     tryWithFallback,
     uploadFromExternalUrl,
 } from "../helpers";
+import sharp from "sharp";
 import { safeFetch, SsrfBlockedError } from "@/server/security/ssrfGuard";
 
 const safeFetchMock = safeFetch as unknown as ReturnType<typeof vi.fn>;
@@ -93,25 +95,89 @@ describe("tryWithFallback", () => {
     });
 });
 
-// ─── buildReflectionPrompt ──────────────────────────────────────────────────
+// ─── applyMask / applyBlur (sharp-based) ───────────────────────────────────
 
-describe("buildReflectionPrompt", () => {
-    it("includes style and intensity in the prompt", () => {
-        const p = buildReflectionPrompt("subtle", 0.3);
-        expect(p).toMatch(/Style: subtle/);
-        expect(p).toMatch(/Opacity: 0\.30/);
-        expect(p).toMatch(/transparent background/i);
+async function makeOpaqueRgbBuffer(w = 32, h = 32): Promise<Buffer> {
+    return sharp({
+        create: {
+            width: w,
+            height: h,
+            channels: 3,
+            background: { r: 200, g: 100, b: 50 },
+        },
+    })
+        .png()
+        .toBuffer();
+}
+
+describe("applyMask", () => {
+    it("produces a 4-channel PNG and modulates alpha along the gradient", async () => {
+        const input = await makeOpaqueRgbBuffer(32, 32);
+
+        const out = await applyMask(input, {
+            direction: "top-to-bottom",
+            start: 1,
+            end: 0,
+        });
+        const meta = await sharp(out).metadata();
+        expect(meta.channels).toBe(4);
+        expect(meta.format).toBe("png");
+
+        // Sample the raw RGBA buffer: top row should be opaque, bottom row
+        // transparent (within tolerance — the SVG renderer interpolates at
+        // the pixel center, not the edge).
+        const { data, info } = await sharp(out).raw().toBuffer({ resolveWithObject: true });
+        const stride = info.width * info.channels;
+        const topAlpha = data[3]; // first pixel, alpha channel
+        const bottomAlpha = data[(info.height - 1) * stride + 3];
+        expect(topAlpha).toBeGreaterThan(220);
+        expect(bottomAlpha).toBeLessThan(40);
     });
 
-    it("clamps intensity below 0.1 up to 0.1", () => {
-        const p = buildReflectionPrompt("subtle", 0.05);
-        expect(p).toMatch(/Opacity: 0\.10/);
+    it("supports inverted gradient (start=0 end=1)", async () => {
+        const input = await makeOpaqueRgbBuffer(32, 32);
+        const out = await applyMask(input, {
+            direction: "top-to-bottom",
+            start: 0,
+            end: 1,
+        });
+        const { data, info } = await sharp(out).raw().toBuffer({ resolveWithObject: true });
+        const stride = info.width * info.channels;
+        const topAlpha = data[3];
+        const bottomAlpha = data[(info.height - 1) * stride + 3];
+        expect(topAlpha).toBeLessThan(40);
+        expect(bottomAlpha).toBeGreaterThan(220);
+    });
+});
+
+describe("applyBlur", () => {
+    it("uniform mode: returns a PNG with same dimensions", async () => {
+        const input = await makeOpaqueRgbBuffer(40, 40);
+        const out = await applyBlur(input, { mode: "uniform", intensity: 5 });
+        const meta = await sharp(out).metadata();
+        expect(meta.format).toBe("png");
+        expect(meta.width).toBe(40);
+        expect(meta.height).toBe(40);
     });
 
-    it("clamps intensity above 1 down to 1", () => {
-        const p = buildReflectionPrompt("hard", 2);
-        expect(p).toMatch(/Opacity: 1\.00/);
-        expect(p).toMatch(/Style: hard/);
+    it("uniform mode with intensity 0 is a no-op pass-through", async () => {
+        const input = await makeOpaqueRgbBuffer(20, 20);
+        const out = await applyBlur(input, { mode: "uniform", intensity: 0 });
+        expect((await sharp(out).metadata()).format).toBe("png");
+    });
+
+    it("progressive mode: returns same-dimension PNG", async () => {
+        const input = await makeOpaqueRgbBuffer(40, 40);
+        const out = await applyBlur(input, {
+            mode: "progressive",
+            direction: "top-to-bottom",
+            start: 0,
+            end: 8,
+        });
+        const meta = await sharp(out).metadata();
+        expect(meta.format).toBe("png");
+        expect(meta.width).toBe(40);
+        expect(meta.height).toBe(40);
     });
 });
 

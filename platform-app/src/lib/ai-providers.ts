@@ -585,12 +585,15 @@ async function falSubmitAndPoll(
 export async function invokeFalModel(
     modelId: string,
     input: Record<string, unknown>,
-    opts: { maxPollSeconds?: number } = {},
+    opts: { maxPollSeconds?: number; endpoint?: string } = {},
 ): Promise<{ output: string; model: string; costUsd: number }> {
     const entry = getModelById(modelId);
     if (!entry) throw new Error(`Unknown model: ${modelId}`);
 
-    const endpoint = FAL_MODEL_MAP[modelId] ?? entry.slug;
+    // `opts.endpoint` overrides the registry/FAL_MODEL_MAP mapping. Used when
+    // the same model has multiple fal endpoints (e.g. nano-banana base vs
+    // /edit vs /pro) and the caller knows exactly which one is needed.
+    const endpoint = opts.endpoint ?? FAL_MODEL_MAP[modelId] ?? entry.slug;
     if (!endpoint) {
         throw new Error(`Model ${modelId} has no fal.ai endpoint mapping`);
     }
@@ -632,6 +635,8 @@ const FAL_MODEL_MAP: Record<string, string> = {
     "bria-expand":     "fal-ai/bria/expand",
     "bria-rmbg":       "fal-ai/bria/background/remove",
     "bria-product-shot": "fal-ai/bria/product-shot",
+    "fal-birefnet":    "fal-ai/birefnet/v2",
+    "flux-kontext-pro": "fal-ai/flux-pro/kontext",
     "esrgan":          "fal-ai/esrgan",
     "seedvr":          "fal-ai/seedvr/upscale/image",
     "sima-upscaler":   "simalabs/sima-upscaler",
