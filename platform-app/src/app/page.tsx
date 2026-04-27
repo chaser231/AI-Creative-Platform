@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
+import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Plus, ImageIcon, Type, Camera, Video, Search, HelpCircle, LayoutTemplate, ArrowRight, Star, Loader2, X, FolderKanban, Image as ImageLibIcon, Workflow } from "lucide-react";
@@ -77,6 +78,7 @@ const generationTypes = [
     gradient: "gradient-card-purple",
     iconBg: "bg-violet-100 text-violet-600 dark:bg-violet-500/20 dark:text-violet-400",
     image: "/cards/banner.png",
+    darkImage: "/cards/banner-dark.png",
   },
   {
     id: "text" as const,
@@ -85,6 +87,7 @@ const generationTypes = [
     gradient: "gradient-card-blue",
     iconBg: "bg-sky-100 text-sky-600 dark:bg-sky-500/20 dark:text-sky-400",
     image: "/cards/text.png",
+    darkImage: "/cards/text-dark.png",
   },
   {
     id: "photo" as const,
@@ -93,6 +96,7 @@ const generationTypes = [
     gradient: "gradient-card-peach",
     iconBg: "bg-orange-100 text-orange-600 dark:bg-orange-500/20 dark:text-orange-400",
     image: "/cards/photo.png",
+    darkImage: "/cards/photo-dark.png",
   },
   {
     id: "video" as const,
@@ -100,7 +104,8 @@ const generationTypes = [
     label: "Генерация\nвидео",
     gradient: "gradient-card-green",
     iconBg: "bg-emerald-100 text-emerald-600 dark:bg-emerald-500/20 dark:text-emerald-400",
-    image: "/cards/video.png",
+    image: "/cards/video-light.png",
+    darkImage: "/cards/video-dark.png",
   },
   {
     id: "workflows" as const,
@@ -108,7 +113,8 @@ const generationTypes = [
     label: "AI\nWorkflows",
     gradient: "gradient-card-pink",
     iconBg: "bg-pink-100 text-pink-600 dark:bg-pink-500/20 dark:text-pink-400",
-    image: "/cards/workflows.png",
+    image: "/cards/workflows-light.png",
+    darkImage: "/cards/workflows-dark.png",
   },
 ];
 
@@ -278,11 +284,21 @@ export default function DashboardPage() {
                   </span>
                 </div>
                 {/* Decorative illustration — bottom right */}
-                <img
+                <Image
                   src={type.image}
                   alt=""
                   aria-hidden
-                  className="absolute -bottom-3 -right-3 w-[120px] h-[120px] object-contain opacity-80 group-hover:opacity-100 group-hover:scale-110 transition-all duration-300 select-none pointer-events-none"
+                  width={120}
+                  height={120}
+                  className="absolute -bottom-3 -right-3 w-[120px] h-[120px] object-contain opacity-80 group-hover:opacity-100 group-hover:scale-110 transition-all duration-300 select-none pointer-events-none dark:hidden"
+                />
+                <Image
+                  src={type.darkImage}
+                  alt=""
+                  aria-hidden
+                  width={120}
+                  height={120}
+                  className="absolute -bottom-3 -right-3 hidden w-[120px] h-[120px] object-contain opacity-80 group-hover:opacity-100 group-hover:scale-110 transition-all duration-300 select-none pointer-events-none dark:block"
                 />
               </button>
             ))}
