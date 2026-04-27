@@ -56,7 +56,7 @@ export default function WorkflowsListPage() {
                     <div className="mb-6 flex items-center justify-between">
                         <div>
                             <h1 className="text-2xl font-semibold text-neutral-900 dark:text-neutral-50">
-                                Workflow&rsquo;ы
+                                AI Workflows
                             </h1>
                             <p className="mt-1 text-sm text-neutral-500">
                                 Сценарии автоматизации на основе AI-нод
