@@ -184,12 +184,20 @@ export function NodeInspector({
     if (edge && edgeNodes?.source && edgeNodes.target) {
         const sourceDefinition = NODE_REGISTRY[edgeNodes.source.type];
         const targetDefinition = NODE_REGISTRY[edgeNodes.target.type];
-        const sourcePort =
-            sourceDefinition.outputs.find((port) => port.id === edge.sourceHandle)?.label ??
-            edge.sourceHandle;
-        const targetPort =
-            targetDefinition.inputs.find((port) => port.id === edge.targetHandle)?.label ??
-            edge.targetHandle;
+        const sourcePortDefinition = sourceDefinition.outputs.find(
+            (port) => port.id === edge.sourceHandle,
+        );
+        const targetPortDefinition = targetDefinition.inputs.find(
+            (port) => port.id === edge.targetHandle,
+        );
+        const sourcePort = sourcePortDefinition?.label ?? edge.sourceHandle;
+        const targetPort = targetPortDefinition?.label ?? edge.targetHandle;
+        const flowTitle =
+            sourcePortDefinition?.type === "text"
+                ? "Поток текста"
+                : sourcePortDefinition?.type === "image"
+                  ? "Поток изображения"
+                  : "Связь";
 
         return (
             <InspectorShell label="Параметры выбранной связи">
@@ -198,10 +206,10 @@ export function NodeInspector({
                         Связь
                     </span>
                     <h3 className="text-sm font-semibold text-text-primary">
-                        Поток изображения
+                        {flowTitle}
                     </h3>
                     <p className="text-xs text-text-secondary">
-                        Эта связь передаёт результат одного узла во вход другого.
+                        Эта связь передаёт результат одного узла во вход «{targetPort}».
                     </p>
                 </header>
 

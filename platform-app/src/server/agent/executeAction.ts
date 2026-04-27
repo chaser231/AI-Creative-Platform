@@ -55,6 +55,32 @@ function clampPx(v: unknown, fallback: number): number {
     : fallback;
 }
 
+function normalizeStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const item of value) {
+    if (typeof item !== "string") continue;
+    const trimmed = item.trim();
+    if (!trimmed || seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    out.push(trimmed);
+  }
+  return out;
+}
+
+async function assertSafeImageInputs(urls: string[]): Promise<void> {
+  for (const url of urls) {
+    if (/^data:image\//i.test(url)) continue;
+    await assertUrlIsSafe(url, agentAddImagePolicy());
+  }
+}
+
+function ssrfErrorMessage(error: unknown): string | null {
+  if (!(error instanceof SsrfBlockedError)) return null;
+  return `URL заблокирован политикой SSRF (${error.code})`;
+}
+
 // ─── Action Executors ────────────────────────────────────
 
 export async function executeAction(
@@ -134,8 +160,8 @@ export async function executeAction(
     }
 
     case "generate_text": {
-      const prompt = params.prompt as string | undefined;
-      if (!prompt || typeof prompt !== "string") {
+      const prompt = typeof params.prompt === "string" ? params.prompt.trim() : "";
+      if (!prompt) {
         return { success: false, type: "error", content: "Промпт для генерации текста обязателен" };
       }
 
@@ -153,6 +179,22 @@ export async function executeAction(
         subtitle: "Напиши один подзаголовок или CTA на 10-20 слов.",
         freeform: "Напиши короткий рекламный текст до 40 слов.",
       };
+      const sourceImageUrls = normalizeStringArray(params.sourceImageUrls);
+      let visualContext = "";
+
+      if (sourceImageUrls.length > 0) {
+        try {
+          await assertSafeImageInputs(sourceImageUrls);
+        } catch (error) {
+          const message = ssrfErrorMessage(error);
+          if (message) return { success: false, type: "error", content: message };
+          throw error;
+        }
+        const vision = await analyzeReferenceImages(sourceImageUrls, prompt);
+        if (vision.combinedSummary) {
+          visualContext = `\n\nВХОДНЫЕ ИЗОБРАЖЕНИЯ:\n${vision.combinedSummary}\n\nИспользуй этот визуальный контекст как источник фактов. Если пользователь просит описать изображение, придумать промпт для изменения стиля или извлечь рекламное сообщение, опирайся именно на эти входные изображения.`;
+        }
+      }
 
       const response = await callLLM([
         {
@@ -164,7 +206,7 @@ export async function executeAction(
 - Тон: ${toneMap[tone] || toneMap.bold}
 - Без кавычек вокруг ответа
 - Без пояснений и вариантов
-- Пиши на языке пользовательского запроса`,
+- Пиши на языке пользовательского запроса${visualContext}`,
         },
         { role: "user", content: prompt },
       ]);
@@ -174,50 +216,57 @@ export async function executeAction(
         success: true,
         type: "text",
         content: text,
-        metadata: { role: mode, tone },
+        metadata: { role: mode, tone, sourceImageCount: sourceImageUrls.length },
       };
     }
 
     case "generate_image": {
-      const subject = (params.subject ?? params.prompt) as string | undefined;
-      if (!subject || typeof subject !== "string") {
+      const subject =
+        typeof (params.subject ?? params.prompt) === "string"
+          ? ((params.subject ?? params.prompt) as string).trim()
+          : "";
+      if (!subject) {
         return { success: false, type: "error", content: "Промпт для генерации изображения обязателен" };
       }
       const style = (params.style as string) || "photo";
 
-      // Build an English prompt for the image model
-      const hasReferenceDescriptions = subject.includes('ТОЧНЫЕ ОПИСАНИЯ ТОВАРОВ');
-      const referenceImages = (params.referenceImages as string[] | undefined);
-      const hasActualRefs = referenceImages && referenceImages.length > 0;
+      // Build an English prompt for the image model.
+      const referenceImages = normalizeStringArray(params.referenceImages);
+      const hasActualRefs = referenceImages.length > 0;
+      if (hasActualRefs) {
+        try {
+          await assertSafeImageInputs(referenceImages);
+        } catch (error) {
+          const message = ssrfErrorMessage(error);
+          if (message) return { success: false, type: "error", content: message };
+          throw error;
+        }
+      }
 
       let imagePrompt: string;
 
-      if (hasActualRefs && hasReferenceDescriptions) {
-        // Reference-based generation: use Google's recommended pattern
-        // [Reference Images] + [Relationship Instruction] + [New Scenario]
+      if (hasActualRefs) {
         imagePrompt = await callLLM([
           {
             role: "system",
-            content: `You write prompts for AI image generation that uses attached reference product photos.
+            content: `You write prompts for AI image generation that uses attached reference images.
 
 CRITICAL RULES:
 - Write in ENGLISH only
-- The user has attached ${referenceImages.length} reference product photos
-- The model CAN SEE the attached photos — you must tell it to USE them
-- Start the prompt with: "Using the attached reference images as the exact products to include:"
-- Then describe the COMPOSITION/SCENE: how to arrange these exact products together
-- Do NOT describe individual products in detail (the model sees the photos)
-- Focus on: arrangement, lighting, background, angles, mood
+- The user has attached ${referenceImages.length} reference image(s)
+- The model CAN SEE the attached images — explicitly tell it to use them
+- Start with: "Using the attached reference images as visual references:"
+- If the request asks to preserve exact products/objects, say to preserve their identity, shape, material, colors, and details
+- If the request asks for style transfer or mood, say to borrow style, palette, lighting, composition, or material cues from the references
+- Then describe the new scene/composition clearly
 - Style: premium commercial ${style} photography, magazine-quality product hero shot
-- Background: soft gradient (light gray to white) or elegant surface
-- Lighting: professional studio lighting with soft shadows and subtle reflections
 - ALWAYS end with: "no text, no letters, no words, no logos, no watermarks"
 - Keep it under 80 words
 - Return ONLY the prompt text, no quotes, no "Here is the prompt:" prefix`,
           },
           {
             role: "user",
-            content: `Create a composition prompt for ${referenceImages.length} attached product photos. ${subject}`,
+            content: `Create a generation prompt using the attached reference image(s). User request: ${subject}`,
           },
         ]);
       } else {

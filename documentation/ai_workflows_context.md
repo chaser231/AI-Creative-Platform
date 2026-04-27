@@ -367,6 +367,7 @@ P1 node expansion:
 
 - Image generation node.
 - Text generation node.
+- Multimodal upstream inputs for generation nodes.
 - Layer editor node.
 - Batch node.
 - Router node.
@@ -540,6 +541,62 @@ Status:
   - node cards render text result previews instead of image placeholders;
   - tests cover text param validation, executor dispatch, route response mapping, and text preview resolution.
 
+P1.7.5 Multimodal input ports for generation nodes:
+
+- Add optional upstream inputs to AI generation nodes so they behave like Flora-style content blocks, not isolated prompt boxes.
+- Extend port metadata:
+  - `multiple?: boolean` for repeatable image/text inputs;
+  - semantic role, e.g. `prompt`, `reference`, `source`, so executor/API mapping does not depend only on handle names.
+- `imageGeneration` inputs:
+  - one repeatable `context-in` input accepts both text and image outputs;
+  - text context from `textGeneration` or future text input nodes is used as prompt context;
+  - image context from `imageInput`, image transforms, previews, or generated images is used as references;
+  - merge local prompt + upstream text into one generation task;
+  - pass upstream images as `referenceImages` and make the prompt explicitly describe how to use them.
+- `textGeneration` inputs:
+  - one repeatable `context-in` input accepts both text and image outputs;
+  - text context from another text node is used as task/context;
+  - image context is used as visual sources;
+  - support prompts like "describe this image", "write an edit prompt for this style", "extract product messaging", or "invent a banner headline from this visual";
+  - use `visionAnalyzer` or provider vision input to convert source images into grounded context before LLM generation.
+- Executor/API contract:
+  - update `collectInputs` so multiple edges into a repeatable handle aggregate instead of overwriting each other;
+  - preserve existing `{ imageUrl, text }` single-value shape for old nodes, but add arrays such as `imageUrls` / `texts` for repeatable ports;
+  - allow local required prompt params to be satisfied by an upstream text prompt where the node UX marks that as acceptable;
+  - route `referenceImages` into `generate_image` and source image context into `generate_text`.
+- UI:
+  - show connected image references as small thumbnails/chips inside the generation node;
+  - show connected text prompt chips or a concise merged prompt preview;
+  - keep handles visible enough to invite image/text connections, matching the Flora references;
+  - inspector should explain connected inputs as "Референсы", "Промпт", or "Источник" rather than raw port ids.
+- Tests:
+  - image/text port compatibility for generation nodes;
+  - multiple incoming image references are preserved in execution inputs;
+  - upstream text can satisfy/augment generation prompt validation;
+  - `generate_image` receives merged prompt + `referenceImages`;
+  - `generate_text` receives image-source context and returns text without breaking text previews.
+
+Definition of done:
+
+- A user can connect image and text outputs into `imageGeneration` and `textGeneration`.
+- Image generation uses connected images as references and connected text as prompt context.
+- Text generation can reason over connected image sources and connected text instructions.
+- Existing transform/output nodes keep their current single-image behavior.
+- Old saved workflows remain schema-compatible.
+
+Status:
+
+- Done 2026-04-25:
+  - `imageGeneration` now accepts one repeatable `context-in` input for text prompt context and image references;
+  - `textGeneration` now accepts one repeatable `context-in` input for text task context and image sources;
+  - legacy `prompt-in`, `reference-images`, and `source-images` input handles are still accepted during execution;
+  - prompt validation accepts either a local prompt or connected upstream text;
+  - executor aggregates repeatable inputs into `imageUrls` / `texts` while preserving single-value compatibility;
+  - execute-node route merges local/upstream prompts and forwards `referenceImages` / `sourceImageUrls`;
+  - `generate_text` uses `visionAnalyzer` context for connected source images;
+  - node cards show connected reference/source thumbnails and prompt chips;
+  - focused tests cover schemas, connection compatibility, executor aggregation, and route mapping.
+
 P1.8 Later node contracts:
 
 - Layer editor node:
@@ -593,6 +650,7 @@ Run from node:
 New node contracts:
 
 - Image/text generation can reuse existing `executeAction("generate_image")`, `generate_headline`, `generate_subtitle` or introduce workflow-specific actions for less banner-specific prompts.
+- Generation nodes should accept optional upstream text/image context: image generation treats images as references and text as prompt context; text generation treats images as grounded visual sources and text as task context.
 - Layer editor is likely a client/composite node at first if it edits banner layers; it may need a scenario runner rather than normal graph execution.
 - Batch/router require executor changes: ports may need arrays, branching metadata, and result type beyond `{ url, assetId }`.
 

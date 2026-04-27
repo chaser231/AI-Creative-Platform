@@ -181,6 +181,53 @@ describe("POST /api/workflow/execute-node", () => {
         );
     });
 
+    it("passes connected text and image references to generate_image", async () => {
+        mockExecuteAction.mockResolvedValue({
+            success: true,
+            type: "image",
+            content: "https://s3/generated.png",
+            metadata: { model: "flux-schnell" },
+        });
+
+        const res = await POST(
+            makeRequest({
+                actionId: "generate_image",
+                inputs: {
+                    "context-in": {
+                        imageUrl: "https://cdn.example.com/a.png",
+                        imageUrls: [
+                            "https://cdn.example.com/a.png",
+                            "https://cdn.example.com/b.png",
+                        ],
+                        text: "Сделай мягкую вязаную фактуру",
+                        texts: ["Сделай мягкую вязаную фактуру"],
+                    },
+                },
+                params: {
+                    prompt: "Сохрани форму товара",
+                    style: "photo",
+                    model: "flux-schnell",
+                    aspectRatio: "1:1",
+                },
+                workspaceId: "ws_1",
+            }) as never,
+        );
+
+        expect(res.status).toBe(200);
+        expect(mockExecuteAction).toHaveBeenCalledWith(
+            "generate_image",
+            expect.objectContaining({
+                prompt: expect.stringContaining("Сохрани форму товара"),
+                subject: expect.stringContaining("Сделай мягкую вязаную фактуру"),
+                referenceImages: [
+                    "https://cdn.example.com/a.png",
+                    "https://cdn.example.com/b.png",
+                ],
+            }),
+            expect.objectContaining({ workspaceId: "ws_1" }),
+        );
+    });
+
     it("allows generate_text and returns a text response", async () => {
         mockExecuteAction.mockResolvedValue({
             success: true,
@@ -215,6 +262,45 @@ describe("POST /api/workflow/execute-node", () => {
                 mode: "headline",
                 tone: "bold",
                 imageUrl: undefined,
+            }),
+            expect.objectContaining({ workspaceId: "ws_1" }),
+        );
+    });
+
+    it("passes connected task text and source images to generate_text", async () => {
+        mockExecuteAction.mockResolvedValue({
+            success: true,
+            type: "text",
+            content: "Описание изображения",
+            metadata: { role: "freeform" },
+        });
+
+        const res = await POST(
+            makeRequest({
+                actionId: "generate_text",
+                inputs: {
+                    "context-in": {
+                        text: "Опиши входное изображение в двух предложениях",
+                        imageUrls: ["https://cdn.example.com/source.png"],
+                    },
+                },
+                params: {
+                    prompt: "",
+                    mode: "freeform",
+                    tone: "neutral",
+                },
+                workspaceId: "ws_1",
+            }) as never,
+        );
+
+        expect(res.status).toBe(200);
+        expect(mockExecuteAction).toHaveBeenCalledWith(
+            "generate_text",
+            expect.objectContaining({
+                prompt: expect.stringContaining(
+                    "Опиши входное изображение в двух предложениях",
+                ),
+                sourceImageUrls: ["https://cdn.example.com/source.png"],
             }),
             expect.objectContaining({ workspaceId: "ws_1" }),
         );

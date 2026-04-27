@@ -17,6 +17,16 @@ function e(id: string, source: string, target: string): WorkflowEdge {
     return { id, source, sourceHandle: "image-out", target, targetHandle: "image-in" };
 }
 
+function edge(
+    id: string,
+    source: string,
+    sourceHandle: string,
+    target: string,
+    targetHandle: string,
+): WorkflowEdge {
+    return { id, source, sourceHandle, target, targetHandle };
+}
+
 function makeDeps(overrides: Partial<ExecutorDeps> = {}): ExecutorDeps {
     return {
         getAssetById: vi.fn(async ({ id }) => ({ id, url: `https://s3/${id}.png` })),
@@ -94,6 +104,25 @@ describe("validateBeforeRun", () => {
     it("accepts a text generation node as a root text producer", () => {
         const nodes = [n("text", "textGeneration", validTextGeneration)];
         expect(validateBeforeRun(nodes, [])).toEqual([]);
+    });
+
+    it("allows generation prompts to come from upstream text nodes", () => {
+        const nodes = [
+            n("prompt", "textGeneration", validTextGeneration),
+            n("image", "imageGeneration", {
+                ...validImageGeneration,
+                prompt: "",
+            }),
+        ];
+
+        expect(validateBeforeRun([nodes[1]!], [])).toEqual([
+            expect.objectContaining({ nodeId: "image" }),
+        ]);
+        expect(
+            validateBeforeRun(nodes, [
+                edge("prompt-image", "prompt", "text-out", "image", "context-in"),
+            ]),
+        ).toEqual([]);
     });
 
     it("validates only selected node ancestors when targetNodeId is provided", () => {
@@ -454,6 +483,63 @@ describe("executeGraph", () => {
                 actionId: "generate_image",
                 params: validImageGeneration,
                 inputs: {},
+            }),
+        );
+    });
+
+    it("aggregates multimodal inputs for generation nodes", async () => {
+        const nodes = [
+            n("img-a", "imageInput", { source: "asset", assetId: "a" }),
+            n("img-b", "imageInput", { source: "asset", assetId: "b" }),
+            n("prompt", "textGeneration", validTextGeneration),
+            n("gen", "imageGeneration", {
+                ...validImageGeneration,
+                prompt: "",
+            }),
+        ];
+        const edges = [
+            edge("ref-a", "img-a", "image-out", "gen", "context-in"),
+            edge("ref-b", "img-b", "image-out", "gen", "context-in"),
+            edge("prompt-gen", "prompt", "text-out", "gen", "context-in"),
+        ];
+        const deps = makeDeps({
+            executeServerAction: vi.fn(async (req) => {
+                if (req.actionId === "generate_text") {
+                    return {
+                        success: true as const,
+                        type: "text" as const,
+                        text: "Сделай мягкую вязаную фактуру",
+                        requestId: "rid",
+                    };
+                }
+                return {
+                    success: true as const,
+                    type: "image" as const,
+                    imageUrl: "https://s3/generated.png",
+                    requestId: "rid",
+                };
+            }),
+        });
+
+        const result = await executeGraph({
+            nodes,
+            edges,
+            workspaceId: "ws",
+            deps,
+        });
+
+        expect(result.success).toBe(true);
+        expect(deps.executeServerAction).toHaveBeenCalledWith(
+            expect.objectContaining({
+                actionId: "generate_image",
+                inputs: {
+                    "context-in": {
+                        imageUrl: "https://s3/a.png",
+                        imageUrls: ["https://s3/a.png", "https://s3/b.png"],
+                        text: "Сделай мягкую вязаную фактуру",
+                        texts: ["Сделай мягкую вязаную фактуру"],
+                    },
+                },
             }),
         );
     });

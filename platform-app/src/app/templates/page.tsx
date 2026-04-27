@@ -31,6 +31,7 @@ import { trpc } from "@/lib/trpc";
 import { useTemplateListSync } from "@/hooks/useTemplateSync";
 import { useCreateProjectSync } from "@/hooks/useProjectSync";
 import { useProjectStore } from "@/store/projectStore";
+import { getCanvasStateForSave } from "@/utils/canvasState";
 import { searchPacks, getAllTags, type CatalogSearchParams } from "@/services/templateCatalogService";
 import type { TemplatePackV2 } from "@/services/templateService";
 import type { BusinessUnit, TemplateCategory, ContentType, TemplateTag } from "@/types";
@@ -297,21 +298,7 @@ export default function TemplateCatalogPage() {
                         try {
                             const { useCanvasStore } = await import("@/store/canvasStore");
                             const store = useCanvasStore.getState();
-                            // Update active format's snapshot with current layers
-                            const resizesWithSnapshot = store.resizes.map(r =>
-                                r.id === store.activeResizeId
-                                    ? { ...r, layerSnapshot: store.layers }
-                                    : r
-                            );
-                            const canvasState = {
-                                layers: store.layers,
-                                masterComponents: store.masterComponents,
-                                componentInstances: store.componentInstances,
-                                resizes: resizesWithSnapshot,
-                                artboardProps: store.artboardProps,
-                                canvasWidth: store.canvasWidth,
-                                canvasHeight: store.canvasHeight,
-                            };
+                            const canvasState = getCanvasStateForSave(store);
                             await fetch("/api/canvas/save", {
                                 method: "POST",
                                 headers: { "Content-Type": "application/json" },

@@ -43,6 +43,34 @@ describe("isValidConnection", () => {
         expect(isValidConnection(conn("a", "text-out", "b", "image-in"), nodes)).toBe(false);
     });
 
+    it("accepts text-out → context-in for generation nodes", () => {
+        const nodes = [
+            node("text", "textGeneration"),
+            node("image", "imageGeneration"),
+            node("copy", "textGeneration"),
+        ];
+        expect(
+            isValidConnection(conn("text", "text-out", "image", "context-in"), nodes),
+        ).toBe(true);
+        expect(
+            isValidConnection(conn("text", "text-out", "copy", "context-in"), nodes),
+        ).toBe(true);
+    });
+
+    it("accepts image-out → context-in for generation nodes", () => {
+        const nodes = [
+            node("image", "imageInput"),
+            node("gen", "imageGeneration"),
+            node("text", "textGeneration"),
+        ];
+        expect(
+            isValidConnection(conn("image", "image-out", "gen", "context-in"), nodes),
+        ).toBe(true);
+        expect(
+            isValidConnection(conn("image", "image-out", "text", "context-in"), nodes),
+        ).toBe(true);
+    });
+
     it("rejects when source node is missing from list", () => {
         const nodes = [node("b", "removeBackground")];
         expect(

@@ -54,9 +54,9 @@ describe("imageGenerationParamsSchema", () => {
         }
     });
 
-    it("rejects an empty prompt", () => {
+    it("allows an empty prompt so upstream text can satisfy it", () => {
         const r = imageGenerationParamsSchema.safeParse({ prompt: "" });
-        expect(r.success).toBe(false);
+        expect(r.success).toBe(true);
     });
 });
 
@@ -89,9 +89,9 @@ describe("textGenerationParamsSchema", () => {
         ).toBe(true);
     });
 
-    it("rejects an empty prompt", () => {
+    it("allows an empty prompt so upstream text can satisfy it", () => {
         const r = textGenerationParamsSchema.safeParse({ prompt: "" });
-        expect(r.success).toBe(false);
+        expect(r.success).toBe(true);
     });
 });
 

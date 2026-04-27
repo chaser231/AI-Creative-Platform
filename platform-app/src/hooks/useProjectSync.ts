@@ -17,41 +17,17 @@
 
 "use client";
 
-import { useEffect, useRef, useCallback, type RefObject } from "react";
+import { useEffect, useRef, useCallback, useState, type RefObject } from "react";
 import { trpc } from "@/lib/trpc";
 import { useCanvasStore } from "@/store/canvasStore";
 import { DEFAULT_RESIZE } from "@/store/canvas/types";
 import { useWorkspace } from "@/providers/WorkspaceProvider";
+import { getCanvasStateForSave } from "@/utils/canvasState";
 import type Konva from "konva";
 
 // Default workspace ID — will be replaced by WorkspaceProvider later
 // For now, we use a hardcoded fallback that gets resolved on first load
 let cachedWorkspaceId: string | null = null;
-
-/**
- * Build the canvas state object for persistence.
- * Ensures the active format's layerSnapshot is updated with the current layers
- * before serialization, so per-format snapshots are always fresh.
- */
-function getCanvasStateForSave(store: ReturnType<typeof useCanvasStore.getState>) {
-    // Update the active format's snapshot with current layers
-    const resizesWithSnapshot = store.resizes.map(r =>
-        r.id === store.activeResizeId
-            ? { ...r, layerSnapshot: store.layers }
-            : r
-    );
-
-    return {
-        layers: store.layers,
-        masterComponents: store.masterComponents,
-        componentInstances: store.componentInstances,
-        resizes: resizesWithSnapshot,
-        artboardProps: store.artboardProps,
-        canvasWidth: store.canvasWidth,
-        canvasHeight: store.canvasHeight,
-        palette: store.palette,
-    };
-}
 
 /**
  * Synchronize the project list from backend.
@@ -143,6 +119,7 @@ export function useCanvasAutoSave(
   const enabledRef = useRef(enabled);
   const hasEverLoadedRef = useRef(false);
   const isMigratingRef = useRef(false);
+  const [isMigrating, setIsMigrating] = useState(false);
   // Guards against two concurrent in-flight tRPC saves racing on the
   // same `expectedVersion`. Combined with `needsResaveRef`, this turns
   // overlapping calls into a single queued save.
@@ -151,8 +128,15 @@ export function useCanvasAutoSave(
   const saveCountRef = useRef(0);
   const lastKnownVersionRef = getVersionRef(projectId);
   const onVersionConflictRef = useRef(onVersionConflict);
-  onVersionConflictRef.current = onVersionConflict;
-  enabledRef.current = enabled;
+  const saveNowRef = useRef<(() => Promise<void>) | null>(null);
+
+  useEffect(() => {
+    onVersionConflictRef.current = onVersionConflict;
+  }, [onVersionConflict]);
+
+  useEffect(() => {
+    enabledRef.current = enabled;
+  }, [enabled]);
 
   // Track when the first successful load happens
   useEffect(() => {
@@ -246,6 +230,7 @@ export function useCanvasAutoSave(
     if (hasUnpersistedImages) {
       try {
         isMigratingRef.current = true;
+        setIsMigrating(true);
         const { migrateImagesToS3Map } = await import("@/utils/imageUpload");
         const migratedUrls = await migrateImagesToS3Map(
           layers as unknown as Array<{ id: string; type: string; src?: string; [key: string]: unknown }>,
@@ -267,6 +252,7 @@ export function useCanvasAutoSave(
         // Continue with base64 — better to save large than not save at all
       } finally {
         isMigratingRef.current = false;
+        setIsMigrating(false);
       }
     }
 
@@ -343,14 +329,18 @@ export function useCanvasAutoSave(
           if (needsResaveRef.current) {
             needsResaveRef.current = false;
             if (timeoutRef.current) clearTimeout(timeoutRef.current);
-            timeoutRef.current = setTimeout(saveNow, 200);
+            timeoutRef.current = setTimeout(() => {
+              void saveNowRef.current?.();
+            }, 200);
           }
         },
       }
     );
-    // `saveStateMutate` is a stable reference from TanStack Query.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, saveStateMutate, captureThumbnail, lastKnownVersionRef]);
+
+  useEffect(() => {
+    saveNowRef.current = saveNow;
+  }, [saveNow]);
 
   const getUnsavedState = useCallback(() => {
     return !!timeoutRef.current || isMigratingRef.current || saveStateMutation.isPending;
@@ -559,7 +549,7 @@ export function useCanvasAutoSave(
   }, [projectId, captureThumbnail, lastKnownVersionRef]);
 
   return {
-    isSaving: saveStateMutation.isPending || isMigratingRef.current,
+    isSaving: saveStateMutation.isPending || isMigrating,
     lastError: saveStateMutation.error,
     getUnsavedState,
     saveNowSync,

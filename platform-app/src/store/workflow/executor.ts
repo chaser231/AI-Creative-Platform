@@ -328,9 +328,44 @@ export function validateBeforeRun(
                 });
             }
         }
+
+        const promptIssue = validateGenerationPromptInput(n, executionPlan.inputEdges);
+        if (promptIssue) issues.push(promptIssue);
     }
 
     return issues;
+}
+
+function validateGenerationPromptInput(
+    node: WorkflowNode,
+    inputEdges: WorkflowEdge[],
+): ValidationIssue | null {
+    if (node.type !== "imageGeneration" && node.type !== "textGeneration") {
+        return null;
+    }
+
+    const localPrompt =
+        typeof node.data.params.prompt === "string"
+            ? node.data.params.prompt.trim()
+            : "";
+    const hasLocalPrompt = localPrompt.length >= 3;
+    const hasPromptInput = inputEdges.some(
+        (edge) =>
+            edge.target === node.id &&
+            (edge.targetHandle === "prompt-in" || edge.targetHandle === "context-in"),
+    );
+
+    if (hasLocalPrompt || hasPromptInput) return null;
+
+    const message =
+        node.type === "imageGeneration"
+            ? "Опишите, что нужно сгенерировать, или подключите контекст с текстом."
+            : "Опишите, какой текст нужен, или подключите контекст с текстом.";
+
+    return {
+        nodeId: node.id,
+        message: `«${NODE_REGISTRY[node.type].displayName}»: ${message}`,
+    };
 }
 
 /**
@@ -444,7 +479,7 @@ async function runOne(
     callbacks?.onNodeStart?.(nodeId);
 
     try {
-        const inputs = collectInputs(nodeId, edges, results);
+        const inputs = collectInputs(node, edges, results);
         let result: NodeRunResult;
 
         if (def.execute.kind === "client") {
@@ -493,14 +528,30 @@ async function runOne(
  * client handlers expect.
  */
 function collectInputs(
-    nodeId: string,
+    node: WorkflowNode,
     edges: WorkflowEdge[],
     results: Record<string, NodeRunResult>,
 ): ExecuteNodeRequest["inputs"] {
     const map: ExecuteNodeRequest["inputs"] = {};
+    const definition = NODE_REGISTRY[node.type];
     for (const e of edges) {
-        if (e.target !== nodeId) continue;
+        if (e.target !== node.id) continue;
         const upstream = results[e.source];
+        const targetPort = definition.inputs.find((port) => port.id === e.targetHandle);
+        if (targetPort?.multiple) {
+            const current = map[e.targetHandle] ?? {};
+            if (upstream?.url) {
+                current.imageUrl ??= upstream.url;
+                current.imageUrls = [...(current.imageUrls ?? []), upstream.url];
+            }
+            if (upstream?.text) {
+                current.text ??= upstream.text;
+                current.texts = [...(current.texts ?? []), upstream.text];
+            }
+            map[e.targetHandle] = current;
+            continue;
+        }
+
         if (upstream?.url) map[e.targetHandle] = { imageUrl: upstream.url };
         if (upstream?.text) map[e.targetHandle] = { text: upstream.text };
     }
