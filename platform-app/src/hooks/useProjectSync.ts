@@ -105,15 +105,30 @@ export function useCanvasAutoSave(
   onVersionConflict?: () => void,
 ) {
   const saveStateMutation = trpc.project.saveState.useMutation();
+  // `.mutate` is stable across renders (TanStack Query guarantees it).
+  // Extract it so dependent useCallbacks don't rebuild every time
+  // `isPending` / `error` flicker — that was causing the Zustand
+  // subscribe effect to cleanup+resubscribe on every render, which
+  // fired a spurious `saveNowSync()` beacon each time. Two concurrent
+  // writes (tRPC mutate + beacon) race, both bump `version`, and the
+  // second one hits `CONFLICT`. See the `useEffect([saveNow,
+  // saveNowSync, enabled])` below.
+  const saveStateMutate = saveStateMutation.mutate;
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
   const lastSavedRef = useRef<string>("");
   const enabledRef = useRef(enabled);
   const hasEverLoadedRef = useRef(false);
   const isMigratingRef = useRef(false);
   const [isMigrating, setIsMigrating] = useState(false);
+  // Guards against two concurrent in-flight tRPC saves racing on the
+  // same `expectedVersion`. Combined with `needsResaveRef`, this turns
+  // overlapping calls into a single queued save.
+  const isSavingRef = useRef(false);
+  const needsResaveRef = useRef(false);
   const saveCountRef = useRef(0);
   const lastKnownVersionRef = getVersionRef(projectId);
   const onVersionConflictRef = useRef(onVersionConflict);
+  const saveNowRef = useRef<(() => Promise<void>) | null>(null);
 
   useEffect(() => {
     onVersionConflictRef.current = onVersionConflict;
@@ -181,6 +196,15 @@ export function useCanvasAutoSave(
     if (!hasEverLoadedRef.current) return;
     // Guard: don't run concurrent migrations
     if (isMigratingRef.current) return;
+    // Guard: don't start a new save while the previous one is still in
+    // flight. The server increments `version` on every write, so two
+    // parallel saves carrying the same `expectedVersion` make the second
+    // one fail with CONFLICT. Mark that a follow-up save is required so
+    // `onSettled` picks up whatever state landed during the request.
+    if (isSavingRef.current) {
+      needsResaveRef.current = true;
+      return;
+    }
 
     const store = useCanvasStore.getState();
 
@@ -259,7 +283,8 @@ export function useCanvasAutoSave(
     }
 
     const expectedVersion = lastKnownVersionRef.current;
-    saveStateMutation.mutate(
+    isSavingRef.current = true;
+    saveStateMutate(
       {
         id: projectId,
         canvasState,
@@ -280,18 +305,42 @@ export function useCanvasAutoSave(
           // attempt once the caller has refetched.
           const code = (err as { data?: { code?: string } | null })?.data?.code;
           if (code === "CONFLICT") {
-            console.error(
-              `[useCanvasAutoSave] version conflict for project ${projectId} — refetching is required`,
+            // Recoverable — the editor refetches and re-hydrates. Using
+            // `warn` instead of `error` so the Next.js dev overlay stays
+            // quiet during an expected race.
+            console.warn(
+              `[useCanvasAutoSave] version conflict for project ${projectId} — refetching`,
             );
             lastSavedRef.current = "";
+            // A pending resave here would fire with the still-stale
+            // version and CONFLICT again before the refetch finishes.
+            // The refetch re-hydrates the store, which triggers a
+            // fresh debounced save via the Zustand subscription.
+            needsResaveRef.current = false;
             onVersionConflictRef.current?.();
             return;
           }
           console.error("Auto-save failed:", err.message);
         },
+        onSettled: () => {
+          isSavingRef.current = false;
+          // Pick up any edits that arrived while the request was in
+          // flight. Use a short delay to coalesce bursts.
+          if (needsResaveRef.current) {
+            needsResaveRef.current = false;
+            if (timeoutRef.current) clearTimeout(timeoutRef.current);
+            timeoutRef.current = setTimeout(() => {
+              void saveNowRef.current?.();
+            }, 200);
+          }
+        },
       }
     );
-  }, [projectId, saveStateMutation, captureThumbnail, lastKnownVersionRef]);
+  }, [projectId, saveStateMutate, captureThumbnail, lastKnownVersionRef]);
+
+  useEffect(() => {
+    saveNowRef.current = saveNow;
+  }, [saveNow]);
 
   const getUnsavedState = useCallback(() => {
     return !!timeoutRef.current || isMigratingRef.current || saveStateMutation.isPending;
@@ -343,16 +392,84 @@ export function useCanvasAutoSave(
     }
   }, [projectId, captureThumbnail, lastKnownVersionRef]);
 
-  // Subscribe to canvas store changes and debounce saves
+  // Subscribe to canvas store changes. Save cadence is action-based:
+  //   - Every SAVE_ACTION_THRESHOLD meaningful actions → flush immediately.
+  //   - Otherwise arm an idle-flush timer so pauses also get persisted.
+  //
+  // "Meaningful" = any reference change in a persisted field (layers,
+  // resizes, components, artboardProps, canvas size, palette). Selection,
+  // hover, zoom, pan, and history-stack changes do NOT count — they were
+  // the main source of wasted save trips under the old 1.5s debounce.
   useEffect(() => {
     // Don't subscribe until enabled
     if (!enabled) return;
 
-    const unsubscribe = useCanvasStore.subscribe(() => {
-      if (timeoutRef.current) {
-        clearTimeout(timeoutRef.current);
+    const SAVE_ACTION_THRESHOLD = 8; // flush every 8 meaningful actions
+    const IDLE_FLUSH_MS = 8000; // fallback flush when user pauses
+
+    type PersistedSnapshot = {
+      layers: unknown;
+      resizes: unknown;
+      masterComponents: unknown;
+      componentInstances: unknown;
+      artboardProps: unknown;
+      canvasWidth: number;
+      canvasHeight: number;
+      palette: unknown;
+    };
+
+    const snapshotPersisted = (s: ReturnType<typeof useCanvasStore.getState>): PersistedSnapshot => ({
+      layers: s.layers,
+      resizes: s.resizes,
+      masterComponents: s.masterComponents,
+      componentInstances: s.componentInstances,
+      artboardProps: s.artboardProps,
+      canvasWidth: s.canvasWidth,
+      canvasHeight: s.canvasHeight,
+      palette: s.palette,
+    });
+
+    let prev: PersistedSnapshot = snapshotPersisted(useCanvasStore.getState());
+    let actionCount = 0;
+
+    const scheduleIdleFlush = () => {
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+      timeoutRef.current = setTimeout(() => {
+        actionCount = 0;
+        timeoutRef.current = null;
+        saveNow();
+      }, IDLE_FLUSH_MS);
+    };
+
+    const unsubscribe = useCanvasStore.subscribe((state) => {
+      // Shallow reference diff: Zustand slice updates replace the top-
+      // level array/object refs, so `!==` is enough to spot real changes
+      // without stringifying or deep-comparing layer trees.
+      const isMeaningful =
+        prev.layers !== state.layers ||
+        prev.resizes !== state.resizes ||
+        prev.masterComponents !== state.masterComponents ||
+        prev.componentInstances !== state.componentInstances ||
+        prev.artboardProps !== state.artboardProps ||
+        prev.canvasWidth !== state.canvasWidth ||
+        prev.canvasHeight !== state.canvasHeight ||
+        prev.palette !== state.palette;
+
+      if (!isMeaningful) return;
+
+      prev = snapshotPersisted(state);
+      actionCount += 1;
+
+      if (actionCount >= SAVE_ACTION_THRESHOLD) {
+        actionCount = 0;
+        if (timeoutRef.current) {
+          clearTimeout(timeoutRef.current);
+          timeoutRef.current = null;
+        }
+        saveNow();
+      } else {
+        scheduleIdleFlush();
       }
-      timeoutRef.current = setTimeout(saveNow, 1500); // Save 1.5s after last change
     });
 
     return () => {
@@ -504,21 +621,52 @@ export function useLoadCanvasState(projectId: string) {
         // activeResizeId that no format in the current project matches.
         // Fallbacks: if there's no master, use the first format; as a last
         // resort, fall back to the literal "master" string (matches DEFAULT_RESIZE.id).
-        const activeResizeId =
-          resizes.find((r) => r.isMaster)?.id
-          ?? resizes.find((r) => r.id === "master")?.id
-          ?? resizes[0]?.id
-          ?? "master";
+        //
+        // Exception: if this is a refetch triggered by a version conflict
+        // (the user is mid-editing and the store already has a non-trivial
+        // active format), keep the user's current format selection so we
+        // don't yank them back to master during a background reconcile.
+        const currentStore = useCanvasStore.getState();
+        const currentActive = currentStore.activeResizeId;
+        const hasMeaningfulSession = currentStore.layers.length > 0;
+        const currentIsStillValid = resizes.some((r) => r.id === currentActive);
+        const preserveCurrent = hasMeaningfulSession && currentIsStillValid;
+        const activeResizeId = preserveCurrent
+          ? currentActive
+          : (
+              resizes.find((r) => r.isMaster)?.id
+              ?? resizes.find((r) => r.id === "master")?.id
+              ?? resizes[0]?.id
+              ?? "master"
+            );
+
+        // When preserving the user's current format (refetch-during-edit),
+        // hydrate layers + canvas size from that format's snapshot instead
+        // of the raw top-level state (which reflects whatever format was
+        // active when the server write happened — usually the master).
+        type Layers = ReturnType<typeof useCanvasStore.getState>["layers"];
+        const activeFormat = preserveCurrent
+          ? resizes.find((r) => r.id === activeResizeId)
+          : undefined;
+        const resolvedLayers = (
+          activeFormat?.layerSnapshot ?? state.layers
+        ) as Layers;
+        const resolvedCanvasWidth = (
+          activeFormat?.width ?? state.canvasWidth ?? useCanvasStore.getState().canvasWidth
+        ) as number;
+        const resolvedCanvasHeight = (
+          activeFormat?.height ?? state.canvasHeight ?? useCanvasStore.getState().canvasHeight
+        ) as number;
 
         useCanvasStore.setState({
-          layers: state.layers as ReturnType<typeof useCanvasStore.getState>["layers"],
+          layers: resolvedLayers,
           masterComponents: (state.masterComponents ?? []) as ReturnType<typeof useCanvasStore.getState>["masterComponents"],
           componentInstances: (state.componentInstances ?? []) as ReturnType<typeof useCanvasStore.getState>["componentInstances"],
           resizes,
           activeResizeId,
           artboardProps: (state.artboardProps ?? useCanvasStore.getState().artboardProps) as ReturnType<typeof useCanvasStore.getState>["artboardProps"],
-          canvasWidth: (state.canvasWidth ?? useCanvasStore.getState().canvasWidth) as number,
-          canvasHeight: (state.canvasHeight ?? useCanvasStore.getState().canvasHeight) as number,
+          canvasWidth: resolvedCanvasWidth,
+          canvasHeight: resolvedCanvasHeight,
           palette: (state.palette ?? { colors: [], backgrounds: [] }) as ReturnType<typeof useCanvasStore.getState>["palette"],
         });
       }
