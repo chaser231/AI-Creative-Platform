@@ -597,6 +597,72 @@ Status:
   - node cards show connected reference/source thumbnails and prompt chips;
   - focused tests cover schemas, connection compatibility, executor aggregation, and route mapping.
 
+P1.8.0 Generic scenario runner inputs/outputs:
+
+- Goal: make external workflow scenarios honor the existing `scenarioConfig.input.kind` / `output.kind` contract instead of being image-only.
+- Why first:
+  - Layer editor and "В баннер" output nodes need a runner that can move image, text, and future layer context through the graph;
+  - current `useWorkflowScenarioRun` injects only image/asset into the first `imageInput`;
+  - current final-result picker only returns image URLs, so text workflows cannot become real scenarios yet.
+- Input contract:
+  - keep supporting the existing image injection into the first `imageInput`;
+  - add text injection into the first compatible node:
+    - prefer generation node `context-in` when present;
+    - otherwise inject into a future explicit text input node when it exists;
+    - if no compatible input exists and input is required, show a clear error.
+  - add a lightweight layer input shape for future use, but initially map selected image layers to image context:
+    - selected image layer source URL behaves like `input.kind: image`;
+    - non-image layers should fail with a clear unsupported-input message until layer nodes exist.
+  - external injection should not mutate persisted workflow graph; it should build a transient execution graph or initial cached inputs.
+- Output contract:
+  - extend `WorkflowScenarioRunResult` with `text?: string` and `outputKind`;
+  - final result picking should respect `scenarioConfig.output.kind`:
+    - `image`: prefer `assetOutput`, then `preview`, then last image-producing leaf;
+    - `text`: prefer last text-producing leaf;
+    - `asset`: prefer saved `assetOutput` or save image result as asset if configured;
+    - `banner`: return enough image/text payload for `open-banner` behavior.
+  - keep current image behavior stable for `replace-selection`, `create-layer`, `save-asset`, `open-banner`.
+- Runner architecture:
+  - extract pure helpers from `useWorkflowScenarioRun.ts` so they can be unit-tested:
+    - `buildScenarioExecutionGraph(graph, scenarioConfig, input)`;
+    - `pickScenarioResult(graph, results, scenarioConfig)`;
+    - `resolveScenarioOutput(result, scenarioConfig, launchContext)`.
+  - avoid making this a React-only behavior; the core rules should be pure functions.
+- UI/UX:
+  - `AIScenariosModal` should show clear disabled/error copy when scenario input kind does not match the launch context;
+  - success copy should distinguish image replaced/created/saved, text generated, and banner opened.
+  - do not add a large UI redesign in this slice.
+- Tests:
+  - image scenarios keep existing behavior;
+  - text input injects into generation `context-in`;
+  - text output is picked from `textGeneration`;
+  - required input without compatible graph node fails clearly;
+  - image output behavior still saves to workspace/project assets as before;
+  - unknown/unsupported layer input fails clearly rather than silently running wrong graph.
+
+Definition of done:
+
+- Scenario runner can launch image-in/image-out workflows exactly as today.
+- Scenario runner can launch text-in/text-out and image-in/text-out workflows.
+- `scenarioConfig.input.kind` and `output.kind` materially affect injection/result picking.
+- The rules are covered by pure tests, not only manual modal testing.
+- P1.8 Layer Editor and "В баннер" node work can start without changing the runner contract again.
+
+Status:
+
+- Done 2026-04-25:
+  - extracted pure scenario runner helpers in `lib/workflow/scenarioRunner.ts`;
+  - `executeGraph` now accepts external scenario input edges/results without mutating persisted graphs;
+  - image input still injects into the first `imageInput` when available, preserving existing behavior;
+  - image inputs can also be injected into generation `context-in` when no `imageInput` exists;
+  - text input injects into the first compatible `context-in`;
+  - image-layer input is mapped to image context when a layer image URL is available;
+  - non-image layer input fails clearly until layer-aware nodes exist;
+  - scenario result picking respects `output.kind` for image/text/asset/banner cases;
+  - `WorkflowScenarioRunResult` now carries `outputKind` and optional `text`;
+  - `AIScenariosModal` has input-aware disabled/success copy;
+  - focused tests cover pure runner behavior, external executor inputs, and scenario config compatibility.
+
 P1.8 Later node contracts:
 
 - Layer editor node:

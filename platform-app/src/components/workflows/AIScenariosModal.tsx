@@ -18,6 +18,7 @@ export interface AIScenarioInput {
     kind: WorkflowScenarioInputKind;
     imageUrl?: string;
     assetId?: string;
+    text?: string;
     selectedLayerId?: string;
 }
 
@@ -64,11 +65,14 @@ export function AIScenariosModal({
                 workflowId,
                 workspaceId,
                 projectId,
+                inputKind: input?.kind,
                 inputImageUrl: input?.imageUrl,
                 inputAssetId: input?.assetId,
+                inputText: input?.text,
+                selectedLayerId: input?.selectedLayerId,
             });
             await onResult?.(result);
-            setSuccess(successText(result.scenarioConfig.output.behavior));
+            setSuccess(successText(result));
         } catch (err) {
             setError(err instanceof Error ? err.message : "Не удалось запустить сценарий");
         } finally {
@@ -88,9 +92,7 @@ export function AIScenariosModal({
             <div className="space-y-4">
                 <div className="flex items-center gap-2 rounded-[var(--radius-xl)] border border-border-primary bg-bg-secondary px-4 py-3 text-xs text-text-secondary">
                     <Sparkles size={14} className="text-accent-primary" />
-                    {input?.imageUrl || input?.assetId
-                        ? "Сценарии будут применены к выбранному изображению."
-                        : "Выберите изображение или слой, чтобы применить сценарии с обязательным входом."}
+                    {inputHint(input)}
                 </div>
 
                 {scenariosQuery.isLoading ? (
@@ -111,7 +113,7 @@ export function AIScenariosModal({
                     <div className="grid gap-3 md:grid-cols-2">
                         {scenarios.map((scenario) => {
                             const needsInput = scenario.scenarioConfig.input.required;
-                            const hasInput = !!input?.imageUrl || !!input?.assetId;
+                            const hasInput = hasScenarioInput(input, scenario.scenarioConfig.input.kind);
                             const disabled =
                                 runningId !== null ||
                                 !scenario.runnable ||
@@ -119,7 +121,7 @@ export function AIScenariosModal({
                             const disabledReason =
                                 scenario.disabledReason ??
                                 (needsInput && !hasInput
-                                    ? "Выберите изображение для запуска"
+                                    ? missingInputReason(scenario.scenarioConfig.input.kind)
                                     : undefined);
 
                             return (
@@ -208,8 +210,39 @@ function behaviorLabel(behavior: string): string {
     }
 }
 
-function successText(behavior: string): string {
-    switch (behavior) {
+function inputHint(input: AIScenarioInput | undefined): string {
+    if (input?.text?.trim()) return "Сценарии будут применены к введенному тексту.";
+    if (input?.imageUrl || input?.assetId) {
+        return input.kind === "layer"
+            ? "Сценарии будут применены к выбранному image-слою."
+            : "Сценарии будут применены к выбранному изображению.";
+    }
+    return "Выберите изображение, слой или текст, чтобы применить сценарии с обязательным входом.";
+}
+
+function hasScenarioInput(
+    input: AIScenarioInput | undefined,
+    requiredKind: WorkflowScenarioInputKind,
+): boolean {
+    if (!input) return false;
+    if (requiredKind === "text") return Boolean(input.text?.trim());
+    if (requiredKind === "layer") {
+        return Boolean(input.selectedLayerId || input.imageUrl || input.assetId);
+    }
+    return Boolean(input.imageUrl || input.assetId);
+}
+
+function missingInputReason(kind: WorkflowScenarioInputKind): string {
+    if (kind === "text") return "Введите текст для запуска";
+    if (kind === "layer") return "Выберите слой для запуска";
+    return "Выберите изображение для запуска";
+}
+
+function successText(result: WorkflowScenarioRunResult): string {
+    if (result.outputKind === "text") return "Текст сгенерирован";
+    if (result.outputKind === "asset") return "Результат сохранен в библиотеку";
+
+    switch (result.scenarioConfig.output.behavior) {
         case "replace-selection":
             return "Выделение обновлено";
         case "create-layer":

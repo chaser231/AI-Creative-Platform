@@ -6,23 +6,34 @@ import { executeGraph, fetchExecuteNode } from "@/store/workflow/executor";
 import {
     normalizeWorkflowScenarioConfig,
     type WorkflowScenarioConfig,
+    type WorkflowScenarioInputKind,
+    type WorkflowScenarioOutputKind,
 } from "@/lib/workflow/scenarioConfig";
-import type { WorkflowGraph, WorkflowNode } from "@/server/workflow/types";
+import {
+    buildScenarioExecutionGraph,
+    pickScenarioResult,
+    scenarioMissingOutputMessage,
+} from "@/lib/workflow/scenarioRunner";
 
 export interface WorkflowScenarioRunInput {
     workflowId: string;
     workspaceId: string;
     projectId?: string;
+    inputKind?: WorkflowScenarioInputKind;
     inputImageUrl?: string;
     inputAssetId?: string;
+    inputText?: string;
+    selectedLayerId?: string;
 }
 
 export interface WorkflowScenarioRunResult {
     workflowId: string;
     workflowName: string;
     scenarioConfig: WorkflowScenarioConfig;
+    outputKind: WorkflowScenarioOutputKind;
     nodeId: string;
     imageUrl?: string;
+    text?: string;
     assetId?: string;
     savedAssetId?: string;
 }
@@ -43,15 +54,19 @@ export function useWorkflowScenarioRun() {
                 workflow.scenarioConfig,
                 workflow.name,
             );
-            const graph = injectExternalInput(workflow.graph, {
+            const executionGraph = buildScenarioExecutionGraph(workflow.graph, scenarioConfig, {
+                kind: input.inputKind ?? scenarioConfig.input.kind,
                 imageUrl: input.inputImageUrl,
                 assetId: input.inputAssetId,
-                inputRequired: scenarioConfig.input.required,
+                text: input.inputText,
+                selectedLayerId: input.selectedLayerId,
             });
 
             const result = await executeGraph({
-                nodes: graph.nodes,
-                edges: graph.edges,
+                nodes: executionGraph.graph.nodes,
+                edges: executionGraph.graph.edges,
+                externalInputResults: executionGraph.externalInputResults,
+                externalInputEdges: executionGraph.externalInputEdges,
                 workspaceId: input.workspaceId,
                 workflowId: input.workflowId,
                 deps: {
@@ -70,13 +85,23 @@ export function useWorkflowScenarioRun() {
                 throw new Error(result.error?.message ?? "Сценарий не выполнился");
             }
 
-            const picked = pickFinalImageResult(graph, result.results);
-            if (!picked?.result.url) {
-                throw new Error("Сценарий не вернул изображение");
+            const picked = pickScenarioResult(
+                executionGraph.graph,
+                result.results,
+                scenarioConfig,
+            );
+            if (!picked) {
+                throw new Error(scenarioMissingOutputMessage(scenarioConfig));
             }
 
             let savedAssetId = picked.result.assetId;
-            if (scenarioConfig.output.behavior === "save-asset") {
+            const shouldSaveAsset =
+                scenarioConfig.output.behavior === "save-asset" ||
+                scenarioConfig.output.kind === "asset";
+            if (shouldSaveAsset && !savedAssetId) {
+                if (!picked.result.url) {
+                    throw new Error("Сценарий не вернул изображение для сохранения");
+                }
                 if (input.projectId) {
                     const created = await attachUrlToProject.mutateAsync({
                         projectId: input.projectId,
@@ -100,8 +125,10 @@ export function useWorkflowScenarioRun() {
                 workflowId: input.workflowId,
                 workflowName: workflow.name,
                 scenarioConfig,
+                outputKind: picked.outputKind,
                 nodeId: picked.nodeId,
                 imageUrl: picked.result.url,
+                text: picked.result.text,
                 assetId: picked.result.assetId,
                 savedAssetId,
             };
@@ -114,76 +141,4 @@ export function useWorkflowScenarioRun() {
         isRunning:
             attachUrlToWorkspace.isPending || attachUrlToProject.isPending,
     };
-}
-
-function injectExternalInput(
-    graph: WorkflowGraph,
-    input: {
-        imageUrl?: string;
-        assetId?: string;
-        inputRequired: boolean;
-    },
-): WorkflowGraph {
-    if (!input.imageUrl && !input.assetId) {
-        if (input.inputRequired) {
-            throw new Error("Выберите изображение для запуска сценария");
-        }
-        return graph;
-    }
-
-    const imageInput = graph.nodes.find((node) => node.type === "imageInput");
-    if (!imageInput) {
-        throw new Error("В сценарии нет входной ноды изображения");
-    }
-
-    return {
-        ...graph,
-        nodes: graph.nodes.map((node): WorkflowNode => {
-            if (node.id !== imageInput.id) return node;
-            return {
-                ...node,
-                data: {
-                    params: input.assetId
-                        ? {
-                              ...node.data.params,
-                              source: "asset",
-                              assetId: input.assetId,
-                              sourceUrl: input.imageUrl,
-                          }
-                        : {
-                              ...node.data.params,
-                              source: "url",
-                              sourceUrl: input.imageUrl,
-                              assetId: undefined,
-                          },
-                },
-            };
-        }),
-    };
-}
-
-function pickFinalImageResult(
-    graph: WorkflowGraph,
-    results: Record<string, { url?: string; assetId?: string }>,
-): { nodeId: string; result: { url?: string; assetId?: string } } | null {
-    const seen = new Set<string>();
-    const groups = [
-        graph.nodes.filter((node) => node.type === "assetOutput"),
-        graph.nodes.filter((node) => node.type === "preview"),
-        graph.nodes.filter(
-            (node) => !graph.edges.some((edge) => edge.source === node.id),
-        ),
-        graph.nodes,
-    ];
-
-    for (const group of groups) {
-        for (const node of [...group].reverse()) {
-            if (seen.has(node.id)) continue;
-            seen.add(node.id);
-            const result = results[node.id];
-            if (result?.url) return { nodeId: node.id, result };
-        }
-    }
-
-    return null;
 }

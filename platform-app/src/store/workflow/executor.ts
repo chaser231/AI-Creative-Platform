@@ -65,6 +65,10 @@ export interface ExecuteGraphParams {
     targetRunMode?: TargetRunMode;
     /** Last successful node results used by `cached-inputs` target runs. */
     cachedResults?: Record<string, NodeRunResult>;
+    /** Synthetic upstream results injected by external scenario launchers. */
+    externalInputResults?: Record<string, NodeRunResult>;
+    /** Synthetic incoming edges from external scenario inputs into graph nodes. */
+    externalInputEdges?: WorkflowEdge[];
     deps: ExecutorDeps;
     callbacks?: ExecutorCallbacks;
 }
@@ -99,6 +103,8 @@ export interface ValidateBeforeRunOptions {
     targetNodeId?: string;
     targetRunMode?: TargetRunMode;
     cachedResults?: Record<string, NodeRunResult>;
+    externalInputResults?: Record<string, NodeRunResult>;
+    externalInputEdges?: WorkflowEdge[];
 }
 
 /**
@@ -175,20 +181,24 @@ export function buildExecutionPlan({
     nodes,
     edges,
     cachedResults = {},
+    externalInputResults = {},
+    externalInputEdges = [],
 }: {
     targetNodeId?: string;
     targetRunMode?: TargetRunMode;
     nodes: WorkflowNode[];
     edges: WorkflowEdge[];
     cachedResults?: Record<string, NodeRunResult>;
+    externalInputResults?: Record<string, NodeRunResult>;
+    externalInputEdges?: WorkflowEdge[];
 }): ExecutionPlan {
     if (!targetNodeId) {
         return {
             nodes,
             edges,
-            inputEdges: edges,
+            inputEdges: [...edges, ...externalInputEdges],
             nodeIds: new Set(nodes.map((node) => node.id)),
-            initialResults: {},
+            initialResults: { ...externalInputResults },
             mode: "full",
         };
     }
@@ -218,8 +228,11 @@ export function buildExecutionPlan({
     const slice = buildExecutionSlice({ targetNodeId, nodes, edges });
     return {
         ...slice,
-        inputEdges: slice.edges,
-        initialResults: {},
+        inputEdges: [
+            ...slice.edges,
+            ...externalInputEdges.filter((edge) => slice.nodeIds.has(edge.target)),
+        ],
+        initialResults: { ...externalInputResults },
         mode: "ancestors",
     };
 }
@@ -295,6 +308,8 @@ export function validateBeforeRun(
         nodes,
         edges,
         cachedResults: options.cachedResults,
+        externalInputResults: options.externalInputResults,
+        externalInputEdges: options.externalInputEdges,
     });
 
     const g = buildGraph(executionPlan.nodes, executionPlan.edges);
@@ -382,6 +397,8 @@ export async function executeGraph(
         targetNodeId,
         targetRunMode,
         cachedResults,
+        externalInputResults,
+        externalInputEdges,
         deps,
         callbacks,
     } = params;
@@ -391,12 +408,16 @@ export async function executeGraph(
         nodes: params.nodes,
         edges: params.edges,
         cachedResults,
+        externalInputResults,
+        externalInputEdges,
     });
 
     const issues = validateBeforeRun(params.nodes, params.edges, {
         targetNodeId,
         targetRunMode,
         cachedResults,
+        externalInputResults,
+        externalInputEdges,
     });
     if (issues.length > 0) {
         const first = issues[0];
