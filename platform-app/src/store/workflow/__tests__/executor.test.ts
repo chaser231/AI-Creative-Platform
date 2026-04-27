@@ -572,4 +572,47 @@ describe("executeGraph", () => {
             }),
         );
     });
+
+    it("uses external scenario inputs as upstream context", async () => {
+        const nodes = [
+            n("text", "textGeneration", {
+                ...validTextGeneration,
+                prompt: "",
+            }),
+        ];
+        const deps = makeDeps({
+            executeServerAction: vi.fn(async () => ({
+                success: true as const,
+                type: "text" as const,
+                text: "Описание входа",
+                requestId: "rid",
+            })),
+        });
+
+        const result = await executeGraph({
+            nodes,
+            edges: [],
+            workspaceId: "ws",
+            externalInputResults: {
+                external: { text: "Опиши это изображение" },
+            },
+            externalInputEdges: [
+                edge("external-text", "external", "text-out", "text", "context-in"),
+            ],
+            deps,
+        });
+
+        expect(result.success).toBe(true);
+        expect(deps.executeServerAction).toHaveBeenCalledWith(
+            expect.objectContaining({
+                actionId: "generate_text",
+                inputs: {
+                    "context-in": {
+                        text: "Опиши это изображение",
+                        texts: ["Опиши это изображение"],
+                    },
+                },
+            }),
+        );
+    });
 });
