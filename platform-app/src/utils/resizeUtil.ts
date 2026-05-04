@@ -1,4 +1,4 @@
-import type { BaseComponentProps } from "@/types";
+import { DEFAULT_CONSTRAINTS, type BaseComponentProps } from "@/types";
 
 export function applyConstraints(
     props: Pick<BaseComponentProps, "x" | "y" | "width" | "height" | "constraints">,
@@ -9,8 +9,8 @@ export function applyConstraints(
     const { width: mw, height: mh } = masterDimensions;
     const { width: tw, height: th } = targetDimensions;
 
-    const horizontal = constraints?.horizontal || "scale";
-    const vertical = constraints?.vertical || "scale";
+    const horizontal = constraints?.horizontal || DEFAULT_CONSTRAINTS.horizontal;
+    const vertical = constraints?.vertical || DEFAULT_CONSTRAINTS.vertical;
 
     let nx = x;
     let nw = width;

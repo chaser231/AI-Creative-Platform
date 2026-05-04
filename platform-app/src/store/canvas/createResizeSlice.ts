@@ -7,14 +7,50 @@
  */
 
 import type { StateCreator } from "zustand";
-import type { CanvasStore, Layer, ComponentProps, ComponentInstance, ResizeFormat } from "./types";
+import type { CanvasStore, Layer, ComponentProps, ResizeFormat } from "./types";
 import { DEFAULT_RESIZE } from "./types";
 import { v4 as uuid } from "uuid";
 import { applyLayout, applyAllAutoLayouts } from "@/utils/layoutEngine";
 import { applyConstraints } from "@/utils/resizeUtil";
-import { getContentSourceUpdates } from "./helpers";
+import { computeConstrainedPosition, getContentSourceUpdates } from "./helpers";
 import { cloneLayerTree } from "@/utils/cloneLayerTree";
 import { applyCascade, type CascadeContext } from "./bindingCascade";
+
+function applyArtboardConstraintsToRootLayers(
+    layers: Layer[],
+    oldSize: { width: number; height: number },
+    newSize: { width: number; height: number },
+): Layer[] {
+    if (
+        Math.abs(oldSize.width - newSize.width) < 0.01 &&
+        Math.abs(oldSize.height - newSize.height) < 0.01
+    ) {
+        return layers;
+    }
+
+    const childIds = new Set<string>();
+    for (const layer of layers) {
+        if (layer.type === "frame") {
+            for (const childId of layer.childIds) childIds.add(childId);
+        }
+    }
+
+    const delta = {
+        oldX: 0,
+        oldY: 0,
+        oldWidth: oldSize.width,
+        oldHeight: oldSize.height,
+        newX: 0,
+        newY: 0,
+        newWidth: newSize.width,
+        newHeight: newSize.height,
+    };
+
+    return layers.map((layer) => {
+        if (childIds.has(layer.id)) return layer;
+        return { ...layer, ...computeConstrainedPosition(layer, delta) } as Layer;
+    });
+}
 
 export type ResizeSlice = Pick<CanvasStore,
     | "resizes" | "activeResizeId" | "canvasWidth" | "canvasHeight"
@@ -135,11 +171,38 @@ export const createResizeSlice: StateCreator<CanvasStore, [], [], ResizeSlice> =
     resizeFormat: (resizeId, width, height) => {
         const state = get();
         const newLabel = `${width} × ${height}`;
+        const target = state.resizes.find((r) => r.id === resizeId);
+        if (!target) return;
+
+        const oldSize = { width: target.width, height: target.height };
+        const newSize = { width, height };
+        const resizedActiveLayers = state.activeResizeId === resizeId
+            ? applyAllAutoLayouts(
+                applyArtboardConstraintsToRootLayers(state.layers, oldSize, newSize),
+                state.layers,
+            )
+            : state.layers;
 
         set({
             resizes: state.resizes.map((r) =>
-                r.id === resizeId ? { ...r, width, height, label: newLabel } : r
+                r.id === resizeId
+                    ? {
+                        ...r,
+                        width,
+                        height,
+                        label: newLabel,
+                        layerSnapshot: state.activeResizeId === resizeId
+                            ? resizedActiveLayers
+                            : r.layerSnapshot
+                                ? applyAllAutoLayouts(
+                                    applyArtboardConstraintsToRootLayers(r.layerSnapshot, oldSize, newSize),
+                                    r.layerSnapshot,
+                                )
+                                : r.layerSnapshot,
+                    }
+                    : r
             ),
+            ...(state.activeResizeId === resizeId ? { layers: resizedActiveLayers } : {}),
             // If resizing the active format, also update canvas dimensions
             ...(state.activeResizeId === resizeId ? { canvasWidth: width, canvasHeight: height } : {}),
         });
@@ -359,12 +422,20 @@ export const createResizeSlice: StateCreator<CanvasStore, [], [], ResizeSlice> =
 
     setCanvasSize: (width, height) => {
         const state = get();
+        const oldSize = { width: state.canvasWidth, height: state.canvasHeight };
+        const newSize = { width, height };
+        const resizedLayers = applyAllAutoLayouts(
+            applyArtboardConstraintsToRootLayers(state.layers, oldSize, newSize),
+            state.layers,
+        );
+
         set({
             canvasWidth: width,
             canvasHeight: height,
+            layers: resizedLayers,
             resizes: state.resizes.map((r) =>
                 r.id === state.activeResizeId
-                    ? { ...r, width, height, label: `${width} × ${height}` }
+                    ? { ...r, width, height, label: `${width} × ${height}`, layerSnapshot: resizedLayers }
                     : r
             ),
         });

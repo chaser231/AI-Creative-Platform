@@ -148,7 +148,7 @@ function syncSnapshotFormats(
         if (srcChanged) console.log("[cascade] applyCascade updated snapshot for", resize.id);
 
         changed = true;
-        return { ...resize, layerSnapshot: applyAllAutoLayouts(cascadedSnapshot) };
+        return { ...resize, layerSnapshot: applyAllAutoLayouts(cascadedSnapshot, resize.layerSnapshot) };
     });
 
     return changed ? nextResizes : resizes;
@@ -170,7 +170,7 @@ export const createLayerSlice: StateCreator<CanvasStore, [], [], LayerSlice> = (
             rotation: 0, visible: true, locked: false,
             text: "Type something",
             fontSize: 48, fontFamily: getDefaultTextFontFamily(), fontWeight: "600",
-            fill: "#111827", align: "left",
+            fill: "#111827", align: "left", verticalAlign: "top",
             letterSpacing: 0, lineHeight: 1.2,
             textAdjust: "auto_width",
             truncateText: false, verticalTrim: false,
@@ -185,6 +185,7 @@ export const createLayerSlice: StateCreator<CanvasStore, [], [], LayerSlice> = (
                 rotation: layer.rotation, visible: layer.visible, locked: layer.locked,
                 text: layer.text, fontSize: layer.fontSize, fontFamily: layer.fontFamily,
                 fontWeight: layer.fontWeight, fill: layer.fill, align: layer.align,
+                verticalAlign: layer.verticalAlign,
                 letterSpacing: layer.letterSpacing, lineHeight: layer.lineHeight,
                 textAdjust: layer.textAdjust, truncateText: layer.truncateText,
                 verticalTrim: layer.verticalTrim,
@@ -377,40 +378,14 @@ export const createLayerSlice: StateCreator<CanvasStore, [], [], LayerSlice> = (
                 const targetLayer = currentLayers.find(l => l.id === targetId);
                 if (!targetLayer) return currentLayers;
 
-                let dx = 0;
-                let dy = 0;
-
-                if (targetLayer.type === "frame" && (layerUpdates.x !== undefined || layerUpdates.y !== undefined)) {
-                    if (layerUpdates.x !== undefined) dx = (layerUpdates.x as number) - targetLayer.x;
-                    if (layerUpdates.y !== undefined) dy = (layerUpdates.y as number) - targetLayer.y;
-                }
-
-                const childrenIdsToMove = new Set<string>();
-                if ((dx !== 0 || dy !== 0) && targetLayer.type === "frame") {
-                    const collect = (fid: string) => {
-                        const f = currentLayers.find(l => l.id === fid) as FrameLayer;
-                        if (f && f.childIds) {
-                            f.childIds.forEach(cid => {
-                                if (childrenIdsToMove.has(cid)) return; // circular ref guard
-                                childrenIdsToMove.add(cid);
-                                const child = currentLayers.find(l => l.id === cid);
-                                if (child?.type === "frame") collect(cid);
-                            });
-                        }
-                    };
-                    collect(targetId);
-                }
-
                 return currentLayers.map(l => {
                     if (l.id === targetId) return { ...l, ...layerUpdates } as Layer;
-                    if (childrenIdsToMove.has(l.id)) {
-                        return { ...l, x: l.x + dx, y: l.y + dy } as Layer;
-                    }
                     return l;
                 });
             };
 
-            const newLayers = applyAllAutoLayouts(computeUpdatedLayers(state.layers, id, updates));
+            const updatedLayers = computeUpdatedLayers(state.layers, id, updates);
+            const newLayers = applyAllAutoLayouts(updatedLayers, state.layers);
             const layer = newLayers.find((l) => l.id === id);
             const snapshotAwareResizes = syncSnapshotFormats(state.resizes, state.activeResizeId, newLayers, state.layers);
             const fontSyncUpdates = Object.fromEntries(

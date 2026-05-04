@@ -55,10 +55,21 @@ describe("mapFigmaDocument — simple banner", () => {
         expect(text.fontFamily).toBe("Inter");
         expect(text.fontWeight).toBe("700");
         expect(text.align).toBe("center");
+        expect(text.verticalAlign).toBe("top");
         expect(text.fill).toBe("#ffffff");
         expect(text.textTransform).toBe("uppercase");
         // 115.2 / 96 = 1.2
         expect(text.lineHeight).toBeCloseTo(1.2, 3);
+    });
+
+    it("maps Figma vertical text alignment", () => {
+        const document = JSON.parse(JSON.stringify(simpleBannerFixture.document));
+        document.children[0].children[0].children[0].style.textAlignVertical = "BOTTOM";
+
+        const res = mapFigmaDocument(document, simpleBannerFixture.components);
+        const text = res.pages[0].frames[0].layers.find((l) => l.type === "text") as TextLayer;
+
+        expect(text.verticalAlign).toBe("bottom");
     });
 
     it("maps RECTANGLE nodes with cornerRadius and constraints", () => {
@@ -92,6 +103,16 @@ describe("mapFigmaDocument — auto-layout", () => {
         expect(root.spacing).toBe(12);
         expect(root.primaryAxisSizingMode).toBe("fixed");
         expect(root.counterAxisSizingMode).toBe("auto");
+    });
+
+    it("maps Figma counter-axis STRETCH to canvas stretch alignment", () => {
+        const document = JSON.parse(JSON.stringify(autoLayoutFixture.document));
+        document.children[0].children[0].counterAxisAlignItems = "STRETCH";
+
+        const res = mapFigmaDocument(document, autoLayoutFixture.components);
+        const root = res.pages[0].frames[0].layers[0] as FrameLayer;
+
+        expect(root.counterAxisAlignItems).toBe("stretch");
     });
 });
 

@@ -510,6 +510,10 @@ function mapText(
         warn(ctx, node, "justified_text_lost", "Justified alignment is not supported; left used");
     }
 
+    let verticalAlign: TextLayer["verticalAlign"] = "top";
+    if (style.textAlignVertical === "CENTER") verticalAlign = "middle";
+    else if (style.textAlignVertical === "BOTTOM") verticalAlign = "bottom";
+
     // Text case / decoration
     let textTransform: TextLayer["textTransform"] = "none";
     if (style.textCase === "UPPER") textTransform = "uppercase";
@@ -551,6 +555,7 @@ function mapText(
         fill,
         fillEnabled,
         align,
+        verticalAlign,
         letterSpacing,
         lineHeight,
         textAdjust,
@@ -929,13 +934,15 @@ function mapPrimaryAlign(
 }
 
 function mapCounterAlign(
-    v: FrameNode["counterAxisAlignItems"] | undefined,
+    v: FrameNode["counterAxisAlignItems"] | "STRETCH" | undefined,
 ): FrameLayer["counterAxisAlignItems"] {
     switch (v) {
         case "CENTER":
             return "center";
         case "MAX":
             return "flex-end";
+        case "STRETCH":
+            return "stretch";
         case "BASELINE":
             return "flex-start";
         case "MIN":
