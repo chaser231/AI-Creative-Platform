@@ -383,9 +383,43 @@ function computeAutoLayoutInternal(
         ? intrinsicFrameHeight
         : frame.height;
 
-    if (Math.abs(finalFrameWidth - frame.width) > 0.01 || Math.abs(finalFrameHeight - frame.height) > 0.01) {
-        updates[frame.id] = { ...updates[frame.id], width: finalFrameWidth, height: finalFrameHeight };
+    // ── Self-anchor on hug-resize ───────────────────────────────
+    // When the frame hugs its content, its width/height change without any
+    // parent-driven cascade. Default behaviour is "grow from top-left", but
+    // a frame with `constraints.{vertical:"bottom"|"center"}` (or the
+    // horizontal equivalents) expects the opposite/centred edge to stay
+    // pinned — the frame should grow upward / from its centre. We compute
+    // the self-shift here and use it as the origin for child positioning
+    // below so direct children move with the frame in lock-step.
+    const frameWidthChanged = Math.abs(finalFrameWidth - frame.width) > 0.01;
+    const frameHeightChanged = Math.abs(finalFrameHeight - frame.height) > 0.01;
+
+    let newFrameX = frame.x;
+    let newFrameY = frame.y;
+
+    if (frameWidthChanged || frameHeightChanged) {
+        const cs = frame.constraints;
+        const dw = finalFrameWidth - frame.width;
+        const dh = finalFrameHeight - frame.height;
+
+        // `stretch` / `scale` are parent-resize behaviours, not self-anchor
+        // hints — for self-driven hug we treat them as the default edge
+        // (left / top) so the frame keeps its current origin.
+        if (cs?.horizontal === "right") newFrameX = frame.x - dw;
+        else if (cs?.horizontal === "center") newFrameX = frame.x - dw / 2;
+
+        if (cs?.vertical === "bottom") newFrameY = frame.y - dh;
+        else if (cs?.vertical === "center") newFrameY = frame.y - dh / 2;
+
+        const sizeUpdate: Partial<Layer> = {};
+        if (frameWidthChanged) sizeUpdate.width = finalFrameWidth;
+        if (frameHeightChanged) sizeUpdate.height = finalFrameHeight;
+        if (Math.abs(newFrameX - frame.x) > 0.01) sizeUpdate.x = newFrameX;
+        if (Math.abs(newFrameY - frame.y) > 0.01) sizeUpdate.y = newFrameY;
+        updates[frame.id] = { ...updates[frame.id], ...sizeUpdate };
     }
+
+    const frameOrigin = { x: newFrameX, y: newFrameY };
 
     // ── Second pass: resolve "fill" children ──────────────────
 
@@ -420,6 +454,9 @@ function computeAutoLayoutInternal(
         }
 
         if (m.fillCounter) {
+            if (isHorizontal) h = finalFrameHeight - paddingTop - paddingBottom;
+            else w = finalFrameWidth - paddingLeft - paddingRight;
+        } else if (counterAxisAlignItems === "stretch" && !counterHug) {
             if (isHorizontal) h = finalFrameHeight - paddingTop - paddingBottom;
             else w = finalFrameWidth - paddingLeft - paddingRight;
         }
@@ -463,7 +500,7 @@ function computeAutoLayoutInternal(
         } else if (primaryAxisAlignItems === "flex-end") {
             currentX = finalFrameWidth - paddingRight - resolvedTotalW - totalSpacing;
         } else if (primaryAxisAlignItems === "space-between" && computedChildren.length > 1) {
-            const flexibleSpacing = (finalFrameWidth - paddingLeft - paddingRight - resolvedTotalW) / (computedChildren.length - 1);
+            const flexibleSpacing = Math.max(0, (finalFrameWidth - paddingLeft - paddingRight - resolvedTotalW) / (computedChildren.length - 1));
             currentX = paddingLeft;
             computedChildren.forEach(cc => {
                 const cy = getCounterAxisOffset(cc.h, finalFrameHeight, paddingTop, paddingBottom, counterAxisAlignItems);
@@ -471,7 +508,7 @@ function computeAutoLayoutInternal(
                 cc.y = cy;
                 currentX += cc.w + flexibleSpacing;
             });
-            return commitUpdates(updates, childById, computedChildren, frame);
+            return commitUpdates(updates, childById, computedChildren, frameOrigin);
         }
     } else {
         if (primaryAxisAlignItems === "center") {
@@ -479,7 +516,7 @@ function computeAutoLayoutInternal(
         } else if (primaryAxisAlignItems === "flex-end") {
             currentY = finalFrameHeight - paddingBottom - resolvedTotalH - totalSpacing;
         } else if (primaryAxisAlignItems === "space-between" && computedChildren.length > 1) {
-            const flexibleSpacing = (finalFrameHeight - paddingTop - paddingBottom - resolvedTotalH) / (computedChildren.length - 1);
+            const flexibleSpacing = Math.max(0, (finalFrameHeight - paddingTop - paddingBottom - resolvedTotalH) / (computedChildren.length - 1));
             currentY = paddingTop;
             computedChildren.forEach(cc => {
                 const cx = getCounterAxisOffset(cc.w, finalFrameWidth, paddingLeft, paddingRight, counterAxisAlignItems);
@@ -487,7 +524,7 @@ function computeAutoLayoutInternal(
                 cc.y = currentY;
                 currentY += cc.h + flexibleSpacing;
             });
-            return commitUpdates(updates, childById, computedChildren, frame);
+            return commitUpdates(updates, childById, computedChildren, frameOrigin);
         }
     }
 
@@ -503,7 +540,7 @@ function computeAutoLayoutInternal(
         }
     });
 
-    return commitUpdates(updates, childById, computedChildren, frame);
+    return commitUpdates(updates, childById, computedChildren, frameOrigin);
 }
 
 function getCounterAxisOffset(size: number, frameSize: number, padStart: number, padEnd: number, align: string) {
@@ -519,7 +556,7 @@ function commitUpdates(
     updates: Record<string, Partial<Layer>>,
     originalById: Map<string, Layer>,
     computed: { id: string, x: number, y: number, w: number, h: number }[],
-    frame: FrameLayer
+    frameOrigin: { x: number, y: number },
 ) {
     computed.forEach(cc => {
         const original = originalById.get(cc.id);
@@ -528,9 +565,11 @@ function commitUpdates(
         const existingUpdate = updates[cc.id] || {};
 
         // Auto-layout produces local coords; the store keeps absolute coords,
-        // so we offset by the frame origin before diffing.
-        const absoluteX = frame.x + cc.x;
-        const absoluteY = frame.y + cc.y;
+        // so we offset by the (possibly self-shifted) frame origin before
+        // diffing. Using `frameOrigin` rather than the stale `frame.x/y`
+        // keeps direct children glued to the frame when its anchor moves.
+        const absoluteX = frameOrigin.x + cc.x;
+        const absoluteY = frameOrigin.y + cc.y;
 
         if (Math.abs(original.x - absoluteX) > 0.01) existingUpdate.x = absoluteX;
         if (Math.abs(original.y - absoluteY) > 0.01) existingUpdate.y = absoluteY;
@@ -544,90 +583,67 @@ function commitUpdates(
     return updates;
 }
 
+function getAutoWidthTextAnchorFactor(text: TextLayer): number {
+    if (text.align === "center") return 0.5;
+    if (text.align === "right") return 1;
+    return 0;
+}
+
+function getAutoHeightTextAnchorFactor(text: TextLayer): number {
+    if (text.verticalAlign === "middle") return 0.5;
+    if (text.verticalAlign === "bottom") return 1;
+    return 0;
+}
+
 /**
- * Applies computeAutoLayout to all frames in the document.
- * Runs bottom-up twice:
- *  - 1st pass: resolve sizes (inner frames first so parents can measure them)
- *  - 2nd pass: fix child positions after parents reposition child frames
+ * Figma keeps the visual anchor of auto-sized text stable while the text box
+ * grows: left/top text grows right/down, centered text grows around its center,
+ * and right/bottom text preserves the opposite edge.
  */
-export function applyAllAutoLayouts(layers: Layer[]): Layer[] {
-    let updatedLayers = layers.slice();
-    let layerById = buildLayerMap(updatedLayers);
+export function preserveAutoWidthTextAnchors(previousLayers: Layer[], nextLayers: Layer[]): Layer[] {
+    const previousById = buildLayerMap(previousLayers);
+    let changed = false;
 
-    const frames = updatedLayers.filter(
-        (l): l is FrameLayer => l.type === "frame" && !!l.layoutMode && l.layoutMode !== "none"
-    );
-    if (frames.length === 0) return updatedLayers;
+    const anchored = nextLayers.map((layer) => {
+        if (layer.type !== "text") return layer;
+        const text = layer as TextLayer;
 
-    let selfRefChanged = false;
-    for (const f of frames) {
-        if (f.childIds.includes(f.id)) {
-            const fixed = { ...f, childIds: f.childIds.filter(c => c !== f.id) } as Layer;
-            layerById.set(f.id, fixed);
-            selfRefChanged = true;
-        }
-    }
-    if (selfRefChanged) {
-        updatedLayers = updatedLayers.map(l => layerById.get(l.id) ?? l);
-    }
+        const previous = previousById.get(layer.id);
+        if (!previous || previous.type !== "text") return layer;
 
-    // childId → parentFrameId (first parent wins, matching the prior `.find` semantics).
-    const childToParent = new Map<string, string>();
-    for (const l of updatedLayers) {
-        if (l.type === "frame") {
-            const fl = l as FrameLayer;
-            for (const cid of fl.childIds) {
-                if (!childToParent.has(cid)) childToParent.set(cid, fl.id);
+        let nextText = text;
+        const textAdjust = text.textAdjust || "auto_width";
+
+        const xFactor = getAutoWidthTextAnchorFactor(text);
+        if (textAdjust === "auto_width" && xFactor !== 0 && Math.abs(previous.width - text.width) >= 0.01) {
+            const previousAnchorX = previous.x + previous.width * xFactor;
+            const anchoredX = previousAnchorX - text.width * xFactor;
+            if (Math.abs(text.x - anchoredX) >= 0.01) {
+                nextText = { ...nextText, x: anchoredX };
             }
         }
-    }
 
-    const depthCache = new Map<string, number>();
-    const getDepth = (id: string, visited: Set<string>): number => {
-        const cached = depthCache.get(id);
-        if (cached !== undefined) return cached;
-        if (visited.has(id)) return 0;
-        visited.add(id);
-        const parentId = childToParent.get(id);
-        const depth = parentId ? 1 + getDepth(parentId, visited) : 0;
-        depthCache.set(id, depth);
-        return depth;
-    };
+        const yFactor = getAutoHeightTextAnchorFactor(text);
+        if (textAdjust !== "fixed" && yFactor !== 0 && Math.abs(previous.height - text.height) >= 0.01) {
+            const previousAnchorY = previous.y + previous.height * yFactor;
+            const anchoredY = previousAnchorY - text.height * yFactor;
+            if (Math.abs(text.y - anchoredY) >= 0.01) {
+                nextText = { ...nextText, y: anchoredY };
+            }
+        }
 
-    const frameIds = frames.map(f => f.id);
-    const sortedIds = frameIds.slice().sort((a, b) => {
-        return getDepth(b, new Set<string>()) - getDepth(a, new Set<string>());
+        if (nextText === text) return layer;
+
+        changed = true;
+        return nextText as Layer;
     });
 
-    for (let pass = 0; pass < 2; pass++) {
-        for (const fid of sortedIds) {
-            const currentFrame = layerById.get(fid) as FrameLayer | undefined;
-            if (!currentFrame || !currentFrame.layoutMode || currentFrame.layoutMode === "none") continue;
+    return changed ? anchored : nextLayers;
+}
 
-            const updates = computeAutoLayoutInternal(currentFrame, layerById);
-
-            if (Object.keys(updates).length > 0) {
-                updatedLayers = updatedLayers.map(l => {
-                    const u = updates[l.id];
-                    return u ? ({ ...l, ...u } as Layer) : l;
-                });
-                layerById = buildLayerMap(updatedLayers);
-            }
-        }
-    }
-
-    // ── Cascade position deltas with constraints ─────────────
-    // When a frame is moved OR resized (either by auto-layout hug, or by an
-    // external Transformer drag that the caller captured in the input array),
-    // its unmanaged children (invisible, absolute-positioned, or children of
-    // non-auto-layout frames) must honour their `LayerConstraints` instead of
-    // just sliding along dx/dy. Managed children were already positioned by
-    // commitUpdates (frame.x + localOffset), so we skip them.
-    //
-    // If an unmanaged child is itself an auto-layout frame whose width/height
-    // changed under the constraint pass (e.g. `stretch`), we re-run its
-    // auto-layout so its managed descendants pick up the new size.
-    const originalById = buildLayerMap(layers);
+function applyFrameConstraintCascade(previousLayers: Layer[], nextLayers: Layer[]): Layer[] {
+    const layerById = buildLayerMap(nextLayers);
+    const originalById = buildLayerMap(previousLayers);
     const cascaded = new Set<string>();
 
     const cascade = (frameId: string) => {
@@ -672,17 +688,12 @@ export function applyAllAutoLayouts(layers: Layer[]): Layer[] {
             const isManagedByAutoLayout = isAutoLayout && !child.isAbsolutePositioned && child.visible;
             if (isManagedByAutoLayout) continue;
 
-            // Default constraints {left, top} reproduce the old dx/dy shift exactly,
-            // so layers without explicit constraints don't regress.
             const constrained = computeConstrainedPosition(child, delta);
             const prevW = child.width;
             const prevH = child.height;
             const moved = { ...child, ...constrained } as Layer;
             layerById.set(cid, moved);
 
-            // If this unmanaged child is itself an auto-layout frame whose
-            // dimensions were altered by the constraint pass, re-run its layout
-            // so its managed descendants are repositioned under the new size.
             if (child.type === "frame") {
                 const childFrame = moved as FrameLayer;
                 const sizeChanged =
@@ -704,11 +715,89 @@ export function applyAllAutoLayouts(layers: Layer[]): Layer[] {
         }
     };
 
-    for (const l of updatedLayers) {
+    for (const l of nextLayers) {
         if (l.type === "frame") cascade(l.id);
     }
 
-    return updatedLayers.map(l => layerById.get(l.id) ?? l);
+    return nextLayers.map(l => layerById.get(l.id) ?? l);
+}
+
+/**
+ * Applies computeAutoLayout to all frames in the document.
+ * Runs bottom-up twice:
+ *  - 1st pass: resolve sizes (inner frames first so parents can measure them)
+ *  - 2nd pass: fix child positions after parents reposition child frames
+ */
+export function applyAllAutoLayouts(layers: Layer[], previousLayers: Layer[] = layers): Layer[] {
+    let updatedLayers = layers.slice();
+    let layerById = buildLayerMap(updatedLayers);
+
+    const frames = updatedLayers.filter(
+        (l): l is FrameLayer => l.type === "frame" && !!l.layoutMode && l.layoutMode !== "none"
+    );
+
+    let selfRefChanged = false;
+    for (const f of frames) {
+        if (f.childIds.includes(f.id)) {
+            const fixed = { ...f, childIds: f.childIds.filter(c => c !== f.id) } as Layer;
+            layerById.set(f.id, fixed);
+            selfRefChanged = true;
+        }
+    }
+    if (selfRefChanged) {
+        updatedLayers = updatedLayers.map(l => layerById.get(l.id) ?? l);
+    }
+
+    if (frames.length > 0) {
+        // childId → parentFrameId (first parent wins, matching the prior `.find` semantics).
+        const childToParent = new Map<string, string>();
+        for (const l of updatedLayers) {
+            if (l.type === "frame") {
+                const fl = l as FrameLayer;
+                for (const cid of fl.childIds) {
+                    if (!childToParent.has(cid)) childToParent.set(cid, fl.id);
+                }
+            }
+        }
+
+        const depthCache = new Map<string, number>();
+        const getDepth = (id: string, visited: Set<string>): number => {
+            const cached = depthCache.get(id);
+            if (cached !== undefined) return cached;
+            if (visited.has(id)) return 0;
+            visited.add(id);
+            const parentId = childToParent.get(id);
+            const depth = parentId ? 1 + getDepth(parentId, visited) : 0;
+            depthCache.set(id, depth);
+            return depth;
+        };
+
+        const frameIds = frames.map(f => f.id);
+        const sortedIds = frameIds.slice().sort((a, b) => {
+            return getDepth(b, new Set<string>()) - getDepth(a, new Set<string>());
+        });
+
+        for (let pass = 0; pass < 2; pass++) {
+            for (const fid of sortedIds) {
+                const currentFrame = layerById.get(fid) as FrameLayer | undefined;
+                if (!currentFrame || !currentFrame.layoutMode || currentFrame.layoutMode === "none") continue;
+
+                const updates = computeAutoLayoutInternal(currentFrame, layerById);
+
+                if (Object.keys(updates).length > 0) {
+                    updatedLayers = updatedLayers.map(l => {
+                        const u = updates[l.id];
+                        return u ? ({ ...l, ...u } as Layer) : l;
+                    });
+                    layerById = buildLayerMap(updatedLayers);
+                }
+            }
+        }
+    }
+
+    updatedLayers = preserveAutoWidthTextAnchors(previousLayers, updatedLayers);
+    updatedLayers = applyFrameConstraintCascade(previousLayers, updatedLayers);
+    return preserveAutoWidthTextAnchors(previousLayers, updatedLayers);
 }
 
 // ─── Template Slot Layout Rules ────────────────────────────────
