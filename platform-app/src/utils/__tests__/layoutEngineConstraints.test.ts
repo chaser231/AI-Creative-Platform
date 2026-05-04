@@ -61,6 +61,61 @@ function getLayer<T extends Layer>(layers: Layer[], id: string): T {
 }
 
 describe("applyAllAutoLayouts — cascade honours LayerConstraints on unmanaged children", () => {
+    it("applies constraints when a non-auto-layout frame is resized", () => {
+        const beforeFrame = makeFrame("frame", {
+            width: 100,
+            height: 100,
+            childIds: ["pinned"],
+        });
+        const afterFrame = makeFrame("frame", {
+            width: 200,
+            height: 150,
+            childIds: ["pinned"],
+        });
+        const pinned = makeRect("pinned", {
+            x: 80,
+            y: 70,
+            width: 20,
+            height: 30,
+            constraints: { horizontal: "right", vertical: "bottom" },
+        });
+
+        const result = applyAllAutoLayouts([afterFrame, pinned], [beforeFrame, pinned]);
+        const out = getLayer<RectangleLayer>(result, "pinned");
+
+        expect(out.x).toBe(180);
+        expect(out.y).toBe(120);
+    });
+
+    it("translates children exactly once when a frame moves", () => {
+        const beforeFrame = makeFrame("frame", {
+            x: 10,
+            y: 20,
+            width: 100,
+            height: 100,
+            childIds: ["child"],
+        });
+        const afterFrame = makeFrame("frame", {
+            x: 40,
+            y: 50,
+            width: 100,
+            height: 100,
+            childIds: ["child"],
+        });
+        const child = makeRect("child", {
+            x: 30,
+            y: 60,
+            width: 20,
+            height: 20,
+        });
+
+        const result = applyAllAutoLayouts([afterFrame, child], [beforeFrame, child]);
+        const out = getLayer<RectangleLayer>(result, "child");
+
+        expect(out.x).toBe(60);
+        expect(out.y).toBe(90);
+    });
+
     it("PR-4: absolute child inside an AL frame respects {right, bottom} when parent hug-shrinks", () => {
         // Outer hug-hug AL frame. Managed rect 50×50 + absolute 20×20 pinned to right-bottom.
         // Frame starts 100×100 (with 10 padding and one 50×50 child, hug target is 70×70).
@@ -166,5 +221,171 @@ describe("applyAllAutoLayouts — cascade honours LayerConstraints on unmanaged 
         const gOut = getLayer<RectangleLayer>(result, "gc");
         expect(gOut.width).toBe(200);
         expect(gOut.height).toBe(30);
+    });
+
+    it("stretches children on the counter axis when counterAxisAlignItems is stretch", () => {
+        const frame = makeFrame("frame", {
+            width: 200,
+            height: 100,
+            layoutMode: "horizontal",
+            paddingTop: 10,
+            paddingBottom: 20,
+            paddingLeft: 5,
+            paddingRight: 5,
+            counterAxisAlignItems: "stretch",
+            childIds: ["child"],
+        });
+        const child = makeRect("child", { width: 40, height: 10 });
+
+        const result = applyAllAutoLayouts([frame, child]);
+        const out = getLayer<RectangleLayer>(result, "child");
+
+        expect(out.y).toBe(10);
+        expect(out.height).toBe(70);
+    });
+
+    it("does not create negative space-between gaps when children overflow", () => {
+        const frame = makeFrame("frame", {
+            width: 100,
+            height: 50,
+            layoutMode: "horizontal",
+            paddingLeft: 0,
+            paddingRight: 0,
+            primaryAxisAlignItems: "space-between",
+            childIds: ["a", "b"],
+        });
+        const a = makeRect("a", { width: 80, height: 10 });
+        const b = makeRect("b", { width: 80, height: 10 });
+
+        const result = applyAllAutoLayouts([frame, a, b]);
+
+        expect(getLayer<RectangleLayer>(result, "a").x).toBe(0);
+        expect(getLayer<RectangleLayer>(result, "b").x).toBe(80);
+    });
+});
+
+describe("applyAllAutoLayouts — self-anchor on hug resize", () => {
+    // Reused setup: a vertical hug-on-primary frame with two stacked rects.
+    // Initial frame.height = 100 (oversized); intrinsic height = 50+50 = 100,
+    // so by default the hug resolves to no change. We force a bigger child to
+    // see the frame grow, and the constraint decides which edge stays put.
+
+    it("vertical:bottom — frame grows upward (bottom edge pinned) and children follow", () => {
+        const frame = makeFrame("frame", {
+            x: 100,
+            y: 200,
+            width: 50,
+            height: 60,
+            layoutMode: "vertical",
+            primaryAxisSizingMode: "auto",
+            constraints: { horizontal: "left", vertical: "bottom" },
+            childIds: ["a", "b"],
+        });
+        // Two 50×40 rects + 0 spacing → intrinsic height = 80. dh = +20.
+        // Bottom anchor: frame.y must shift -20 (200 → 180), bottom edge
+        // (260) stays put. Children get repositioned inside the new frame
+        // and must move up with it.
+        const a = makeRect("a", { x: 100, y: 200, width: 50, height: 40 });
+        const b = makeRect("b", { x: 100, y: 240, width: 50, height: 40 });
+
+        const result = applyAllAutoLayouts([frame, a, b]);
+
+        const f = getLayer<FrameLayer>(result, "frame");
+        expect(f.x).toBe(100);
+        expect(f.y).toBe(180);
+        expect(f.height).toBe(80);
+
+        // Bottom edge invariant: y + height should equal the original bottom.
+        expect(f.y + f.height).toBe(260);
+
+        // Children stack from the new top inside the (now taller) frame.
+        const aOut = getLayer<RectangleLayer>(result, "a");
+        const bOut = getLayer<RectangleLayer>(result, "b");
+        expect(aOut.y).toBe(180);
+        expect(bOut.y).toBe(220);
+    });
+
+    it("vertical:center — frame grows symmetrically around its centre", () => {
+        const frame = makeFrame("frame", {
+            x: 100,
+            y: 200,
+            width: 50,
+            height: 60,
+            layoutMode: "vertical",
+            primaryAxisSizingMode: "auto",
+            constraints: { horizontal: "left", vertical: "center" },
+            childIds: ["a", "b"],
+        });
+        const a = makeRect("a", { x: 100, y: 200, width: 50, height: 40 });
+        const b = makeRect("b", { x: 100, y: 240, width: 50, height: 40 });
+
+        const result = applyAllAutoLayouts([frame, a, b]);
+
+        const f = getLayer<FrameLayer>(result, "frame");
+        // dh = +20 → frame y shifts -10 (split evenly), height grows by 20.
+        expect(f.y).toBe(190);
+        expect(f.height).toBe(80);
+        // Centre invariant: y + height/2 stays the same (230).
+        expect(f.y + f.height / 2).toBe(230);
+    });
+
+    it("horizontal:right — hug-shrink keeps the right edge pinned", () => {
+        // Mirror of PR-4 with a right-anchored frame: hug shrinks the
+        // frame from 100×100 to 70×70 (managed 50×50 + padding 10), and
+        // the right edge (x=200) must stay put → frame.x shifts from
+        // 100 to 130.
+        const frame = makeFrame("outer", {
+            x: 100,
+            y: 0,
+            width: 100,
+            height: 100,
+            layoutMode: "horizontal",
+            paddingTop: 10,
+            paddingRight: 10,
+            paddingBottom: 10,
+            paddingLeft: 10,
+            primaryAxisSizingMode: "auto",
+            counterAxisSizingMode: "auto",
+            constraints: { horizontal: "right", vertical: "top" },
+            childIds: ["managed"],
+        });
+        const managed = makeRect("managed", { x: 110, y: 10, width: 50, height: 50 });
+
+        const result = applyAllAutoLayouts([frame, managed]);
+
+        const f = getLayer<FrameLayer>(result, "outer");
+        expect(f.width).toBe(70);
+        expect(f.height).toBe(70);
+        expect(f.x).toBe(130);
+        expect(f.y).toBe(0);
+        // Right edge invariant.
+        expect(f.x + f.width).toBe(200);
+
+        const m = getLayer<RectangleLayer>(result, "managed");
+        // Managed child sits inside the frame at padding (10,10) → absolute (140, 10).
+        expect(m.x).toBe(140);
+        expect(m.y).toBe(10);
+    });
+
+    it("default (top/left) — frame grows down/right exactly as before", () => {
+        const frame = makeFrame("frame", {
+            x: 100,
+            y: 200,
+            width: 50,
+            height: 60,
+            layoutMode: "vertical",
+            primaryAxisSizingMode: "auto",
+            childIds: ["a", "b"],
+        });
+        const a = makeRect("a", { x: 100, y: 200, width: 50, height: 40 });
+        const b = makeRect("b", { x: 100, y: 240, width: 50, height: 40 });
+
+        const result = applyAllAutoLayouts([frame, a, b]);
+
+        const f = getLayer<FrameLayer>(result, "frame");
+        // No constraints → top-left anchor; frame.y unchanged, height grows.
+        expect(f.x).toBe(100);
+        expect(f.y).toBe(200);
+        expect(f.height).toBe(80);
     });
 });

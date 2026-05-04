@@ -187,6 +187,7 @@ export interface TextComponentProps extends BaseComponentProps {
     fill: string;
     fillEnabled?: boolean; // default true
     align: "left" | "center" | "right";
+    verticalAlign?: "top" | "middle" | "bottom";
     letterSpacing: number;
     lineHeight: number;
     textAdjust?: "auto_width" | "auto_height" | "fixed";
@@ -409,6 +410,7 @@ export interface TextLayer extends BaseLayer {
     fill: string;
     fillEnabled?: boolean; // default true
     align: "left" | "center" | "right";
+    verticalAlign?: "top" | "middle" | "bottom";
     letterSpacing: number;
     lineHeight: number;
     textAdjust?: "auto_width" | "auto_height" | "fixed";

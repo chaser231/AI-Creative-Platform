@@ -17,7 +17,7 @@ import Konva from "konva";
  */
 export function InlineTextEditor({
     layer,
-    stageRef,
+    stageRef: _stageRef,
     zoom,
     stageX,
     stageY,
@@ -60,6 +60,11 @@ export function InlineTextEditor({
     // Use the live layer dimensions from the store (updated by auto-layout)
     const screenW = Math.max(layer.width * zoom, 20);
     const screenH = Math.max(layer.height * zoom, fontSizeScaled * layer.lineHeight);
+    const fixedVerticalAlign = layer.verticalAlign === "bottom"
+        ? "flex-end"
+        : layer.verticalAlign === "middle"
+            ? "center"
+            : "flex-start";
 
     // Auto-resize textarea height to match content and report dimensions back
     const autoResize = useCallback(() => {
@@ -154,6 +159,10 @@ export function InlineTextEditor({
                 position: "absolute",
                 left: screenX,
                 top: screenY,
+                width: isFixed ? screenW : undefined,
+                height: isFixed ? screenH : undefined,
+                display: isFixed ? "flex" : undefined,
+                alignItems: isFixed ? fixedVerticalAlign : undefined,
                 zIndex: 50,
                 transformOrigin: "top left",
                 transform: layer.rotation ? `rotate(${layer.rotation}deg)` : undefined,
@@ -195,7 +204,7 @@ export function InlineTextEditor({
                     // Sizing based on textAdjust mode
                     width: isAutoWidth ? "auto" : screenW,
                     minWidth: isAutoWidth ? 20 : undefined,
-                    height: isFixed ? screenH : "auto",
+                    height: "auto",
                     minHeight: fontSizeScaled * layer.lineHeight,
 
                     // Prevent text selection styling from obscuring content

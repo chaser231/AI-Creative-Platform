@@ -3,7 +3,7 @@
 import { useRef, useCallback, useEffect, useState, useMemo, Fragment } from "react";
 import { ImageIcon } from "lucide-react";
 import { Stage, Layer, Rect, Text, Image as KonvaImage, Transformer, Group, Line } from "react-konva";
-import { useCanvasStore, computeConstrainedPosition } from "@/store/canvasStore";
+import { useCanvasStore } from "@/store/canvasStore";
 import { useShallow } from "zustand/react/shallow";
 import type { Layer as LayerType, TextLayer, BadgeLayer, FrameLayer, ImageLayer } from "@/types";
 import { computeImageFitProps } from "@/utils/imageFitUtils";
@@ -122,6 +122,7 @@ function CanvasLayer({
                     fontStyle={layer.fontWeight || "normal"}
                     fill={layer.fillEnabled === false ? "transparent" : layer.fill}
                     align={layer.align}
+                    verticalAlign={layer.verticalAlign || "top"}
                     letterSpacing={layer.letterSpacing}
                     lineHeight={layer.lineHeight}
                     wrap={layer.textAdjust === "auto_width" ? "none" : "word"}
@@ -1181,27 +1182,6 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
         }
 
         updateLayer(id, { x: newX, y: newY, width, height, rotation, ...extraProps });
-
-        // Handle constrained position for children if it's a non-auto-layout frame.
-        // Auto-layout frames have their children positioned by applyAllAutoLayouts.
-        if (layer?.type === "frame") {
-            const frame = layer as FrameLayer;
-            const isAutoLayout = frame.layoutMode && frame.layoutMode !== "none";
-            if (!isAutoLayout) {
-                const delta = {
-                    oldX: layer.x, oldY: layer.y,
-                    oldWidth: layer.width, oldHeight: layer.height,
-                    newX, newY, newWidth: width, newHeight: height
-                };
-                frame.childIds.forEach(cid => {
-                    const child = layers.find(l => l.id === cid);
-                    if (child) {
-                        const res = computeConstrainedPosition(child, delta);
-                        updateLayer(cid, res);
-                    }
-                });
-            }
-        }
 
     }, [updateLayer, layers]);
 
