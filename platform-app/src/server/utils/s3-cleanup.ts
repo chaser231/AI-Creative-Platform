@@ -27,6 +27,21 @@ const s3 = new S3Client({
 
 const BUCKET = process.env.S3_BUCKET || "acp-assets";
 const S3_HOST = "storage.yandexcloud.net";
+const DELETE_TIMEOUT_MS = 3000;
+
+async function withAbortTimeout<T>(
+  task: (signal: AbortSignal) => Promise<T>,
+  timeoutMs: number,
+): Promise<T> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await task(controller.signal);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
 
 // ─── Key Extraction ──────────────────────────────────────────────────────────
 
@@ -70,7 +85,14 @@ export async function deleteS3Objects(keys: string[]): Promise<{ deleted: number
 
   const results = await Promise.allSettled(
     uniqueKeys.map(async (key) => {
-      await s3.send(new DeleteObjectCommand({ Bucket: BUCKET, Key: key }));
+      await withAbortTimeout(
+        (abortSignal) =>
+          s3.send(
+            new DeleteObjectCommand({ Bucket: BUCKET, Key: key }),
+            { abortSignal },
+          ),
+        DELETE_TIMEOUT_MS,
+      );
     })
   );
 

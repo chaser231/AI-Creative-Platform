@@ -100,7 +100,7 @@ export function useTemplateListSync() {
  * Hook for saving a template pack to the backend.
  */
 export function useSaveTemplateSync() {
-  const createMutation = trpc.template.create.useMutation();
+  const createMutation = trpc.template.create.useMutation({ retry: false });
 
   const saveTemplate = useCallback(
     async (pack: TemplatePackV2, workspaceId?: string) => {
