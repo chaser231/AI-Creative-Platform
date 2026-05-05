@@ -42,6 +42,12 @@ const s3 = new S3Client({
 });
 
 const BUCKET = process.env.S3_BUCKET || "acp-assets";
+const NON_PROJECT_UPLOAD_NAMESPACES = new Set([
+  "tmp",
+  "ai-tmp",
+  "avatars",
+  "workspace-logos",
+]);
 
 const ALLOWED_MIME_TYPES = new Set([
   "image/png",
@@ -62,7 +68,7 @@ export async function GET(req: NextRequest) {
     const mimeType = searchParams.get("mimeType") || "image/png";
     const projectId = searchParams.get("projectId") || "tmp";
 
-    if (projectId && projectId !== "tmp") {
+    if (projectId && !NON_PROJECT_UPLOAD_NAMESPACES.has(projectId)) {
       try {
         await requireSessionAndProjectAccess(session.user.id, projectId, "write");
       } catch (e) {

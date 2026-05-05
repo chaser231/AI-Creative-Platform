@@ -1,36 +1,28 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# AI Creative Platform — приложение
 
-## Getting Started
+Это рабочее Next.js-приложение AI Creative Platform. Общее описание сервиса, пользовательских сценариев и актуальных возможностей лежит в корневом [README.md](../README.md).
 
-First, run the development server:
+## Локальный запуск
 
 ```bash
+npm install
+cp .env.example .env.local
+npm run db:push
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+После запуска откройте `http://localhost:3000`.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Для полной работы нужны PostgreSQL, Yandex Object Storage, настройки авторизации и ключи AI-сервисов. Figma-импорт включается отдельно через переменные `AUTH_FIGMA_ID`, `AUTH_FIGMA_SECRET` и `AUTH_FIGMA_REDIRECT_URI`.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Команды
 
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```bash
+npm run dev        # локальный запуск
+npm run build      # сборка
+npm run start      # запуск собранного приложения
+npm run lint       # проверка кода
+npm run test       # тесты
+npm run db:push    # применить Prisma-схему к базе
+npm run db:seed    # заполнить базовые данные
+```
