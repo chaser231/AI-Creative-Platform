@@ -52,6 +52,7 @@ export default function AdminTemplatesPage() {
         onSuccess: () => utils.adminTemplate.list.invalidate(),
     });
     const deleteMutation = trpc.adminTemplate.delete.useMutation({
+        retry: false,
         onSuccess: () => utils.adminTemplate.list.invalidate(),
     });
 

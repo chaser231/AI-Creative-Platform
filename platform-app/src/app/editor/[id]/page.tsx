@@ -115,6 +115,7 @@ export default function EditorPage({ params }: EditorPageProps) {
         { enabled: isTemplateMode, retry: false, refetchOnWindowFocus: false }
     );
     const templateSaveMutation = trpc.template.saveState.useMutation({
+        retry: false,
         onSuccess: () => {
             setTemplateSaveStatus("saved");
             setTimeout(() => setTemplateSaveStatus("idle"), 2000);

@@ -8,27 +8,104 @@
 import { z } from "zod";
 import { createTRPCRouter, superAdminProcedure } from "../trpc";
 import { TRPCError } from "@trpc/server";
+import type { PrismaClient } from "@prisma/client";
 import {
   collectS3KeysFromTemplate,
   deleteS3Objects,
 } from "../utils/s3-cleanup";
 
-/** Extract resizes count from template JSON data */
-function getResizesCount(data: unknown): number {
-  if (!data || typeof data !== "object") return 0;
-  const d = data as Record<string, unknown>;
-  if (Array.isArray(d.resizes)) return d.resizes.length;
-  return 0;
-}
+type ResizeMeta = { id: string; name: string; width: number; height: number };
 
-/** Extract resize names from template JSON data */
-function getResizeNames(data: unknown): string[] {
+function getResizeMetaFromData(data: unknown): ResizeMeta[] {
   if (!data || typeof data !== "object") return [];
   const d = data as Record<string, unknown>;
-  if (Array.isArray(d.resizes)) {
-    return d.resizes.map((r: any) => r.name || r.id || "—");
+  if (!Array.isArray(d.resizes)) return [];
+
+  return d.resizes.map((resize, index) => {
+    const r = resize && typeof resize === "object"
+      ? resize as Record<string, unknown>
+      : {};
+    const fallbackId = `resize-${index + 1}`;
+    const id = typeof r.id === "string" && r.id ? r.id : fallbackId;
+    const name = typeof r.name === "string" && r.name ? r.name : id;
+    const width = typeof r.width === "number" ? r.width : Number(r.width ?? 0) || 0;
+    const height = typeof r.height === "number" ? r.height : Number(r.height ?? 0) || 0;
+
+    return { id, name, width, height };
+  });
+}
+
+async function getResizesMetaByIds(
+  prisma: PrismaClient,
+  ids: string[],
+): Promise<Map<string, ResizeMeta[]>> {
+  if (ids.length === 0) return new Map();
+
+  try {
+    const rows = await prisma.$queryRawUnsafe<
+      Array<{
+        template_id: string;
+        resize_id: string | null;
+        name: string | null;
+        width: number | null;
+        height: number | null;
+      }>
+    >(
+      `SELECT t.id AS template_id,
+              r->>'id' AS resize_id,
+              r->>'name' AS name,
+              (r->>'width')::int AS width,
+              (r->>'height')::int AS height
+       FROM "Template" t
+       LEFT JOIN LATERAL json_array_elements(
+         CASE
+           WHEN jsonb_typeof(t.data::jsonb->'resizes') = 'array'
+           THEN (t.data::json->'resizes')
+           ELSE '[]'::json
+         END
+       ) AS r ON true
+       WHERE t.id = ANY($1)`,
+      ids,
+    );
+
+    const map = new Map<string, ResizeMeta[]>();
+    for (const row of rows) {
+      if (
+        row.resize_id === null &&
+        row.name === null &&
+        row.width === null &&
+        row.height === null
+      ) {
+        continue;
+      }
+      const arr = map.get(row.template_id) ?? [];
+      const fallbackId = `resize-${arr.length + 1}`;
+      const id = row.resize_id ?? fallbackId;
+      arr.push({
+        id,
+        name: row.name ?? id,
+        width: row.width ?? 0,
+        height: row.height ?? 0,
+      });
+      map.set(row.template_id, arr);
+    }
+    return map;
+  } catch (err) {
+    console.error("[adminTemplate.getResizesMetaByIds] Raw query failed, falling back to JSON parse:", (err as Error)?.message);
+    const templates = await prisma.template.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, data: true },
+    });
+    return new Map(templates.map((template) => [
+      template.id,
+      getResizeMetaFromData(template.data),
+    ]));
   }
-  return [];
+}
+
+/** Extract resizes count from template JSON data */
+function getResizesCount(data: unknown): number {
+  return getResizeMetaFromData(data).length;
 }
 
 export const adminTemplateRouter = createTRPCRouter({
@@ -75,7 +152,6 @@ export const adminTemplateRouter = createTRPCRouter({
             workspaceId: true,
             author: true,
             visibility: true,
-            data: true, // needed to extract resizes count
             workspace: {
               select: { name: true, slug: true },
             },
@@ -86,18 +162,17 @@ export const adminTemplateRouter = createTRPCRouter({
         }),
         ctx.prisma.template.count({ where }),
       ]);
+      const resizesMap = await getResizesMetaByIds(ctx.prisma, templates.map((tmpl) => tmpl.id));
 
       // Enrich with type info and filter by templateType if needed
       const enriched = templates.map((tmpl) => {
-        const formatCount = getResizesCount(tmpl.data);
+        const resizes = resizesMap.get(tmpl.id) ?? [];
+        const formatCount = resizes.length;
         const type: "single" | "pack" = formatCount >= 2 ? "pack" : "single";
-        const formatNames = getResizeNames(tmpl.data);
-
-        // Strip heavy data field from response
-        const { data, ...rest } = tmpl;
+        const formatNames = resizes.map((resize) => resize.name || resize.id || "—");
 
         return {
-          ...rest,
+          ...tmpl,
           formatCount,
           templateType: type,
           formatNames,

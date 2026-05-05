@@ -107,7 +107,7 @@ export function TemplatePanel({ open, onClose, projectId }: TemplatePanelProps) 
     );
     const { savedPacks, addPack, deletePack } = useTemplateStore();
     const { backendTemplates, refetch, workspaceId } = useTemplateListSync();
-    const { saveTemplate } = useSaveTemplateSync();
+    const { saveTemplate, isPending: isSavingTemplate } = useSaveTemplateSync();
     const router = useRouter();
     const updateMutation = trpc.template.update.useMutation({
         onSuccess: () => refetch(),
@@ -160,6 +160,7 @@ export function TemplatePanel({ open, onClose, projectId }: TemplatePanelProps) 
     const [saveEditPermission, setSaveEditPermission] = useState<TemplateEditPermission>("AUTHOR_ONLY");
     const [saveTagInput, setSaveTagInput] = useState("");
     const [saveTags, setSaveTags] = useState<string[]>([]);
+    const [saveError, setSaveError] = useState<string | null>(null);
 
     // Smart Resize state
     const [smartResizePack, setSmartResizePack] = useState<TemplatePack | null>(null);
@@ -261,6 +262,7 @@ export function TemplatePanel({ open, onClose, projectId }: TemplatePanelProps) 
     };
 
     const handleSaveAsTemplate = async () => {
+        setSaveError(null);
         const state = useCanvasStore.getState();
         const activeProject = projects.find((p) => p.id === activeProjectId);
         const projectData = activeProject || { name: "Новый шаблон" };
@@ -289,8 +291,6 @@ export function TemplatePanel({ open, onClose, projectId }: TemplatePanelProps) 
             visibility: "WORKSPACE",
         };
 
-        addPack(newPack, meta);
-
         // Persist to backend DB so it appears in Catalog & Admin
         const v2Pack: TemplatePackV2 = {
             ...newPack,
@@ -307,12 +307,18 @@ export function TemplatePanel({ open, onClose, projectId }: TemplatePanelProps) 
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString(),
         };
-        await saveTemplate(v2Pack, workspaceId || undefined);
+        const saved = await saveTemplate(v2Pack, workspaceId || undefined);
+        if (!saved) {
+            setSaveError("Не удалось сохранить шаблон. Попробуйте ещё раз.");
+            return;
+        }
+        addPack(newPack, meta);
         refetch();
     };
 
     const handleSaveAsPack = async () => {
         if (!saveName.trim()) return;
+        setSaveError(null);
 
         const state = useCanvasStore.getState();
         const activeProject = projects.find((p) => p.id === activeProjectId);
@@ -344,8 +350,6 @@ export function TemplatePanel({ open, onClose, projectId }: TemplatePanelProps) 
             editPermission: saveEditPermission,
         };
 
-        addPack(newPack, meta);
-
         // Persist to backend DB so it appears in Catalog & Admin
         const v2Pack: TemplatePackV2 = {
             ...newPack,
@@ -363,7 +367,12 @@ export function TemplatePanel({ open, onClose, projectId }: TemplatePanelProps) 
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString(),
         };
-        await saveTemplate(v2Pack, workspaceId || undefined);
+        const saved = await saveTemplate(v2Pack, workspaceId || undefined);
+        if (!saved) {
+            setSaveError("Не удалось сохранить пакет. Форма оставлена открытой, чтобы не потерять введённые данные.");
+            return;
+        }
+        addPack(newPack, meta);
         refetch();
 
         setShowSaveForm(false);
@@ -381,6 +390,7 @@ export function TemplatePanel({ open, onClose, projectId }: TemplatePanelProps) 
         setSaveEditPermission("AUTHOR_ONLY");
         setSaveTags([]);
         setSaveTagInput("");
+        setSaveError(null);
     };
 
     const handleAddTag = () => {
@@ -620,9 +630,12 @@ export function TemplatePanel({ open, onClose, projectId }: TemplatePanelProps) 
                                     <p className="text-[11px] text-text-tertiary mb-2">
                                         Создаст шаблон из {masterComponentCount} компонент{masterComponentCount !== 1 ? "ов" : "а"}.
                                     </p>
-                                    <Button size="sm" variant="secondary" onClick={handleSaveAsTemplate}>
-                                        Сохранить как шаблон
+                                    <Button size="sm" variant="secondary" onClick={handleSaveAsTemplate} disabled={isSavingTemplate}>
+                                        {isSavingTemplate ? "Сохранение..." : "Сохранить как шаблон"}
                                     </Button>
+                                    {saveError && (
+                                        <p className="mt-2 text-[10px] text-red-400">{saveError}</p>
+                                    )}
                                 </div>
                             )}
 
@@ -865,10 +878,13 @@ export function TemplatePanel({ open, onClose, projectId }: TemplatePanelProps) 
                                                 <Button size="sm" variant="ghost" onClick={() => { setShowSaveForm(false); resetSaveForm(); }}>
                                                     Отмена
                                                 </Button>
-                                                <Button size="sm" disabled={!saveName.trim()} onClick={handleSaveAsPack}>
-                                                    Сохранить пакет
+                                                <Button size="sm" disabled={!saveName.trim() || isSavingTemplate} onClick={handleSaveAsPack}>
+                                                    {isSavingTemplate ? "Сохранение..." : "Сохранить пакет"}
                                                 </Button>
                                             </div>
+                                            {saveError && (
+                                                <p className="text-[10px] text-red-400">{saveError}</p>
+                                            )}
                                         </div>
                                     )}
                                 </div>
