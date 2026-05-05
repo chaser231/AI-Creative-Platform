@@ -6,6 +6,7 @@ import { Popover, PopoverButton } from "@/components/ui/Popover";
 import { Select } from "@/components/ui/Select";
 import type { BadgeLayer } from "@/types";
 import { ColorInput } from "./ColorInput";
+import { PaintInput } from "./PaintInput";
 
 export function BadgePropsGrouped({
     layer,
@@ -52,7 +53,7 @@ export function BadgePropsGrouped({
                     isActive={activePopover === "style"}
                     onClick={() => togglePopover("style")}
                 />
-                <Popover isOpen={activePopover === "style"} onClose={() => setActivePopover(null)}>
+                <Popover isOpen={activePopover === "style"} onClose={() => setActivePopover(null)} keepOpenOnCanvasInteraction>
                     <div className="space-y-3">
                         {/* Opacity */}
                         <div>
@@ -86,7 +87,7 @@ export function BadgePropsGrouped({
                             <label className="text-[9px] text-text-tertiary uppercase tracking-wider font-medium mb-1.5 block">Фон</label>
                             <div className="flex items-center gap-1.5">
                                 <div className={`transition-opacity ${fillEnabled ? '' : 'opacity-30 pointer-events-none'}`}>
-                                    <ColorInput value={layer.fill} onChange={(v) => onChange({ fill: v })} />
+                                    <PaintInput value={layer.fill} gradientTargetId={layer.id} onChange={(v) => onChange({ fill: v })} />
                                 </div>
                                 <button
                                     onClick={() => onChange({ fillEnabled: !fillEnabled })}

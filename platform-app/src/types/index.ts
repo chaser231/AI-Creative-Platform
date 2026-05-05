@@ -178,6 +178,43 @@ export interface BaseComponentProps {
     swatchRefs?: SwatchRefs;
 }
 
+export type GradientType = "linear" | "radial" | "angular" | "diamond";
+
+export interface PaintPoint {
+    x: number; // normalized 0..1
+    y: number; // normalized 0..1
+}
+
+export interface PaintStop {
+    id: string;
+    offset: number; // normalized 0..1
+    color: string;
+    opacity: number; // normalized 0..1
+}
+
+export interface SolidPaint {
+    kind: "solid";
+    color: string;
+    opacity: number;
+}
+
+export interface GradientPaint {
+    kind: "gradient";
+    gradientType: GradientType;
+    stops: PaintStop[];
+    angle: number;
+    start?: PaintPoint;
+    end?: PaintPoint;
+    center?: PaintPoint;
+    radius?: number; // normalized against the largest side
+}
+
+/**
+ * Fill values are intentionally backward compatible with legacy hex strings.
+ * New code should normalize through `normalizePaint()` before rendering/editing.
+ */
+export type Paint = string | SolidPaint | GradientPaint;
+
 export interface TextComponentProps extends BaseComponentProps {
     type: "text";
     text: string;
@@ -198,7 +235,7 @@ export interface TextComponentProps extends BaseComponentProps {
 
 export interface RectangleComponentProps extends BaseComponentProps {
     type: "rectangle";
-    fill: string;
+    fill: Paint;
     fillEnabled?: boolean; // default true
     stroke: string;
     strokeEnabled?: boolean; // default true
@@ -234,7 +271,7 @@ export interface BadgeComponentProps extends BaseComponentProps {
     type: "badge";
     label: string;
     shape: "pill" | "rectangle" | "circle";
-    fill: string;
+    fill: Paint;
     fillEnabled?: boolean; // default true
     textColor: string;
     fontSize: number;
@@ -242,7 +279,7 @@ export interface BadgeComponentProps extends BaseComponentProps {
 
 export interface FrameComponentProps extends BaseComponentProps {
     type: "frame";
-    fill: string;
+    fill: Paint;
     fillEnabled?: boolean; // default true
     stroke: string;
     strokeEnabled?: boolean; // default true
@@ -421,7 +458,7 @@ export interface TextLayer extends BaseLayer {
 
 export interface RectangleLayer extends BaseLayer {
     type: "rectangle";
-    fill: string;
+    fill: Paint;
     fillEnabled?: boolean; // default true
     stroke: string;
     strokeEnabled?: boolean; // default true
@@ -439,7 +476,7 @@ export interface BadgeLayer extends BaseLayer {
     type: "badge";
     label: string;
     shape: "pill" | "rectangle" | "circle";
-    fill: string;
+    fill: Paint;
     fillEnabled?: boolean; // default true
     textColor: string;
     fontSize: number;
@@ -447,7 +484,7 @@ export interface BadgeLayer extends BaseLayer {
 
 export interface FrameLayer extends BaseLayer {
     type: "frame";
-    fill: string;
+    fill: Paint;
     fillEnabled?: boolean; // default true
     stroke: string;
     strokeEnabled?: boolean; // default true
@@ -471,12 +508,14 @@ export interface FrameLayer extends BaseLayer {
 
 export type Layer = TextLayer | RectangleLayer | ImageLayer | BadgeLayer | FrameLayer;
 
-/** Accepts any subset of layer properties without requiring the `type` discriminant */
-export type LayerUpdate = Partial<BaseLayer> & Partial<Omit<TextLayer, keyof BaseLayer>>
-    & Partial<Omit<RectangleLayer, keyof BaseLayer>>
+/** Accepts any subset of layer properties without requiring the `type` discriminant. */
+export type LayerUpdate = Partial<BaseLayer>
+    & Partial<Omit<TextLayer, keyof BaseLayer | "fill">>
+    & Partial<Omit<RectangleLayer, keyof BaseLayer | "fill">>
     & Partial<Omit<ImageLayer, keyof BaseLayer>>
-    & Partial<Omit<BadgeLayer, keyof BaseLayer>>
-    & Partial<Omit<FrameLayer, keyof BaseLayer>>;
+    & Partial<Omit<BadgeLayer, keyof BaseLayer | "fill">>
+    & Partial<Omit<FrameLayer, keyof BaseLayer | "fill">>
+    & { fill?: Paint };
 
 // ─── Template Catalogization ────────────────────────────
 
@@ -550,6 +589,7 @@ export type SwatchType = "color" | "background";
  */
 export type BackgroundSwatchValue =
     | { kind: "solid"; color: string }
+    | { kind: "gradient"; paint: GradientPaint }
     | {
           kind: "image";
           src: string;
@@ -562,8 +602,8 @@ export interface Swatch {
     id: string;
     type: SwatchType;
     name: string;
-    /** hex string for `type === "color"`, BackgroundSwatchValue for `type === "background"`. */
-    value: string | BackgroundSwatchValue;
+    /** Paint for `type === "color"`, BackgroundSwatchValue for `type === "background"`. */
+    value: Paint | BackgroundSwatchValue;
     sortOrder?: number;
 }
 

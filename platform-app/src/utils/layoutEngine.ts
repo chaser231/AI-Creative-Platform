@@ -1,4 +1,4 @@
-import { Layer, FrameLayer, TextLayer, TemplateSlotRole, ResizeFormat } from "@/types";
+import { Layer, FrameLayer, TextLayer, TemplateSlotRole, ResizeFormat, LayerUpdate } from "@/types";
 import { computeConstrainedPosition } from "@/store/canvas/helpers";
 import type { FrameResizeDelta } from "@/store/canvas/types";
 import Konva from "konva";
@@ -229,15 +229,15 @@ function buildLayerMap(layers: Layer[]): Map<string, Layer> {
 export function computeAutoLayout(
     frame: FrameLayer,
     allLayers: Layer[]
-): Record<string, Partial<Layer>> {
+): Record<string, LayerUpdate> {
     return computeAutoLayoutInternal(frame, buildLayerMap(allLayers));
 }
 
 function computeAutoLayoutInternal(
     frame: FrameLayer,
     layerById: Map<string, Layer>
-): Record<string, Partial<Layer>> {
-    const updates: Record<string, Partial<Layer>> = {};
+): Record<string, LayerUpdate> {
+    const updates: Record<string, LayerUpdate> = {};
 
     if (!frame.layoutMode || frame.layoutMode === "none") {
         return updates;
@@ -411,7 +411,7 @@ function computeAutoLayoutInternal(
         if (cs?.vertical === "bottom") newFrameY = frame.y - dh;
         else if (cs?.vertical === "center") newFrameY = frame.y - dh / 2;
 
-        const sizeUpdate: Partial<Layer> = {};
+        const sizeUpdate: LayerUpdate = {};
         if (frameWidthChanged) sizeUpdate.width = finalFrameWidth;
         if (frameHeightChanged) sizeUpdate.height = finalFrameHeight;
         if (Math.abs(newFrameX - frame.x) > 0.01) sizeUpdate.x = newFrameX;
@@ -553,7 +553,7 @@ function getCounterAxisOffset(size: number, frameSize: number, padStart: number,
 }
 
 function commitUpdates(
-    updates: Record<string, Partial<Layer>>,
+    updates: Record<string, LayerUpdate>,
     originalById: Map<string, Layer>,
     computed: { id: string, x: number, y: number, w: number, h: number }[],
     frameOrigin: { x: number, y: number },

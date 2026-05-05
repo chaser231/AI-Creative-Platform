@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Stage, Layer, Rect, Text, Image as KonvaImage, Group } from "react-konva";
 import type { Layer as LayerType, ImageLayer } from "@/types";
 import { computeImageFitProps } from "@/utils/imageFitUtils";
+import { paintToKonvaProps } from "@/utils/paint";
 import Konva from "konva";
 
 type ImageLoadStatus = "loading" | "loaded" | "error";
@@ -32,7 +33,9 @@ function PreviewLayer({ layer, loadedImages, imageStatuses }: PreviewLayerProps)
             return (
                 <Rect
                     {...commonProps}
-                    fill={layer.fill}
+                    {...(layer.fillEnabled === false
+                        ? { fill: "transparent", fillPriority: "color" }
+                        : paintToKonvaProps(layer.fill, layer.width, layer.height))}
                     stroke={layer.stroke}
                     strokeWidth={layer.strokeWidth}
                     cornerRadius={layer.cornerRadius}
@@ -123,7 +126,9 @@ function PreviewLayer({ layer, loadedImages, imageStatuses }: PreviewLayerProps)
                     <Rect
                         width={layer.width}
                         height={layer.height}
-                        fill={layer.fill}
+                        {...(layer.fillEnabled === false
+                            ? { fill: "transparent", fillPriority: "color" }
+                            : paintToKonvaProps(layer.fill, layer.width, layer.height))}
                         cornerRadius={layer.shape === "pill" ? layer.height / 2 : layer.shape === "circle" ? layer.width / 2 : 4}
                     />
                     <Text
@@ -150,7 +155,9 @@ function PreviewLayer({ layer, loadedImages, imageStatuses }: PreviewLayerProps)
                     <Rect
                         width={layer.width}
                         height={layer.height}
-                        fill={layer.fill}
+                        {...(layer.fillEnabled === false
+                            ? { fill: undefined, fillPriority: "color" }
+                            : paintToKonvaProps(layer.fill, layer.width, layer.height))}
                         stroke={layer.stroke}
                         strokeWidth={layer.strokeWidth}
                         cornerRadius={layer.cornerRadius}

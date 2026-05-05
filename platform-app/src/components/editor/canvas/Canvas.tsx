@@ -2,10 +2,10 @@
 
 import { useRef, useCallback, useEffect, useState, useMemo, Fragment } from "react";
 import { ImageIcon } from "lucide-react";
-import { Stage, Layer, Rect, Text, Image as KonvaImage, Transformer, Group, Line } from "react-konva";
+import { Stage, Layer, Rect, Text, Image as KonvaImage, Transformer, Group, Line, Circle } from "react-konva";
 import { useCanvasStore } from "@/store/canvasStore";
 import { useShallow } from "zustand/react/shallow";
-import type { Layer as LayerType, TextLayer, BadgeLayer, FrameLayer, ImageLayer } from "@/types";
+import type { Layer as LayerType, TextLayer, BadgeLayer, FrameLayer, ImageLayer, Paint, LayerUpdate } from "@/types";
 import { computeImageFitProps } from "@/utils/imageFitUtils";
 import { ContextMenu, buildLayerContextMenuItems, buildMultiSelectionContextMenuItems } from "../ContextMenu";
 import { useSearchParams } from "next/navigation";
@@ -21,6 +21,7 @@ import { SnapGuides } from "./SnapGuides";
 import { usePanZoom } from "./usePanZoom";
 import { ArtboardBackgroundRenderer } from "./ArtboardBackgroundRenderer";
 import { useProjectLibrary } from "@/hooks/useProjectLibrary";
+import { normalizePaint, paintToKonvaProps, setGradientEndpoints } from "@/utils/paint";
 /* ─── Constants ───────────────────────────────────── */
 const FRAME_HIGHLIGHT_STROKE = "#6366F1";
 const FRAME_HIGHLIGHT_WIDTH = 2;
@@ -104,7 +105,9 @@ function CanvasLayer({
                 <Rect
                     ref={shapeRef as React.RefObject<Konva.Rect | null>}
                     {...commonProps}
-                    fill={layer.fillEnabled === false ? "transparent" : layer.fill}
+                    {...(layer.fillEnabled === false
+                        ? { fill: "transparent", fillPriority: "color" }
+                        : paintToKonvaProps(layer.fill, layer.width, layer.height))}
                     stroke={layer.strokeEnabled === false ? undefined : (layer.stroke || undefined)}
                     strokeWidth={layer.strokeEnabled === false ? 0 : layer.strokeWidth}
                     cornerRadius={layer.cornerRadius}
@@ -249,7 +252,9 @@ function BadgeLayerRenderer({
             <Rect
                 width={layer.width}
                 height={layer.height}
-                fill={layer.fillEnabled === false ? "transparent" : layer.fill}
+                {...(layer.fillEnabled === false
+                    ? { fill: "transparent", fillPriority: "color" }
+                    : paintToKonvaProps(layer.fill, layer.width, layer.height))}
                 cornerRadius={radius}
             />
             <Text
@@ -473,7 +478,9 @@ function FrameLayerRenderer({
                         id={layer.id}
                         width={layer.width}
                         height={layer.height}
-                        fill={layer.fillEnabled === false ? undefined : (layer.fill || undefined)}
+                        {...(layer.fillEnabled === false
+                            ? { fill: undefined, fillPriority: "color" }
+                            : paintToKonvaProps(layer.fill, layer.width, layer.height))}
                         stroke={isHighlighted ? FRAME_HIGHLIGHT_STROKE : (layer.strokeEnabled === false ? undefined : (layer.stroke || undefined))}
                         strokeWidth={isHighlighted ? FRAME_HIGHLIGHT_WIDTH : (layer.strokeEnabled === false ? 0 : layer.strokeWidth)}
                         cornerRadius={layer.cornerRadius}
@@ -510,6 +517,189 @@ function FrameLayerRenderer({
                     containerRef={clipGroupRef}
                 />
             )}
+        </Group>
+    );
+}
+
+function GradientDirectionHandles({
+    target,
+    zoom,
+    onDragStart,
+    onDragEnd,
+    onUpdateLayer,
+    onUpdateArtboard,
+}: {
+    target:
+        | { kind: "layer"; layer: Extract<LayerType, { type: "rectangle" | "badge" | "frame" }> }
+        | { kind: "artboard"; fill: Paint; width: number; height: number };
+    zoom: number;
+    onDragStart: () => void;
+    onDragEnd: () => void;
+    onUpdateLayer: (id: string, updates: LayerUpdate) => void;
+    onUpdateArtboard: (updates: { fill: Paint }) => void;
+}) {
+    const bounds = target.kind === "layer"
+        ? { x: target.layer.x, y: target.layer.y, width: target.layer.width, height: target.layer.height }
+        : { x: 0, y: 0, width: target.width, height: target.height };
+    const fill = target.kind === "layer" ? target.layer.fill : target.fill;
+    const paint = normalizePaint(fill);
+    if (paint.kind !== "gradient") return null;
+
+    const start = paint.start ?? { x: 0, y: 0.5 };
+    const end = paint.end ?? { x: 1, y: 0.5 };
+    const center = paint.center ?? { x: 0.5, y: 0.5 };
+    const radius = paint.radius ?? 0.7;
+    const startAbs = { x: bounds.x + start.x * bounds.width, y: bounds.y + start.y * bounds.height };
+    const endAbs = paint.gradientType === "linear"
+        ? { x: bounds.x + end.x * bounds.width, y: bounds.y + end.y * bounds.height }
+        : {
+            x: bounds.x + center.x * bounds.width + Math.cos((paint.angle * Math.PI) / 180) * Math.max(bounds.width, bounds.height) * radius,
+            y: bounds.y + center.y * bounds.height + Math.sin((paint.angle * Math.PI) / 180) * Math.max(bounds.width, bounds.height) * radius,
+        };
+    const centerAbs = { x: bounds.x + center.x * bounds.width, y: bounds.y + center.y * bounds.height };
+    const guideStartAbs = paint.gradientType === "linear" ? startAbs : centerAbs;
+    const guideEndAbs = endAbs;
+    const handleRadius = Math.max(4, 6 / zoom);
+    const stopHandleRadius = Math.max(5, 7 / zoom);
+    const strokeWidth = Math.max(1, 2 / zoom);
+
+    const updateFill = (nextFill: typeof paint) => {
+        if (target.kind === "layer") {
+            onUpdateLayer(target.layer.id, { fill: nextFill });
+        } else {
+            onUpdateArtboard({ fill: nextFill });
+        }
+    };
+
+    const pointFromNode = (node: Konva.Node) => ({
+        x: Math.min(1, Math.max(0, (node.x() - bounds.x) / Math.max(1, bounds.width))),
+        y: Math.min(1, Math.max(0, (node.y() - bounds.y) / Math.max(1, bounds.height))),
+    });
+
+    const updateLinearPoint = (which: "start" | "end", node: Konva.Node) => {
+        const point = pointFromNode(node);
+        updateFill(which === "start"
+            ? setGradientEndpoints(paint, point, end)
+            : setGradientEndpoints(paint, start, point));
+    };
+
+    const updateRadialPoint = (which: "center" | "edge", node: Konva.Node) => {
+        const point = pointFromNode(node);
+        if (which === "center") {
+            updateFill({ ...paint, center: point });
+            return;
+        }
+        const dx = point.x - center.x;
+        const dy = point.y - center.y;
+        updateFill({
+            ...paint,
+            angle: (Math.atan2(dy * bounds.height, dx * bounds.width) * 180) / Math.PI,
+            radius: Math.min(1, Math.max(0.05, Math.hypot(dx * bounds.width, dy * bounds.height) / Math.max(bounds.width, bounds.height, 1))),
+        });
+    };
+
+    const projectPointToGuide = (point: { x: number; y: number }) => {
+        const vx = guideEndAbs.x - guideStartAbs.x;
+        const vy = guideEndAbs.y - guideStartAbs.y;
+        const lengthSquared = Math.max(1, vx * vx + vy * vy);
+        const rawOffset = ((point.x - guideStartAbs.x) * vx + (point.y - guideStartAbs.y) * vy) / lengthSquared;
+        const offset = Math.min(1, Math.max(0, rawOffset));
+        return {
+            offset,
+            x: guideStartAbs.x + vx * offset,
+            y: guideStartAbs.y + vy * offset,
+        };
+    };
+
+    const updateStopOffset = (stopId: string, node: Konva.Node) => {
+        const projected = projectPointToGuide({ x: node.x(), y: node.y() });
+        node.position({ x: projected.x, y: projected.y });
+        updateFill({
+            ...paint,
+            stops: paint.stops
+                .map((stop) => stop.id === stopId ? { ...stop, offset: projected.offset } : stop)
+                .sort((a, b) => a.offset - b.offset),
+        });
+    };
+
+    return (
+        <Group listening name="gradient-control">
+            <Line
+                points={paint.gradientType === "linear"
+                    ? [startAbs.x, startAbs.y, endAbs.x, endAbs.y]
+                    : [centerAbs.x, centerAbs.y, endAbs.x, endAbs.y]}
+                stroke="#2563EB"
+                strokeWidth={strokeWidth}
+                dash={[6 / zoom, 4 / zoom]}
+                name="gradient-control"
+                listening={false}
+            />
+            <Circle
+                x={paint.gradientType === "linear" ? startAbs.x : centerAbs.x}
+                y={paint.gradientType === "linear" ? startAbs.y : centerAbs.y}
+                radius={handleRadius}
+                fill="#FFFFFF"
+                stroke="#2563EB"
+                strokeWidth={strokeWidth}
+                name="gradient-control"
+                draggable
+                onDragMove={(e) => paint.gradientType === "linear"
+                    ? updateLinearPoint("start", e.target)
+                    : updateRadialPoint("center", e.target)}
+                onDragStart={(e) => { e.cancelBubble = true; onDragStart(); }}
+                onDragEnd={(e) => { e.cancelBubble = true; onDragEnd(); }}
+                onMouseDown={(e) => { e.cancelBubble = true; }}
+                onTouchStart={(e) => { e.cancelBubble = true; }}
+                onClick={(e) => { e.cancelBubble = true; }}
+            />
+            <Circle
+                x={endAbs.x}
+                y={endAbs.y}
+                radius={handleRadius}
+                fill="#2563EB"
+                stroke="#FFFFFF"
+                strokeWidth={strokeWidth}
+                name="gradient-control"
+                draggable
+                onDragMove={(e) => paint.gradientType === "linear"
+                    ? updateLinearPoint("end", e.target)
+                    : updateRadialPoint("edge", e.target)}
+                onDragStart={(e) => { e.cancelBubble = true; onDragStart(); }}
+                onDragEnd={(e) => { e.cancelBubble = true; onDragEnd(); }}
+                onMouseDown={(e) => { e.cancelBubble = true; }}
+                onTouchStart={(e) => { e.cancelBubble = true; }}
+                onClick={(e) => { e.cancelBubble = true; }}
+            />
+            {paint.stops.map((stop) => {
+                const position = projectPointToGuide({
+                    x: guideStartAbs.x + (guideEndAbs.x - guideStartAbs.x) * stop.offset,
+                    y: guideStartAbs.y + (guideEndAbs.y - guideStartAbs.y) * stop.offset,
+                });
+                return (
+                    <Circle
+                        key={stop.id}
+                        x={position.x}
+                        y={position.y}
+                        radius={stopHandleRadius}
+                        fill={stop.color}
+                        opacity={Math.max(0.35, stop.opacity)}
+                        stroke="#FFFFFF"
+                        strokeWidth={strokeWidth}
+                        name="gradient-control"
+                        shadowColor="#0F172A"
+                        shadowOpacity={0.18}
+                        shadowBlur={4 / zoom}
+                        listening={stop.offset > 0.02 && stop.offset < 0.98}
+                        draggable={stop.offset > 0.02 && stop.offset < 0.98}
+                        onDragMove={(e) => updateStopOffset(stop.id, e.target)}
+                        onDragStart={(e) => { e.cancelBubble = true; onDragStart(); }}
+                        onDragEnd={(e) => { e.cancelBubble = true; updateStopOffset(stop.id, e.target); onDragEnd(); }}
+                        onMouseDown={(e) => { e.cancelBubble = true; }}
+                        onTouchStart={(e) => { e.cancelBubble = true; }}
+                        onClick={(e) => { e.cancelBubble = true; }}
+                    />
+                );
+            })}
         </Group>
     );
 }
@@ -602,9 +792,11 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
         setDrawingBox,
         isEditingText,
         editingLayerId,
+        activeGradientEditorTarget,
         startTextEditing,
         stopTextEditing,
         artboardProps,
+        updateArtboardProps,
         setHighlightedFrameId,
         hoveredLayerId,
         setHoveredLayerId,
@@ -643,9 +835,11 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
         setDrawingBox: s.setDrawingBox,
         isEditingText: s.isEditingText,
         editingLayerId: s.editingLayerId,
+        activeGradientEditorTarget: s.activeGradientEditorTarget,
         startTextEditing: s.startTextEditing,
         stopTextEditing: s.stopTextEditing,
         artboardProps: s.artboardProps,
+        updateArtboardProps: s.updateArtboardProps,
         setHighlightedFrameId: s.setHighlightedFrameId,
         hoveredLayerId: s.hoveredLayerId,
         setHoveredLayerId: s.setHoveredLayerId,
@@ -1298,6 +1492,66 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
             return;
         }
 
+        const isGradientOverlayNode = (() => {
+            const stage = e.target.getStage();
+            let ancestor: Konva.Node | null = e.target;
+            while (ancestor && ancestor !== stage) {
+                if (ancestor.name()?.split(" ").includes("gradient-control")) return true;
+                ancestor = ancestor.getParent();
+            }
+            return false;
+        })();
+        if (isGradientOverlayNode) {
+            e.cancelBubble = true;
+            return;
+        }
+
+        const isNearActiveGradientGuide = (() => {
+            if (!activeGradientEditorTarget || activeGradientEditorTarget === "artboard") return false;
+            if (!selectedLayerIds.includes(activeGradientEditorTarget)) return false;
+            const stage = e.target.getStage();
+            const pointer = stage?.getPointerPosition();
+            if (!stage || !pointer) return false;
+            const layer = layers.find((l) => l.id === activeGradientEditorTarget);
+            if (!layer || !(layer.type === "rectangle" || layer.type === "badge" || layer.type === "frame")) return false;
+            const paint = normalizePaint(layer.fill);
+            if (paint.kind !== "gradient") return false;
+
+            const scenePoint = {
+                x: (pointer.x - stage.x()) / stage.scaleX(),
+                y: (pointer.y - stage.y()) / stage.scaleY(),
+            };
+            const center = paint.center ?? { x: 0.5, y: 0.5 };
+            const radius = paint.radius ?? 0.7;
+            const start = paint.gradientType === "linear"
+                ? paint.start ?? { x: 0, y: 0.5 }
+                : center;
+            const startAbs = {
+                x: layer.x + start.x * layer.width,
+                y: layer.y + start.y * layer.height,
+            };
+            const endAbs = paint.gradientType === "linear"
+                ? {
+                    x: layer.x + (paint.end?.x ?? 1) * layer.width,
+                    y: layer.y + (paint.end?.y ?? 0.5) * layer.height,
+                }
+                : {
+                    x: layer.x + center.x * layer.width + Math.cos((paint.angle * Math.PI) / 180) * Math.max(layer.width, layer.height) * radius,
+                    y: layer.y + center.y * layer.height + Math.sin((paint.angle * Math.PI) / 180) * Math.max(layer.width, layer.height) * radius,
+                };
+            const vx = endAbs.x - startAbs.x;
+            const vy = endAbs.y - startAbs.y;
+            const lengthSquared = Math.max(1, vx * vx + vy * vy);
+            const offset = Math.min(1, Math.max(0, ((scenePoint.x - startAbs.x) * vx + (scenePoint.y - startAbs.y) * vy) / lengthSquared));
+            const projected = { x: startAbs.x + vx * offset, y: startAbs.y + vy * offset };
+            const distance = Math.hypot(scenePoint.x - projected.x, scenePoint.y - projected.y);
+            return distance <= Math.max(10 / zoom, 4);
+        })();
+        if (isNearActiveGradientGuide) {
+            e.cancelBubble = true;
+            return;
+        }
+
         // ── Drawing tool interception ──
         if (activeTool === "text" || activeTool === "rectangle" || activeTool === "frame") {
             const stage = e.target.getStage();
@@ -1476,7 +1730,7 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
                 stopTextEditing();
             }
         }
-    }, [selectLayer, isEditingText, stopTextEditing, isPanning, artboardProps.clipContent, canvasWidth, canvasHeight, layers, selectedLayerIds, activeTool, addTextLayer, setActiveTool, setDrawingBox, startTextEditing]);
+    }, [selectLayer, isEditingText, stopTextEditing, isPanning, activeGradientEditorTarget, selectedLayerIds, layers, zoom, artboardProps.clipContent, canvasWidth, canvasHeight, activeTool, addTextLayer, setActiveTool, setDrawingBox, startTextEditing]);
 
     const handleStageMouseMove = useCallback((e: Konva.KonvaEventObject<MouseEvent>) => {
         const stage = e.target.getStage();
@@ -1995,6 +2249,25 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
         return layers.filter((l) => !frameChildIds.has(l.id));
     }, [layers, frameChildIds]);
 
+    const gradientHandleTarget = useMemo(() => {
+        if (!activeGradientEditorTarget) return null;
+        if (selectedLayerIds.length === 1) {
+            const selected = layers.find((l) => l.id === selectedLayerIds[0]);
+            if (
+                selected
+                && activeGradientEditorTarget === selected.id
+                && (selected.type === "rectangle" || selected.type === "badge" || selected.type === "frame")
+                && normalizePaint(selected.fill).kind === "gradient"
+            ) {
+                return { kind: "layer" as const, layer: selected };
+            }
+        }
+        if (activeGradientEditorTarget === "artboard" && selectedLayerIds.length === 0 && normalizePaint(artboardProps.fill).kind === "gradient") {
+            return { kind: "artboard" as const, fill: artboardProps.fill, width: canvasWidth, height: canvasHeight };
+        }
+        return null;
+    }, [activeGradientEditorTarget, selectedLayerIds, layers, artboardProps.fill, canvasWidth, canvasHeight]);
+
     return (
         <div
             ref={containerRef}
@@ -2057,8 +2330,10 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
                                 } : undefined}
                             >
                                 <Rect
+                                    id="__artboard_fill"
+                                    name="export-artboard-fill"
                                     x={0} y={0} width={canvasWidth} height={canvasHeight}
-                                    fill={artboardProps.fill}
+                                    {...paintToKonvaProps(artboardProps.fill, canvasWidth, canvasHeight)}
                                     stroke={artboardProps.stroke || undefined}
                                     strokeWidth={artboardProps.strokeWidth}
                                     cornerRadius={artboardProps.cornerRadius}
@@ -2088,8 +2363,10 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
                     ) : (
                         <>
                             <Rect
+                                id="__artboard_fill"
+                                name="export-artboard-fill"
                                 x={0} y={0} width={canvasWidth} height={canvasHeight}
-                                fill={artboardProps.fill}
+                                {...paintToKonvaProps(artboardProps.fill, canvasWidth, canvasHeight)}
                                 stroke={artboardProps.stroke || undefined}
                                 strokeWidth={artboardProps.strokeWidth}
                                 cornerRadius={artboardProps.cornerRadius}
@@ -2126,6 +2403,17 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
                         drawingBox={drawingBox}
                         activeTool={activeTool}
                     />
+
+                    {gradientHandleTarget && (
+                        <GradientDirectionHandles
+                            target={gradientHandleTarget}
+                            zoom={zoom}
+                            onDragStart={() => setStageDraggable(false)}
+                            onDragEnd={() => setStageDraggable(true)}
+                            onUpdateLayer={updateLayer}
+                            onUpdateArtboard={updateArtboardProps}
+                        />
+                    )}
 
                     {/* Hover Outline (Figma-like) */}
                     {hoveredLayerId && !selectedLayerIds.includes(hoveredLayerId) && (() => {
@@ -2167,8 +2455,8 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
                         );
                     })()}
 
-                    {/* Selection Transformer — hidden when expand mode is active */}
-                    {!expandMode && (
+                    {/* Selection Transformer — hidden when dedicated edit overlays own the handles. */}
+                    {!expandMode && !gradientHandleTarget && (
                         <SelectionTransformer selectedLayerIds={selectedLayerIds} stageRef={stageRef} excludeIds={frameChildIds} />
                     )}
 

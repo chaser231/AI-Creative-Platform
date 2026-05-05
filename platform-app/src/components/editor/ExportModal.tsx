@@ -19,6 +19,31 @@ interface ExportModalProps {
     stageRef: React.RefObject<Konva.Stage | null>;
 }
 
+function TransparentBackgroundOption({
+    checked,
+    onChange,
+}: {
+    checked: boolean;
+    onChange: (checked: boolean) => void;
+}) {
+    return (
+        <label className="flex items-start gap-2 rounded-[var(--radius-md)] border border-border-primary bg-bg-secondary p-3 cursor-pointer">
+            <input
+                type="checkbox"
+                checked={checked}
+                onChange={(e) => onChange(e.target.checked)}
+                className="mt-0.5 accent-accent-primary"
+            />
+            <span>
+                <span className="block text-sm font-medium text-text-primary">Прозрачный фон PNG</span>
+                <span className="block text-[11px] text-text-tertiary">
+                    Скрывает заливку и фоновое изображение артборда на время экспорта. Тень артборда не попадает в PNG.
+                </span>
+            </span>
+        </label>
+    );
+}
+
 type ExportTarget = "artboard" | string; // "artboard" or frame id
 type ExportMode = "single" | "batch" | "template";
 
@@ -28,11 +53,12 @@ export function ExportModal({ open, onClose, stageRef }: ExportModalProps) {
     const [exportTarget, setExportTarget] = useState<ExportTarget>("artboard");
     const [selectedResizes, setSelectedResizes] = useState<Set<string>>(new Set());
     const [isExporting, setIsExporting] = useState(false);
+    const [transparentBackground, setTransparentBackground] = useState(false);
 
-    const { canvasWidth, canvasHeight, layers, resizes, setActiveResize, activeResizeId, artboardProps } = useCanvasStore(useShallow((s) => ({
+    const { canvasWidth, canvasHeight, layers, resizes, setActiveResize, activeResizeId } = useCanvasStore(useShallow((s) => ({
         canvasWidth: s.canvasWidth, canvasHeight: s.canvasHeight, layers: s.layers,
         resizes: s.resizes, setActiveResize: s.setActiveResize,
-        activeResizeId: s.activeResizeId, artboardProps: s.artboardProps,
+        activeResizeId: s.activeResizeId,
     })));
 
     // Get all frames for export target selector
@@ -81,6 +107,51 @@ export function ExportModal({ open, onClose, stageRef }: ExportModalProps) {
         return { x: 0, y: 0, width: canvasWidth, height: canvasHeight };
     }, [exportTarget, canvasWidth, canvasHeight, layers]);
 
+    const captureDataUrl = useCallback((stage: Konva.Stage, bounds: { x: number; y: number; width: number; height: number }) => {
+        const restore: Array<() => void> = [];
+        stage.find(".export-artboard-fill").forEach((node) => {
+            const shape = node as Konva.Shape;
+            const prevShadowBlur = shape.shadowBlur();
+            const prevShadowEnabled = shape.shadowEnabled();
+            const prevFill = shape.fill();
+            const prevFillPriority = shape.fillPriority();
+            restore.push(() => {
+                shape.shadowBlur(prevShadowBlur);
+                shape.shadowEnabled(prevShadowEnabled);
+                shape.fill(prevFill);
+                shape.fillPriority(prevFillPriority);
+            });
+            shape.shadowBlur(0);
+            shape.shadowEnabled(false);
+            if (transparentBackground) {
+                shape.fill("transparent");
+                shape.fillPriority("color");
+            }
+        });
+        if (transparentBackground) {
+            stage.find(".export-artboard-background").forEach((node) => {
+                const prevVisible = node.visible();
+                restore.push(() => node.visible(prevVisible));
+                node.visible(false);
+            });
+        }
+
+        stage.batchDraw();
+        try {
+            return stage.toDataURL({
+                x: bounds.x,
+                y: bounds.y,
+                width: bounds.width,
+                height: bounds.height,
+                pixelRatio: scale,
+                mimeType: "image/png",
+            });
+        } finally {
+            restore.reverse().forEach((fn) => fn());
+            stage.batchDraw();
+        }
+    }, [scale, transparentBackground]);
+
     const doExport = useCallback((fileName: string) => {
         const stage = stageRef.current;
         if (!stage) return;
@@ -96,14 +167,7 @@ export function ExportModal({ open, onClose, stageRef }: ExportModalProps) {
         stage.scale({ x: 1, y: 1 });
         stage.position({ x: 0, y: 0 });
 
-        const dataURL = stage.toDataURL({
-            x: bounds.x,
-            y: bounds.y,
-            width: bounds.width,
-            height: bounds.height,
-            pixelRatio: scale,
-            mimeType: "image/png",
-        });
+        const dataURL = captureDataUrl(stage, bounds);
 
         // Restore
         stage.scale({ x: oldScale, y: oldScale });
@@ -115,7 +179,7 @@ export function ExportModal({ open, onClose, stageRef }: ExportModalProps) {
         link.download = fileName;
         link.href = dataURL;
         link.click();
-    }, [stageRef, getExportBounds, scale]);
+    }, [stageRef, getExportBounds, captureDataUrl]);
 
     const handleSingleExport = () => {
         const bounds = getExportBounds();
@@ -155,13 +219,11 @@ export function ExportModal({ open, onClose, stageRef }: ExportModalProps) {
             stage.position({ x: 0, y: 0 });
             stage.batchDraw();
 
-            const dataURL = stage.toDataURL({
+            const dataURL = captureDataUrl(stage, {
                 x: 0,
                 y: 0,
                 width: resize.width,
                 height: resize.height,
-                pixelRatio: scale,
-                mimeType: "image/png",
             });
 
             // Add the image to the zip file
@@ -213,7 +275,7 @@ export function ExportModal({ open, onClose, stageRef }: ExportModalProps) {
                             onClick={() => {
                                 import("@/services/templateService").then(({ serializeTemplate }) => {
                                     const { masterComponents, resizes, layers } = useCanvasStore.getState();
-                                    const pack = serializeTemplate({}, masterComponents, resizes);
+                                    const pack = serializeTemplate({}, masterComponents, resizes, undefined, layers);
                                     const blob = new Blob([JSON.stringify(pack, null, 2)], { type: "application/json" });
                                     const url = URL.createObjectURL(blob);
                                     const link = document.createElement("a");
@@ -324,6 +386,10 @@ export function ExportModal({ open, onClose, stageRef }: ExportModalProps) {
                                 ))}
                             </div>
                         </div>
+                        <TransparentBackgroundOption
+                            checked={transparentBackground}
+                            onChange={setTransparentBackground}
+                        />
                     </>
                 ) : exportMode === "batch" ? (
                     <>
@@ -393,6 +459,10 @@ export function ExportModal({ open, onClose, stageRef }: ExportModalProps) {
                                 ))}
                             </div>
                         </div>
+                        <TransparentBackgroundOption
+                            checked={transparentBackground}
+                            onChange={setTransparentBackground}
+                        />
 
                         {/* Batch preview */}
                         <div className="p-3 bg-bg-secondary rounded-[var(--radius-md)] border border-border-primary">

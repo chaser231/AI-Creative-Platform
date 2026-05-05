@@ -5,7 +5,7 @@
 import type { StateCreator } from "zustand";
 import type {
     CanvasStore,
-    Layer, TextLayer, RectangleLayer, ImageLayer, BadgeLayer, FrameLayer,
+    Layer, LayerUpdate, TextLayer, RectangleLayer, ImageLayer, BadgeLayer, FrameLayer,
     MasterComponent, ComponentInstance, ComponentProps,
     HistorySnapshot,
 } from "./types";
@@ -374,7 +374,7 @@ export const createLayerSlice: StateCreator<CanvasStore, [], [], LayerSlice> = (
         }
 
         set((state) => {
-            const computeUpdatedLayers = (currentLayers: Layer[], targetId: string, layerUpdates: Partial<Layer>): Layer[] => {
+            const computeUpdatedLayers = (currentLayers: Layer[], targetId: string, layerUpdates: LayerUpdate): Layer[] => {
                 const targetLayer = currentLayers.find(l => l.id === targetId);
                 if (!targetLayer) return currentLayers;
 

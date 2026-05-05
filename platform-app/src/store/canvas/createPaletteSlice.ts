@@ -29,9 +29,11 @@ import type {
     RectangleLayer,
     BadgeLayer,
     FrameLayer,
+    Paint,
 } from "@/types";
 import { v4 as uuid } from "uuid";
 import { pushSnapshot } from "./createHistorySlice";
+import { isPaint, normalizePaint } from "@/utils/paint";
 
 export type PaletteSlice = Pick<CanvasStore,
     | "palette"
@@ -60,8 +62,9 @@ function findSwatch(palette: TemplatePalette, swatchId: string): Swatch | undefi
  * Returns undefined for image-backgrounds (only relevant for artboard).
  */
 function resolveColorFromSwatch(swatch: Swatch): string | undefined {
-    if (swatch.type === "color" && typeof swatch.value === "string") {
-        return swatch.value;
+    if (swatch.type === "color") {
+        const paint = isPaint(swatch.value) ? normalizePaint(swatch.value) : undefined;
+        return paint?.kind === "solid" ? paint.color : undefined;
     }
     if (
         swatch.type === "background"
@@ -73,24 +76,43 @@ function resolveColorFromSwatch(swatch: Swatch): string | undefined {
     return undefined;
 }
 
+function resolvePaintFromSwatch(swatch: Swatch): Paint | undefined {
+    if (swatch.type === "color" && isPaint(swatch.value)) {
+        return swatch.value;
+    }
+    if (swatch.type === "background" && typeof swatch.value === "object") {
+        const v = swatch.value as BackgroundSwatchValue;
+        if (v.kind === "solid") return v.color;
+        if (v.kind === "gradient") return v.paint;
+    }
+    return undefined;
+}
+
 /** Apply a fill/stroke color override to a layer based on swatchRefs. */
-function applyColorRefsToLayer<T extends { swatchRefs?: Layer["swatchRefs"] } & Partial<Layer>>(
+function applyPaintRefsToLayer<T extends { swatchRefs?: Layer["swatchRefs"] } & Partial<Layer>>(
     layer: T,
     swatchId: string,
-    color: string,
+    paint: Paint,
 ): T {
     if (!layer.swatchRefs) return layer;
     let changed = false;
     const next = { ...layer } as T & Record<string, unknown>;
     if (layer.swatchRefs.fill === swatchId && (next as { fill?: string }).fill !== undefined) {
-        (next as { fill?: string }).fill = color;
+        (next as { fill?: Paint }).fill = paint;
         changed = true;
     }
     if (layer.swatchRefs.stroke === swatchId && (next as { stroke?: string }).stroke !== undefined) {
-        (next as { stroke?: string }).stroke = color;
-        changed = true;
+        const normalized = typeof paint === "string" ? undefined : normalizePaint(paint);
+        const color = typeof paint === "string" ? paint : normalized?.kind === "solid" ? normalized.color : undefined;
+        if (color) {
+            (next as { stroke?: string }).stroke = color;
+            changed = true;
+        }
     }
     if (layer.swatchRefs.text === swatchId) {
+        const normalized = typeof paint === "string" ? undefined : normalizePaint(paint);
+        const color = typeof paint === "string" ? paint : normalized?.kind === "solid" ? normalized.color : undefined;
+        if (!color) return changed ? next : layer;
         // Text layer uses `fill` for text color; badge uses `textColor`.
         if ((next as { type?: string }).type === "badge") {
             (next as { textColor?: string }).textColor = color;
@@ -103,10 +125,10 @@ function applyColorRefsToLayer<T extends { swatchRefs?: Layer["swatchRefs"] } & 
     return changed ? next : layer;
 }
 
-function cascadeLayers(layers: Layer[], swatchId: string, color: string): Layer[] {
+function cascadeLayers(layers: Layer[], swatchId: string, paint: Paint): Layer[] {
     let changed = false;
     const next = layers.map((l) => {
-        const nl = applyColorRefsToLayer(l, swatchId, color) as Layer;
+        const nl = applyPaintRefsToLayer(l, swatchId, paint) as Layer;
         if (nl !== l) changed = true;
         return nl;
     });
@@ -129,12 +151,12 @@ function cascadeImageLayers(layers: Layer[], swatchId: string, src: string): Lay
     return changed ? next : layers;
 }
 
-function cascadeMasters(masters: MasterComponent[], swatchId: string, color: string): MasterComponent[] {
+function cascadeMasters(masters: MasterComponent[], swatchId: string, paint: Paint): MasterComponent[] {
     let changed = false;
     const next = masters.map((m) => {
         const props = m.props as MasterComponent["props"] & { swatchRefs?: Layer["swatchRefs"] };
         if (!props.swatchRefs) return m;
-        const updated = applyColorRefsToLayer(props, swatchId, color);
+        const updated = applyPaintRefsToLayer(props, swatchId, paint);
         if (updated === props) return m;
         changed = true;
         return { ...m, props: updated as MasterComponent["props"] };
@@ -142,12 +164,12 @@ function cascadeMasters(masters: MasterComponent[], swatchId: string, color: str
     return changed ? next : masters;
 }
 
-function cascadeInstances(instances: ComponentInstance[], swatchId: string, color: string): ComponentInstance[] {
+function cascadeInstances(instances: ComponentInstance[], swatchId: string, paint: Paint): ComponentInstance[] {
     let changed = false;
     const next = instances.map((inst) => {
         const local = inst.localProps as ComponentInstance["localProps"] & { swatchRefs?: Layer["swatchRefs"] };
         if (!local.swatchRefs) return inst;
-        const updated = applyColorRefsToLayer(local, swatchId, color);
+        const updated = applyPaintRefsToLayer(local, swatchId, paint);
         if (updated === local) return inst;
         changed = true;
         return { ...inst, localProps: updated as ComponentInstance["localProps"] };
@@ -218,19 +240,19 @@ export const createPaletteSlice: StateCreator<CanvasStore, [], [], PaletteSlice>
             //    has no swatchRef — left as a no-op).
             //  - image-background change: refresh artboardProps.backgroundImage
             //    if it was applied from this swatch.
-            const color = resolveColorFromSwatch(updatedSwatch);
+            const paint = resolvePaintFromSwatch(updatedSwatch);
             let layers = s.layers;
             let masters = s.masterComponents;
             let instances = s.componentInstances;
             let resizes = s.resizes;
 
-            if (color !== undefined) {
-                layers = cascadeLayers(layers, id, color);
-                masters = cascadeMasters(masters, id, color);
-                instances = cascadeInstances(instances, id, color);
+            if (paint !== undefined) {
+                layers = cascadeLayers(layers, id, paint);
+                masters = cascadeMasters(masters, id, paint);
+                instances = cascadeInstances(instances, id, paint);
                 resizes = s.resizes.map((r) => {
                     if (!r.layerSnapshot) return r;
-                    const next = cascadeLayers(r.layerSnapshot, id, color);
+                    const next = cascadeLayers(r.layerSnapshot, id, paint);
                     return next === r.layerSnapshot ? r : { ...r, layerSnapshot: next };
                 });
             }
@@ -253,6 +275,9 @@ export const createPaletteSlice: StateCreator<CanvasStore, [], [], PaletteSlice>
 
             // Artboard background image swatch: if currently applied, refresh.
             let artboardProps = s.artboardProps;
+            if (paint !== undefined && artboardProps.fillSwatchRef === id) {
+                artboardProps = { ...artboardProps, fill: paint };
+            }
             if (
                 updatedSwatch.type === "background"
                 && typeof updatedSwatch.value === "object"
@@ -264,8 +289,8 @@ export const createPaletteSlice: StateCreator<CanvasStore, [], [], PaletteSlice>
                 } else {
                     // Swatch switched from image → solid: drop the backgroundImage.
                     artboardProps = { ...artboardProps, backgroundImage: undefined };
-                    if (color !== undefined) {
-                        artboardProps = { ...artboardProps, fill: color };
+                    if (paint !== undefined) {
+                        artboardProps = { ...artboardProps, fill: paint };
                     }
                 }
             }
@@ -361,6 +386,17 @@ export const createPaletteSlice: StateCreator<CanvasStore, [], [], PaletteSlice>
 
             // Artboard background: if driven by this swatch, drop the link.
             let artboardProps = s.artboardProps;
+            if (artboardProps.fillSwatchRef === id) {
+                if (mode === "replace" && replaceWithId) {
+                    const replacement = findSwatch({ ...s.palette, [bucket]: remaining }, replaceWithId);
+                    const paint = replacement ? resolvePaintFromSwatch(replacement) : undefined;
+                    artboardProps = paint
+                        ? { ...artboardProps, fill: paint, fillSwatchRef: replaceWithId }
+                        : { ...artboardProps, fillSwatchRef: undefined };
+                } else {
+                    artboardProps = { ...artboardProps, fillSwatchRef: undefined };
+                }
+            }
             if (artboardProps.backgroundImage?.swatchRef === id) {
                 if (mode === "replace" && replaceWithId) {
                     const replacement = findSwatch({ ...s.palette, [bucket]: remaining }, replaceWithId);
@@ -394,7 +430,7 @@ export const createPaletteSlice: StateCreator<CanvasStore, [], [], PaletteSlice>
             const nextState = get();
             const replacement = findSwatch(nextState.palette, replaceWithId);
             if (replacement) {
-                const color = resolveColorFromSwatch(replacement);
+                const paint = resolvePaintFromSwatch(replacement);
                 const newImgSrc =
                     replacement.type === "background"
                     && typeof replacement.value === "object"
@@ -402,19 +438,19 @@ export const createPaletteSlice: StateCreator<CanvasStore, [], [], PaletteSlice>
                         ? (replacement.value as Extract<BackgroundSwatchValue, { kind: "image" }>).src
                         : undefined;
 
-                if (color !== undefined || newImgSrc !== undefined) {
+                if (paint !== undefined || newImgSrc !== undefined) {
                     set((s) => {
                         let layers = s.layers;
                         let masters = s.masterComponents;
                         let instances = s.componentInstances;
                         let resizes = s.resizes;
-                        if (color !== undefined) {
-                            layers = cascadeLayers(layers, replaceWithId, color);
-                            masters = cascadeMasters(masters, replaceWithId, color);
-                            instances = cascadeInstances(instances, replaceWithId, color);
+                        if (paint !== undefined) {
+                            layers = cascadeLayers(layers, replaceWithId, paint);
+                            masters = cascadeMasters(masters, replaceWithId, paint);
+                            instances = cascadeInstances(instances, replaceWithId, paint);
                             resizes = resizes.map((r) => {
                                 if (!r.layerSnapshot) return r;
-                                const next = cascadeLayers(r.layerSnapshot, replaceWithId, color);
+                                const next = cascadeLayers(r.layerSnapshot, replaceWithId, paint);
                                 return next === r.layerSnapshot ? r : { ...r, layerSnapshot: next };
                             });
                         }
@@ -457,8 +493,10 @@ export const createPaletteSlice: StateCreator<CanvasStore, [], [], PaletteSlice>
         const state = get();
         const swatch = findSwatch(state.palette, swatchId);
         if (!swatch) return;
+        const paint = resolvePaintFromSwatch(swatch);
         const color = resolveColorFromSwatch(swatch);
-        if (color === undefined) return;
+        if (target === "fill" && paint === undefined) return;
+        if (target !== "fill" && color === undefined) return;
         const layer = state.layers.find((l) => l.id === layerId);
         if (!layer) return;
 
@@ -470,9 +508,9 @@ export const createPaletteSlice: StateCreator<CanvasStore, [], [], PaletteSlice>
                 const nextRefs: Layer["swatchRefs"] = { ...(l.swatchRefs ?? {}), [target]: swatchId };
                 const next = { ...l, swatchRefs: nextRefs } as Layer & Record<string, unknown>;
                 if (target === "fill") {
-                    if ("fill" in next) (next as { fill: string }).fill = color;
+                    if ("fill" in next) (next as { fill: Paint }).fill = paint!;
                 } else if (target === "stroke") {
-                    if ("stroke" in next) (next as { stroke: string }).stroke = color;
+                    if ("stroke" in next) (next as { stroke: string }).stroke = color!;
                 }
                 return next as Layer;
             };
@@ -494,8 +532,8 @@ export const createPaletteSlice: StateCreator<CanvasStore, [], [], PaletteSlice>
                     const props = m.props as MasterComponent["props"] & Record<string, unknown>;
                     const nextRefs: Layer["swatchRefs"] = { ...(props.swatchRefs ?? {}), [target]: swatchId };
                     const nextProps: Record<string, unknown> = { ...props, swatchRefs: nextRefs };
-                    if (target === "fill" && "fill" in nextProps) nextProps.fill = color;
-                    if (target === "stroke" && "stroke" in nextProps) nextProps.stroke = color;
+                    if (target === "fill" && "fill" in nextProps) nextProps.fill = paint!;
+                    if (target === "stroke" && "stroke" in nextProps) nextProps.stroke = color!;
                     return { ...m, props: nextProps as unknown as MasterComponent["props"] };
                 });
                 instances = s.componentInstances.map((inst) => {
@@ -503,8 +541,8 @@ export const createPaletteSlice: StateCreator<CanvasStore, [], [], PaletteSlice>
                     const local = inst.localProps as ComponentInstance["localProps"] & Record<string, unknown>;
                     const nextRefs: Layer["swatchRefs"] = { ...(local.swatchRefs ?? {}), [target]: swatchId };
                     const nextLocal: Record<string, unknown> = { ...local, swatchRefs: nextRefs };
-                    if (target === "fill" && "fill" in nextLocal) nextLocal.fill = color;
-                    if (target === "stroke" && "stroke" in nextLocal) nextLocal.stroke = color;
+                    if (target === "fill" && "fill" in nextLocal) nextLocal.fill = paint!;
+                    if (target === "stroke" && "stroke" in nextLocal) nextLocal.stroke = color!;
                     return { ...inst, localProps: nextLocal as unknown as ComponentInstance["localProps"] };
                 });
             }
@@ -561,6 +599,17 @@ export const createPaletteSlice: StateCreator<CanvasStore, [], [], PaletteSlice>
                     artboardProps: {
                         ...s.artboardProps,
                         fill: v.color,
+                        fillSwatchRef: swatch.id,
+                        backgroundImage: undefined,
+                    },
+                } as Partial<CanvasStore>;
+            }
+            if (v.kind === "gradient") {
+                return {
+                    artboardProps: {
+                        ...s.artboardProps,
+                        fill: v.paint,
+                        fillSwatchRef: swatch.id,
                         backgroundImage: undefined,
                     },
                 } as Partial<CanvasStore>;
@@ -586,7 +635,7 @@ export const createPaletteSlice: StateCreator<CanvasStore, [], [], PaletteSlice>
         if (!layer) return null;
         // Only meaningful for layers that carry a `fill` color
         const fill = (layer as TextLayer | RectangleLayer | BadgeLayer | FrameLayer).fill;
-        if (!fill || typeof fill !== "string") return null;
+        if (!fill || !isPaint(fill)) return null;
 
         const swatchName = name?.trim() || `Цвет ${state.palette.colors.length + 1}`;
         const id = get().addSwatch({ type: "color", name: swatchName, value: fill });
@@ -627,12 +676,19 @@ export const createPaletteSlice: StateCreator<CanvasStore, [], [], PaletteSlice>
 
         // No image background → snapshot the solid fill as a background swatch
         const fill = state.artboardProps.fill;
-        if (!fill) return null;
-        return get().addSwatch({
+        if (!fill || !isPaint(fill)) return null;
+        const paint = normalizePaint(fill);
+        const id = get().addSwatch({
             type: "background",
             name: swatchName,
-            value: { kind: "solid", color: fill },
+            value: paint.kind === "gradient"
+                ? { kind: "gradient", paint }
+                : { kind: "solid", color: paint.color },
         });
+        set((s) => ({
+            artboardProps: { ...s.artboardProps, fillSwatchRef: id },
+        }));
+        return id;
     },
 });
 

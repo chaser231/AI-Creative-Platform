@@ -5,6 +5,7 @@ import { Tag, Save, Trash2, ChevronDown, ChevronUp } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import type { BadgeComponentProps, BusinessUnit } from "@/types";
 import { useBadgeStore, DEFAULT_BADGE_CONFIG, type BadgeConfig } from "@/store/badgeStore";
+import { paintToCssBackground } from "@/utils/paint";
 
 interface BadgeContentBlockProps {
     id: string;
@@ -38,7 +39,7 @@ export function BadgeContentBlock({ id, name, props, value, onChange, onConfigCh
     const [config, setConfig] = useState<BadgeConfig>(() => ({
         ...DEFAULT_BADGE_CONFIG,
         label: value || props.label || "",
-        fill: props.fill || DEFAULT_BADGE_CONFIG.fill,
+        fill: props.fill ? paintToCssBackground(props.fill) : DEFAULT_BADGE_CONFIG.fill,
         textColor: props.textColor || DEFAULT_BADGE_CONFIG.textColor,
         fontSize: props.fontSize || DEFAULT_BADGE_CONFIG.fontSize,
         shape: props.shape || DEFAULT_BADGE_CONFIG.shape,
@@ -73,7 +74,7 @@ export function BadgeContentBlock({ id, name, props, value, onChange, onConfigCh
     const BadgePreview = ({ cfg, size = "normal" }: { cfg: BadgeConfig; size?: "normal" | "small" }) => {
         const isSmall = size === "small";
         const baseStyles: React.CSSProperties = {
-            backgroundColor: cfg.fill, color: cfg.textColor,
+            background: cfg.fill, color: cfg.textColor,
             fontSize: isSmall ? 10 : cfg.fontSize, fontWeight: cfg.fontWeight as any,
             border: cfg.borderWidth > 0 ? `${cfg.borderWidth}px solid ${cfg.borderColor}` : "none",
             display: "inline-flex", alignItems: "center", justifyContent: "center",

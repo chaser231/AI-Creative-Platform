@@ -11,6 +11,7 @@ import { Modal } from "@/components/ui/Modal";
 import { Select } from "@/components/ui/Select";
 import { LayersPanel } from "@/components/editor/LayersPanel";
 import { PropertiesPanel } from "@/components/editor/properties";
+import { PaintInput } from "@/components/editor/properties/PaintInput";
 import { Toolbar } from "@/components/editor/Toolbar";
 import { ExportModal } from "@/components/editor/ExportModal";
 import { ResizePanel } from "@/components/editor/ResizePanel";
@@ -1051,20 +1052,7 @@ export default function EditorPage({ params }: EditorPageProps) {
                     {/* Artboard Background Color */}
                     <div className="space-y-1.5">
                         <label className="text-[12px] font-medium text-text-secondary">Цвет фона холста</label>
-                        <div className="flex items-center gap-2">
-                            <input
-                                type="color"
-                                value={artboardProps.fill}
-                                onChange={(e) => updateArtboardProps({ fill: e.target.value })}
-                                className="w-9 h-9 rounded-[var(--radius-md)] border border-border-primary cursor-pointer p-0.5"
-                            />
-                            <input
-                                type="text"
-                                value={artboardProps.fill}
-                                onChange={(e) => updateArtboardProps({ fill: e.target.value })}
-                                className="flex-1 h-9 px-3 rounded-[var(--radius-md)] border border-border-primary bg-bg-secondary text-[13px] text-text-primary font-mono focus:outline-none focus:ring-1 focus:ring-accent-primary/50"
-                            />
-                        </div>
+                        <PaintInput value={artboardProps.fill} gradientTargetId="artboard" onChange={(fill) => updateArtboardProps({ fill })} />
                     </div>
 
                     {/* Goal (readonly) */}
