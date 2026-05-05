@@ -13,6 +13,7 @@ export type ViewportSlice = Pick<CanvasStore,
     | "artboardProps" | "snapConfig"
     | "highlightedFrameId" | "hoveredLayerId" | "editorMode"
     | "isEditingText" | "editingLayerId"
+    | "activeGradientEditorTarget" | "setActiveGradientEditorTarget"
     | "expandMode" | "expandPadding" | "expandTargetLayerId"
     | "drawingBox" | "setDrawingBox"
     | "setZoom" | "setStagePosition"
@@ -46,6 +47,7 @@ export const createViewportSlice: StateCreator<CanvasStore, [], [], ViewportSlic
     editorMode: "studio",
     isEditingText: false,
     editingLayerId: null,
+    activeGradientEditorTarget: null,
 
     // Generative Expand
     expandMode: false,
@@ -76,7 +78,15 @@ export const createViewportSlice: StateCreator<CanvasStore, [], [], ViewportSlic
 
     updateArtboardProps: (updates: Partial<ArtboardProps>) => {
         set((state) => ({
-            artboardProps: { ...state.artboardProps, ...updates },
+            artboardProps: {
+                ...state.artboardProps,
+                ...updates,
+                fillSwatchRef:
+                    Object.prototype.hasOwnProperty.call(updates, "fill")
+                    && !Object.prototype.hasOwnProperty.call(updates, "fillSwatchRef")
+                        ? undefined
+                        : updates.fillSwatchRef ?? state.artboardProps.fillSwatchRef,
+            },
         }));
     },
 
@@ -138,6 +148,10 @@ export const createViewportSlice: StateCreator<CanvasStore, [], [], ViewportSlic
 
     stopTextEditing: () => {
         set({ isEditingText: false, editingLayerId: null });
+    },
+
+    setActiveGradientEditorTarget: (target) => {
+        set({ activeGradientEditorTarget: target });
     },
 
     // ── Generative Expand ────────────────────────────────

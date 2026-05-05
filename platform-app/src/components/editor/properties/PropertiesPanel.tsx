@@ -29,6 +29,7 @@ import type { ArtboardBackgroundFit, BackgroundSwatchValue } from "@/types";
 import { uploadForAI } from "@/utils/imageUpload";
 import { CompactInput } from "./CompactInput";
 import { ColorInput } from "./ColorInput";
+import { PaintInput } from "./PaintInput";
 import { TextPropsGrouped } from "./TextPropsGrouped";
 import { RectPropsGrouped } from "./RectPropsGrouped";
 import { BadgePropsGrouped } from "./BadgePropsGrouped";
@@ -119,7 +120,7 @@ export function PropertiesPanel() {
                 <CompactInput label="H" value={canvasHeight} min={1} onChange={(v) => setCanvasSize(canvasWidth, Math.max(1, Number(v)))} />
                 <div className="w-px h-5 bg-border-primary shrink-0" />
                 <span className="text-[10px] text-text-tertiary font-light shrink-0">Фон</span>
-                <ColorInput value={artboardProps.fill} onChange={(v) => updateArtboardProps({ fill: v })} />
+                <PaintInput value={artboardProps.fill} gradientTargetId="artboard" onChange={(v) => updateArtboardProps({ fill: v })} />
                 <div className="w-px h-5 bg-border-primary shrink-0" />
                 <CompactInput label="R" value={artboardProps.cornerRadius} min={0} onChange={(v) => updateArtboardProps({ cornerRadius: Math.max(0, Number(v)) })} />
                 <div className="w-px h-5 bg-border-primary shrink-0" />

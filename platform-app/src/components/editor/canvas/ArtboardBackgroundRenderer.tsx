@@ -43,6 +43,7 @@ export function ArtboardBackgroundRenderer() {
 
     const image = (
         <KonvaImage
+            name="export-artboard-background"
             image={img}
             x={fitProps.drawX}
             y={fitProps.drawY}
@@ -65,6 +66,7 @@ export function ArtboardBackgroundRenderer() {
         const r = Math.min(cornerRadius, Math.min(canvasWidth, canvasHeight) / 2);
         return (
             <Group
+                name="export-artboard-background"
                 listening={false}
                 clipFunc={(ctx) => {
                     ctx.beginPath();

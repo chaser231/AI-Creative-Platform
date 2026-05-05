@@ -34,12 +34,14 @@ export function Popover({
     onClose,
     className = "",
     position = "bottom",
+    keepOpenOnCanvasInteraction = false,
 }: {
     children: React.ReactNode;
     isOpen: boolean;
     onClose: () => void;
     className?: string;
     position?: "top" | "bottom";
+    keepOpenOnCanvasInteraction?: boolean;
 }) {
     const ref = useRef<HTMLDivElement>(null);
 
@@ -53,12 +55,15 @@ export function Popover({
             //    Radix UI renders portal content with data-radix-popper-content-wrapper
             const el = target instanceof Element ? target : target.parentElement;
             if (el?.closest('[data-radix-popper-content-wrapper]')) return;
+            // Gradient controls are rendered by Konva in the canvas, but they are
+            // semantically part of the currently open style editor.
+            if (keepOpenOnCanvasInteraction && (target instanceof HTMLCanvasElement || el?.closest(".konvajs-content"))) return;
             // 3. Everything else — close
             onClose();
         };
         document.addEventListener("mousedown", handler);
         return () => document.removeEventListener("mousedown", handler);
-    }, [isOpen, onClose]);
+    }, [isOpen, onClose, keepOpenOnCanvasInteraction]);
 
     if (!isOpen) return null;
 

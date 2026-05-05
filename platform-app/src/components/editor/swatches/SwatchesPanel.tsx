@@ -5,7 +5,8 @@ import { Plus, Trash2, Pencil, Palette, Image as ImageIcon, Upload, X, Check } f
 import { useCanvasStore } from "@/store/canvasStore";
 import { useShallow } from "zustand/react/shallow";
 import { uploadForAI } from "@/utils/imageUpload";
-import type { Swatch, BackgroundSwatchValue } from "@/types";
+import type { Swatch, BackgroundSwatchValue, Paint } from "@/types";
+import { makeGradientPaint, paintToCssBackground } from "@/utils/paint";
 
 type Tab = "colors" | "backgrounds";
 
@@ -43,9 +44,10 @@ export function SwatchesPanel() {
     const [tab, setTab] = useState<Tab>("colors");
     const [adding, setAdding] = useState(false);
     const [newColor, setNewColor] = useState("#4F46E5");
+    const [newColorMode, setNewColorMode] = useState<"solid" | "gradient">("solid");
     const [newName, setNewName] = useState("");
     const [newSolid, setNewSolid] = useState("#FFFFFF");
-    const [newBgMode, setNewBgMode] = useState<"solid" | "image">("solid");
+    const [newBgMode, setNewBgMode] = useState<"solid" | "gradient" | "image">("solid");
     const [editingId, setEditingId] = useState<string | null>(null);
     const [editingName, setEditingName] = useState("");
     const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -90,6 +92,7 @@ export function SwatchesPanel() {
         setAdding(false);
         setNewName("");
         setNewColor("#4F46E5");
+        setNewColorMode("solid");
         setNewSolid("#FFFFFF");
         setNewBgMode("solid");
     };
@@ -100,12 +103,28 @@ export function SwatchesPanel() {
         resetAddForm();
     };
 
+    const handleAddColorGradient = () => {
+        const name = newName.trim() || `Градиент ${palette.colors.length + 1}`;
+        addSwatch({ type: "color", name, value: makeGradientPaint("linear") });
+        resetAddForm();
+    };
+
     const handleAddBgSolid = () => {
         const name = newName.trim() || `Фон ${palette.backgrounds.length + 1}`;
         addSwatch({
             type: "background",
             name,
             value: { kind: "solid", color: newSolid },
+        });
+        resetAddForm();
+    };
+
+    const handleAddBgGradient = () => {
+        const name = newName.trim() || `Фон ${palette.backgrounds.length + 1}`;
+        addSwatch({
+            type: "background",
+            name,
+            value: { kind: "gradient", paint: makeGradientPaint("linear") },
         });
         resetAddForm();
     };
@@ -267,22 +286,46 @@ export function SwatchesPanel() {
 
                         {tab === "colors" && (
                             <>
-                                <div className="flex items-center gap-2">
-                                    <input
-                                        type="color"
-                                        value={newColor}
-                                        onChange={(e) => setNewColor(e.target.value)}
-                                        className="w-10 h-8 rounded-[var(--radius-sm)] border border-border-primary cursor-pointer"
-                                    />
-                                    <input
-                                        value={newColor}
-                                        onChange={(e) => setNewColor(e.target.value)}
-                                        className="flex-1 h-8 px-2 rounded-[var(--radius-sm)] border border-border-primary bg-bg-primary text-[11px] text-text-primary text-center focus:outline-none focus:ring-1 focus:ring-border-focus"
-                                    />
+                                <div className="flex gap-1">
+                                    <button
+                                        onClick={() => setNewColorMode("solid")}
+                                        className={`flex-1 h-7 rounded-[var(--radius-sm)] text-[10px] font-medium cursor-pointer ${newColorMode === "solid"
+                                            ? "bg-accent-primary text-text-inverse"
+                                            : "border border-border-primary text-text-tertiary hover:text-text-primary"
+                                            }`}
+                                    >
+                                        Цвет
+                                    </button>
+                                    <button
+                                        onClick={() => setNewColorMode("gradient")}
+                                        className={`flex-1 h-7 rounded-[var(--radius-sm)] text-[10px] font-medium cursor-pointer ${newColorMode === "gradient"
+                                            ? "bg-accent-primary text-text-inverse"
+                                            : "border border-border-primary text-text-tertiary hover:text-text-primary"
+                                            }`}
+                                    >
+                                        Градиент
+                                    </button>
                                 </div>
+                                {newColorMode === "solid" ? (
+                                    <div className="flex items-center gap-2">
+                                        <input
+                                            type="color"
+                                            value={newColor}
+                                            onChange={(e) => setNewColor(e.target.value)}
+                                            className="w-10 h-8 rounded-[var(--radius-sm)] border border-border-primary cursor-pointer"
+                                        />
+                                        <input
+                                            value={newColor}
+                                            onChange={(e) => setNewColor(e.target.value)}
+                                            className="flex-1 h-8 px-2 rounded-[var(--radius-sm)] border border-border-primary bg-bg-primary text-[11px] text-text-primary text-center focus:outline-none focus:ring-1 focus:ring-border-focus"
+                                        />
+                                    </div>
+                                ) : (
+                                    <div className="h-8 rounded-[var(--radius-sm)] border border-border-primary" style={{ background: paintToCssBackground(makeGradientPaint("linear")) }} />
+                                )}
                                 <div className="flex gap-1.5">
                                     <button
-                                        onClick={handleAddColor}
+                                        onClick={newColorMode === "solid" ? handleAddColor : handleAddColorGradient}
                                         className="flex-1 flex items-center justify-center gap-1 h-7 rounded-[var(--radius-md)] bg-accent-primary text-text-inverse text-[11px] font-medium hover:bg-accent-primary-hover transition-colors cursor-pointer"
                                     >
                                         <Check size={11} />
@@ -309,6 +352,15 @@ export function SwatchesPanel() {
                                             }`}
                                     >
                                         Цвет
+                                    </button>
+                                    <button
+                                        onClick={() => setNewBgMode("gradient")}
+                                        className={`flex-1 h-7 rounded-[var(--radius-sm)] text-[10px] font-medium cursor-pointer ${newBgMode === "gradient"
+                                            ? "bg-accent-primary text-text-inverse"
+                                            : "border border-border-primary text-text-tertiary hover:text-text-primary"
+                                            }`}
+                                    >
+                                        Градиент
                                     </button>
                                     <button
                                         onClick={() => setNewBgMode("image")}
@@ -339,6 +391,27 @@ export function SwatchesPanel() {
                                         <div className="flex gap-1.5">
                                             <button
                                                 onClick={handleAddBgSolid}
+                                                className="flex-1 flex items-center justify-center gap-1 h-7 rounded-[var(--radius-md)] bg-accent-primary text-text-inverse text-[11px] font-medium hover:bg-accent-primary-hover transition-colors cursor-pointer"
+                                            >
+                                                <Check size={11} />
+                                                Добавить
+                                            </button>
+                                            <button
+                                                onClick={resetAddForm}
+                                                className="h-7 px-2 rounded-[var(--radius-md)] border border-border-primary text-text-tertiary text-[11px] hover:bg-bg-tertiary hover:text-text-primary transition-colors cursor-pointer"
+                                            >
+                                                <X size={11} />
+                                            </button>
+                                        </div>
+                                    </>
+                                )}
+
+                                {newBgMode === "gradient" && (
+                                    <>
+                                        <div className="h-8 rounded-[var(--radius-sm)] border border-border-primary" style={{ background: paintToCssBackground(makeGradientPaint("linear")) }} />
+                                        <div className="flex gap-1.5">
+                                            <button
+                                                onClick={handleAddBgGradient}
                                                 className="flex-1 flex items-center justify-center gap-1 h-7 rounded-[var(--radius-md)] bg-accent-primary text-text-inverse text-[11px] font-medium hover:bg-accent-primary-hover transition-colors cursor-pointer"
                                             >
                                                 <Check size={11} />
@@ -412,12 +485,14 @@ export function SwatchesPanel() {
 
 function renderSwatchPreview(swatch: Swatch) {
     if (swatch.type === "color") {
-        const color = typeof swatch.value === "string" ? swatch.value : "#000000";
-        return <div className="w-full h-full" style={{ background: color }} />;
+        return <div className="w-full h-full" style={{ background: paintToCssBackground(swatch.value as Paint) }} />;
     }
     const v = swatch.value as BackgroundSwatchValue;
     if (v.kind === "solid") {
         return <div className="w-full h-full" style={{ background: v.color }} />;
+    }
+    if (v.kind === "gradient") {
+        return <div className="w-full h-full" style={{ background: paintToCssBackground(v.paint) }} />;
     }
     return (
         <div

@@ -26,6 +26,7 @@ import type {
     TemplatePalette,
     Swatch,
     SwatchType,
+    Paint,
 } from "@/types";
 import type { SnapConfig } from "@/services/snapService";
 import type { SlotMapping } from "@/services/slotMappingService";
@@ -62,7 +63,9 @@ export type {
 // ─── ArtboardProps (single source of truth) ─────────────
 
 export interface ArtboardProps {
-    fill: string;
+    fill: Paint;
+    /** If the artboard fill was applied from a swatch, keep a backlink for cascade updates. */
+    fillSwatchRef?: string;
     cornerRadius: number;
     clipContent: boolean;
     stroke: string;
@@ -183,6 +186,7 @@ export interface CanvasStore {
     // Inline text editing
     isEditingText: boolean;
     editingLayerId: string | null;
+    activeGradientEditorTarget: string | null;
 
     // Generative Expand (outpaint with drag handles)
     expandMode: boolean;
@@ -295,6 +299,7 @@ export interface CanvasStore {
     // Inline text editing
     startTextEditing: (layerId: string) => void;
     stopTextEditing: () => void;
+    setActiveGradientEditorTarget: (target: string | null) => void;
 
     // Generative Expand actions
     setExpandMode: (active: boolean) => void;

@@ -5,6 +5,7 @@ import { Paintbrush, Eye, EyeOff } from "lucide-react";
 import { Popover, PopoverButton } from "@/components/ui/Popover";
 import type { RectangleLayer } from "@/types";
 import { ColorInput } from "./ColorInput";
+import { PaintInput } from "./PaintInput";
 
 export function RectPropsGrouped({
     layer,
@@ -28,7 +29,7 @@ export function RectPropsGrouped({
                     isActive={activePopover === "style"}
                     onClick={() => togglePopover("style")}
                 />
-                <Popover isOpen={activePopover === "style"} onClose={() => setActivePopover(null)}>
+                <Popover isOpen={activePopover === "style"} onClose={() => setActivePopover(null)} keepOpenOnCanvasInteraction>
                     <div className="space-y-3">
                         {/* Opacity */}
                         <div>
@@ -62,7 +63,7 @@ export function RectPropsGrouped({
                             <label className="text-[9px] text-text-tertiary uppercase tracking-wider font-medium mb-1.5 block">Заливка</label>
                             <div className="flex items-center gap-1.5">
                                 <div className={`transition-opacity ${fillEnabled ? '' : 'opacity-30 pointer-events-none'}`}>
-                                    <ColorInput value={layer.fill} onChange={(v) => onChange({ fill: v })} />
+                                    <PaintInput value={layer.fill} gradientTargetId={layer.id} onChange={(v) => onChange({ fill: v })} />
                                 </div>
                                 <button
                                     onClick={() => onChange({ fillEnabled: !fillEnabled })}
