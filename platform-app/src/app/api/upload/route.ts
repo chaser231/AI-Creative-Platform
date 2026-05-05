@@ -47,6 +47,12 @@ const s3 = new S3Client({
 });
 
 const BUCKET = process.env.S3_BUCKET || "acp-assets";
+const NON_PROJECT_UPLOAD_NAMESPACES = new Set([
+  "tmp",
+  "ai-tmp",
+  "avatars",
+  "workspace-logos",
+]);
 
 export async function POST(req: Request) {
   try {
@@ -64,7 +70,7 @@ export async function POST(req: Request) {
       skipAssetRecord?: boolean;
     };
 
-    if (projectId && projectId !== "tmp") {
+    if (projectId && !NON_PROJECT_UPLOAD_NAMESPACES.has(projectId)) {
       try {
         await requireSessionAndProjectAccess(session.user.id, projectId, "write");
       } catch (e) {
