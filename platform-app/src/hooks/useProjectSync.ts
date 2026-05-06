@@ -381,14 +381,33 @@ export function useCanvasAutoSave(
     } catch {}
 
     if (!sent) {
-      // Fallback for large payloads (e.g. over 64KB limit).
-      // Since client-side routing unmounts this component without destroying the page context,
-      // a standard fetch request will perfectly succeed in the background.
+      // Fallback for large payloads (e.g. over 64KB limit) and for SPA
+      // navigation where the page context survives. `keepalive: true`
+      // makes the request survive even a real unload, up to ~4MB.
+      //
+      // We DO read the response here (unlike `sendBeacon`, which is
+      // fire-and-forget) so the new server version updates the shared
+      // ref. Otherwise the next interactive save uses a stale
+      // `expectedVersion`, hits CONFLICT, and the refetch path overwrites
+      // the user's freshly edited canvas.
       fetch("/api/canvas/save", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: payload,
-      }).catch(() => { /* best-effort */ });
+        keepalive: true,
+      })
+        .then(async (r) => {
+          if (!r.ok) return;
+          try {
+            const data = (await r.json()) as { version?: number };
+            if (typeof data.version === "number") {
+              lastKnownVersionRef.current = data.version;
+            }
+          } catch {
+            /* best-effort */
+          }
+        })
+        .catch(() => { /* best-effort */ });
     }
   }, [projectId, captureThumbnail, lastKnownVersionRef]);
 
@@ -478,15 +497,29 @@ export function useCanvasAutoSave(
         clearTimeout(timeoutRef.current);
         timeoutRef.current = null;
       }
-      // Flush pending save synchronously on cleanup
-      saveNowSync();
+      // Flush pending save on cleanup. Use the tRPC path (`saveNow`)
+      // rather than `saveNowSync`/beacon: this cleanup runs on every dep
+      // change and on React-only re-mounts (e.g. StrictMode, parent key
+      // bumps) where the page is NOT unloading. A beacon there is the
+      // main source of phantom CONFLICTs — its response is unreadable,
+      // so `lastKnownVersionRef` falls behind by 1 every time, and the
+      // next interactive save self-conflicts and triggers a refetch
+      // that wipes the user's freshly typed edits. The interactive
+      // mutation reads the response and keeps the version in sync.
+      void saveNow();
     };
-  }, [saveNow, saveNowSync, enabled]);
+  }, [saveNow, enabled]);
 
-  // Save on unmount (leaving editor via React navigation)
+  // Save on unmount (leaving editor via React navigation).
+  // Same reasoning as the subscribe-cleanup above: SPA navigation does
+  // NOT unload the page, so a tRPC mutation will complete in the
+  // background and update `lastKnownVersionRef` via `onSuccess`.
+  // `beforeunload` below still handles real refresh/close.
   useEffect(() => {
     return () => {
-      saveNowSync();
+      // Read through the ref so this effect's deps stay empty and the
+      // cleanup doesn't fire on every `saveNow` rebuild.
+      void saveNowRef.current?.();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -534,13 +567,29 @@ export function useCanvasAutoSave(
       // sendBeacon has a ~64KB limit; fallback to fetch+keepalive for larger payloads
       const sent = navigator.sendBeacon("/api/canvas/save", blob);
       if (!sent) {
-        // Fallback: fetch with keepalive survives unload for up to ~4MB
+        // Fallback: fetch with keepalive survives unload for up to ~4MB.
+        // If the user cancels the unload via the confirm dialog, the
+        // response can still arrive — read `version` so the shared ref
+        // stays in sync and the next interactive save doesn't
+        // self-conflict.
         fetch("/api/canvas/save", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: payload,
           keepalive: true,
-        }).catch(() => { /* best-effort */ });
+        })
+          .then(async (r) => {
+            if (!r.ok) return;
+            try {
+              const data = (await r.json()) as { version?: number };
+              if (typeof data.version === "number") {
+                lastKnownVersionRef.current = data.version;
+              }
+            } catch {
+              /* best-effort */
+            }
+          })
+          .catch(() => { /* best-effort */ });
       }
     };
 
