@@ -89,7 +89,7 @@ export const SYSTEM_IMAGE_PRESETS: ImageStylePreset[] = [
     name: "studio",
     label: "Студийная",
     description: "Профессиональная студийная съёмка с мягким светом",
-    thumbnailUrl: "/style-presets/product.jpg",
+    thumbnailUrl: "/style-presets/studio.png",
     promptSuffix:
       "professional studio photography, clean white/gray background, product hero shot, soft studio lighting, commercial quality",
     category: "photography",
@@ -113,7 +113,7 @@ export const SYSTEM_IMAGE_PRESETS: ImageStylePreset[] = [
     name: "3d",
     label: "3D Рендер",
     description: "3D-сцена с мягкими тенями и изометрической перспективой",
-    thumbnailUrl: "/style-presets/tech.jpg",
+    thumbnailUrl: "/style-presets/3d.png",
     promptSuffix:
       "3D rendered scene, soft ambient occlusion, isometric perspective, clean shadows, modern 3D design",
     category: "digital",
@@ -125,7 +125,7 @@ export const SYSTEM_IMAGE_PRESETS: ImageStylePreset[] = [
     name: "illustration",
     label: "Иллюстрация",
     description: "Современная цифровая иллюстрация с плоскими цветами",
-    thumbnailUrl: "/style-presets/vibrant.jpg",
+    thumbnailUrl: "/style-presets/illustration.png",
     promptSuffix:
       "modern digital illustration, bold flat colors, clean vector style, contemporary design",
     category: "digital",
@@ -137,7 +137,7 @@ export const SYSTEM_IMAGE_PRESETS: ImageStylePreset[] = [
     name: "gradient",
     label: "Градиент",
     description: "Абстрактный градиентный фон с яркими современными цветами",
-    thumbnailUrl: "/style-presets/vibrant.jpg",
+    thumbnailUrl: "/style-presets/gradient.png",
     promptSuffix:
       "abstract gradient background, vibrant modern colors, soft color transitions, premium feel",
     category: "digital",
@@ -161,7 +161,7 @@ export const SYSTEM_IMAGE_PRESETS: ImageStylePreset[] = [
     name: "vibrant",
     label: "Яркий",
     description: "Яркие насыщенные цвета в стиле поп-арт",
-    thumbnailUrl: "/style-presets/vibrant.jpg",
+    thumbnailUrl: "/style-presets/vibrant-pop.png",
     promptSuffix:
       "Bold vibrant pop art style, explosive vivid colors, high saturation, energetic and eye-catching visual impact, playful graphic design aesthetic with maximum visual contrast.",
     category: "artistic",

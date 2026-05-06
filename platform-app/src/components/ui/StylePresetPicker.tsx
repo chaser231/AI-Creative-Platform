@@ -23,6 +23,8 @@ import {
   IMAGE_CATEGORY_LABELS,
   groupImagePresetsByCategory,
 } from "@/lib/stylePresets";
+import { useWorkspace } from "@/providers/WorkspaceProvider";
+import { SegmentedControl } from "@/components/ui/SegmentedControl";
 
 // ─── Image Style Preset Picker ───────────────────────────────────────────────
 
@@ -80,8 +82,16 @@ function GridImagePicker({
   selectedId: string;
   onChange: (id: string) => void;
 }) {
+  const { currentWorkspace } = useWorkspace();
+  const [activeTab, setActiveTab] = useState<"system" | "custom">("system");
+
   const nonePreset = presets.find((p) => p.id === "none");
-  const grouped = groupImagePresetsByCategory(presets);
+  const systemPresets = presets.filter((p) => p.isSystem && p.id !== "none");
+  const customPresets = presets.filter((p) => !p.isSystem && p.id !== "none");
+
+  const displayedPresets = activeTab === "system" ? systemPresets : customPresets;
+  const grouped = groupImagePresetsByCategory(displayedPresets);
+  
   const categoryOrder: ImageStyleCategory[] = [
     "photography",
     "digital",
@@ -91,7 +101,17 @@ function GridImagePicker({
 
   return (
     <div className="space-y-3">
-      {/* "No style" option */}
+      {/* Tabs */}
+      <SegmentedControl
+        value={activeTab}
+        onChange={(val) => setActiveTab(val as "system" | "custom")}
+        options={[
+          { value: "system", label: "Стандартные" },
+          { value: "custom", label: `Стили ${currentWorkspace?.name || "воркспейса"}` },
+        ]}
+      />
+
+      {/* "No style" option (always visible as the first option) */}
       {nonePreset && (
         <button
           onClick={() => onChange("none")}
@@ -119,27 +139,36 @@ function GridImagePicker({
       )}
 
       {/* Categories */}
-      {categoryOrder.map((cat) => {
-        const items = grouped[cat];
-        if (items.length === 0) return null;
-        return (
-          <div key={cat}>
-            <div className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wider mb-2">
-              {IMAGE_CATEGORY_LABELS[cat]}
+      {activeTab === "custom" && customPresets.length === 0 ? (
+        <div className="text-center py-6 border border-dashed border-border-primary rounded-[var(--radius-md)]">
+          <p className="text-xs text-text-secondary">Нет кастомных стилей</p>
+          <p className="text-[10px] text-text-tertiary mt-1 px-4">
+            Вы можете создать свои стили генерации в настройках воркспейса.
+          </p>
+        </div>
+      ) : (
+        categoryOrder.map((cat) => {
+          const items = grouped[cat];
+          if (!items || items.length === 0) return null;
+          return (
+            <div key={cat}>
+              <div className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wider mb-2">
+                {IMAGE_CATEGORY_LABELS[cat]}
+              </div>
+              <div className="grid grid-cols-4 gap-2">
+                {items.map((preset) => (
+                  <StyleTile
+                    key={preset.id}
+                    preset={preset}
+                    isSelected={selectedId === preset.id}
+                    onClick={() => onChange(preset.id)}
+                  />
+                ))}
+              </div>
             </div>
-            <div className="grid grid-cols-4 gap-2">
-              {items.map((preset) => (
-                <StyleTile
-                  key={preset.id}
-                  preset={preset}
-                  isSelected={selectedId === preset.id}
-                  onClick={() => onChange(preset.id)}
-                />
-              ))}
-            </div>
-          </div>
-        );
-      })}
+          );
+        })
+      )}
     </div>
   );
 }

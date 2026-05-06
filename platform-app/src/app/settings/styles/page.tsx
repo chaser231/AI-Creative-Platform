@@ -12,11 +12,11 @@
  *  - "workspace" → visible to all workspace members (admin-only)
  */
 
-import { useState } from "react";
+import { useState, useRef } from "react";
 import {
   Plus, Trash2, Pencil, Type as TypeIcon,
   Loader2, X, ImageIcon, Save, User, Users,
-  Globe, Lock,
+  Globe, Lock, Upload, Sparkles,
 } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { useWorkspace } from "@/providers/WorkspaceProvider";
@@ -26,22 +26,24 @@ import { SYSTEM_IMAGE_PRESETS, SYSTEM_TEXT_PRESETS, IMAGE_CATEGORY_LABELS, TEXT_
 import { Select } from "@/components/ui/Select";
 import { Textarea } from "@/components/ui/Textarea";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
+import { compressImageFile, uploadForAI } from "@/utils/imageUpload";
 import type { ImageStylePreset, TextStylePreset, DBPresetConfig } from "@/lib/stylePresets";
 
 type PresetTab = "image" | "text";
 type Visibility = "personal" | "workspace";
 
-interface EditingPreset {
-  id?: string;           // undefined = new preset
-  name: string;
-  description: string;
-  promptSuffix: string;  // for image
-  instruction: string;   // for text
-  category: string;
-  icon: string;
-  type: PresetTab;
-  visibility: Visibility;
-}
+  interface EditingPreset {
+    id?: string;           // undefined = new preset
+    name: string;
+    description: string;
+    promptSuffix: string;  // for image
+    instruction: string;   // for text
+    category: string;
+    icon: string;
+    type: PresetTab;
+    visibility: Visibility;
+    thumbnailUrl?: string; // Add this
+  }
 
 const EMPTY_IMAGE_PRESET: EditingPreset = {
   name: "", description: "", promptSuffix: "", instruction: "",
@@ -60,6 +62,10 @@ export default function StylePresetsPage() {
   const [activeTab, setActiveTab] = useState<PresetTab>("image");
   const [editing, setEditing] = useState<EditingPreset | null>(null);
   const [deleteId, setDeleteId] = useState<string | null>(null);
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isUploadingThumb, setIsUploadingThumb] = useState(false);
+  const [isGeneratingThumb, setIsGeneratingThumb] = useState(false);
 
   // ─── Current user ────────────────────────────────────────
   const meQuery = trpc.auth.me.useQuery(undefined, { refetchOnWindowFocus: false });
@@ -104,6 +110,7 @@ export default function StylePresetsPage() {
         config,
         category: editing.category,
         visibility: editing.visibility,
+        thumbnailUrl: editing.thumbnailUrl,
       });
     } else {
       // Create new
@@ -115,6 +122,7 @@ export default function StylePresetsPage() {
         config,
         category: editing.category,
         visibility: editing.visibility,
+        thumbnailUrl: editing.thumbnailUrl,
       });
     }
     setEditing(null);
@@ -125,6 +133,60 @@ export default function StylePresetsPage() {
     if (!deleteId) return;
     await deleteMut.mutateAsync({ id: deleteId });
     setDeleteId(null);
+  };
+
+  // ─── Thumbnail handlers ──────────────────────────────────────
+  const handleThumbUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !editing) return;
+
+    try {
+      setIsUploadingThumb(true);
+      const base64 = await compressImageFile(file, 800);
+      const publicUrl = await uploadForAI(base64, workspaceId || "styles");
+      setEditing({ ...editing, thumbnailUrl: publicUrl });
+    } catch (err) {
+      console.error("Failed to upload thumbnail:", err);
+    } finally {
+      setIsUploadingThumb(false);
+      // Reset input
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
+  const handleGenerateThumb = async () => {
+    if (!editing || !editing.promptSuffix.trim()) return;
+
+    try {
+      setIsGeneratingThumb(true);
+      const basePrompt = "A visually appealing thumbnail image representing the following style:";
+      const finalPrompt = `${basePrompt} ${editing.promptSuffix}`;
+
+      const res = await fetch("/api/ai/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt: finalPrompt,
+          type: "image",
+          model: "flux-schnell", // Fast model for thumbnails
+          aspectRatio: "1:1",
+          count: 1,
+        }),
+      });
+
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+
+      if (data.content) {
+        // The API returns a base64 or URL depending on the model, we upload it
+        const publicUrl = await uploadForAI(data.content, workspaceId || "styles");
+        setEditing({ ...editing, thumbnailUrl: publicUrl });
+      }
+    } catch (err) {
+      console.error("Failed to generate thumbnail:", err);
+    } finally {
+      setIsGeneratingThumb(false);
+    }
   };
 
   // ─── DB presets as typed arrays ──────────────────────────────
@@ -145,6 +207,7 @@ export default function StylePresetsPage() {
       icon: cfg?.icon ?? "🎨",
       type: p.type as PresetTab,
       visibility: (p.visibility as Visibility) || "workspace",
+      thumbnailUrl: p.thumbnailUrl || undefined,
     });
   };
 
@@ -438,20 +501,72 @@ export default function StylePresetsPage() {
               </div>
 
               {editing.type === "image" ? (
-                <div>
-                  <label className="text-[11px] text-text-tertiary uppercase tracking-wider font-medium mb-1.5 block">
-                    Промпт-суффикс
-                    <span className="ml-1 text-text-tertiary/50 normal-case tracking-normal font-normal">
-                      Добавляется к промпту пользователя
-                    </span>
-                  </label>
-                  <Textarea
-                    value={editing.promptSuffix}
-                    onChange={(e) => setEditing({ ...editing, promptSuffix: e.target.value })}
-                    placeholder="Professional studio photography, soft lighting, clean background..."
-                    rows={3}
-                  />
-                </div>
+                <>
+                  {/* Thumbnail Upload/Generate Section */}
+                  <div className="flex gap-4 p-4 rounded-[var(--radius-lg)] border border-border-primary bg-bg-secondary/50">
+                    <div className="w-24 h-24 shrink-0 rounded-[var(--radius-md)] border border-border-primary overflow-hidden bg-bg-tertiary flex items-center justify-center relative group">
+                      {editing.thumbnailUrl ? (
+                        <img src={editing.thumbnailUrl} alt="Thumbnail" className="w-full h-full object-cover" />
+                      ) : (
+                        <ImageIcon size={24} className="text-text-tertiary" />
+                      )}
+                      
+                      {(isUploadingThumb || isGeneratingThumb) && (
+                        <div className="absolute inset-0 flex flex-col items-center justify-center bg-bg-secondary/80 backdrop-blur-sm">
+                          <Loader2 size={18} className="animate-spin text-accent-primary" />
+                          <span className="text-[9px] font-medium text-text-primary mt-1">
+                            {isGeneratingThumb ? "Создаём..." : "Загрузка..."}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                    
+                    <div className="flex-1 space-y-2.5 flex flex-col justify-center">
+                      <p className="text-[11px] font-medium text-text-secondary uppercase tracking-wider">Миниатюра стиля</p>
+                      
+                      <div className="flex flex-wrap gap-2">
+                        <input 
+                          type="file" 
+                          accept="image/*" 
+                          className="hidden" 
+                          ref={fileInputRef} 
+                          onChange={handleThumbUpload} 
+                        />
+                        <button
+                          onClick={() => fileInputRef.current?.click()}
+                          disabled={isUploadingThumb || isGeneratingThumb}
+                          className="h-8 px-3 flex items-center gap-1.5 text-xs font-medium rounded-[var(--radius-md)] bg-bg-surface border border-border-primary text-text-primary hover:bg-bg-tertiary transition-colors disabled:opacity-50 cursor-pointer"
+                        >
+                          <Upload size={14} className="text-text-secondary" /> Загрузить
+                        </button>
+                        
+                        <button
+                          onClick={handleGenerateThumb}
+                          disabled={isGeneratingThumb || isUploadingThumb || !editing.promptSuffix.trim()}
+                          className="h-8 px-3 flex items-center gap-1.5 text-xs font-medium rounded-[var(--radius-md)] bg-accent-lime/10 border border-accent-lime text-accent-lime-text hover:bg-accent-lime/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                          title={!editing.promptSuffix.trim() ? "Сначала заполните Промпт-суффикс" : ""}
+                        >
+                          <Sparkles size={14} /> Сгенерировать AI
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="text-[11px] text-text-tertiary uppercase tracking-wider font-medium mb-1.5 block">
+                      Промпт-суффикс
+                      <span className="ml-1 text-text-tertiary/50 normal-case tracking-normal font-normal">
+                        Добавляется к промпту пользователя
+                      </span>
+                    </label>
+                    <Textarea
+                      value={editing.promptSuffix}
+                      onChange={(e) => setEditing({ ...editing, promptSuffix: e.target.value })}
+                      placeholder="Professional studio photography, soft lighting, clean background..."
+                      rows={3}
+                    />
+                  </div>
+                </>
               ) : (
                 <>
                   <div className="grid grid-cols-[auto_1fr] gap-4">
