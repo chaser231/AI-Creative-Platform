@@ -366,4 +366,24 @@ Phase 2 ──────────────▶ Phase 3 ──▶ Phase 4 
 
 ---
 
-*Last updated: 2026-04-24 (initial).*
+## Backlog
+
+### Phase 999.1: Figma-like internal tabs (BACKLOG)
+
+**Goal:** Внутри платформы, чтобы пользователь мог открывать несколько проектов в собственных «вкладках» приложения (как в Figma) — без браузерных вкладок. Альтернатива/надстройка над cross-tab координацией из `fix/stop-spontaneous-tab-refresh`: вместо того чтобы синхронизировать N браузерных вкладок, мы держим всё в одной вкладке и в одном instance React-приложения, что устраняет classs шансов на «спонтанный рефреш» и упрощает sharing state между проектами.
+
+**Requirements:** TBD (нужны UX-сессии с пользователем — табs персистятся? Drag-to-reorder? Workspace-scope vs global?)
+
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (promote with /gsd-review-backlog when ready)
+
+**Контекст:**
+- Не лечит причину «рефреша», только убирает один класс мульти-табного UX.
+- Корневая стабилизация рефреша уже сделана в `fix/stop-spontaneous-tab-refresh` (sticky WaitlistGuard, idle-only session refresh, IndexedDB local buffer, leader election через navigator.locks).
+- Этот item — отдельная UX-feature на 2-3 недели работы, заходить в неё стоит после того как стабильность подтвердится несколькими неделями прода.
+
+---
+
+*Last updated: 2026-05-06 — added 999.1 (figma-like internal tabs) to backlog.*

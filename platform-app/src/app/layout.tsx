@@ -28,7 +28,24 @@ export default function RootLayout({
   return (
     <html lang="ru" suppressHydrationWarning>
       <body className={`${plusJakarta.variable} font-sans antialiased`} suppressHydrationWarning>
-        <SessionProvider>
+        {/*
+         * SessionProvider configuration:
+         * - refetchOnWindowFocus={false}: NextAuth's default refetches the session
+         *   on every tab focus. With Prisma DB sessions, that's a Postgres round-trip
+         *   inside the `session()` callback. While in flight, `useSession().status`
+         *   flickers through `loading`, which makes WaitlistGuard remount the entire
+         *   children tree (visually identical to a page refresh). This was the root
+         *   cause of "page randomly refreshes when switching browser tabs".
+         * - refetchInterval={0}: no polling; session freshness is enforced via
+         *   `useIdleSessionRefresh` (only after >10min of inactivity) and the
+         *   tRPC 401 → /api/auth/probe → redirect path that already exists.
+         * - refetchWhenOffline={false}: avoid futile retries when offline.
+         */}
+        <SessionProvider
+          refetchOnWindowFocus={false}
+          refetchInterval={0}
+          refetchWhenOffline={false}
+        >
           <TRPCProvider>
             <WaitlistGuard>
               <WorkspaceProvider>

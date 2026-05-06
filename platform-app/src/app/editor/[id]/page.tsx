@@ -20,6 +20,7 @@ import { TemplatePanel } from "@/components/editor/TemplatePanel";
 import { AIPromptBar } from "@/components/editor/AIPromptBar";
 import { AIChatPanel } from "@/components/editor/ai-chat";
 import { VersionHistoryPanel } from "@/components/editor/VersionHistoryPanel";
+import { TabLeaderBadge } from "@/components/editor/TabLeaderBadge";
 import { AssetLibraryModal } from "@/components/editor/AssetLibraryModal";
 import { AIScenariosModal } from "@/components/workflows/AIScenariosModal";
 import { TemplateSettingsModal } from "@/components/editor/TemplateSettingsModal";
@@ -30,6 +31,7 @@ import { useCanvasStore } from "@/store/canvasStore";
 import { useShallow } from "zustand/react/shallow";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { useCanvasAutoSave, useLoadCanvasState } from "@/hooks/useProjectSync";
+import { useCanvasTabLeader } from "@/hooks/useCanvasTabLeader";
 import { useAISessionSync } from "@/hooks/useAISessionSync";
 import { getModelById } from "@/lib/ai-models";
 import { trpc } from "@/lib/trpc";
@@ -253,6 +255,10 @@ export default function EditorPage({ params }: EditorPageProps) {
     // IMPORTANT: Load canvas state FIRST, then enable auto-save AFTER load completes.
     // This prevents the canvas-clear-on-mount from triggering an empty save.
     const { isLoaded: canvasLoaded, refetch: refetchCanvas } = useLoadCanvasState(isTemplateMode ? "__skip__" : id);
+    // Cross-tab coordination: only the leader pushes to the server, others
+    // refetch on broadcast. Replaces the old "every tab races to save"
+    // behaviour that caused CONFLICT thrashing between sibling tabs.
+    const tabLeader = useCanvasTabLeader(isTemplateMode ? null : id);
     // MF-3: when the server detects a version mismatch (another tab saved
     // first), we refetch and let Zustand re-hydrate from the canonical state.
     // No toast yet — we only log; UI polish is a follow-up.
@@ -269,7 +275,20 @@ export default function EditorPage({ params }: EditorPageProps) {
         !isTemplateMode && canvasLoaded,
         stageRef,
         handleVersionConflict,
+        { isLeader: tabLeader.isLeader, broadcastSaved: tabLeader.broadcastSaved },
     );
+
+    // Followers: when the leader broadcasts a `saved`, refetch so we don't
+    // sit on stale canvas state.
+    useEffect(() => {
+        if (isTemplateMode) return;
+        const off = tabLeader.onSaved(() => {
+            if (tabLeader.isLeader) return; // ignore our own echo (also filtered server-side by tabId)
+            console.info(`[editor] follower received saved broadcast — refetching canvas`);
+            void refetchCanvas();
+        });
+        return off;
+    }, [isTemplateMode, tabLeader, refetchCanvas]);
 
     const [showExitWarning, setShowExitWarning] = useState(false);
 
@@ -743,6 +762,16 @@ export default function EditorPage({ params }: EditorPageProps) {
                                 </>
                             ) : (
                                 isSaving && <span className="text-[10px] text-text-tertiary">💾 Сохранение...</span>
+                            )}
+
+                            {/* Cross-tab badge: shown only when another tab of the
+                                same project currently owns the autosave lock. */}
+                            {!isTemplateMode && (
+                                <TabLeaderBadge
+                                    isLeader={tabLeader.isLeader}
+                                    isReady={tabLeader.isReady}
+                                    onTakeOver={tabLeader.requestLead}
+                                />
                             )}
                         </div>
                     }
