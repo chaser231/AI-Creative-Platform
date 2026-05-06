@@ -180,7 +180,9 @@ export function AIScenariosModal({
 
                 {error && (
                     <div className="rounded-[var(--radius-lg)] border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-500/40 dark:bg-red-500/10 dark:text-red-300">
-                        {error}
+                        {error.includes("SSRF_BLOCKED") || error.includes("Схема data: запрещена")
+                            ? "Изображение ещё загружается на сервер. Подождите пару секунд и попробуйте снова."
+                            : error}
                     </div>
                 )}
 

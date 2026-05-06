@@ -50,13 +50,27 @@ export function useWorkflowScenarioRun() {
                 throw new Error("Этот workflow не является графовым сценарием");
             }
 
+            // Normalise input image URL: if it's a data URI or blob, persist it to S3 first
+            // so the server-side SSRF guard doesn't reject it.
+            let safeImageUrl = input.inputImageUrl;
+            if (safeImageUrl && (safeImageUrl.startsWith("data:") || safeImageUrl.startsWith("blob:"))) {
+                try {
+                    const { persistImageToS3 } = await import("@/utils/imageUpload");
+                    safeImageUrl = await persistImageToS3(safeImageUrl, input.projectId ?? "tmp");
+                } catch (err) {
+                    console.warn("[useWorkflowScenarioRun] failed to persist input image to S3:", err);
+                    // We'll let it pass through to the server, which will likely reject it
+                    // with a clearer SSRF error message.
+                }
+            }
+
             const scenarioConfig = normalizeWorkflowScenarioConfig(
                 workflow.scenarioConfig,
                 workflow.name,
             );
             const executionGraph = buildScenarioExecutionGraph(workflow.graph, scenarioConfig, {
                 kind: input.inputKind ?? scenarioConfig.input.kind,
-                imageUrl: input.inputImageUrl,
+                imageUrl: safeImageUrl,
                 assetId: input.inputAssetId,
                 text: input.inputText,
                 selectedLayerId: input.selectedLayerId,
