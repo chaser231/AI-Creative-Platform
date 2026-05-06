@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import {
     Image as ImageIcon,
     Upload,
@@ -9,11 +10,12 @@ import {
     Pencil,
     Loader2,
     Settings2,
+    Ratio,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
-import { Select } from "@/components/ui/Select";
 import { ReferenceImageInput } from "@/components/ui/ReferenceImageInput";
 import { RefAutocompleteTextarea, type RefAutocompleteTextareaHandle } from "@/components/ui/RefAutocompleteTextarea";
+import { ImageStylePresetPicker } from "@/components/ui/StylePresetPicker";
 import { getModelById, getMaxRefs, getAspectRatios, getResolutions, resolveRefTags } from "@/lib/ai-models";
 import { getImagePresetPromptSuffix } from "@/lib/stylePresets";
 import { useStylePresets } from "@/hooks/useStylePresets";
@@ -38,8 +40,6 @@ const IMAGE_GEN_MODELS = [
 ];
 
 // Aspect ratios and resolutions are now dynamic per model — see ai-models.ts
-
-const SCALE_OPTIONS = ["1x", "2x", "4x"];
 
 interface ImageContentBlockProps {
     id: string;
@@ -234,126 +234,151 @@ export function ImageContentBlock({ id, name, props, value, onChange, businessUn
                     </div>
                 </div>
 
-                {/* Generation Panel */}
+                {/* Compact generation bar — mirrors the Studio AIPromptBar form factor. */}
                 {showGenPanel && (
-                    <div className="mt-4 p-4 bg-bg-secondary border border-border-primary rounded-[var(--radius-md)] space-y-4">
-
-                        {/* Model Selection */}
-                        <div>
-                            <p className="text-[11px] font-semibold text-text-secondary uppercase tracking-wider mb-2">Модель</p>
-                            <div className="flex gap-1.5 flex-wrap">
-                                {IMAGE_GEN_MODELS.map(m => (
-                                    <button key={m.id} onClick={() => setSelectedModel(m.id)}
-                                        className={`px-2.5 py-1.5 text-[11px] font-medium rounded-[var(--radius-sm)] border transition-all cursor-pointer ${selectedModel === m.id ? "bg-accent-primary text-text-inverse border-accent-primary" : "bg-bg-primary text-text-secondary border-border-primary hover:bg-bg-tertiary"}`}>
-                                        {m.label}
-                                    </button>
-                                ))}
-                            </div>
+                    <div className="mt-4 overflow-visible rounded-[var(--radius-xl)] border border-border-primary bg-bg-surface shadow-[var(--shadow-md)]">
+                        <div className="px-4 pt-3">
+                            <RefAutocompleteTextarea
+                                ref={promptRef}
+                                value={genPrompt}
+                                onChange={(v) => { setGenPrompt(v); setGenError(null); }}
+                                referenceImages={additionalPhotos}
+                                placeholder={productDescription || "Промпт для генерации изображения"}
+                                className="w-full h-12 bg-transparent text-sm text-text-primary focus:outline-none resize-none placeholder:text-text-tertiary"
+                            />
                         </div>
 
-                        {/* Prompt */}
-                        <RefAutocompleteTextarea
-                            ref={promptRef}
-                            value={genPrompt}
-                            onChange={(v) => { setGenPrompt(v); setGenError(null); }}
-                            referenceImages={additionalPhotos}
-                            placeholder={productDescription || "Опишите изображение..."}
-                            className="w-full h-16 px-3 py-2 rounded-[var(--radius-md)] border border-border-primary bg-bg-primary text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-border-focus resize-none placeholder:text-text-tertiary"
-                        />
-
-                        {/* Style Presets — unified from stylePresets.ts */}
-                        <div>
-                            <p className="text-[11px] font-semibold text-text-secondary uppercase tracking-wider mb-2">Стиль</p>
-                            <div className="grid grid-cols-4 gap-2">
-                                {imagePresets.map(s => (
-                                    <button key={s.id} onClick={() => setStylePreset(s.id)}
-                                        className={`relative rounded-[var(--radius-md)] overflow-hidden border-2 transition-all cursor-pointer aspect-square ${stylePreset === s.id ? "border-accent-lime-hover shadow-[0_0_0_1px_var(--accent-lime)]" : "border-border-primary hover:border-border-secondary"}`}>
-                                        <img src={s.thumbnailUrl} alt={s.label} className="w-full h-full object-cover" />
-                                        <div className={`absolute inset-0 flex items-end justify-center pb-1.5 bg-gradient-to-t from-black/60 to-transparent`}>
-                                            <span className={`text-[10px] font-semibold leading-tight text-center px-1 ${stylePreset === s.id ? "text-white" : "text-white/90"}`}>{s.label}</span>
-                                        </div>
-                                        {stylePreset === s.id && (
-                                            <div className="absolute top-1.5 right-1.5 w-4 h-4 bg-accent-lime rounded-full flex items-center justify-center">
-                                                <span className="text-[8px] font-bold text-accent-primary">✓</span>
-                                            </div>
-                                        )}
-                                    </button>
-                                ))}
+                        {genError && (
+                            <div className="mx-4 mb-2 rounded-[var(--radius-md)] border border-text-error/20 bg-text-error/10 px-3 py-2">
+                                <p className="text-[11px] font-medium leading-relaxed text-text-error">{genError}</p>
                             </div>
-                        </div>
+                        )}
 
-                        {/* Aspect Ratio */}
-                        <div>
-                            <p className="text-[11px] font-semibold text-text-secondary uppercase tracking-wider mb-2">Соотношение сторон</p>
-                            <div className="flex gap-1.5 flex-wrap">
-                                {modelAspectRatios.map(r => (
-                                    <button key={r} onClick={() => setAspectRatio(r)}
-                                        className={`px-3 py-1.5 text-[11px] font-medium rounded-[var(--radius-sm)] border transition-all cursor-pointer ${aspectRatio === r ? "bg-accent-primary text-text-inverse border-accent-primary" : "bg-bg-primary text-text-secondary border-border-primary hover:bg-bg-tertiary"}`}>
-                                        {r}
-                                    </button>
-                                ))}
+                        {(isUploading || previewState === "loading") && (
+                            <div className="mx-4 mb-2 rounded-[var(--radius-md)] border border-border-primary bg-bg-secondary px-3 py-2">
+                                <p className="text-[11px] text-text-secondary">
+                                    {isUploading ? "Подготавливаю изображение для вставки..." : "Превью изображения еще подгружается..."}
+                                </p>
                             </div>
-                        </div>
+                        )}
 
-                        {/* Reference photos */}
-                        {supportsVision && (
-                            <div>
-                                <p className="text-[11px] font-semibold text-text-secondary uppercase tracking-wider mb-2">Фото-референсы</p>
+                        <div className="flex items-center gap-2 px-4 pb-3 pt-1">
+                            <div className="flex min-w-0 flex-1 items-center gap-1.5">
+                                <OutlinedSelector icon={<Settings2 size={13} />}>
+                                    <select
+                                        value={selectedModel}
+                                        onChange={(e) => setSelectedModel(e.target.value)}
+                                        className="max-w-[150px] bg-transparent text-[12px] font-medium text-text-secondary focus:outline-none cursor-pointer hover:text-text-primary appearance-none"
+                                    >
+                                        {IMAGE_GEN_MODELS.map((model) => (
+                                            <option key={model.id} value={model.id}>
+                                                {model.label}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </OutlinedSelector>
+
+                                <OutlinedSelector icon={<Ratio size={13} />}>
+                                    <select
+                                        value={aspectRatio}
+                                        onChange={(e) => setAspectRatio(e.target.value)}
+                                        className="bg-transparent text-[12px] font-medium text-text-secondary focus:outline-none cursor-pointer hover:text-text-primary appearance-none"
+                                    >
+                                        {modelAspectRatios.map((ratio) => (
+                                            <option key={ratio} value={ratio}>
+                                                {ratio}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </OutlinedSelector>
+
+                                <ImageStylePresetPicker
+                                    presets={imagePresets}
+                                    selectedId={stylePreset}
+                                    onChange={setStylePreset}
+                                    variant="compact"
+                                />
+
+                                <button
+                                    onClick={() => setShowAdvanced((open) => !open)}
+                                    className={`h-8 px-2.5 rounded-[10px] border text-[12px] font-medium transition-all cursor-pointer ${
+                                        showAdvanced
+                                            ? "border-accent-primary/40 bg-accent-primary/10 text-accent-primary"
+                                            : "border-border-primary/60 text-text-secondary hover:border-border-secondary hover:bg-bg-tertiary/30"
+                                    }`}
+                                    title="Дополнительные настройки"
+                                >
+                                    <Settings2 size={13} />
+                                </button>
+                            </div>
+
+                            {supportsVision && (
                                 <ReferenceImageInput
                                     images={additionalPhotos}
                                     onChange={setAdditionalPhotos}
                                     max={getMaxRefs(selectedModel)}
-                                    label="Добавить референс"
+                                    label="Референс"
                                     onTagClick={(tag) => promptRef.current?.insertAtCursor(tag)}
                                 />
-                            </div>
-                        )}
+                            )}
 
-                        {/* Advanced settings */}
-                        <button onClick={() => setShowAdvanced(!showAdvanced)} className="flex items-center gap-1.5 text-[11px] text-text-secondary hover:text-text-primary cursor-pointer transition-colors">
-                            <Settings2 size={12} />
-                            {showAdvanced ? "Скрыть настройки" : "Расширенные настройки"}
-                        </button>
+                            <button
+                                onClick={handleGenerate}
+                                disabled={isGenerating}
+                                title={isGenerating ? "Генерирую..." : "Сгенерировать изображение"}
+                                className="flex h-10 w-10 items-center justify-center rounded-full bg-accent-lime-hover text-accent-lime-text shadow-sm transition-all duration-200 cursor-pointer hover:bg-accent-lime hover:scale-105 hover:shadow-md active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100"
+                            >
+                                {isGenerating ? (
+                                    <Loader2 size={18} className="animate-spin" />
+                                ) : (
+                                    <Sparkles size={18} />
+                                )}
+                            </button>
+                        </div>
 
                         {showAdvanced && (
-                            <div className="grid grid-cols-2 gap-3 pt-1">
-                                <div>
-                                    <p className="text-[10px] font-medium text-text-secondary mb-1">Количество</p>
-                                    <Select size="sm" value={String(genCount)} onChange={(val) => setGenCount(Number(val))} options={[1, 2, 3, 4].map(n => ({ value: String(n), label: String(n) }))} />
-                                </div>
+                            <div className="grid grid-cols-3 gap-3 border-t border-border-primary bg-bg-secondary/40 px-4 py-3">
                                 {modelResolutions.length > 0 && (
-                                    <div>
-                                        <p className="text-[10px] font-medium text-text-secondary mb-1">Разрешение</p>
-                                        <Select size="sm" value={scale} onChange={(val) => setScale(val)} options={modelResolutions.map(r => ({ value: r.id, label: r.label }))} />
-                                    </div>
+                                    <label className="space-y-1">
+                                        <span className="text-[10px] font-medium text-text-secondary">Разрешение</span>
+                                        <select
+                                            value={scale}
+                                            onChange={(e) => setScale(e.target.value)}
+                                            className="h-8 w-full rounded-[var(--radius-sm)] border border-border-primary bg-bg-primary px-2 text-[11px] text-text-primary focus:outline-none focus:ring-1 focus:ring-border-focus"
+                                        >
+                                            <option value="">Авто</option>
+                                            {modelResolutions.map((resolution) => (
+                                                <option key={resolution.id} value={resolution.id}>
+                                                    {resolution.label}
+                                                </option>
+                                            ))}
+                                        </select>
+                                    </label>
                                 )}
-                                <div>
-                                    <p className="text-[10px] font-medium text-text-secondary mb-1">Seed</p>
-                                    <input type="text" placeholder="Авто" value={seed} onChange={(e) => setSeed(e.target.value.replace(/\D/g, ""))} className="w-full h-8 px-2 text-[11px] bg-bg-primary border border-border-primary rounded-[var(--radius-sm)] text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-1 focus:ring-border-focus" />
-                                </div>
+                                <label className="space-y-1">
+                                    <span className="text-[10px] font-medium text-text-secondary">Количество</span>
+                                    <select
+                                        value={String(genCount)}
+                                        onChange={(e) => setGenCount(Number(e.target.value))}
+                                        className="h-8 w-full rounded-[var(--radius-sm)] border border-border-primary bg-bg-primary px-2 text-[11px] text-text-primary focus:outline-none focus:ring-1 focus:ring-border-focus"
+                                    >
+                                        {[1, 2, 3, 4].map((count) => (
+                                            <option key={count} value={count}>{count}</option>
+                                        ))}
+                                    </select>
+                                </label>
+                                <label className="space-y-1">
+                                    <span className="text-[10px] font-medium text-text-secondary">Seed</span>
+                                    <input
+                                        type="text"
+                                        placeholder="Авто"
+                                        value={seed}
+                                        onChange={(e) => setSeed(e.target.value.replace(/\D/g, ""))}
+                                        className="h-8 w-full rounded-[var(--radius-sm)] border border-border-primary bg-bg-primary px-2 text-[11px] text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-1 focus:ring-border-focus"
+                                    />
+                                </label>
                             </div>
                         )}
-
-                        {/* Error */}
-                        {genError && (
-                            <p className="text-[12px] text-red-500">{genError}</p>
-                        )}
-
-                        {(isUploading || previewState === "loading") && (
-                            <p className="text-[12px] text-text-secondary">
-                                {isUploading ? "Подготавливаю изображение для вставки..." : "Превью изображения еще подгружается..."}
-                            </p>
-                        )}
-
-                        {/* Generate button */}
-                        <button
-                            onClick={handleGenerate}
-                            disabled={isGenerating}
-                            className="w-full h-10 flex items-center justify-center gap-2 rounded-[var(--radius-md)] bg-accent-lime text-accent-lime-text font-semibold text-sm hover:bg-accent-lime-hover disabled:opacity-50 transition-all cursor-pointer disabled:cursor-default"
-                        >
-                            {isGenerating ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
-                            {isGenerating ? "Создаю..." : "Сгенерировать"}
-                        </button>
                     </div>
                 )}
             </div>
@@ -367,5 +392,20 @@ export function ImageContentBlock({ id, name, props, value, onChange, businessUn
                 />
             )}
         </>
+    );
+}
+
+function OutlinedSelector({
+    icon,
+    children,
+}: {
+    icon?: ReactNode;
+    children: ReactNode;
+}) {
+    return (
+        <div className="flex h-8 items-center gap-1.5 rounded-[10px] border border-border-primary/60 px-2.5 text-text-secondary transition-colors hover:border-border-secondary hover:bg-bg-tertiary/30">
+            {icon && <span className="text-text-tertiary">{icon}</span>}
+            {children}
+        </div>
     );
 }

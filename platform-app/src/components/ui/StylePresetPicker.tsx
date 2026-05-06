@@ -11,7 +11,7 @@
  * Supports both image and text presets via the `presetType` prop.
  */
 
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { Check, ChevronDown, Palette, Type, X as XIcon } from "lucide-react";
 import type {
@@ -105,6 +105,8 @@ function GridImagePicker({
       <SegmentedControl
         value={activeTab}
         onChange={(val) => setActiveTab(val as "system" | "custom")}
+        size="sm"
+        fullWidth
         options={[
           { value: "system", label: "Стандартные" },
           { value: "custom", label: `Стили ${currentWorkspace?.name || "воркспейса"}` },
@@ -226,8 +228,13 @@ function CompactImagePicker({
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const { currentWorkspace } = useWorkspace();
+  const [activeTab, setActiveTab] = useState<"system" | "custom">("system");
   const selected = presets.find((p) => p.id === selectedId);
   const hasStyle = selectedId !== "none";
+  const systemPresets = presets.filter((preset) => preset.isSystem);
+  const customPresets = presets.filter((preset) => !preset.isSystem);
+  const visiblePresets = activeTab === "system" ? systemPresets : customPresets;
 
   // Position state for portal dropdown
   const [pos, setPos] = useState({ left: 0, bottom: 0 });
@@ -306,8 +313,20 @@ function CompactImagePicker({
             Стиль генерации
           </div>
 
+          <SegmentedControl
+            value={activeTab}
+            onChange={(val) => setActiveTab(val as "system" | "custom")}
+            size="sm"
+            fullWidth
+            options={[
+              { value: "system", label: "Стандартные" },
+              { value: "custom", label: `Стили ${currentWorkspace?.name || "воркспейса"}` },
+            ]}
+            className="mb-3"
+          />
+
           <div className="grid grid-cols-4 gap-1.5">
-            {presets.map((preset) => (
+            {visiblePresets.map((preset) => (
               <button
                 key={preset.id}
                 onClick={() => {
@@ -340,6 +359,16 @@ function CompactImagePicker({
               </button>
             ))}
           </div>
+          {activeTab === "custom" && visiblePresets.length === 0 && (
+            <div className="rounded-[var(--radius-md)] border border-dashed border-border-primary px-3 py-5 text-center">
+              <p className="text-[11px] font-medium text-text-secondary">
+                Нет стилей воркспейса
+              </p>
+              <p className="mt-1 text-[10px] text-text-tertiary">
+                Создайте стиль в настройках, чтобы он появился здесь.
+              </p>
+            </div>
+          )}
         </div>,
         document.body
       )}
