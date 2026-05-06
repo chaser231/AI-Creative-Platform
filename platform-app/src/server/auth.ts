@@ -59,17 +59,36 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     async session({ session, user }) {
       if (session.user) {
         session.user.id = user.id;
+        // Hard cap on the DB lookup. The session callback runs on EVERY
+        // /api/auth/session call (which used to fire on every tab focus —
+        // see useIdleSessionRefresh and the SessionProvider config in
+        // app/layout.tsx). A slow Postgres response here would stall the
+        // /api/auth/session endpoint, the client would see the request hang,
+        // and useSession().status would flicker through "loading" — exactly
+        // the symptom that made WaitlistGuard remount the editor and lose
+        // unsaved canvas edits. 1.5s is plenty for a single primary-key
+        // SELECT against managed PG; anything slower is degraded and we
+        // prefer to let the user through with the safe "APPROVED" default
+        // (write ops re-check via approvedProcedure anyway).
+        const STATUS_LOOKUP_TIMEOUT_MS = 1_500;
         try {
-          const dbUser = await prisma.user.findUnique({
+          const lookup = prisma.user.findUnique({
             where: { id: user.id },
             select: { status: true },
           });
+          const timeout = new Promise<{ status: never }>((_, reject) =>
+            setTimeout(
+              () => reject(new Error("user-status lookup timed out")),
+              STATUS_LOOKUP_TIMEOUT_MS,
+            ),
+          );
+          const dbUser = await Promise.race([lookup, timeout]);
           session.user.status = dbUser?.status ?? "PENDING";
         } catch (err) {
           // Graceful degradation: if DB is temporarily unreachable (PgBouncer reset,
-          // serverless cold-start), allow the session through with APPROVED status
-          // so the user isn't locked out entirely. The approvedProcedure middleware
-          // will re-check status on write operations.
+          // serverless cold-start, > timeout) allow the session through with
+          // APPROVED status so the user isn't locked out entirely. The
+          // approvedProcedure middleware will re-check status on write operations.
           console.error("[AUTH] Failed to fetch user status, defaulting to APPROVED:", (err as Error)?.message);
           session.user.status = "APPROVED";
         }

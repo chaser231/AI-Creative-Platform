@@ -23,7 +23,17 @@ import { useCanvasStore } from "@/store/canvasStore";
 import { DEFAULT_RESIZE } from "@/store/canvas/types";
 import { useWorkspace } from "@/providers/WorkspaceProvider";
 import { getCanvasStateForSave } from "@/utils/canvasState";
+import {
+  saveLocalDraft,
+  loadLocalDraft,
+  clearLocalDraft,
+  stashRejectedDraft,
+  type CanvasLocalDraft,
+} from "@/lib/canvasLocalBuffer";
 import type Konva from "konva";
+
+/** Internal sentinel projectId used by the editor page in template mode. */
+const TEMPLATE_MODE_PROJECT_ID = "__skip__";
 
 // Default workspace ID — will be replaced by WorkspaceProvider later
 // For now, we use a hardcoded fallback that gets resolved on first load
@@ -97,12 +107,23 @@ function getVersionRef(projectId: string) {
  *                    first). The editor page should refetch canvas state and
  *                    reconcile. MF-3 deliberately skips auto-retry so we don't
  *                    clobber the newer work.
+ * @param tabLeader - Optional cross-tab coordination state. When provided
+ *                    AND `tabLeader.isLeader === false`, this hook skips
+ *                    server saves entirely (the leader tab handles them) but
+ *                    keeps writing to the local IDB buffer so follower edits
+ *                    survive an unexpected leader-tab crash. When omitted,
+ *                    behaves exactly as before — every instance is a leader
+ *                    and the existing optimistic locking handles conflicts.
  */
 export function useCanvasAutoSave(
   projectId: string,
   enabled: boolean = true,
   stageRef?: RefObject<Konva.Stage | null>,
   onVersionConflict?: () => void,
+  tabLeader?: {
+    isLeader: boolean;
+    broadcastSaved?: (version: number) => void;
+  },
 ) {
   const saveStateMutation = trpc.project.saveState.useMutation();
   // `.mutate` is stable across renders (TanStack Query guarantees it).
@@ -129,6 +150,20 @@ export function useCanvasAutoSave(
   const lastKnownVersionRef = getVersionRef(projectId);
   const onVersionConflictRef = useRef(onVersionConflict);
   const saveNowRef = useRef<(() => Promise<void>) | null>(null);
+  // Coordination across tabs: only the leader fires server saves. Followers
+  // still write to the local IDB buffer (via the subscribe handler) so their
+  // edits survive a leader-tab crash. When undefined, treat as leader so
+  // existing single-tab callers don't change behaviour.
+  const isLeaderRef = useRef(tabLeader?.isLeader ?? true);
+  const broadcastSavedRef = useRef(tabLeader?.broadcastSaved);
+
+  useEffect(() => {
+    isLeaderRef.current = tabLeader?.isLeader ?? true;
+  }, [tabLeader?.isLeader]);
+
+  useEffect(() => {
+    broadcastSavedRef.current = tabLeader?.broadcastSaved;
+  }, [tabLeader?.broadcastSaved]);
 
   useEffect(() => {
     onVersionConflictRef.current = onVersionConflict;
@@ -196,6 +231,11 @@ export function useCanvasAutoSave(
     if (!hasEverLoadedRef.current) return;
     // Guard: don't run concurrent migrations
     if (isMigratingRef.current) return;
+    // Guard: cross-tab coordination — only the leader pushes to the server.
+    // Followers' edits are still written to the IDB local buffer (via the
+    // Zustand subscribe handler below), so if this tab gets promoted to
+    // leader (or the leader crashes), the next page load reconciles them.
+    if (!isLeaderRef.current) return;
     // Guard: don't start a new save while the previous one is still in
     // flight. The server increments `version` on every write, so two
     // parallel saves carrying the same `expectedVersion` make the second
@@ -295,6 +335,19 @@ export function useCanvasAutoSave(
         onSuccess: (data: { version?: number }) => {
           if (typeof data?.version === "number") {
             lastKnownVersionRef.current = data.version;
+            // Leader → followers: tell the other tabs of this project that
+            // the canonical version has advanced so they can refetch and
+            // stay in sync. Cheap (single BroadcastChannel post) and
+            // optional — followers gracefully degrade without it (they'd
+            // just see stale UI until the next refetch).
+            broadcastSavedRef.current?.(data.version);
+          }
+          // The server now holds (at least) the state we just shipped — the
+          // local IDB draft is no longer a recovery slot for unsaved edits.
+          // If the user makes more edits after this, the subscribe handler
+          // will write a fresh draft pegged to the new version.
+          if (projectId !== TEMPLATE_MODE_PROJECT_ID) {
+            void clearLocalDraft(projectId);
           }
         },
         onError: (err) => {
@@ -350,6 +403,9 @@ export function useCanvasAutoSave(
   const saveNowSync = useCallback(() => {
     if (!enabledRef.current) return;
     if (!hasEverLoadedRef.current) return;
+    // Leader-only — same reason as saveNow above. A follower's beacon would
+    // race the leader's interactive save and either CONFLICT or clobber.
+    if (!isLeaderRef.current) return;
 
     const store = useCanvasStore.getState();
     if (store.layers.length === 0 && lastSavedRef.current !== "") return;
@@ -479,6 +535,22 @@ export function useCanvasAutoSave(
       prev = snapshotPersisted(state);
       actionCount += 1;
 
+      // Local IDB buffer — write IMMEDIATELY on every meaningful change so
+      // that even if the page is killed before the next debounced server
+      // save fires (browser crash, OOM, hard refresh, accidental Cmd+W),
+      // the draft survives. Fire-and-forget; failures are logged inside
+      // the buffer module and must not affect the editor.
+      if (projectId !== TEMPLATE_MODE_PROJECT_ID) {
+        const snapshot = getCanvasStateForSave(state);
+        const draft: CanvasLocalDraft = {
+          projectId,
+          snapshot,
+          baseVersion: lastKnownVersionRef.current,
+          ts: Date.now(),
+        };
+        void saveLocalDraft(draft);
+      }
+
       if (actionCount >= SAVE_ACTION_THRESHOLD) {
         actionCount = 0;
         if (timeoutRef.current) {
@@ -541,6 +613,9 @@ export function useCanvasAutoSave(
       // 2. Perform best-effort save on unload
       if (!enabledRef.current) return;
       if (!hasEverLoadedRef.current) return;
+      // Leader-only — followers' last edits are still safe in the IDB
+      // local buffer, which the next session will reconcile.
+      if (!isLeaderRef.current) return;
 
       const store = useCanvasStore.getState();
 
@@ -615,10 +690,19 @@ export function useCanvasAutoSave(
  * (success, error, or empty). Use this to gate auto-save.
  */
 export function useLoadCanvasState(projectId: string) {
+  // Tracks whether we've already attempted to reconcile a local IDB draft
+  // for THIS projectId. Reset whenever projectId changes. We only run the
+  // local-buffer recovery on the first server hydration per project — a
+  // CONFLICT-driven `refetch()` should NOT re-apply local edits (those are
+  // exactly what triggered the conflict and need to be kept out of the way
+  // until the user resolves the rejected slot manually).
+  const hasReconciledLocalDraftRef = useRef(false);
+
   // Clear canvas immediately on mount — before any render.
   // canvasStore is a global singleton, so it retains data from previously
   // opened projects. We must wipe it before loading the new project's state.
   useEffect(() => {
+    hasReconciledLocalDraftRef.current = false;
     useCanvasStore.setState({
       layers: [],
       selectedLayerIds: [],
@@ -723,6 +807,105 @@ export function useLoadCanvasState(projectId: string) {
     // If load fails (project not in DB), keep the current canvas state.
     // The projectId-change reset above already handles clearing between projects.
   }, [canvasQuery.data, projectId]);
+
+  // Local IDB draft reconciliation — runs once per projectId after the
+  // server hydration has settled. If the user previously edited this
+  // project and the page was killed before autosave caught up (crash, OOM,
+  // hard refresh, accidental tab close), we replay those edits on top of
+  // the server state.
+  //
+  // Decision matrix:
+  //   draft.baseVersion === server.version
+  //     → safe to apply: these edits never reached the server, no other
+  //       client has advanced the state, the user picks up exactly where
+  //       they left off.
+  //   draft.baseVersion <  server.version  (or draft has null baseVersion
+  //     and server.version > 0)
+  //     → another writer (other tab on this device, another device, the
+  //       autosave that DID land before the crash) advanced the server.
+  //       We refuse to silently overwrite that work; the draft is moved
+  //       into the rejected slot for future manual recovery UI. Server
+  //       state stays as-is.
+  //   no draft, or draft is for a different baseVersion that we've
+  //     already passed → nothing to do.
+  useEffect(() => {
+    if (projectId === TEMPLATE_MODE_PROJECT_ID) return;
+    if (!canvasQuery.isFetched) return;
+    if (hasReconciledLocalDraftRef.current) return;
+    hasReconciledLocalDraftRef.current = true;
+
+    let cancelled = false;
+    void (async () => {
+      const draft = await loadLocalDraft(projectId);
+      if (cancelled || !draft) return;
+
+      const serverVersion = getVersionRef(projectId).current ?? 0;
+      const draftBase = draft.baseVersion ?? 0;
+
+      if (draftBase === serverVersion) {
+        // Apply on top. We trust the draft snapshot to be the same shape
+        // as the server canvasState (it was produced by
+        // `getCanvasStateForSave`).
+        const snapshot = draft.snapshot as Record<string, unknown> | null;
+        if (!snapshot || typeof snapshot !== "object") return;
+
+        type Layers = ReturnType<typeof useCanvasStore.getState>["layers"];
+        type Resizes = ReturnType<typeof useCanvasStore.getState>["resizes"];
+        type MasterComponents = ReturnType<typeof useCanvasStore.getState>["masterComponents"];
+        type ComponentInstances = ReturnType<typeof useCanvasStore.getState>["componentInstances"];
+        type ArtboardProps = ReturnType<typeof useCanvasStore.getState>["artboardProps"];
+        type Palette = ReturnType<typeof useCanvasStore.getState>["palette"];
+
+        const draftLayers = snapshot.layers as Layers | undefined;
+        if (!Array.isArray(draftLayers)) return;
+
+        const resizes = (snapshot.resizes ?? useCanvasStore.getState().resizes) as Resizes;
+        const draftActiveResizeId = (snapshot.activeResizeId as string | undefined) ?? null;
+        const activeResizeId =
+          draftActiveResizeId && resizes.some((r) => r.id === draftActiveResizeId)
+            ? draftActiveResizeId
+            : (resizes.find((r) => r.isMaster)?.id
+                ?? resizes.find((r) => r.id === "master")?.id
+                ?? resizes[0]?.id
+                ?? "master");
+
+        useCanvasStore.setState({
+          layers: draftLayers,
+          masterComponents: (snapshot.masterComponents ?? []) as MasterComponents,
+          componentInstances: (snapshot.componentInstances ?? []) as ComponentInstances,
+          resizes,
+          activeResizeId,
+          artboardProps: (snapshot.artboardProps ?? useCanvasStore.getState().artboardProps) as ArtboardProps,
+          canvasWidth: (snapshot.canvasWidth ?? useCanvasStore.getState().canvasWidth) as number,
+          canvasHeight: (snapshot.canvasHeight ?? useCanvasStore.getState().canvasHeight) as number,
+          palette: (snapshot.palette ?? { colors: [], backgrounds: [] }) as Palette,
+        });
+        console.info(
+          `[canvas] restored local draft for project ${projectId} (baseVersion=${draftBase}, ts=${new Date(draft.ts).toISOString()})`,
+        );
+      } else if (draftBase < serverVersion) {
+        // Server moved ahead while this client was offline/dead. Don't
+        // clobber. Park the draft in the rejected slot — a future UI
+        // surface can let the user inspect / cherry-pick / discard.
+        await stashRejectedDraft(draft);
+        console.warn(
+          `[canvas] local draft rejected for project ${projectId}: baseVersion=${draftBase} < server=${serverVersion}. Stashed for manual recovery.`,
+        );
+      } else {
+        // draftBase > serverVersion shouldn't happen (server is the source
+        // of truth for version monotonicity). If it does — likely a stale
+        // entry from a deleted-and-recreated project — clear it.
+        await clearLocalDraft(projectId);
+        console.warn(
+          `[canvas] dropping local draft with future baseVersion (${draftBase} > server ${serverVersion}) for project ${projectId}.`,
+        );
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [canvasQuery.isFetched, projectId]);
 
   return {
     isLoading: canvasQuery.isLoading,
