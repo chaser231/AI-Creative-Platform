@@ -2087,7 +2087,7 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
     }, []);
 
     const { registerFile } = useProjectLibrary();
-    const handleDrop = useCallback(
+        const handleDrop = useCallback(
         (e: React.DragEvent) => {
             e.preventDefault();
             e.stopPropagation();
@@ -2111,6 +2111,16 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
                     const layerId = addImageLayer(localPreview, width, height);
 
                     if (!projectId) return;
+                    import("@/utils/imageUpload").then(({ uploadForAI }) => {
+                        // Also upload to S3 directly so that AI scenarios can use it immediately
+                        // without waiting for the slower registerFile pipeline
+                        uploadForAI(localPreview, projectId).then((s3Url) => {
+                            if (s3Url && s3Url !== localPreview) {
+                                useCanvasStore.getState().updateLayer(layerId, { src: s3Url });
+                            }
+                        });
+                    });
+
                     void registerFile({ projectId, file, source: "upload" }).then(
                         (permanentUrl) => {
                             if (!permanentUrl || !layerId) return;

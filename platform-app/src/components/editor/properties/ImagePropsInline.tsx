@@ -1,8 +1,9 @@
 "use client";
 
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import type { ImageLayer, ImageFitMode } from "@/types";
 import { IMAGE_FIT_MODE_LABELS } from "@/types";
+import { Loader2 } from "lucide-react";
 
 export function ImagePropsInline({
     layer,
@@ -12,14 +13,27 @@ export function ImagePropsInline({
     onChange: (updates: Partial<ImageLayer>) => void;
 }) {
     const fileRef = useRef<HTMLInputElement>(null);
+    const [isUploading, setIsUploading] = useState(false);
     const currentFit: ImageFitMode = layer.objectFit || "cover";
 
     const handleReplace = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
         if (!file) return;
-        import("@/utils/imageUpload").then(({ compressImageFile }) => {
+        setIsUploading(true);
+        import("@/utils/imageUpload").then(({ compressImageFile, uploadForAI }) => {
             compressImageFile(file).then((compressedBase64) => {
+                // Show local preview immediately
                 onChange({ src: compressedBase64 });
+                // Upload to S3 in the background
+                uploadForAI(compressedBase64, "tmp").then((s3Url) => {
+                    if (s3Url && s3Url !== compressedBase64) {
+                        onChange({ src: s3Url });
+                    }
+                }).finally(() => {
+                    setIsUploading(false);
+                });
+            }).catch(() => {
+                setIsUploading(false);
             });
         });
         e.target.value = "";
@@ -32,8 +46,10 @@ export function ImagePropsInline({
             <span className="text-[10px] text-text-tertiary font-light shrink-0">Изображение</span>
             <button
                 onClick={() => fileRef.current?.click()}
-                className="text-[10px] px-2 py-1 rounded-[var(--radius-sm)] border border-border-primary text-text-secondary hover:text-text-primary hover:bg-bg-secondary cursor-pointer transition-colors shrink-0"
+                disabled={isUploading}
+                className="flex items-center gap-1 text-[10px] px-2 py-1 rounded-[var(--radius-sm)] border border-border-primary text-text-secondary hover:text-text-primary hover:bg-bg-secondary cursor-pointer transition-colors shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
             >
+                {isUploading && <Loader2 className="w-3 h-3 animate-spin" />}
                 Заменить
             </button>
             <input
