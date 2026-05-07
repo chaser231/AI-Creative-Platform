@@ -373,7 +373,10 @@ model AIPreset {
   category    String  @default("custom")  // photography, digital, artistic, tone, length, custom
   thumbnailUrl String?
   order       Int     @default(0)
-  visibility  String  @default("workspace") // "personal" | "workspace"
+  // "personal"  — visible only to the author
+  // "workspace" — visible to all members of the parent workspace (workspace ADMIN or SUPER_ADMIN can set)
+  // "global"    — visible to every authenticated user across all workspaces (SUPER_ADMIN only)
+  visibility  String  @default("personal")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -385,6 +388,8 @@ model AIPreset {
   createdById String?
 
   @@index([workspaceId, type, isActive, visibility])
+  // Cross-workspace lookup of global presets in listPresets — filters by visibility first.
+  @@index([visibility, type, isActive])
   @@index([createdById])
 }
 

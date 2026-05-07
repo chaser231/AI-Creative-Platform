@@ -8,55 +8,76 @@
  * created, edited, and deleted.
  *
  * Visibility:
- *  - "personal" → only visible to the creator
- *  - "workspace" → visible to all workspace members (admin-only)
+ *  - "personal"  → only visible to the creator
+ *  - "workspace" → visible to all workspace members
+ *                  (workspace ADMIN or SUPER_ADMIN can set)
+ *  - "global"    → visible to every authenticated user across all workspaces
+ *                  (SUPER_ADMIN only — behaves like a system preset)
  */
 
-import { useState, useRef } from "react";
+import { useState, useRef, useMemo } from "react";
 import {
   Plus, Trash2, Pencil, Type as TypeIcon,
   Loader2, X, ImageIcon, Save, User, Users,
-  Globe, Lock, Upload, Sparkles,
+  Globe, Lock, Upload, Sparkles, RotateCcw, ShieldCheck,
 } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { useWorkspace } from "@/providers/WorkspaceProvider";
 import { AppShell } from "@/components/layout/AppShell";
 import { TopBar } from "@/components/layout/TopBar";
-import { SYSTEM_IMAGE_PRESETS, SYSTEM_TEXT_PRESETS, IMAGE_CATEGORY_LABELS, TEXT_CATEGORY_LABELS } from "@/lib/stylePresets";
+import {
+  SYSTEM_IMAGE_PRESETS,
+  SYSTEM_TEXT_PRESETS,
+  IMAGE_CATEGORY_LABELS,
+  TEXT_CATEGORY_LABELS,
+  isSystemPresetId,
+} from "@/lib/stylePresets";
 import { Select } from "@/components/ui/Select";
 import { Textarea } from "@/components/ui/Textarea";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import { compressImageFile, uploadForAI } from "@/utils/imageUpload";
-import type { ImageStylePreset, TextStylePreset, DBPresetConfig } from "@/lib/stylePresets";
+import type { DBPresetConfig } from "@/lib/stylePresets";
 
 type PresetTab = "image" | "text";
-type Visibility = "personal" | "workspace";
+type Visibility = "personal" | "workspace" | "global";
+/**
+ * `custom` — regular user-created preset (CRUD via createPreset/updatePreset).
+ * `system` — super-admin override of a baked-in system preset (CRUD via
+ *            upsertSystemPresetOverride / resetSystemPresetOverride). The id
+ *            of a system preset matches its hardcoded id (e.g. "product").
+ */
+type EditingKind = "custom" | "system";
 
-  interface EditingPreset {
-    id?: string;           // undefined = new preset
-    name: string;
-    description: string;
-    promptSuffix: string;  // for image
-    instruction: string;   // for text
-    category: string;
-    icon: string;
-    type: PresetTab;
-    visibility: Visibility;
-    thumbnailUrl?: string; // Add this
-  }
+interface EditingPreset {
+  id?: string;             // undefined = new preset; for system kind = systemId
+  name: string;
+  description: string;
+  promptSuffix: string;    // for image
+  instruction: string;     // for text
+  category: string;
+  icon: string;
+  type: PresetTab;
+  visibility: Visibility;
+  thumbnailUrl?: string;
+  kind: EditingKind;
+  /** True iff a DB override for this system preset already exists. */
+  hasExistingOverride?: boolean;
+}
 
 const EMPTY_IMAGE_PRESET: EditingPreset = {
   name: "", description: "", promptSuffix: "", instruction: "",
   category: "custom", icon: "🎨", type: "image", visibility: "personal",
+  kind: "custom",
 };
 
 const EMPTY_TEXT_PRESET: EditingPreset = {
   name: "", description: "", promptSuffix: "", instruction: "",
   category: "custom", icon: "✨", type: "text", visibility: "personal",
+  kind: "custom",
 };
 
 export default function StylePresetsPage() {
-  const { currentWorkspace, isAdmin } = useWorkspace();
+  const { currentWorkspace, isAdmin, isSuperAdmin } = useWorkspace();
   const workspaceId = currentWorkspace?.id ?? "";
 
   const [activeTab, setActiveTab] = useState<PresetTab>("image");
@@ -90,8 +111,10 @@ export default function StylePresetsPage() {
   const createMut = trpc.ai.createPreset.useMutation({ onSuccess: refetchAll });
   const updateMut = trpc.ai.updatePreset.useMutation({ onSuccess: refetchAll });
   const deleteMut = trpc.ai.deletePreset.useMutation({ onSuccess: refetchAll });
+  const upsertSystemMut = trpc.ai.upsertSystemPresetOverride.useMutation({ onSuccess: refetchAll });
+  const resetSystemMut = trpc.ai.resetSystemPresetOverride.useMutation({ onSuccess: refetchAll });
 
-  const isSaving = createMut.isPending || updateMut.isPending;
+  const isSaving = createMut.isPending || updateMut.isPending || upsertSystemMut.isPending;
 
   // ─── Save handler ──────────────────────────────────────────
   const handleSave = async () => {
@@ -101,8 +124,20 @@ export default function StylePresetsPage() {
       ? { promptSuffix: editing.promptSuffix }
       : { instruction: editing.instruction, icon: editing.icon };
 
-    if (editing.id) {
-      // Update existing
+    if (editing.kind === "system") {
+      // System override is keyed by the hardcoded system id; upsertSystemPresetOverride
+      // ignores category / visibility (those are dictated by the registry).
+      if (!editing.id) return;
+      await upsertSystemMut.mutateAsync({
+        systemId: editing.id,
+        type: editing.type,
+        workspaceId,
+        name: editing.name.trim(),
+        description: editing.description.trim(),
+        config,
+        thumbnailUrl: editing.thumbnailUrl ?? null,
+      });
+    } else if (editing.id) {
       await updateMut.mutateAsync({
         id: editing.id,
         name: editing.name.trim(),
@@ -113,7 +148,6 @@ export default function StylePresetsPage() {
         thumbnailUrl: editing.thumbnailUrl,
       });
     } else {
-      // Create new
       await createMut.mutateAsync({
         workspaceId,
         name: editing.name.trim(),
@@ -126,6 +160,14 @@ export default function StylePresetsPage() {
       });
     }
     setEditing(null);
+  };
+
+  // ─── Reset system override ──────────────────────────────────
+  const handleResetSystem = async (systemId: string, type: PresetTab) => {
+    await resetSystemMut.mutateAsync({ systemId, type });
+    if (editing?.kind === "system" && editing.id === systemId) {
+      setEditing(null);
+    }
   };
 
   // ─── Delete handler ──────────────────────────────────────────
@@ -191,10 +233,34 @@ export default function StylePresetsPage() {
 
   // ─── DB presets as typed arrays ──────────────────────────────
   type DBPreset = NonNullable<typeof imagePresetsQ.data>[0];
-  const customImagePresets = (imagePresetsQ.data ?? []) as DBPreset[];
-  const customTextPresets = (textPresetsQ.data ?? []) as DBPreset[];
+  const allImageDB = (imagePresetsQ.data ?? []) as DBPreset[];
+  const allTextDB = (textPresetsQ.data ?? []) as DBPreset[];
 
-  // ─── Edit from DB row ────────────────────────────────────────
+  // Split DB list into "overrides of built-in system presets" (id matches a
+  // system preset) and "purely custom presets". Overrides are rendered inside
+  // the system section (they replace the default), so they should NOT also
+  // appear in the custom section — that would duplicate the same logical row.
+  const imageSystemOverrides = useMemo(() => {
+    const map = new Map<string, DBPreset>();
+    for (const p of allImageDB) if (isSystemPresetId(p.id, "image")) map.set(p.id, p);
+    return map;
+  }, [allImageDB]);
+  const textSystemOverrides = useMemo(() => {
+    const map = new Map<string, DBPreset>();
+    for (const p of allTextDB) if (isSystemPresetId(p.id, "text")) map.set(p.id, p);
+    return map;
+  }, [allTextDB]);
+
+  const customImagePresets = useMemo(
+    () => allImageDB.filter((p) => !isSystemPresetId(p.id, "image")),
+    [allImageDB],
+  );
+  const customTextPresets = useMemo(
+    () => allTextDB.filter((p) => !isSystemPresetId(p.id, "text")),
+    [allTextDB],
+  );
+
+  // ─── Edit from DB row (custom preset) ────────────────────────
   const editFromDB = (p: DBPreset) => {
     const cfg = p.config as DBPresetConfig;
     setEditing({
@@ -208,12 +274,52 @@ export default function StylePresetsPage() {
       type: p.type as PresetTab,
       visibility: (p.visibility as Visibility) || "workspace",
       thumbnailUrl: p.thumbnailUrl || undefined,
+      kind: "custom",
+    });
+  };
+
+  // ─── Edit a built-in system preset (super-admin only) ────────
+  // Pre-fills the form with the active definition: DB override if it exists,
+  // otherwise the hardcoded default from `stylePresets.ts`.
+  const editSystem = (
+    type: PresetTab,
+    sys:
+      | (typeof SYSTEM_IMAGE_PRESETS)[number]
+      | (typeof SYSTEM_TEXT_PRESETS)[number],
+  ) => {
+    const overrideMap = type === "image" ? imageSystemOverrides : textSystemOverrides;
+    const override = overrideMap.get(sys.id);
+    const cfg = (override?.config as DBPresetConfig | undefined) ?? null;
+
+    const isImage = type === "image";
+    const sysImage = isImage ? (sys as (typeof SYSTEM_IMAGE_PRESETS)[number]) : null;
+    const sysText = !isImage ? (sys as (typeof SYSTEM_TEXT_PRESETS)[number]) : null;
+
+    setEditing({
+      id: sys.id,
+      type,
+      kind: "system",
+      hasExistingOverride: !!override,
+      name: override?.name ?? sys.label,
+      description: override?.description ?? sys.description,
+      promptSuffix: cfg?.promptSuffix ?? sysImage?.promptSuffix ?? "",
+      instruction: cfg?.instruction ?? sysText?.instruction ?? "",
+      icon: cfg?.icon ?? sysText?.icon ?? "🎨",
+      category: sys.category,
+      visibility: "global",
+      thumbnailUrl:
+        override?.thumbnailUrl ?? sysImage?.thumbnailUrl ?? undefined,
     });
   };
 
   // Can user edit/delete this preset?
+  // Author always can; workspace admin can manage presets in their workspace;
+  // SUPER_ADMIN can manage any preset (incl. global ones from other workspaces).
   const canManagePreset = (preset: DBPreset) => {
-    return isAdmin || preset.createdById === myUserId;
+    if (preset.createdById === myUserId) return true;
+    if (isSuperAdmin) return true;
+    if (preset.visibility === "global") return false;
+    return isAdmin && preset.workspaceId === workspaceId;
   };
 
   const tabs: { id: PresetTab; label: string; icon: React.ReactNode }[] = [
@@ -240,7 +346,8 @@ export default function StylePresetsPage() {
           <div>
             <h1 className="text-2xl font-bold text-text-primary mb-1">AI Стили генерации</h1>
             <p className="text-sm text-text-secondary">
-              Настройте стили генерации. Личные стили видны только вам, командные — всем участникам воркспейса.
+              Настройте стили генерации. Личные стили видны только вам, командные — всем
+              участникам воркспейса, глобальные — всем пользователям платформы.
             </p>
           </div>
 
@@ -251,44 +358,128 @@ export default function StylePresetsPage() {
             options={tabs.map((t) => ({ value: t.id, label: t.label, icon: t.icon }))}
           />
 
-          {/* ── System Presets (read-only) ── */}
+          {/* ── System Presets (overridable by super-admin) ── */}
           <section>
-            <h2 className="text-sm font-semibold text-text-primary mb-3">
+            <h2 className="text-sm font-semibold text-text-primary mb-3 flex items-center gap-2">
               Системные стили
-              <span className="ml-2 text-[10px] font-normal text-text-tertiary">Доступны всегда</span>
+              <span className="text-[10px] font-normal text-text-tertiary">
+                Доступны всегда
+                {isSuperAdmin && " · можно редактировать"}
+              </span>
             </h2>
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
-              {(activeTab === "image" ? SYSTEM_IMAGE_PRESETS : []).filter(p => p.id !== "none").map((preset) => (
-                <div
-                  key={preset.id}
-                  className="relative rounded-[var(--radius-md)] border border-border-primary bg-bg-surface p-3 space-y-1.5 opacity-80"
-                >
-                  {/* Thumbnail */}
-                  <div className="w-full aspect-video rounded-[var(--radius-sm)] overflow-hidden bg-bg-secondary">
-                    <img src={preset.thumbnailUrl} alt={preset.label} className="w-full h-full object-cover" />
-                  </div>
-                  <p className="text-xs font-medium text-text-primary truncate">{preset.label}</p>
-                  <p className="text-[10px] text-text-tertiary line-clamp-2">{preset.description}</p>
-                  <span className="inline-block text-[9px] font-medium text-text-tertiary bg-bg-tertiary px-1.5 py-0.5 rounded-full">
-                    {IMAGE_CATEGORY_LABELS[preset.category] || preset.category}
-                  </span>
-                </div>
-              ))}
-              {(activeTab === "text" ? SYSTEM_TEXT_PRESETS : []).map((preset) => (
-                <div
-                  key={preset.id}
-                  className="rounded-[var(--radius-md)] border border-border-primary bg-bg-surface p-3 space-y-1.5 opacity-80"
-                >
-                  <div className="flex items-center gap-2">
-                    <span className="text-lg">{preset.icon}</span>
-                    <p className="text-xs font-medium text-text-primary">{preset.label}</p>
-                  </div>
-                  <p className="text-[10px] text-text-tertiary line-clamp-2">{preset.description}</p>
-                  <span className="inline-block text-[9px] font-medium text-text-tertiary bg-bg-tertiary px-1.5 py-0.5 rounded-full">
-                    {TEXT_CATEGORY_LABELS[preset.category] || preset.category}
-                  </span>
-                </div>
-              ))}
+              {activeTab === "image" &&
+                SYSTEM_IMAGE_PRESETS.filter((p) => p.id !== "none").map((preset) => {
+                  const override = imageSystemOverrides.get(preset.id);
+                  // Apply override (if any) on top of the hardcoded defaults.
+                  const displayName = override?.name ?? preset.label;
+                  const displayDesc = override?.description ?? preset.description;
+                  const displayThumb = override?.thumbnailUrl ?? preset.thumbnailUrl;
+                  const isOverridden = !!override;
+                  return (
+                    <div
+                      key={preset.id}
+                      className={`group relative rounded-[var(--radius-md)] border bg-bg-surface p-3 space-y-1.5 transition-colors ${
+                        isOverridden ? "border-amber-500/40" : "border-border-primary"
+                      }`}
+                    >
+                      <div className="w-full aspect-video rounded-[var(--radius-sm)] overflow-hidden bg-bg-secondary">
+                        <img src={displayThumb} alt={displayName} className="w-full h-full object-cover" />
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <p className="text-xs font-medium text-text-primary truncate flex-1">{displayName}</p>
+                        {isOverridden && (
+                          <span
+                            className="flex items-center gap-0.5 text-[9px] font-medium text-amber-600 dark:text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded-full shrink-0"
+                            title="Изменён супер-админом"
+                          >
+                            <ShieldCheck size={8} /> Изменён
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[10px] text-text-tertiary line-clamp-2">{displayDesc}</p>
+                      <span className="inline-block text-[9px] font-medium text-text-tertiary bg-bg-tertiary px-1.5 py-0.5 rounded-full">
+                        {IMAGE_CATEGORY_LABELS[preset.category] || preset.category}
+                      </span>
+                      {isSuperAdmin && (
+                        <div className="absolute top-2 right-2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                          {isOverridden && (
+                            <button
+                              onClick={() => handleResetSystem(preset.id, "image")}
+                              disabled={resetSystemMut.isPending}
+                              className="p-1.5 rounded-[var(--radius-sm)] bg-bg-surface/90 backdrop-blur hover:bg-bg-tertiary text-text-tertiary hover:text-amber-500 transition-colors cursor-pointer disabled:opacity-50"
+                              title="Сбросить к дефолту"
+                            >
+                              <RotateCcw size={13} />
+                            </button>
+                          )}
+                          <button
+                            onClick={() => editSystem("image", preset)}
+                            className="p-1.5 rounded-[var(--radius-sm)] bg-bg-surface/90 backdrop-blur hover:bg-bg-tertiary text-text-tertiary hover:text-text-primary transition-colors cursor-pointer"
+                            title="Редактировать (доступно супер-админу)"
+                          >
+                            <Pencil size={13} />
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              {activeTab === "text" &&
+                SYSTEM_TEXT_PRESETS.map((preset) => {
+                  const override = textSystemOverrides.get(preset.id);
+                  const cfg = override?.config as DBPresetConfig | undefined;
+                  const displayName = override?.name ?? preset.label;
+                  const displayDesc = override?.description ?? preset.description;
+                  const displayIcon = cfg?.icon ?? preset.icon;
+                  const isOverridden = !!override;
+                  return (
+                    <div
+                      key={preset.id}
+                      className={`group relative rounded-[var(--radius-md)] border bg-bg-surface p-3 space-y-1.5 transition-colors ${
+                        isOverridden ? "border-amber-500/40" : "border-border-primary"
+                      }`}
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className="text-lg">{displayIcon}</span>
+                        <p className="text-xs font-medium text-text-primary flex-1 truncate">{displayName}</p>
+                        {isOverridden && (
+                          <span
+                            className="flex items-center gap-0.5 text-[9px] font-medium text-amber-600 dark:text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded-full shrink-0"
+                            title="Изменён супер-админом"
+                          >
+                            <ShieldCheck size={8} /> Изменён
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[10px] text-text-tertiary line-clamp-2">{displayDesc}</p>
+                      <span className="inline-block text-[9px] font-medium text-text-tertiary bg-bg-tertiary px-1.5 py-0.5 rounded-full">
+                        {TEXT_CATEGORY_LABELS[preset.category] || preset.category}
+                      </span>
+                      {isSuperAdmin && (
+                        <div className="absolute top-2 right-2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                          {isOverridden && (
+                            <button
+                              onClick={() => handleResetSystem(preset.id, "text")}
+                              disabled={resetSystemMut.isPending}
+                              className="p-1.5 rounded-[var(--radius-sm)] bg-bg-surface/90 backdrop-blur hover:bg-bg-tertiary text-text-tertiary hover:text-amber-500 transition-colors cursor-pointer disabled:opacity-50"
+                              title="Сбросить к дефолту"
+                            >
+                              <RotateCcw size={13} />
+                            </button>
+                          )}
+                          <button
+                            onClick={() => editSystem("text", preset)}
+                            className="p-1.5 rounded-[var(--radius-sm)] bg-bg-surface/90 backdrop-blur hover:bg-bg-tertiary text-text-tertiary hover:text-text-primary transition-colors cursor-pointer"
+                            title="Редактировать (доступно супер-админу)"
+                          >
+                            <Pencil size={13} />
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
             </div>
           </section>
 
@@ -315,7 +506,7 @@ export default function StylePresetsPage() {
             <div className="space-y-2">
               {(activeTab === "image" ? customImagePresets : customTextPresets).map((preset) => {
                 const cfg = preset.config as DBPresetConfig;
-                const isPersonal = preset.visibility === "personal";
+                const visibility = preset.visibility as Visibility;
                 const authorName = (preset as unknown as { createdBy?: { name: string } }).createdBy?.name;
                 return (
                   <div
@@ -338,12 +529,18 @@ export default function StylePresetsPage() {
                       <div className="flex items-center gap-2">
                         <p className="text-sm font-medium text-text-primary truncate">{preset.name}</p>
                         {/* Visibility badge */}
-                        {isPersonal ? (
+                        {visibility === "personal" && (
                           <span className="flex items-center gap-0.5 text-[9px] font-medium text-violet-500 bg-violet-500/10 px-1.5 py-0.5 rounded-full shrink-0">
                             <User size={8} /> Личный
                           </span>
-                        ) : (
+                        )}
+                        {visibility === "workspace" && (
                           <span className="flex items-center gap-0.5 text-[9px] font-medium text-emerald-500 bg-emerald-500/10 px-1.5 py-0.5 rounded-full shrink-0">
+                            <Users size={8} /> Команда
+                          </span>
+                        )}
+                        {visibility === "global" && (
+                          <span className="flex items-center gap-0.5 text-[9px] font-medium text-sky-500 bg-sky-500/10 px-1.5 py-0.5 rounded-full shrink-0">
                             <Globe size={8} /> Для всех
                           </span>
                         )}
@@ -398,9 +595,20 @@ export default function StylePresetsPage() {
           {editing && (
             <section className="bg-bg-surface border border-accent-primary/30 rounded-[var(--radius-xl)] p-5 space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-200">
               <div className="flex items-center justify-between">
-                <h2 className="text-sm font-semibold text-text-primary">
-                  {editing.id ? "Редактировать стиль" : "Новый стиль"}
-                </h2>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-sm font-semibold text-text-primary">
+                    {editing.kind === "system"
+                      ? `Редактировать системный стиль · ${editing.id}`
+                      : editing.id
+                        ? "Редактировать стиль"
+                        : "Новый стиль"}
+                  </h2>
+                  {editing.kind === "system" && (
+                    <span className="flex items-center gap-1 text-[10px] font-medium text-sky-600 dark:text-sky-400 bg-sky-500/10 px-1.5 py-0.5 rounded-full">
+                      <ShieldCheck size={10} /> Супер-админ
+                    </span>
+                  )}
+                </div>
                 <button
                   onClick={() => setEditing(null)}
                   className="p-1 rounded hover:bg-bg-tertiary text-text-tertiary hover:text-text-primary transition-colors cursor-pointer"
@@ -408,6 +616,14 @@ export default function StylePresetsPage() {
                   <X size={16} />
                 </button>
               </div>
+
+              {editing.kind === "system" && (
+                <p className="text-[11px] text-text-tertiary -mt-1">
+                  Изменения видны всем пользователям платформы. Категория и видимость
+                  системного стиля заблокированы. Используйте «Сбросить к дефолту»,
+                  чтобы вернуть встроенные значения.
+                </p>
+              )}
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
@@ -425,10 +641,16 @@ export default function StylePresetsPage() {
                 <div>
                   <label className="text-[11px] text-text-tertiary uppercase tracking-wider font-medium mb-1.5 block">
                     Категория
+                    {editing.kind === "system" && (
+                      <span className="ml-1 normal-case tracking-normal font-normal text-text-tertiary/60">
+                        · фиксирована
+                      </span>
+                    )}
                   </label>
                   <Select
                     value={editing.category}
                     onChange={(val) => setEditing({ ...editing, category: val })}
+                    disabled={editing.kind === "system"}
                     options={
                       editing.type === "image"
                         ? [
@@ -447,12 +669,14 @@ export default function StylePresetsPage() {
                 </div>
               </div>
 
-              {/* Visibility selector */}
+              {/* Visibility selector — hidden for system overrides (always global by definition) */}
+              {editing.kind !== "system" && (
               <div>
                 <label className="text-[11px] text-text-tertiary uppercase tracking-wider font-medium mb-1.5 block">
                   Видимость
                 </label>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
+                  {/* Personal — anyone */}
                   <button
                     onClick={() => setEditing({ ...editing, visibility: "personal" })}
                     className={`flex items-center gap-2 px-4 py-2 rounded-[var(--radius-lg)] border text-xs font-medium transition-all cursor-pointer ${
@@ -464,6 +688,8 @@ export default function StylePresetsPage() {
                     <User size={13} />
                     Только для меня
                   </button>
+
+                  {/* Workspace — workspace ADMIN or SUPER_ADMIN */}
                   <button
                     onClick={() => {
                       if (isAdmin) {
@@ -471,7 +697,7 @@ export default function StylePresetsPage() {
                       }
                     }}
                     disabled={!isAdmin}
-                    title={!isAdmin ? "Только админы могут создавать стили для всей команды" : ""}
+                    title={!isAdmin ? "Только админы воркспейса могут делать стили доступными всей команде" : ""}
                     className={`flex items-center gap-2 px-4 py-2 rounded-[var(--radius-lg)] border text-xs font-medium transition-all ${
                       editing.visibility === "workspace"
                         ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 cursor-pointer"
@@ -484,8 +710,31 @@ export default function StylePresetsPage() {
                     Для всей команды
                     {!isAdmin && <Lock size={10} className="text-text-tertiary" />}
                   </button>
+
+                  {/* Global — SUPER_ADMIN only */}
+                  <button
+                    onClick={() => {
+                      if (isSuperAdmin) {
+                        setEditing({ ...editing, visibility: "global" });
+                      }
+                    }}
+                    disabled={!isSuperAdmin}
+                    title={!isSuperAdmin ? "Только супер-админы могут делать стили доступными всем пользователям платформы" : ""}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-[var(--radius-lg)] border text-xs font-medium transition-all ${
+                      editing.visibility === "global"
+                        ? "border-sky-500/40 bg-sky-500/10 text-sky-600 dark:text-sky-400 cursor-pointer"
+                        : !isSuperAdmin
+                          ? "border-border-primary bg-bg-secondary text-text-tertiary opacity-50 cursor-not-allowed"
+                          : "border-border-primary bg-bg-secondary text-text-secondary hover:border-border-secondary cursor-pointer"
+                    }`}
+                  >
+                    <Globe size={13} />
+                    Для всех пользователей
+                    {!isSuperAdmin && <Lock size={10} className="text-text-tertiary" />}
+                  </button>
                 </div>
               </div>
+              )}
 
               <div>
                 <label className="text-[11px] text-text-tertiary uppercase tracking-wider font-medium mb-1.5 block">
@@ -607,7 +856,7 @@ export default function StylePresetsPage() {
                   className="h-10 px-6 flex items-center gap-2 bg-accent-primary text-text-inverse rounded-[var(--radius-lg)] text-sm font-medium hover:bg-accent-primary/90 transition-colors disabled:opacity-50 cursor-pointer"
                 >
                   {isSaving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
-                  {editing.id ? "Сохранить" : "Создать"}
+                  {editing.kind === "system" || editing.id ? "Сохранить" : "Создать"}
                 </button>
                 <button
                   onClick={() => setEditing(null)}
@@ -615,9 +864,22 @@ export default function StylePresetsPage() {
                 >
                   Отмена
                 </button>
-                {(createMut.error || updateMut.error) && (
+                {editing.kind === "system" && editing.hasExistingOverride && editing.id && (
+                  <button
+                    onClick={() => handleResetSystem(editing.id!, editing.type)}
+                    disabled={resetSystemMut.isPending}
+                    className="h-10 px-4 ml-auto flex items-center gap-2 text-xs font-medium text-amber-600 dark:text-amber-400 hover:bg-amber-500/10 rounded-[var(--radius-lg)] transition-colors disabled:opacity-50 cursor-pointer"
+                    title="Удалить override, вернуть встроенные значения"
+                  >
+                    <RotateCcw size={13} /> Сбросить к дефолту
+                  </button>
+                )}
+                {(createMut.error || updateMut.error || upsertSystemMut.error || resetSystemMut.error) && (
                   <span className="text-xs text-red-400">
-                    {createMut.error?.message || updateMut.error?.message}
+                    {createMut.error?.message ||
+                      updateMut.error?.message ||
+                      upsertSystemMut.error?.message ||
+                      resetSystemMut.error?.message}
                   </span>
                 )}
               </div>

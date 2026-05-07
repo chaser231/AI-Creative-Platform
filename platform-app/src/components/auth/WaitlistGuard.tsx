@@ -70,15 +70,13 @@ export function WaitlistGuard({ children }: { children: ReactNode }) {
     const pathname = usePathname();
     const router = useRouter();
     const queryClient = useQueryClient();
-    // Lazy initializer reads sessionStorage once on first render so a remount
-    // (e.g. React StrictMode, parent provider re-render) doesn't flash the
-    // spinner if we already approved earlier in the tab's lifetime.
-    const [approvedUserId, setApprovedUserId] = useState<string | null>(() =>
-        readApprovedUserIdCache(),
-    );
-    const [freshStatusCheckedForUserId, setFreshStatusCheckedForUserId] = useState<string | null>(
-        () => readApprovedUserIdCache(),
-    );
+    // Keep the server render and the first client render identical.
+    // Reading sessionStorage inside a `useState` lazy initializer makes the
+    // client render children immediately while the server rendered the loading
+    // spinner, which causes a React hydration mismatch. We hydrate the sticky
+    // approval cache in an effect instead.
+    const [approvedUserId, setApprovedUserId] = useState<string | null>(null);
+    const [freshStatusCheckedForUserId, setFreshStatusCheckedForUserId] = useState<string | null>(null);
     const refreshingUserIdRef = useRef<string | null>(null);
     const previousStatusRef = useRef<string | null>(null);
     const unauthenticatedProbeRef = useRef(false);
@@ -87,6 +85,13 @@ export function WaitlistGuard({ children }: { children: ReactNode }) {
     // only refresh the session on tab focus if the user has been idle for >10
     // minutes. See useIdleSessionRefresh.ts for rationale.
     useIdleSessionRefresh();
+
+    useEffect(() => {
+        const cachedUserId = readApprovedUserIdCache();
+        if (!cachedUserId) return;
+        setApprovedUserId(cachedUserId);
+        setFreshStatusCheckedForUserId(cachedUserId);
+    }, []);
 
     const accountStatus = session?.user?.status;
     const userId = session?.user?.id ?? null;
