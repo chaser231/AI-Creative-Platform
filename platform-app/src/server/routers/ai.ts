@@ -5,9 +5,14 @@
  */
 
 import { z } from "zod";
-import { createTRPCRouter, protectedProcedure } from "../trpc";
+import { createTRPCRouter, protectedProcedure, superAdminProcedure } from "../trpc";
 import { TRPCError } from "@trpc/server";
 import type { PrismaClient } from "@prisma/client";
+import {
+  SYSTEM_IMAGE_PRESETS,
+  SYSTEM_TEXT_PRESETS,
+  isSystemPresetId,
+} from "@/lib/stylePresets";
 
 /**
  * Ensure the caller has access to the given project (is a member of its workspace).
@@ -28,6 +33,35 @@ async function assertProjectAccess(
     select: { role: true },
   });
   if (!membership) throw new TRPCError({ code: "FORBIDDEN" });
+}
+
+/**
+ * Resolve preset-management roles for the caller in a given workspace.
+ *
+ * `isWsAdmin` is true if the user is `WorkspaceMember.role === "ADMIN"` in the
+ * target workspace. `isSuperAdmin` is true if the user has the platform-level
+ * `User.role === "SUPER_ADMIN"`. SUPER_ADMIN counts as workspace-admin
+ * everywhere — that's the rule used by AIPreset visibility checks below.
+ */
+async function getPresetRoles(
+  prisma: PrismaClient,
+  userId: string,
+  workspaceId: string,
+): Promise<{ isWsAdmin: boolean; isSuperAdmin: boolean }> {
+  const [membership, user] = await Promise.all([
+    prisma.workspaceMember.findUnique({
+      where: { userId_workspaceId: { userId, workspaceId } },
+      select: { role: true },
+    }),
+    prisma.user.findUnique({
+      where: { id: userId },
+      select: { role: true },
+    }),
+  ]);
+
+  const isSuperAdmin = user?.role === "SUPER_ADMIN";
+  const isWsAdmin = membership?.role === "ADMIN" || isSuperAdmin;
+  return { isWsAdmin, isSuperAdmin };
 }
 
 /** Ensure the caller has access to the session's project. Returns the session (with projectId). */
@@ -228,7 +262,16 @@ export const aiRouter = createTRPCRouter({
 
   // ─── AI Presets ──────────────────────────────────────────
 
-  /** List AI presets for a workspace (workspace + own personal) */
+  /**
+   * List AI presets visible to the caller for a given workspace.
+   *
+   * Returns:
+   *  - all `workspace`-scoped presets that belong to the requested workspace,
+   *  - the caller's own `personal` presets in the requested workspace,
+   *  - every `global` preset (regardless of which workspace originally
+   *    owned the row) — these behave like platform-wide system presets and
+   *    can only be created/edited by SUPER_ADMIN.
+   */
   listPresets: protectedProcedure
     .input(
       z.object({
@@ -239,12 +282,12 @@ export const aiRouter = createTRPCRouter({
     .query(async ({ ctx, input }) => {
       return ctx.prisma.aIPreset.findMany({
         where: {
-          workspaceId: input.workspaceId,
           ...(input.type && { type: input.type }),
           isActive: true,
           OR: [
-            { visibility: "workspace" },
-            { createdById: ctx.user.id },
+            { workspaceId: input.workspaceId, visibility: "workspace" },
+            { workspaceId: input.workspaceId, visibility: "personal", createdById: ctx.user.id },
+            { visibility: "global" },
           ],
         },
         include: {
@@ -254,7 +297,14 @@ export const aiRouter = createTRPCRouter({
       });
     }),
 
-  /** Create an AI preset */
+  /**
+   * Create an AI preset.
+   *
+   * Visibility access matrix:
+   *  - personal  → any authenticated workspace member
+   *  - workspace → workspace ADMIN or SUPER_ADMIN
+   *  - global    → SUPER_ADMIN only
+   */
   createPreset: protectedProcedure
     .input(
       z.object({
@@ -266,22 +316,28 @@ export const aiRouter = createTRPCRouter({
         category: z.string().default("custom"),
         thumbnailUrl: z.string().optional(),
         order: z.number().default(0),
-        visibility: z.enum(["personal", "workspace"]).default("personal"),
+        visibility: z.enum(["personal", "workspace", "global"]).default("personal"),
       })
     )
     .mutation(async ({ ctx, input }) => {
-      // Only admins can create workspace-visible presets
-      if (input.visibility === "workspace") {
-        const membership = await ctx.prisma.workspaceMember.findUnique({
-          where: { userId_workspaceId: { userId: ctx.user.id, workspaceId: input.workspaceId } },
-          select: { role: true },
+      const { isWsAdmin, isSuperAdmin } = await getPresetRoles(
+        ctx.prisma,
+        ctx.user.id,
+        input.workspaceId,
+      );
+
+      if (input.visibility === "global" && !isSuperAdmin) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Только супер-админы могут создавать стили для всех пользователей",
         });
-        if (!membership || membership.role !== "ADMIN") {
-          throw new TRPCError({
-            code: "FORBIDDEN",
-            message: "Только админы могут создавать стили для всей команды",
-          });
-        }
+      }
+
+      if (input.visibility === "workspace" && !isWsAdmin) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Только админы могут создавать стили для всей команды",
+        });
       }
 
       return ctx.prisma.aIPreset.create({
@@ -292,7 +348,13 @@ export const aiRouter = createTRPCRouter({
       });
     }),
 
-  /** Update an AI preset */
+  /**
+   * Update an AI preset.
+   *
+   * Edit access:    author, workspace ADMIN of the preset's workspace, or SUPER_ADMIN.
+   * Visibility set: same matrix as createPreset (workspace → ws-admin/super,
+   *                 global → super only).
+   */
   updatePreset: protectedProcedure
     .input(
       z.object({
@@ -304,31 +366,39 @@ export const aiRouter = createTRPCRouter({
         category: z.string().optional(),
         thumbnailUrl: z.string().optional(),
         order: z.number().optional(),
-        visibility: z.enum(["personal", "workspace"]).optional(),
+        visibility: z.enum(["personal", "workspace", "global"]).optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
       const preset = await ctx.prisma.aIPreset.findUnique({
         where: { id: input.id },
-        select: { createdById: true, workspaceId: true },
+        select: { createdById: true, workspaceId: true, visibility: true },
       });
       if (!preset) throw new TRPCError({ code: "NOT_FOUND" });
 
-      // Check: only author or workspace admin can edit
       const isAuthor = preset.createdById === ctx.user.id;
-      const membership = await ctx.prisma.workspaceMember.findUnique({
-        where: { userId_workspaceId: { userId: ctx.user.id, workspaceId: preset.workspaceId } },
-        select: { role: true },
-      });
-      const isWsAdmin = membership?.role === "ADMIN";
+      const { isWsAdmin, isSuperAdmin } = await getPresetRoles(
+        ctx.prisma,
+        ctx.user.id,
+        preset.workspaceId,
+      );
 
       if (!isAuthor && !isWsAdmin) {
         throw new TRPCError({ code: "FORBIDDEN", message: "Нет прав для редактирования" });
       }
 
-      // Non-admins can't set visibility to workspace
       if (input.visibility === "workspace" && !isWsAdmin) {
-        throw new TRPCError({ code: "FORBIDDEN", message: "Только админы могут делать стили публичными" });
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Только админы могут делать стили доступными всей команде",
+        });
+      }
+
+      if (input.visibility === "global" && !isSuperAdmin) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Только супер-админы могут делать стили доступными всем пользователям",
+        });
       }
 
       const { id, ...data } = input;
@@ -338,7 +408,11 @@ export const aiRouter = createTRPCRouter({
       });
     }),
 
-  /** Delete an AI preset */
+  /**
+   * Delete an AI preset.
+   *
+   * Delete access: author, workspace ADMIN, or SUPER_ADMIN.
+   */
   deletePreset: protectedProcedure
     .input(z.object({ id: z.string() }))
     .mutation(async ({ ctx, input }) => {
@@ -348,19 +422,128 @@ export const aiRouter = createTRPCRouter({
       });
       if (!preset) throw new TRPCError({ code: "NOT_FOUND" });
 
-      // Check: only author or workspace admin can delete
       const isAuthor = preset.createdById === ctx.user.id;
-      const membership = await ctx.prisma.workspaceMember.findUnique({
-        where: { userId_workspaceId: { userId: ctx.user.id, workspaceId: preset.workspaceId } },
-        select: { role: true },
-      });
-      const isWsAdmin = membership?.role === "ADMIN";
+      const { isWsAdmin } = await getPresetRoles(
+        ctx.prisma,
+        ctx.user.id,
+        preset.workspaceId,
+      );
 
       if (!isAuthor && !isWsAdmin) {
         throw new TRPCError({ code: "FORBIDDEN", message: "Нет прав для удаления" });
       }
 
       await ctx.prisma.aIPreset.delete({ where: { id: input.id } });
+      return { success: true };
+    }),
+
+  // ─── System Preset Overrides (SUPER_ADMIN only) ─────────────────────
+  //
+  // System presets (defined in `src/lib/stylePresets.ts`) are static defaults
+  // baked into the codebase. To let super-admins tweak them platform-wide
+  // without a deploy we let them write a row to `AIPreset` whose primary key
+  // matches the system preset id. `mergeImagePresets` / `mergeTextPresets`
+  // already prefer DB rows over the hardcoded defaults, so the override
+  // surfaces everywhere a system preset is shown.
+  //
+  // We *don't* expose a custom `id` on the public `createPreset` mutation —
+  // letting any user pick the row id would let them shadow another user's
+  // preset (or worse, write into another tenant). System overrides therefore
+  // get a dedicated procedure with a strict whitelist + `superAdminProcedure`.
+
+  /**
+   * Create or update an override for a built-in system preset.
+   * Caller MUST be SUPER_ADMIN; `systemId` is whitelisted against the
+   * baked-in `SYSTEM_*_PRESETS` registry.
+   */
+  upsertSystemPresetOverride: superAdminProcedure
+    .input(
+      z.object({
+        systemId: z.string().min(1),
+        type: z.enum(["image", "text"]),
+        workspaceId: z.string(),
+        name: z.string().min(1),
+        description: z.string().default(""),
+        config: z.any(),
+        thumbnailUrl: z.string().nullable().optional(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      if (!isSystemPresetId(input.systemId, input.type)) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: `Системный стиль с id "${input.systemId}" не существует`,
+        });
+      }
+
+      // Pull category + order from the hardcoded definition so the override
+      // can't drift the preset out of its UI group / position. Super-admin
+      // edits are scoped to copy + assets only by product decision.
+      const systemSource =
+        input.type === "image"
+          ? SYSTEM_IMAGE_PRESETS.find((p) => p.id === input.systemId)
+          : SYSTEM_TEXT_PRESETS.find((p) => p.id === input.systemId);
+      if (!systemSource) {
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: "Системный стиль не найден в реестре",
+        });
+      }
+
+      return ctx.prisma.aIPreset.upsert({
+        where: { id: input.systemId },
+        create: {
+          id: input.systemId,
+          workspaceId: input.workspaceId,
+          type: input.type,
+          name: input.name,
+          description: input.description,
+          config: input.config,
+          category: systemSource.category,
+          order: systemSource.order,
+          thumbnailUrl: input.thumbnailUrl ?? null,
+          visibility: "global",
+          isSystem: true,
+          isActive: true,
+          createdById: ctx.user.id,
+        },
+        update: {
+          name: input.name,
+          description: input.description,
+          config: input.config,
+          thumbnailUrl: input.thumbnailUrl ?? null,
+          // Re-assert the platform-level invariants in case a previous
+          // out-of-band write changed them. visibility/isSystem/category
+          // are not user-configurable for system overrides.
+          visibility: "global",
+          isSystem: true,
+          isActive: true,
+          category: systemSource.category,
+          order: systemSource.order,
+        },
+      });
+    }),
+
+  /**
+   * Remove the override for a system preset, restoring the hardcoded default
+   * across all workspaces. SUPER_ADMIN only. No-op if no override exists.
+   */
+  resetSystemPresetOverride: superAdminProcedure
+    .input(
+      z.object({
+        systemId: z.string().min(1),
+        type: z.enum(["image", "text"]),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      if (!isSystemPresetId(input.systemId, input.type)) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: `Системный стиль с id "${input.systemId}" не существует`,
+        });
+      }
+
+      await ctx.prisma.aIPreset.deleteMany({ where: { id: input.systemId } });
       return { success: true };
     }),
 });

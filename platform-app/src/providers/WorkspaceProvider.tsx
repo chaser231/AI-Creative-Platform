@@ -35,8 +35,13 @@ interface WorkspaceContextValue {
   refetch: () => void;
   /** Current user's role in the active workspace */
   currentRole: string | null;
-  /** Shortcut: is the current user an admin? */
+  /**
+   * Shortcut: is the current user an admin in the active workspace?
+   * SUPER_ADMIN counts as workspace admin everywhere.
+   */
   isAdmin: boolean;
+  /** Platform-level SUPER_ADMIN flag (User.role === "SUPER_ADMIN") */
+  isSuperAdmin: boolean;
 }
 
 const WorkspaceContext = createContext<WorkspaceContextValue>({
@@ -48,6 +53,7 @@ const WorkspaceContext = createContext<WorkspaceContextValue>({
   refetch: () => {},
   currentRole: null,
   isAdmin: false,
+  isSuperAdmin: false,
 });
 
 export const WORKSPACE_STORAGE_KEY = "acp_workspace_id";
@@ -63,6 +69,14 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     refetchOnWindowFocus: false,
   });
 
+  // Pull the current user's global role (SUPER_ADMIN | USER) once. We don't
+  // refetch this on focus — global role doesn't change mid-session.
+  const meQuery = trpc.auth.me.useQuery(undefined, {
+    retry: 1,
+    refetchOnWindowFocus: false,
+    staleTime: 5 * 60_000,
+  });
+
   const workspaces = useMemo(
     () => (workspaceQuery.data ?? []) as WorkspaceInfo[],
     [workspaceQuery.data],
@@ -74,9 +88,12 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     workspaces[0] ??
     null;
 
-  // Derived role info
+  // Derived role info. SUPER_ADMIN is treated as workspace admin everywhere
+  // so admin-gated UI (e.g. AI styles visibility) Just Works for platform admins
+  // even in workspaces where their member role is CREATOR/USER.
   const currentRole = currentWorkspace?.role ?? null;
-  const isAdmin = currentRole === "ADMIN";
+  const isSuperAdmin = meQuery.data?.role === "SUPER_ADMIN";
+  const isAdmin = currentRole === "ADMIN" || isSuperAdmin;
 
   // Keep persisted selection valid without adding an extra render.
   useEffect(() => {
@@ -109,6 +126,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         refetch,
         currentRole,
         isAdmin,
+        isSuperAdmin,
       }}
     >
       {children}

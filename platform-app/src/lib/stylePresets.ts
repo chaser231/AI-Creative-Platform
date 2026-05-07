@@ -264,6 +264,35 @@ export const SYSTEM_TEXT_PRESETS: TextStylePreset[] = [
   },
 ];
 
+// ─── System preset registry ──────────────────────────────────────────────────
+//
+// Editable system presets (i.e. everything that super-admin can override via the
+// `/settings/styles` UI). The `none` placeholder is intentionally excluded —
+// it is not a style and is hidden from the management surface.
+
+export const SYSTEM_IMAGE_PRESET_IDS: ReadonlySet<string> = new Set(
+  SYSTEM_IMAGE_PRESETS.filter((p) => p.id !== "none").map((p) => p.id),
+);
+export const SYSTEM_TEXT_PRESET_IDS: ReadonlySet<string> = new Set(
+  SYSTEM_TEXT_PRESETS.map((p) => p.id),
+);
+
+/**
+ * Is the given preset id one of the editable system presets?
+ *
+ * Used by the AI router to whitelist allowed targets of
+ * `upsertSystemPresetOverride` and by the settings UI to split the DB-level
+ * preset list into "overrides of system presets" and "purely custom presets".
+ */
+export function isSystemPresetId(
+  id: string,
+  type: "image" | "text",
+): boolean {
+  return type === "image"
+    ? SYSTEM_IMAGE_PRESET_IDS.has(id)
+    : SYSTEM_TEXT_PRESET_IDS.has(id);
+}
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 /** Category labels for image styles (used in UI grouping) */
@@ -321,7 +350,9 @@ export function mergeImagePresets(
       result.push({
         ...sys,
         name: dbOverride.name || sys.name,
+        label: dbOverride.name || sys.label,
         description: dbOverride.description || sys.description,
+        thumbnailUrl: dbOverride.thumbnailUrl || sys.thumbnailUrl,
         promptSuffix: cfg?.promptSuffix ?? sys.promptSuffix,
         negativePrompt: cfg?.negativePrompt ?? sys.negativePrompt,
       });
@@ -377,6 +408,7 @@ export function mergeTextPresets(
         label: dbOverride.name || sys.label,
         description: dbOverride.description || sys.description,
         instruction: cfg?.instruction ?? sys.instruction,
+        icon: cfg?.icon ?? sys.icon,
       });
       dbMap.delete(sys.id);
     } else {
