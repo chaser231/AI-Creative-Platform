@@ -134,10 +134,12 @@ export const MODEL_REGISTRY: ModelEntry[] = [
         byok: true,
     },
     {
-        // GPT Image 2 (released April 2026). Replicate slug: openai/gpt-image-2.
-        // Supports text-to-image, edit (input_images), up to 10 outputs/call.
-        // Aspect ratios on Replicate are restricted to 1:1, 3:2, 2:3.
-        // BYOK supported via openai_api_key param.
+        // GPT Image 2 (released April 2026).
+        // Routed primarily through fal.ai (no OpenAI BYOK needed — billed
+        // through FAL_KEY); Replicate (openai/gpt-image-2) used as fallback
+        // via MODEL_FALLBACK_CHAIN.
+        // The fal.ai TTI / edit endpoints accept `image_size` preset enum
+        // instead of `aspect_ratio` — see FalProvider for the mapping.
         id: "gpt-image-2",
         label: "GPT Image 2",
         slug: "openai/gpt-image-2",
@@ -145,9 +147,8 @@ export const MODEL_REGISTRY: ModelEntry[] = [
         caps: ["generate", "edit", "vision"],
         costPerRun: 0.15,
         maxRefs: 8,
-        aspectRatios: ["1:1", "3:2", "2:3"],
+        aspectRatios: ["1:1", "4:3", "3:4", "16:9", "9:16"],
         resolutions: GPT_RESOLUTIONS,
-        byok: true,
     },
     {
         id: "qwen-image",

@@ -646,6 +646,8 @@ const FAL_MODEL_MAP: Record<string, string> = {
     "nano-banana-2":   "fal-ai/nano-banana-2",
     "nano-banana-pro": "fal-ai/nano-banana-pro",
     "seedream":        "fal-ai/seedream-4.5",
+    "seedream-5":      "fal-ai/bytedance/seedream/v5/lite/text-to-image",
+    "gpt-image-2":     "openai/gpt-image-2",
     "bria-expand":     "fal-ai/bria/expand",
     "bria-rmbg":       "fal-ai/bria/background/remove",
     "bria-product-shot": "fal-ai/bria/product-shot",
@@ -661,7 +663,31 @@ const FAL_MODEL_MAP_EDIT: Record<string, string> = {
     "nano-banana":     "fal-ai/nano-banana/edit",
     "nano-banana-2":   "fal-ai/nano-banana-2/edit",
     "nano-banana-pro": "fal-ai/nano-banana-pro/edit",
+    "seedream-5":      "fal-ai/bytedance/seedream/v5/lite/edit",
+    "gpt-image-2":     "openai/gpt-image-2/edit",
 };
+
+// Models whose fal.ai endpoints don't accept `aspect_ratio` and instead use
+// the `image_size` preset enum (square_hd / square / portrait_* / landscape_*).
+// Seedream 5 Lite additionally exposes `auto_2K` / `auto_3K` / `auto_4K`.
+//
+// Kept as an explicit set so the FalProvider build-input branch stays narrow
+// and the rest of the pipeline keeps using a unified `aspectRatio` field.
+const FAL_IMAGE_SIZE_MODELS = new Set(["gpt-image-2", "seedream-5"]);
+
+/** Map our canonical AR string → fal.ai `image_size` preset enum value. */
+function falImageSizeFromAspectRatio(aspectRatio?: string): string {
+    switch (aspectRatio) {
+        case "1:1":  return "square_hd";
+        case "4:3":  return "landscape_4_3";
+        case "3:4":  return "portrait_4_3";
+        case "16:9": return "landscape_16_9";
+        case "9:16": return "portrait_16_9";
+        // 3:2 / 2:3 / 21:9 / 4:5 / 5:4 don't have a direct preset; let the
+        // model auto-select the closest valid size from the prompt.
+        default: return "auto";
+    }
+}
 
 class FalProvider implements AIProviderImplementation {
     id = "fal";
@@ -974,16 +1000,32 @@ class FalProvider implements AIProviderImplementation {
         // ── Build input ────────────────────────────────────────────
         const input: Record<string, unknown> = {};
         input.prompt = params.prompt;
-        if (params.aspectRatio) input.aspect_ratio = params.aspectRatio;
 
-        // Resolution mapping: fal.ai uses same "1K"/"2K"/"4K" enum for Google models
-        // fal.ai REQUIRES this field (unlike Replicate which defaults to 1K)
-        const isGoogleModel = !!FAL_MODEL_MAP[modelId]?.includes("nano-banana");
-        input.resolution = params.scale || (isGoogleModel ? "1K" : undefined);
-        if (!input.resolution) delete input.resolution;
-
-        // Output format
-        input.output_format = "png";
+        if (FAL_IMAGE_SIZE_MODELS.has(modelId)) {
+            // GPT Image 2 / Seedream 5 Lite use `image_size` enum (not aspect_ratio).
+            // For Seedream 5 we honour the explicit "2K" / "3K" choice via
+            // `auto_NK`; otherwise we fall back to the AR preset. For GPT Image 2
+            // the resolution knob is `quality` (low | medium | high | auto).
+            if (modelId === "seedream-5" && params.scale) {
+                input.image_size = `auto_${params.scale}`; // "auto_2K" | "auto_3K"
+            } else {
+                input.image_size = falImageSizeFromAspectRatio(params.aspectRatio);
+            }
+            if (modelId === "gpt-image-2") {
+                if (params.scale) input.quality = params.scale; // low | medium | high
+                input.output_format = "png";
+            }
+            // Seedream 5 Lite ignores output_format — leave it out.
+        } else {
+            // Existing nano-banana / Bria flow.
+            if (params.aspectRatio) input.aspect_ratio = params.aspectRatio;
+            // Resolution mapping: fal.ai uses same "1K"/"2K"/"4K" enum for Google models
+            // fal.ai REQUIRES this field (unlike Replicate which defaults to 1K)
+            const isGoogleModel = !!FAL_MODEL_MAP[modelId]?.includes("nano-banana");
+            input.resolution = params.scale || (isGoogleModel ? "1K" : undefined);
+            if (!input.resolution) delete input.resolution;
+            input.output_format = "png";
+        }
 
         // Reference images — /edit endpoint uses `image_urls` (NOT `image_input`)
         // Accepts both public URLs and base64 data URIs
@@ -1123,6 +1165,8 @@ const FAL_PRIMARY_MODELS = new Set([
     "nano-banana-2",
     "nano-banana",
     "nano-banana-pro",
+    "seedream-5",
+    "gpt-image-2",
     "bria-expand",
     "bria-rmbg",
     "esrgan",
