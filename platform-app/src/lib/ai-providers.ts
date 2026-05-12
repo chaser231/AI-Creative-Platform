@@ -260,10 +260,18 @@ class ReplicateProvider implements AIProviderImplementation {
                 input.input_images = [params.imageBase64];
                 input.output_format = "webp";
             } else if (slug.startsWith("bytedance/")) {
-                // Seedream expects image_input
+                // Seedream (4.5 / 5-lite) expects image_input
                 input.image_input = [params.imageBase64];
+                // Seedream 5 supports `size` ("2K" | "3K") in addition to AR
+                if (params.scale) input.size = params.scale;
+            } else if (slug === "openai/gpt-image-2") {
+                // GPT Image 2 expects input_images for editing; quality is the
+                // resolution knob (low | medium | high | auto).
+                input.input_images = [params.imageBase64];
+                input.output_format = "png";
+                if (params.scale) input.quality = params.scale;
             } else {
-                // Default / Qwen expects image
+                // Default / Qwen / GPT Image 1.5 expects image
                 input.image = params.imageBase64;
             }
 
@@ -311,10 +319,13 @@ class ReplicateProvider implements AIProviderImplementation {
             // Google resolution: "1K" | "2K" | "4K"
             if (params.scale) input.resolution = params.scale;
         } else if (slug.startsWith("openai/")) {
-            // GPT Image: quality
-            if (params.scale) input.quality = params.scale; // "low", "medium", "high"
+            // GPT Image (1.5 + 2): quality knob ("low" | "medium" | "high" | "auto")
+            if (params.scale) input.quality = params.scale;
+        } else if (isSeedream) {
+            // Seedream 5 supports `size` ("2K" | "3K"); 4.5 ignores it.
+            if (params.scale) input.size = params.scale;
         }
-        // Seedream, Qwen: no resolution control
+        // Qwen: no resolution control
 
         // ── Reference images — correct parameter per model family ──────
         if (params.referenceImages && params.referenceImages.length > 0) {
@@ -324,13 +335,16 @@ class ReplicateProvider implements AIProviderImplementation {
                 // Nano Banana family: image_input accepts array of URLs or base64
                 input.image_input = params.referenceImages;
             } else if (isSeedream) {
-                // Seedream: image_input
+                // Seedream: image_input (4.5 = up to 4 refs, 5-lite = up to 14)
                 input.image_input = params.referenceImages;
             } else if (slug === "black-forest-labs/flux-2-pro") {
                 // Flux 2 Pro: reference_images
                 input.reference_images = params.referenceImages;
+            } else if (slug === "openai/gpt-image-2") {
+                // GPT Image 2: input_images (multi-ref edit/compose)
+                input.input_images = params.referenceImages;
             } else if (slug.startsWith("openai/")) {
-                // GPT-Image: reference_images
+                // GPT Image 1.5: reference_images (legacy param name)
                 input.reference_images = params.referenceImages;
             }
             // Flux Dev, Flux 1.1 Pro, DALL-E 3, Qwen: no reference image support
@@ -1126,6 +1140,10 @@ const MODEL_FALLBACK_CHAIN: Record<string, string[]> = {
     "nano-banana-2":   ["nano-banana", "nano-banana-pro"],
     "nano-banana":     ["nano-banana-2", "nano-banana-pro"],
     "nano-banana-pro": ["nano-banana-2", "nano-banana"],
+    "seedream-5":      ["seedream"],
+    "seedream":        ["seedream-5"],
+    "gpt-image-2":     ["gpt-image"],
+    "gpt-image":       ["gpt-image-2"],
     "bria-expand":     ["outpainter"],
     "outpainter":      ["bria-expand"],
     "bria-rmbg":       ["rembg"],

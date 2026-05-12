@@ -67,6 +67,12 @@ const GPT_RESOLUTIONS: ResolutionOption[] = [
     { id: "low",    label: "Low" },
 ];
 
+/** Seedream 5 size resolution options ("size" param, enum: 2K | 3K) */
+const SEEDREAM_RESOLUTIONS: ResolutionOption[] = [
+    { id: "2K", label: "2K" },
+    { id: "3K", label: "3K" },
+];
+
 // ─── Registry ───────────────────────────────────────────────────────────────
 
 export const MODEL_REGISTRY: ModelEntry[] = [
@@ -128,6 +134,22 @@ export const MODEL_REGISTRY: ModelEntry[] = [
         byok: true,
     },
     {
+        // GPT Image 2 (released April 2026). Replicate slug: openai/gpt-image-2.
+        // Supports text-to-image, edit (input_images), up to 10 outputs/call.
+        // Aspect ratios on Replicate are restricted to 1:1, 3:2, 2:3.
+        // BYOK supported via openai_api_key param.
+        id: "gpt-image-2",
+        label: "GPT Image 2",
+        slug: "openai/gpt-image-2",
+        provider: "replicate",
+        caps: ["generate", "edit", "vision"],
+        costPerRun: 0.15,
+        maxRefs: 8,
+        aspectRatios: ["1:1", "3:2", "2:3"],
+        resolutions: GPT_RESOLUTIONS,
+        byok: true,
+    },
+    {
         id: "qwen-image",
         label: "Qwen Image",
         slug: "qwen/qwen-image",
@@ -153,6 +175,21 @@ export const MODEL_REGISTRY: ModelEntry[] = [
         costPerRun: 0.04,
         maxRefs: 4,
         aspectRatios: ["1:1", "2:3", "3:2", "3:4", "4:3", "9:16", "16:9"],
+    },
+    {
+        // Seedream 5 (Lite) — ByteDance latest, released Feb 2026.
+        // Replicate slug: bytedance/seedream-5-lite. Adds reasoning,
+        // example-based editing, multi-image blending up to 14 refs.
+        // The non-Lite variant has no public Replicate page yet (404).
+        id: "seedream-5",
+        label: "Seedream 5",
+        slug: "bytedance/seedream-5-lite",
+        provider: "replicate",
+        caps: ["generate", "edit", "vision"],
+        costPerRun: 0.035,
+        maxRefs: 14,
+        aspectRatios: ["1:1", "4:3", "3:4", "16:9", "9:16", "3:2", "2:3", "21:9"],
+        resolutions: SEEDREAM_RESOLUTIONS,
     },
 
     // ── Image Generation Only ───────────────────────────────────────────

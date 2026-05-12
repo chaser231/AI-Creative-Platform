@@ -102,7 +102,7 @@ export const ACTIONS: ActionDefinition[] = [
     parameters: {
       subject: { type: "string", description: "Что изобразить (продукт, сцена, фон)" },
       style: { type: "string", description: "Стиль: photo, illustration, 3d, flat, gradient", enum: ["photo", "illustration", "3d", "flat", "gradient"] },
-      model: { type: "string", description: "Модель для генерации (по умолчанию flux-schnell). Варианты: flux-schnell, flux-dev, flux-1.1-pro, flux-2-pro, dall-e-3, nano-banana, seedream" },
+      model: { type: "string", description: "Модель для генерации (по умолчанию flux-schnell). Варианты: flux-schnell, flux-dev, flux-1.1-pro, flux-2-pro, dall-e-3, nano-banana, nano-banana-2, nano-banana-pro, seedream, seedream-5, gpt-image, gpt-image-2" },
     },
     required: ["subject"],
   },
