@@ -47,6 +47,9 @@ export const imageGenerationParamsSchema = z.object({
             "flux-2-pro",
             "nano-banana-2",
             "seedream",
+            "seedream-5",
+            "gpt-image",
+            "gpt-image-2",
             "qwen-image",
             "dall-e-3",
         ])

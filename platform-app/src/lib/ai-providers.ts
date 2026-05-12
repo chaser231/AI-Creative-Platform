@@ -260,10 +260,18 @@ class ReplicateProvider implements AIProviderImplementation {
                 input.input_images = [params.imageBase64];
                 input.output_format = "webp";
             } else if (slug.startsWith("bytedance/")) {
-                // Seedream expects image_input
+                // Seedream (4.5 / 5-lite) expects image_input
                 input.image_input = [params.imageBase64];
+                // Seedream 5 supports `size` ("2K" | "3K") in addition to AR
+                if (params.scale) input.size = params.scale;
+            } else if (slug === "openai/gpt-image-2") {
+                // GPT Image 2 expects input_images for editing; quality is the
+                // resolution knob (low | medium | high | auto).
+                input.input_images = [params.imageBase64];
+                input.output_format = "png";
+                if (params.scale) input.quality = params.scale;
             } else {
-                // Default / Qwen expects image
+                // Default / Qwen / GPT Image 1.5 expects image
                 input.image = params.imageBase64;
             }
 
@@ -311,10 +319,13 @@ class ReplicateProvider implements AIProviderImplementation {
             // Google resolution: "1K" | "2K" | "4K"
             if (params.scale) input.resolution = params.scale;
         } else if (slug.startsWith("openai/")) {
-            // GPT Image: quality
-            if (params.scale) input.quality = params.scale; // "low", "medium", "high"
+            // GPT Image (1.5 + 2): quality knob ("low" | "medium" | "high" | "auto")
+            if (params.scale) input.quality = params.scale;
+        } else if (isSeedream) {
+            // Seedream 5 supports `size` ("2K" | "3K"); 4.5 ignores it.
+            if (params.scale) input.size = params.scale;
         }
-        // Seedream, Qwen: no resolution control
+        // Qwen: no resolution control
 
         // ── Reference images — correct parameter per model family ──────
         if (params.referenceImages && params.referenceImages.length > 0) {
@@ -324,13 +335,16 @@ class ReplicateProvider implements AIProviderImplementation {
                 // Nano Banana family: image_input accepts array of URLs or base64
                 input.image_input = params.referenceImages;
             } else if (isSeedream) {
-                // Seedream: image_input
+                // Seedream: image_input (4.5 = up to 4 refs, 5-lite = up to 14)
                 input.image_input = params.referenceImages;
             } else if (slug === "black-forest-labs/flux-2-pro") {
                 // Flux 2 Pro: reference_images
                 input.reference_images = params.referenceImages;
+            } else if (slug === "openai/gpt-image-2") {
+                // GPT Image 2: input_images (multi-ref edit/compose)
+                input.input_images = params.referenceImages;
             } else if (slug.startsWith("openai/")) {
-                // GPT-Image: reference_images
+                // GPT Image 1.5: reference_images (legacy param name)
                 input.reference_images = params.referenceImages;
             }
             // Flux Dev, Flux 1.1 Pro, DALL-E 3, Qwen: no reference image support
@@ -632,6 +646,8 @@ const FAL_MODEL_MAP: Record<string, string> = {
     "nano-banana-2":   "fal-ai/nano-banana-2",
     "nano-banana-pro": "fal-ai/nano-banana-pro",
     "seedream":        "fal-ai/seedream-4.5",
+    "seedream-5":      "fal-ai/bytedance/seedream/v5/lite/text-to-image",
+    "gpt-image-2":     "openai/gpt-image-2",
     "bria-expand":     "fal-ai/bria/expand",
     "bria-rmbg":       "fal-ai/bria/background/remove",
     "bria-product-shot": "fal-ai/bria/product-shot",
@@ -647,7 +663,31 @@ const FAL_MODEL_MAP_EDIT: Record<string, string> = {
     "nano-banana":     "fal-ai/nano-banana/edit",
     "nano-banana-2":   "fal-ai/nano-banana-2/edit",
     "nano-banana-pro": "fal-ai/nano-banana-pro/edit",
+    "seedream-5":      "fal-ai/bytedance/seedream/v5/lite/edit",
+    "gpt-image-2":     "openai/gpt-image-2/edit",
 };
+
+// Models whose fal.ai endpoints don't accept `aspect_ratio` and instead use
+// the `image_size` preset enum (square_hd / square / portrait_* / landscape_*).
+// Seedream 5 Lite additionally exposes `auto_2K` / `auto_3K` / `auto_4K`.
+//
+// Kept as an explicit set so the FalProvider build-input branch stays narrow
+// and the rest of the pipeline keeps using a unified `aspectRatio` field.
+const FAL_IMAGE_SIZE_MODELS = new Set(["gpt-image-2", "seedream-5"]);
+
+/** Map our canonical AR string → fal.ai `image_size` preset enum value. */
+function falImageSizeFromAspectRatio(aspectRatio?: string): string {
+    switch (aspectRatio) {
+        case "1:1":  return "square_hd";
+        case "4:3":  return "landscape_4_3";
+        case "3:4":  return "portrait_4_3";
+        case "16:9": return "landscape_16_9";
+        case "9:16": return "portrait_16_9";
+        // 3:2 / 2:3 / 21:9 / 4:5 / 5:4 don't have a direct preset; let the
+        // model auto-select the closest valid size from the prompt.
+        default: return "auto";
+    }
+}
 
 class FalProvider implements AIProviderImplementation {
     id = "fal";
@@ -960,16 +1000,32 @@ class FalProvider implements AIProviderImplementation {
         // ── Build input ────────────────────────────────────────────
         const input: Record<string, unknown> = {};
         input.prompt = params.prompt;
-        if (params.aspectRatio) input.aspect_ratio = params.aspectRatio;
 
-        // Resolution mapping: fal.ai uses same "1K"/"2K"/"4K" enum for Google models
-        // fal.ai REQUIRES this field (unlike Replicate which defaults to 1K)
-        const isGoogleModel = !!FAL_MODEL_MAP[modelId]?.includes("nano-banana");
-        input.resolution = params.scale || (isGoogleModel ? "1K" : undefined);
-        if (!input.resolution) delete input.resolution;
-
-        // Output format
-        input.output_format = "png";
+        if (FAL_IMAGE_SIZE_MODELS.has(modelId)) {
+            // GPT Image 2 / Seedream 5 Lite use `image_size` enum (not aspect_ratio).
+            // For Seedream 5 we honour the explicit "2K" / "3K" choice via
+            // `auto_NK`; otherwise we fall back to the AR preset. For GPT Image 2
+            // the resolution knob is `quality` (low | medium | high | auto).
+            if (modelId === "seedream-5" && params.scale) {
+                input.image_size = `auto_${params.scale}`; // "auto_2K" | "auto_3K"
+            } else {
+                input.image_size = falImageSizeFromAspectRatio(params.aspectRatio);
+            }
+            if (modelId === "gpt-image-2") {
+                if (params.scale) input.quality = params.scale; // low | medium | high
+                input.output_format = "png";
+            }
+            // Seedream 5 Lite ignores output_format — leave it out.
+        } else {
+            // Existing nano-banana / Bria flow.
+            if (params.aspectRatio) input.aspect_ratio = params.aspectRatio;
+            // Resolution mapping: fal.ai uses same "1K"/"2K"/"4K" enum for Google models
+            // fal.ai REQUIRES this field (unlike Replicate which defaults to 1K)
+            const isGoogleModel = !!FAL_MODEL_MAP[modelId]?.includes("nano-banana");
+            input.resolution = params.scale || (isGoogleModel ? "1K" : undefined);
+            if (!input.resolution) delete input.resolution;
+            input.output_format = "png";
+        }
 
         // Reference images — /edit endpoint uses `image_urls` (NOT `image_input`)
         // Accepts both public URLs and base64 data URIs
@@ -1109,6 +1165,8 @@ const FAL_PRIMARY_MODELS = new Set([
     "nano-banana-2",
     "nano-banana",
     "nano-banana-pro",
+    "seedream-5",
+    "gpt-image-2",
     "bria-expand",
     "bria-rmbg",
     "esrgan",
@@ -1126,6 +1184,10 @@ const MODEL_FALLBACK_CHAIN: Record<string, string[]> = {
     "nano-banana-2":   ["nano-banana", "nano-banana-pro"],
     "nano-banana":     ["nano-banana-2", "nano-banana-pro"],
     "nano-banana-pro": ["nano-banana-2", "nano-banana"],
+    "seedream-5":      ["seedream"],
+    "seedream":        ["seedream-5"],
+    "gpt-image-2":     ["gpt-image"],
+    "gpt-image":       ["gpt-image-2"],
     "bria-expand":     ["outpainter"],
     "outpainter":      ["bria-expand"],
     "bria-rmbg":       ["rembg"],
