@@ -19,6 +19,7 @@ import {
   assertUrlIsSafe,
   assertUrlShape,
   isBlockedIp,
+  loraPathPolicy,
   parseHostAllowlistEnv,
   uploadImagePolicy,
 } from "../ssrfGuard";
@@ -314,6 +315,79 @@ describe("presets", () => {
       expect(p.allowedHosts).toBeUndefined();
     } finally {
       if (saved !== undefined) process.env.AGENT_IMAGE_URL_ALLOWLIST = saved;
+    }
+  });
+
+  it("loraPathPolicy: https only, 200MB cap, MIME check disabled", () => {
+    const saved = process.env.LORA_URL_ALLOWLIST;
+    delete process.env.LORA_URL_ALLOWLIST;
+    try {
+      const p = loraPathPolicy();
+      expect(p.allowedSchemes).toEqual(["https:"]);
+      expect(p.allowedPorts).toEqual([443]);
+      // MIME check intentionally absent — HuggingFace serves .safetensors
+      // as application/octet-stream which a strict prefix check would
+      // reject.
+      expect(p.allowedMimePrefixes).toBeUndefined();
+      expect(p.maxContentLength).toBe(200 * 1024 * 1024);
+    } finally {
+      if (saved !== undefined) process.env.LORA_URL_ALLOWLIST = saved;
+    }
+  });
+
+  it("loraPathPolicy: defaults to HuggingFace / CivitAI / fal.media / replicate.delivery", () => {
+    const saved = process.env.LORA_URL_ALLOWLIST;
+    delete process.env.LORA_URL_ALLOWLIST;
+    try {
+      const p = loraPathPolicy();
+      // Sanity-check the curated allowlist — order doesn't matter, just
+      // make sure each trusted host family is reachable.
+      const hosts = p.allowedHosts ?? [];
+      expect(hosts).toEqual(
+        expect.arrayContaining([
+          "huggingface.co",
+          ".huggingface.co",
+          "civitai.com",
+          ".fal.media",
+          ".replicate.delivery",
+        ]),
+      );
+    } finally {
+      if (saved !== undefined) process.env.LORA_URL_ALLOWLIST = saved;
+    }
+  });
+
+  it("loraPathPolicy: ENV override replaces the default allowlist", () => {
+    const saved = process.env.LORA_URL_ALLOWLIST;
+    process.env.LORA_URL_ALLOWLIST = "weights.example.com, .my-cdn.net";
+    try {
+      const p = loraPathPolicy();
+      expect(p.allowedHosts).toEqual(["weights.example.com", ".my-cdn.net"]);
+    } finally {
+      if (saved === undefined) delete process.env.LORA_URL_ALLOWLIST;
+      else process.env.LORA_URL_ALLOWLIST = saved;
+    }
+  });
+
+  it("loraPathPolicy: rejects non-allowlisted host via assertUrlShape", () => {
+    const saved = process.env.LORA_URL_ALLOWLIST;
+    delete process.env.LORA_URL_ALLOWLIST;
+    try {
+      const p = loraPathPolicy();
+      try {
+        assertUrlShape("https://random-malicious.example.com/x.safetensors", p);
+        expect.fail("should have rejected non-allowlisted host");
+      } catch (e) {
+        expect((e as SsrfBlockedError).code).toBe("HOST_NOT_ALLOWED");
+      }
+      expect(() =>
+        assertUrlShape(
+          "https://huggingface.co/foo/bar.safetensors",
+          p,
+        ),
+      ).not.toThrow();
+    } finally {
+      if (saved !== undefined) process.env.LORA_URL_ALLOWLIST = saved;
     }
   });
 });
