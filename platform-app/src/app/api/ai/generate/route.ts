@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { generateWithFallback } from "@/lib/ai-providers";
 import { auth } from "@/server/auth";
 import { prisma } from "@/server/db";
-import { getModelById } from "@/lib/ai-models";
+import { getModelById, estimateMegapixels } from "@/lib/ai-models";
 import { checkRateLimit } from "@/lib/rateLimit";
 import { randomUUID } from "crypto";
 
@@ -31,6 +31,9 @@ export async function POST(req: NextRequest) {
             aspectRatio, count, seed, scale,
             referenceImages, systemPrompt,
             imageBase64, projectId,
+            // LoRA-aware models accept these extra controls. Plain models
+            // ignore them; FalProvider gates them on getLoraSpec(model).
+            loras, guidanceScale, numInferenceSteps, negativePrompt, acceleration,
             // When the client persists the result itself (e.g. photo workspace saves
             // the S3-backed URL into AIMessage on its own), it sets `recordMessage: false`
             // to avoid duplicating the assistant message.
@@ -70,6 +73,11 @@ export async function POST(req: NextRequest) {
             referenceImages,
             systemPrompt,
             imageBase64,
+            loras,
+            guidanceScale,
+            numInferenceSteps,
+            negativePrompt,
+            acceleration,
         });
 
 
@@ -82,7 +90,13 @@ export async function POST(req: NextRequest) {
             }
             const resolvedModel = model || "nano-banana-2";
             const modelEntry = getModelById(resolvedModel);
-            const costPerRun = modelEntry?.costPerRun ?? 0;
+            // LoRA-aware models bill per megapixel — multiply by an estimate
+            // of the actually-generated image size based on aspect/scale.
+            // Plain models keep their flat costPerRun.
+            const costPerRun = modelEntry?.loraSpec
+                ? modelEntry.loraSpec.pricePerMP
+                    * estimateMegapixels(resolvedModel, scale) * (count ?? 1)
+                : (modelEntry?.costPerRun ?? 0);
             const userId = session.user.id;
 
             // Find or create an AI session for this project/user

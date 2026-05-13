@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getProvider, getModelById, generateWithFallback } from "@/lib/ai-providers";
-import { getModelById as getModelEntryById } from "@/lib/ai-models";
+import { getModelById as getModelEntryById, estimateMegapixels } from "@/lib/ai-models";
 import { auth } from "@/server/auth";
 import { prisma } from "@/server/db";
 import { checkRateLimit } from "@/lib/rateLimit";
@@ -26,7 +26,14 @@ export async function POST(req: NextRequest) {
         }
 
         const body = await req.json();
-        const { action, prompt, imageBase64, maskBase64, model, aspectRatio, canvasSize, originalSize, originalLocation, referenceImages, projectId, expandPadding, upscaleScale, recordMessage = true } = body;
+        const {
+            action, prompt, imageBase64, maskBase64, model, aspectRatio,
+            canvasSize, originalSize, originalLocation, referenceImages, projectId,
+            expandPadding, upscaleScale, recordMessage = true,
+            // LoRA-aware models accept these on edit endpoints too
+            // (qwen-image-edit-lora, flux-lora/image-to-image).
+            loras, guidanceScale, numInferenceSteps, negativePrompt, acceleration,
+        } = body;
 
         if (!action) {
             return NextResponse.json(
@@ -78,6 +85,12 @@ export async function POST(req: NextRequest) {
                     model: inpaintModel,
                     imageBase64,
                     maskBase64,
+                    // LoRA controls — only honored when the model has a loraSpec.
+                    loras,
+                    guidanceScale,
+                    numInferenceSteps,
+                    negativePrompt,
+                    acceleration,
                 });
                 if (result.model) usedModel = result.model;
                 break;
@@ -100,6 +113,11 @@ export async function POST(req: NextRequest) {
                         imageBase64,
                         aspectRatio,
                         referenceImages: referenceImages && referenceImages.length > 0 ? referenceImages : undefined,
+                        loras,
+                        guidanceScale,
+                        numInferenceSteps,
+                        negativePrompt,
+                        acceleration,
                     });
                 } else {
                     // Fallback: text-to-image with prompt (no editing, just regenerate)
@@ -108,6 +126,11 @@ export async function POST(req: NextRequest) {
                         type: "image",
                         model: editModel,
                         referenceImages: referenceImages && referenceImages.length > 0 ? referenceImages : undefined,
+                        loras,
+                        guidanceScale,
+                        numInferenceSteps,
+                        negativePrompt,
+                        acceleration,
                     });
                 }
                 if (result.model) usedModel = result.model;
@@ -179,7 +202,13 @@ export async function POST(req: NextRequest) {
                 });
             }
             const modelEntry = getModelEntryById(usedModel);
-            const costPerRun = modelEntry?.costPerRun ?? 0;
+            // LoRA-aware models bill per megapixel — multiply by an estimate
+            // of the actually-generated image size. Plain models keep their
+            // flat costPerRun.
+            const costPerRun = modelEntry?.loraSpec
+                ? modelEntry.loraSpec.pricePerMP
+                    * estimateMegapixels(usedModel, undefined)
+                : (modelEntry?.costPerRun ?? 0);
             const userId = session.user.id;
 
             if (projectId) {
