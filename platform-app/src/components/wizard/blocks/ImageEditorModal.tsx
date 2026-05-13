@@ -18,6 +18,7 @@ import { Textarea } from "@/components/ui/Textarea";
 import { ReferenceImageInput } from "@/components/ui/ReferenceImageInput";
 import { ImageStylePresetPicker } from "@/components/ui/StylePresetPicker";
 import { LoraSelectorPicker } from "@/components/ui/LoraSelectorPicker";
+import { LoraTriggerHint } from "@/components/ui/LoraTriggerHint";
 import { ModelSettingsModal, type AdvancedAIParams } from "@/components/ui/ModelSettingsModal";
 import { getMaxRefs, resolveRefTags, getLoraSpec } from "@/lib/ai-models";
 import type { LoraWeight } from "@/lib/ai-providers";
@@ -540,13 +541,17 @@ export function ImageEditorModal({ imageSrc, onApply, onClose }: ImageEditorModa
                                     </div>
                                     {/* LoRA picker — hidden for non-LoRA models. */}
                                     {loraSpec && (
-                                        <div>
-                                            <p className="text-[10px] font-medium text-text-secondary mb-1.5">LoRA</p>
+                                        <div className="space-y-1.5">
+                                            <p className="text-[10px] font-medium text-text-secondary">LoRA</p>
                                             <LoraSelectorPicker
                                                 family={loraSpec.family}
                                                 maxCount={loraSpec.maxCount}
                                                 value={loras}
                                                 onChange={setLoras}
+                                            />
+                                            <LoraTriggerHint
+                                                family={loraSpec.family}
+                                                loras={loras}
                                             />
                                         </div>
                                     )}

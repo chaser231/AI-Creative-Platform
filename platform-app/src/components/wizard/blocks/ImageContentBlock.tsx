@@ -17,6 +17,7 @@ import { ReferenceImageInput } from "@/components/ui/ReferenceImageInput";
 import { RefAutocompleteTextarea, type RefAutocompleteTextareaHandle } from "@/components/ui/RefAutocompleteTextarea";
 import { ImageStylePresetPicker } from "@/components/ui/StylePresetPicker";
 import { LoraSelectorPicker } from "@/components/ui/LoraSelectorPicker";
+import { LoraTriggerHint } from "@/components/ui/LoraTriggerHint";
 import { ModelSettingsModal, type AdvancedAIParams } from "@/components/ui/ModelSettingsModal";
 import { getModelById, getMaxRefs, getAspectRatios, getResolutions, resolveRefTags, getLoraSpec } from "@/lib/ai-models";
 import type { LoraWeight } from "@/lib/ai-providers";
@@ -295,6 +296,14 @@ export function ImageContentBlock({ id, name, props, value, onChange, businessUn
                                 </p>
                             </div>
                         )}
+
+                        {/* LoRA trigger hint — mirrors server-side auto-injection */}
+                        <div className="px-4 pb-1">
+                            <LoraTriggerHint
+                                family={loraSpec?.family ?? null}
+                                loras={loras}
+                            />
+                        </div>
 
                         <div className="flex items-center gap-2 px-4 pb-3 pt-1">
                             <div className="flex min-w-0 flex-1 items-center gap-1.5">
