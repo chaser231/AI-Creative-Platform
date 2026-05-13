@@ -1210,6 +1210,50 @@ class FalProvider implements AIProviderImplementation {
             ?? (params.referenceImages && params.referenceImages[0]);
         const wantsEdit = params.type === "edit" || !!sourceImage;
 
+        // ── Auto-inject Trigger Words & Translate Prompt ──
+        let finalPrompt = params.prompt || "";
+        
+        try {
+            if (params.loras && params.loras.length > 0) {
+                const paths = params.loras.map(l => l.path);
+                const { SYSTEM_LORA_CATALOG } = await import("@/lib/lora-catalog");
+                const { prisma } = await import("@/server/db");
+                
+                const systemMatches = SYSTEM_LORA_CATALOG.filter(p => paths.includes(p.path));
+                const systemWords = systemMatches.flatMap(p => p.triggerWords || []);
+                
+                const dbMatches = await prisma.loraPreset.findMany({
+                    where: { path: { in: paths } },
+                    select: { triggerWords: true }
+                });
+                const dbWords = dbMatches.flatMap(p => p.triggerWords || []);
+                
+                const allWords = [...new Set([...systemWords, ...dbWords])];
+                if (allWords.length > 0) {
+                    finalPrompt = `${allWords.join(", ")}, ${finalPrompt}`;
+                    console.log(`[fal.ai LoRA] Injected trigger words: ${allWords.join(", ")}`);
+                }
+            }
+
+            // FLUX models on fal.ai (flux-lora, flux-2-lora) heavily degrade with Cyrillic text
+            // because community LoRAs strictly expect English captions.
+            if ((modelId === "flux-lora" || modelId === "flux-2-lora") && /[а-яА-ЯёЁ]/.test(finalPrompt)) {
+                console.log(`[fal.ai LoRA] Russian prompt detected, translating: "${finalPrompt}"`);
+                const textProvider = getProvider("gemini-flash");
+                const res = await textProvider.generate({
+                    prompt: `Translate this image generation prompt to English. Reply ONLY with the English translation, no quotes, no explanations. Preserve any special tags or trigger words as they are:\n\n${finalPrompt}`,
+                    type: "text"
+                });
+                if (res.content) {
+                    finalPrompt = res.content.trim();
+                    console.log(`[fal.ai LoRA] Translation result: "${finalPrompt}"`);
+                }
+            }
+        } catch (e) {
+            console.warn(`[fal.ai LoRA] Failed to process prompt enhancements:`, e);
+            // Non-fatal, continue with original prompt if translation/db-lookup fails
+        }
+
         // Pick endpoint
         let falEndpoint: string;
         if (modelId === "qwen-image-edit-lora") {
@@ -1230,7 +1274,7 @@ class FalProvider implements AIProviderImplementation {
 
         // Build input
         const input: Record<string, unknown> = {
-            prompt: params.prompt,
+            prompt: finalPrompt,
             // All four LoRA endpoints accept the image_size enum (square_hd /
             // portrait_* / landscape_*) — use the existing AR mapper.
             image_size: falImageSizeFromAspectRatio(params.aspectRatio),
