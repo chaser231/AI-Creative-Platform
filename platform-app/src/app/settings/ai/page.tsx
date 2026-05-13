@@ -12,7 +12,7 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import {
-  Sparkles, Cpu, Key, Palette, ChevronRight,
+  Sparkles, Cpu, Key, Palette, ChevronRight, Layers,
   Check, Info, Eye, EyeOff, ShieldCheck,
 } from "lucide-react";
 import { AppShell } from "@/components/layout/AppShell";
@@ -285,7 +285,7 @@ export default function AISettingsPage() {
           {/* ═══════════════════════════════════════════════ */}
           {/* AI STYLES LINK */}
           {/* ═══════════════════════════════════════════════ */}
-          <section className="pb-8">
+          <section>
             <h2 className="text-sm font-medium text-text-primary mb-4 flex items-center gap-2">
               <Palette size={16} className="text-text-tertiary" />
               Стили генерации
@@ -301,6 +301,31 @@ export default function AISettingsPage() {
                 <p className="text-sm font-medium text-text-primary">AI Стили генерации</p>
                 <p className="text-xs text-text-secondary mt-0.5">
                   Кастомные пресеты стилей для изображений и текста. Создавайте, редактируйте и управляйте стилями вашего воркспейса.
+                </p>
+              </div>
+              <ChevronRight size={18} className="text-text-tertiary group-hover:text-text-primary transition-colors shrink-0" />
+            </Link>
+          </section>
+
+          {/* ═══════════════════════════════════════════════ */}
+          {/* LORA PRESETS LINK */}
+          {/* ═══════════════════════════════════════════════ */}
+          <section className="pb-8">
+            <h2 className="text-sm font-medium text-text-primary mb-4 flex items-center gap-2">
+              <Layers size={16} className="text-text-tertiary" />
+              LoRA пресеты
+            </h2>
+            <Link
+              href="/settings/lora"
+              className="flex items-center gap-4 p-5 rounded-[var(--radius-xl)] border border-border-primary bg-bg-surface hover:bg-bg-secondary hover:border-border-secondary transition-all group"
+            >
+              <div className="w-12 h-12 rounded-[var(--radius-lg)] bg-gradient-to-br from-orange-400 to-pink-500 flex items-center justify-center shrink-0">
+                <Layers size={22} className="text-white" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-text-primary">LoRA пресеты</p>
+                <p className="text-xs text-text-secondary mt-0.5">
+                  Кастомные LoRA-веса (.safetensors URL) для FLUX и Qwen моделей. Триггер-слова автоматически добавляются к промпту при генерации.
                 </p>
               </div>
               <ChevronRight size={18} className="text-text-tertiary group-hover:text-text-primary transition-colors shrink-0" />
