@@ -12,17 +12,35 @@
  * Phase 3, Wave 4 — REQ-12, D-14, D-15, D-20.
  */
 
-import { useMemo, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { z } from "zod";
-import { ArrowRight, Database, Loader2, Play, Settings2, Unlink2 } from "lucide-react";
+import { ArrowRight, Database, Loader2, Play, Settings2, Sliders, Unlink2 } from "lucide-react";
 import { useWorkflowStore } from "@/store/workflow/useWorkflowStore";
 import { NODE_REGISTRY } from "@/server/workflow/types";
 import { NODE_PARAM_SCHEMAS } from "@/lib/workflow/nodeParamSchemas";
-import type { ImageInputParams } from "@/lib/workflow/nodeParamSchemas";
+import type {
+    ImageInputParams,
+    ImageGenerationParams,
+    LoraWeightParam,
+} from "@/lib/workflow/nodeParamSchemas";
+import { getLoraSpec } from "@/lib/ai-models";
 import { Button } from "@/components/ui/Button";
+import { LoraSelectorPicker } from "@/components/ui/LoraSelectorPicker";
+import { ModelSettingsModal, type AdvancedAIParams } from "@/components/ui/ModelSettingsModal";
 import { useWorkflowRunControls } from "./WorkflowRunControlsContext";
 import { RenderField } from "./inspector/renderField";
 import { ImageSourceInput } from "./inspector/ImageSourceInput";
+
+// Fields that the imageGeneration node renders through a custom LoRA panel
+// (not the auto-form RenderField loop). Listed here so the loop knows to skip
+// them when the active model has a loraSpec.
+const LORA_AUTO_FIELDS = new Set([
+    "loras",
+    "guidanceScale",
+    "numInferenceSteps",
+    "negativePrompt",
+    "acceleration",
+]);
 
 const PARAM_LABELS: Record<string, string> = {
     source: "Источник",
@@ -45,6 +63,12 @@ const PARAM_LABELS: Record<string, string> = {
     endIntensity: "Блюр в конце (px)",
     mode: "Режим",
     intensity: "Интенсивность (px)",
+    // LoRA-aware imageGeneration overrides
+    loras: "LoRA-веса",
+    guidanceScale: "Guidance scale",
+    numInferenceSteps: "Шаги инференса",
+    negativePrompt: "Negative prompt",
+    acceleration: "Скорость",
 };
 
 /**
@@ -73,6 +97,11 @@ const ENUM_OPTION_LABELS: Record<string, Record<string, string>> = {
         "gpt-image": "GPT Image 1.5",
         "qwen-image": "Qwen Image",
         "dall-e-3": "DALL-E 3",
+        // LoRA-aware variants — surfaced in the inspector so workflows
+        // can use the same model registry as the prompt bars.
+        "flux-lora": "FLUX.1 LoRA",
+        "flux-2-lora": "FLUX.2 LoRA",
+        "qwen-image-lora": "Qwen Image LoRA",
     },
     style: {
         photo: "Фото",
@@ -282,6 +311,16 @@ export function NodeInspector({
         // updateNodeParams is a shallow merge; passing `undefined` clears a key.
         updateNodeParams(node.id, patch);
     };
+
+    // LoRA panel state — only meaningful when the active imageGeneration node
+    // points at a LoRA-aware model. `loraSpec` is null for everything else,
+    // which silences the entire LoRA UI block below.
+    const imageGenParams =
+        node.type === "imageGeneration"
+            ? (node.data.params as Partial<ImageGenerationParams>)
+            : null;
+    const activeModelId = imageGenParams?.model ?? null;
+    const loraSpec = activeModelId ? getLoraSpec(activeModelId) : null;
     const nodeRunDisabledReason = runControls?.getNodeRunDisabledReason(node.id);
     const canRunNode = Boolean(runControls && !nodeRunDisabledReason);
     const nodeCachedRunDisabledReason =
@@ -371,21 +410,39 @@ export function NodeInspector({
                         />
                     ) : (
                         <div className="space-y-5">
-                            {Object.entries(shape).map(([key, fieldSchema]) => (
-                                <RenderField
-                                    key={key}
-                                    name={key}
-                                    label={PARAM_LABELS[key] ?? key}
-                                    schema={fieldSchema as z.ZodTypeAny}
-                                    value={(node.data.params as Record<string, unknown>)[key]}
-                                    error={errorByPath.get(key)}
-                                    optionLabels={ENUM_OPTION_LABELS[key]}
-                                    onChange={(next) => handlePatch({ [key]: next })}
-                                />
-                            ))}
+                            {Object.entries(shape)
+                                // For imageGeneration we render LoRA + advanced fields in a
+                                // dedicated panel below — keep them out of the auto-form so
+                                // each field is shown exactly once.
+                                .filter(
+                                    ([key]) =>
+                                        node.type !== "imageGeneration" ||
+                                        !LORA_AUTO_FIELDS.has(key),
+                                )
+                                .map(([key, fieldSchema]) => (
+                                    <RenderField
+                                        key={key}
+                                        name={key}
+                                        label={PARAM_LABELS[key] ?? key}
+                                        schema={fieldSchema as z.ZodTypeAny}
+                                        value={(node.data.params as Record<string, unknown>)[key]}
+                                        error={errorByPath.get(key)}
+                                        optionLabels={ENUM_OPTION_LABELS[key]}
+                                        onChange={(next) => handlePatch({ [key]: next })}
+                                    />
+                                ))}
                         </div>
                     )}
                 </InspectorSection>
+
+                {/* LoRA panel — only mounted for LoRA-aware imageGeneration nodes. */}
+                {node.type === "imageGeneration" && loraSpec && imageGenParams && (
+                    <LoraInspectorPanel
+                        params={imageGenParams}
+                        spec={loraSpec}
+                        onPatch={handlePatch}
+                    />
+                )}
 
                 {validation && !validation.success && (
                     <div className="mx-4 mb-4 rounded-[var(--radius-md)] border border-status-draft/40 bg-status-draft/10 px-2.5 py-2 text-[11px] text-text-secondary">
@@ -403,6 +460,109 @@ export function NodeInspector({
                 )}
             </div>
         </InspectorShell>
+    );
+}
+
+/**
+ * LoraInspectorPanel — dedicated section for LoRA-aware imageGeneration nodes.
+ *
+ * Reuses the same LoraSelectorPicker + ModelSettingsModal that the prompt
+ * bars use, so the UX stays identical between the canvas, photo and
+ * workflow surfaces. Writes back into `data.params.loras` /
+ * `data.params.guidanceScale` etc through the same `updateNodeParams`
+ * dispatch the rest of the inspector uses.
+ */
+function LoraInspectorPanel({
+    params,
+    spec,
+    onPatch,
+}: {
+    params: Partial<ImageGenerationParams>;
+    spec: NonNullable<ReturnType<typeof getLoraSpec>>;
+    onPatch: (patch: Record<string, unknown>) => void;
+}) {
+    const [settingsOpen, setSettingsOpen] = useState(false);
+    const loras: LoraWeightParam[] = params.loras ?? [];
+    const advanced: AdvancedAIParams = {
+        guidanceScale: params.guidanceScale,
+        numInferenceSteps: params.numInferenceSteps,
+        negativePrompt: params.negativePrompt,
+        acceleration: params.acceleration,
+    };
+
+    return (
+        <>
+            <InspectorSection title="LoRA и параметры модели">
+                <div className="space-y-4">
+                    <div>
+                        <span className="block mb-2 text-xs font-medium leading-5 text-text-primary">
+                            LoRA-веса{" "}
+                            <span className="ml-1 text-text-tertiary">
+                                до {spec.maxCount}
+                            </span>
+                        </span>
+                        <LoraSelectorPicker
+                            family={spec.family}
+                            maxCount={spec.maxCount}
+                            value={loras}
+                            onChange={(next) =>
+                                onPatch({ loras: next.length > 0 ? next : undefined })
+                            }
+                        />
+                    </div>
+
+                    <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => setSettingsOpen(true)}
+                        className="w-full rounded-[var(--radius-md)]"
+                    >
+                        <Sliders className="h-3.5 w-3.5" />
+                        Расширенные параметры
+                    </Button>
+
+                    {/* Compact summary of overrides so users see what's active
+                        without opening the modal. Defaults stay implicit. */}
+                    {(advanced.guidanceScale !== undefined ||
+                        advanced.numInferenceSteps !== undefined ||
+                        advanced.acceleration !== undefined ||
+                        advanced.negativePrompt) && (
+                        <ul className="space-y-1 text-[11px] text-text-tertiary">
+                            {advanced.guidanceScale !== undefined && (
+                                <li>guidance: {advanced.guidanceScale.toFixed(1)}</li>
+                            )}
+                            {advanced.numInferenceSteps !== undefined && (
+                                <li>steps: {advanced.numInferenceSteps}</li>
+                            )}
+                            {advanced.acceleration && (
+                                <li>acceleration: {advanced.acceleration}</li>
+                            )}
+                            {advanced.negativePrompt && (
+                                <li className="truncate">
+                                    negative: {advanced.negativePrompt}
+                                </li>
+                            )}
+                        </ul>
+                    )}
+                </div>
+            </InspectorSection>
+
+            <ModelSettingsModal
+                open={settingsOpen}
+                onClose={() => setSettingsOpen(false)}
+                spec={spec}
+                value={advanced}
+                onChange={(next) =>
+                    onPatch({
+                        guidanceScale: next.guidanceScale,
+                        numInferenceSteps: next.numInferenceSteps,
+                        negativePrompt: next.negativePrompt,
+                        acceleration: next.acceleration,
+                    })
+                }
+            />
+        </>
     );
 }
 
