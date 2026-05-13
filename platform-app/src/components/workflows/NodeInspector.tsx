@@ -26,6 +26,7 @@ import type {
 import { getLoraSpec } from "@/lib/ai-models";
 import { Button } from "@/components/ui/Button";
 import { LoraSelectorPicker } from "@/components/ui/LoraSelectorPicker";
+import { LoraTriggerHint } from "@/components/ui/LoraTriggerHint";
 import { ModelSettingsModal, type AdvancedAIParams } from "@/components/ui/ModelSettingsModal";
 import { useWorkflowRunControls } from "./WorkflowRunControlsContext";
 import { RenderField } from "./inspector/renderField";
@@ -509,6 +510,12 @@ function LoraInspectorPanel({
                                 onPatch({ loras: next.length > 0 ? next : undefined })
                             }
                         />
+                        <div className="mt-2">
+                            <LoraTriggerHint
+                                family={spec.family}
+                                loras={loras}
+                            />
+                        </div>
                     </div>
 
                     <Button

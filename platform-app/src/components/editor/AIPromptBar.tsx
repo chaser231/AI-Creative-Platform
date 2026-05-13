@@ -5,6 +5,7 @@ import { ReferenceImageInput } from "@/components/ui/ReferenceImageInput";
 import { RefAutocompleteTextarea, type RefAutocompleteTextareaHandle } from "@/components/ui/RefAutocompleteTextarea";
 import { ImageStylePresetPicker, TextStylePresetPicker } from "@/components/ui/StylePresetPicker";
 import { LoraSelectorPicker } from "@/components/ui/LoraSelectorPicker";
+import { LoraTriggerHint } from "@/components/ui/LoraTriggerHint";
 import { ModelSettingsModal, type AdvancedAIParams } from "@/components/ui/ModelSettingsModal";
 import { useCanvasStore } from "@/store/canvasStore";
 import { useShallow } from "zustand/react/shallow";
@@ -913,6 +914,16 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                         }}
                     />
                 </div>
+
+                {/* ── LoRA Trigger Hint — mirrors server-side auto-injection ── */}
+                {(activeTab === "image" || activeTab === "edit") && (
+                    <div className="px-4 pb-1">
+                        <LoraTriggerHint
+                            family={loraSpec?.family ?? null}
+                            loras={loras}
+                        />
+                    </div>
+                )}
 
                 {/* ── QUICK ACTIONS (Edit tab only) ── */}
                 {activeTab === "edit" && (

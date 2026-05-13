@@ -10,6 +10,7 @@ import type { LoraWeight } from "@/lib/ai-providers";
 import { persistImageToS3, uploadForAI, uploadManyForAI } from "@/utils/imageUpload";
 import { ImageStylePresetPicker } from "@/components/ui/StylePresetPicker";
 import { LoraSelectorPicker } from "@/components/ui/LoraSelectorPicker";
+import { LoraTriggerHint } from "@/components/ui/LoraTriggerHint";
 import { ModelSettingsModal, type AdvancedAIParams } from "@/components/ui/ModelSettingsModal";
 import { useStylePresets } from "@/hooks/useStylePresets";
 import { getImagePresetPromptSuffix } from "@/lib/stylePresets";
@@ -418,6 +419,14 @@ export function PhotoPromptBar({ projectId }: PhotoPromptBarProps) {
                                 : "Опишите изображение: гиперреалистичная ваза в неоновом свете, 8k..."
                         }
                         className="w-full h-full min-h-[60px] bg-transparent text-[14px] text-text-primary placeholder:text-text-tertiary/60 focus:outline-none resize-none leading-relaxed"
+                    />
+                </div>
+
+                {/* LoRA trigger hint — mirrors server-side auto-injection */}
+                <div className="px-4 pb-1">
+                    <LoraTriggerHint
+                        family={loraSpec?.family ?? null}
+                        loras={loras}
                     />
                 </div>
 
