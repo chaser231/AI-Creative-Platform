@@ -16,12 +16,16 @@ import { Button } from "@/components/ui/Button";
 import { ReferenceImageInput } from "@/components/ui/ReferenceImageInput";
 import { RefAutocompleteTextarea, type RefAutocompleteTextareaHandle } from "@/components/ui/RefAutocompleteTextarea";
 import { ImageStylePresetPicker } from "@/components/ui/StylePresetPicker";
-import { getModelById, getMaxRefs, getAspectRatios, getResolutions, resolveRefTags } from "@/lib/ai-models";
+import { LoraSelectorPicker } from "@/components/ui/LoraSelectorPicker";
+import { ModelSettingsModal, type AdvancedAIParams } from "@/components/ui/ModelSettingsModal";
+import { getModelById, getMaxRefs, getAspectRatios, getResolutions, resolveRefTags, getLoraSpec } from "@/lib/ai-models";
+import type { LoraWeight } from "@/lib/ai-providers";
 import { getImagePresetPromptSuffix } from "@/lib/stylePresets";
 import { useStylePresets } from "@/hooks/useStylePresets";
 import { uploadManyForAI } from "@/utils/imageUpload";
 import type { ImageComponentProps, BusinessUnit } from "@/types";
 import { ImageEditorModal } from "./ImageEditorModal";
+import { Sliders } from "lucide-react";
 
 // ─── AI Models ───────────────────────────────────────────────────────────────
 
@@ -39,6 +43,9 @@ const IMAGE_GEN_MODELS = [
     { id: "flux-dev", label: "Flux Dev" },
     { id: "flux-1.1-pro", label: "Flux 1.1 Pro" },
     { id: "dall-e-3", label: "DALL-E 3" },
+    { id: "flux-lora", label: "FLUX.1 LoRA" },
+    { id: "flux-2-lora", label: "FLUX.2 LoRA" },
+    { id: "qwen-image-lora", label: "Qwen Image LoRA" },
 ];
 
 // Aspect ratios and resolutions are now dynamic per model — see ai-models.ts
@@ -74,14 +81,28 @@ export function ImageContentBlock({ id, name, props, value, onChange, businessUn
     const [stylePreset, setStylePreset] = useState("none");
     const [showAdvanced, setShowAdvanced] = useState(false);
     const [additionalPhotos, setAdditionalPhotos] = useState<string[]>([]);
+    // LoRA selection + advanced overrides — both scoped to the active model.
+    const [loras, setLoras] = useState<LoraWeight[]>([]);
+    const [advancedParams, setAdvancedParams] = useState<AdvancedAIParams>({});
+    const [settingsOpen, setSettingsOpen] = useState(false);
 
     // Whether selected model supports vision (reference images)
     const supportsVision = getModelById(selectedModel)?.caps.includes("vision") ?? false;
     // Dynamic per-model options
     const modelAspectRatios = getAspectRatios(selectedModel);
     const modelResolutions = getResolutions(selectedModel);
+    // LoRA capabilities for the active model.
+    const loraSpec = getLoraSpec(selectedModel);
     // Workspace-aware presets (system + custom from DB)
     const { imagePresets } = useStylePresets();
+
+    // Reset LoRA + overrides on every model swap so values scoped to the
+    // previous model can never leak into the next request.
+    const handleModelChange = (modelId: string) => {
+        setSelectedModel(modelId);
+        setLoras([]);
+        setAdvancedParams({});
+    };
 
     const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
@@ -131,6 +152,17 @@ export function ImageContentBlock({ id, name, props, value, onChange, businessUn
                     scale: scale || undefined,
                     referenceImages: refUrls,
                     projectId,
+                    // LoRA + overrides — server filters them based on the
+                    // model entry, so non-LoRA models silently ignore these.
+                    ...(loraSpec
+                        ? {
+                            loras: loras.length > 0 ? loras : undefined,
+                            guidanceScale: advancedParams.guidanceScale,
+                            numInferenceSteps: advancedParams.numInferenceSteps,
+                            negativePrompt: advancedParams.negativePrompt,
+                            acceleration: advancedParams.acceleration,
+                        }
+                        : {}),
                 }),
             });
             const data = await response.json();
@@ -269,7 +301,7 @@ export function ImageContentBlock({ id, name, props, value, onChange, businessUn
                                 <OutlinedSelector icon={<Settings2 size={13} />}>
                                     <select
                                         value={selectedModel}
-                                        onChange={(e) => setSelectedModel(e.target.value)}
+                                        onChange={(e) => handleModelChange(e.target.value)}
                                         className="max-w-[150px] bg-transparent text-[12px] font-medium text-text-secondary focus:outline-none cursor-pointer hover:text-text-primary appearance-none"
                                     >
                                         {IMAGE_GEN_MODELS.map((model) => (
@@ -279,6 +311,17 @@ export function ImageContentBlock({ id, name, props, value, onChange, businessUn
                                         ))}
                                     </select>
                                 </OutlinedSelector>
+
+                                {/* Advanced model settings — only for LoRA-aware models. */}
+                                {loraSpec && (
+                                    <button
+                                        onClick={() => setSettingsOpen(true)}
+                                        title="Параметры модели"
+                                        className="flex items-center justify-center w-7 h-7 rounded-[10px] border border-border-primary/60 text-text-tertiary hover:text-text-primary hover:bg-bg-tertiary/30 transition-all cursor-pointer"
+                                    >
+                                        <Sliders size={12} />
+                                    </button>
+                                )}
 
                                 <OutlinedSelector icon={<Ratio size={13} />}>
                                     <select
@@ -299,6 +342,14 @@ export function ImageContentBlock({ id, name, props, value, onChange, businessUn
                                     selectedId={stylePreset}
                                     onChange={setStylePreset}
                                     variant="compact"
+                                />
+
+                                {/* LoRA picker — disabled for non-LoRA models. */}
+                                <LoraSelectorPicker
+                                    family={loraSpec?.family ?? null}
+                                    maxCount={loraSpec?.maxCount ?? 1}
+                                    value={loras}
+                                    onChange={setLoras}
                                 />
 
                                 <button
@@ -391,6 +442,17 @@ export function ImageContentBlock({ id, name, props, value, onChange, businessUn
                     onApply={(edited) => { onChange(edited); setShowEditor(false); }}
                     onClose={() => setShowEditor(false)}
                     businessUnit={businessUnit}
+                />
+            )}
+
+            {/* Advanced model settings — only mounted for LoRA-aware models. */}
+            {loraSpec && (
+                <ModelSettingsModal
+                    open={settingsOpen}
+                    onClose={() => setSettingsOpen(false)}
+                    spec={loraSpec}
+                    value={advancedParams}
+                    onChange={setAdvancedParams}
                 />
             )}
         </>
