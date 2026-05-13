@@ -34,6 +34,18 @@ export const imageInputParamsSchema = z
         },
     );
 
+/**
+ * Single LoRA weight passed to the FAL provider. `path` must be an HTTPS URL
+ * to a `.safetensors` file. The server runs `loraPathPolicy` (SSRF guard)
+ * against this URL before invoking fal.ai, so client-side validation here
+ * is intentionally minimal — we only enforce shape so graphs stay
+ * round-trippable.
+ */
+export const loraWeightSchema = z.object({
+    path: z.string().url(),
+    scale: z.number().min(0).max(2).optional(),
+});
+
 export const imageGenerationParamsSchema = z.object({
     prompt: z.string().trim().max(1200).default(""),
     style: z
@@ -52,11 +64,26 @@ export const imageGenerationParamsSchema = z.object({
             "gpt-image-2",
             "qwen-image",
             "dall-e-3",
+            // LoRA-aware fal.ai endpoints — see lib/ai-models.ts
+            "flux-lora",
+            "flux-2-lora",
+            "qwen-image-lora",
         ])
         .default("flux-schnell"),
     aspectRatio: z
         .enum(["1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9"])
         .default("1:1"),
+    // Optional LoRA weights — only honoured by FAL_PRIMARY_MODELS that have
+    // a `loraSpec` (server enforces). Up to 2 entries per loraSpec.maxCount;
+    // the schema caps at 4 to keep older graphs valid if the cap is raised.
+    loras: z.array(loraWeightSchema).max(4).optional(),
+    // Advanced LoRA-only knobs (mirrored from AdvancedAIParams in the UI).
+    // Server clamps each value to the active model's loraSpec range, so
+    // ranges here stay generous to avoid blocking edge cases.
+    guidanceScale: z.number().min(1).max(20).optional(),
+    numInferenceSteps: z.number().int().min(1).max(60).optional(),
+    negativePrompt: z.string().max(1200).optional(),
+    acceleration: z.enum(["none", "regular", "high"]).optional(),
 });
 
 export const textGenerationParamsSchema = z.object({
@@ -201,6 +228,7 @@ export const NODE_PARAM_SCHEMAS: Record<WorkflowNodeType, z.ZodTypeAny> = {
 
 export type ImageInputParams = z.infer<typeof imageInputParamsSchema>;
 export type ImageGenerationParams = z.infer<typeof imageGenerationParamsSchema>;
+export type LoraWeightParam = z.infer<typeof loraWeightSchema>;
 export type TextGenerationParams = z.infer<typeof textGenerationParamsSchema>;
 export type RemoveBackgroundParams = z.infer<typeof removeBackgroundParamsSchema>;
 export type AddReflectionParams = z.infer<typeof addReflectionParamsSchema>;
