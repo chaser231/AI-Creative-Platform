@@ -852,3 +852,47 @@ export function agentAddImagePolicy(): SsrfPolicyOptions {
     if (envList) base.allowedHosts = envList;
     return base;
 }
+
+/**
+ * Policy used when validating user-supplied LoRA `.safetensors` URLs before
+ * they're stored in LoraPreset or sent to fal.ai as `loras[].path`.
+ *
+ * Hosts are restricted to known LoRA distribution networks:
+ *   • huggingface.co + cdn-lfs.huggingface.co — official model registry
+ *   • civitai.com + civitaiarchive.com       — community model index
+ *   • *.fal.media + *.fal.run                — fal.ai-hosted assets
+ *   • *.replicate.delivery                   — Replicate-hosted weights
+ *
+ * Override / extend at deploy time via the LORA_URL_ALLOWLIST env var
+ * (comma-separated; ".example.com" matches subdomains).
+ *
+ * MIME enforcement is intentionally **not** applied here — most LoRA hosts
+ * serve `.safetensors` as `application/octet-stream` or `binary/octet-stream`
+ * and a strict `application/safetensors` check would falsely reject them.
+ * The host allowlist is the trust anchor.
+ *
+ * Size limit 200 MB — a generous ceiling for FLUX LoRAs (typically 50-150 MB)
+ * while still rejecting accidental gigabyte uploads.
+ */
+export function loraPathPolicy(): SsrfPolicyOptions {
+    const envList = parseHostAllowlistEnv(process.env.LORA_URL_ALLOWLIST);
+    const base: SsrfPolicyOptions = {
+        allowedSchemes: ["https:"],
+        allowedPorts: [443],
+        // No MIME prefix — see comment above.
+        maxContentLength: 200 * 1024 * 1024,
+        headTimeoutMs: 8_000,
+        allowedHosts: envList ?? [
+            "huggingface.co",
+            ".huggingface.co",            // cdn-lfs subdomains
+            "civitai.com",
+            ".civitai.com",
+            "civitaiarchive.com",
+            ".civitaiarchive.com",
+            ".fal.media",
+            ".fal.run",
+            ".replicate.delivery",
+        ],
+    };
+    return base;
+}
