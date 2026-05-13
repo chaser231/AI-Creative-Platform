@@ -86,6 +86,12 @@ export type LoraPickerEntry = LoraPresetEntry & {
     authorName: string | null;
     /** True if the caller is allowed to edit/delete this entry. */
     canEdit: boolean;
+    /**
+     * Persisted visibility for DB-backed entries (`personal` | `workspace`).
+     * Always `"system"` for system catalogue rows so consumers can render a
+     * single badge without branching on `source`.
+     */
+    visibility: "personal" | "workspace" | "system";
 };
 
 // ── router ────────────────────────────────────────────────
@@ -107,7 +113,13 @@ export const loraPresetRouter = createTRPCRouter({
             // System catalogue — always visible, flagged read-only.
             const system: LoraPickerEntry[] = SYSTEM_LORA_CATALOG
                 .filter((p) => !input.family || p.family === input.family)
-                .map((p) => ({ ...p, source: "system", authorName: null, canEdit: false }));
+                .map((p) => ({
+                    ...p,
+                    source: "system",
+                    authorName: null,
+                    canEdit: false,
+                    visibility: "system",
+                }));
 
             // Workspace + personal DB rows.
             const rows = await ctx.prisma.loraPreset.findMany({
@@ -155,6 +167,8 @@ export const loraPresetRouter = createTRPCRouter({
                 authorName: r.createdBy?.name ?? null,
                 canEdit:
                     r.createdById === ctx.user.id || isWsAdmin || isSuperAdmin,
+                visibility:
+                    (r.visibility === "workspace" ? "workspace" : "personal"),
             }));
 
             return [...system, ...dbEntries];
