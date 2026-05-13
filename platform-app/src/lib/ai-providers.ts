@@ -10,11 +10,18 @@
  */
 
 // Re-export model registry & helpers (client-safe, no server deps)
-export { MODEL_REGISTRY, getModelsForCaps, getModelById } from "./ai-models";
-export type { ModelCap, ModelEntry } from "./ai-models";
+export {
+    MODEL_REGISTRY,
+    getModelsForCaps,
+    getModelById,
+    supportsLora,
+    getLoraSpec,
+    estimateMegapixels,
+} from "./ai-models";
+export type { ModelCap, ModelEntry, LoraSpec } from "./ai-models";
 
-import { MODEL_REGISTRY, getModelById } from "./ai-models";
-import type { ModelEntry } from "./ai-models";
+import { MODEL_REGISTRY, getModelById, getLoraSpec, estimateMegapixels } from "./ai-models";
+import type { ModelEntry, LoraSpec } from "./ai-models";
 
 // ─── Interfaces ─────────────────────────────────────────────────────────────
 

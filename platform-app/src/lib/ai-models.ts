@@ -16,6 +16,43 @@ export interface ResolutionOption {
     label: string; // user-facing label
 }
 
+/**
+ * LoRA capability descriptor.
+ *
+ * Attached to LoRA-aware fal.ai endpoints (`fal-ai/flux-lora`,
+ * `fal-ai/flux-2/lora`, `fal-ai/qwen-image-2512/lora`,
+ * `fal-ai/qwen-image-edit-lora`). Drives:
+ *   • UI gating of LoraSelectorPicker / ModelSettingsModal
+ *   • allowed `family` filter when picking presets
+ *   • per-model defaults the FalProvider falls back to when the user
+ *     hasn't overridden anything in advanced settings
+ */
+export interface LoraSpec {
+    /** How many LoRAs may be merged at once. Hardcoded to 2 in V1 UI. */
+    maxCount: number;
+    /**
+     * LoRA "family" — only presets whose family matches can be picked.
+     * Cross-family weights are not interchangeable.
+     */
+    family: "flux-1" | "flux-2" | "qwen";
+    /** Default CFG / guidance scale (sent to fal as `guidance_scale`). */
+    defaultGuidance: number;
+    /** Default sampler steps (sent as `num_inference_steps`). */
+    defaultSteps: number;
+    /** Inclusive [min, max] range for guidance slider. */
+    guidanceRange: [number, number];
+    /** Inclusive [min, max] range for steps slider. */
+    stepsRange: [number, number];
+    /** Whether the endpoint accepts an `acceleration` enum. */
+    supportsAcceleration: boolean;
+    /** Allowed acceleration values (subset of "none" | "regular" | "high"). */
+    accelerationOptions?: ("none" | "regular" | "high")[];
+    /** Whether the endpoint accepts a `negative_prompt` (Qwen edit only). */
+    supportsNegativePrompt: boolean;
+    /** Per-megapixel price in USD — used for cost tracking (more precise than costPerRun). */
+    pricePerMP: number;
+}
+
 export interface ModelEntry {
     id: string;
     label: string;
@@ -34,6 +71,12 @@ export interface ModelEntry {
     version?: string;
     /** If true, requires OPENAI_API_KEY for BYOK billing */
     byok?: boolean;
+    /**
+     * LoRA capability — when present, this model accepts a `loras` array and
+     * exposes the advanced-settings modal (guidance / steps / negative prompt /
+     * acceleration). Absent on all base models.
+     */
+    loraSpec?: LoraSpec;
 }
 
 // ─── Shared Constants ───────────────────────────────────────────────────────
@@ -72,6 +115,14 @@ const SEEDREAM_RESOLUTIONS: ResolutionOption[] = [
     { id: "2K", label: "2K" },
     { id: "3K", label: "3K" },
 ];
+
+/**
+ * fal.ai LoRA endpoints accept the `image_size` preset enum (square_hd /
+ * portrait_* / landscape_*). We surface the same canonical AR strings the rest
+ * of the registry uses; FalProvider maps them to fal's image_size internally
+ * via falImageSizeFromAspectRatio().
+ */
+const LORA_ASPECT_RATIOS = ["1:1", "4:3", "3:4", "16:9", "9:16"];
 
 // ─── Registry ───────────────────────────────────────────────────────────────
 
@@ -232,6 +283,112 @@ export const MODEL_REGISTRY: ModelEntry[] = [
         caps: ["generate"],
         costPerRun: 0.04,
         aspectRatios: ["1:1", "16:9", "9:16"],
+    },
+
+    // ── LoRA-aware Image Models (fal.ai) ────────────────────────────────
+    // These endpoints accept a `loras` array of { path, scale } pairs. They
+    // share schema across families (Flux 1, Flux 2, Qwen 2512) but each has
+    // its own guidance/steps/acceleration defaults — see LoraSpec.
+    {
+        // FLUX.1 [dev] with LoRAs — the canonical Flux LoRA endpoint.
+        // Cheapest and most battle-tested LoRA model; the right default for
+        // applying community Flux LoRAs (HuggingFace / CivitAI).
+        // Endpoint: https://fal.run/fal-ai/flux-lora
+        id: "flux-lora",
+        label: "FLUX.1 LoRA",
+        slug: "fal-ai/flux-lora",
+        provider: "fal",
+        caps: ["generate", "edit", "vision"],
+        costPerRun: 0.025,
+        maxRefs: 1, // image-to-image variant accepts a single source image
+        aspectRatios: LORA_ASPECT_RATIOS,
+        loraSpec: {
+            maxCount: 2,
+            family: "flux-1",
+            defaultGuidance: 3.5,
+            defaultSteps: 28,
+            guidanceRange: [0, 35],
+            stepsRange: [1, 50],
+            supportsAcceleration: true,
+            accelerationOptions: ["none", "regular"],
+            supportsNegativePrompt: false,
+            pricePerMP: 0.025,
+        },
+    },
+    {
+        // FLUX.2 [dev] with LoRAs — newest Flux generation. Better prompt
+        // adherence and acceleration="high" support, slightly pricier.
+        // Endpoint: https://fal.run/fal-ai/flux-2/lora
+        id: "flux-2-lora",
+        label: "FLUX.2 LoRA",
+        slug: "fal-ai/flux-2/lora",
+        provider: "fal",
+        caps: ["generate", "vision"],
+        costPerRun: 0.05,
+        aspectRatios: LORA_ASPECT_RATIOS,
+        loraSpec: {
+            maxCount: 2,
+            family: "flux-2",
+            defaultGuidance: 2.5,
+            defaultSteps: 28,
+            guidanceRange: [0, 20],
+            stepsRange: [1, 50],
+            supportsAcceleration: true,
+            accelerationOptions: ["none", "regular", "high"],
+            supportsNegativePrompt: false,
+            pricePerMP: 0.05,
+        },
+    },
+    {
+        // Qwen Image 2512 with LoRAs — best-in-class for photorealism and
+        // legible in-image text (incl. Cyrillic). Use for product photos and
+        // banners with embedded copy.
+        // Endpoint: https://fal.run/fal-ai/qwen-image-2512/lora
+        id: "qwen-image-lora",
+        label: "Qwen Image LoRA",
+        slug: "fal-ai/qwen-image-2512/lora",
+        provider: "fal",
+        caps: ["generate"],
+        costPerRun: 0.035,
+        aspectRatios: LORA_ASPECT_RATIOS,
+        loraSpec: {
+            maxCount: 2,
+            family: "qwen",
+            defaultGuidance: 4,
+            defaultSteps: 28,
+            guidanceRange: [0, 20],
+            stepsRange: [1, 50],
+            supportsAcceleration: true,
+            accelerationOptions: ["none", "regular", "high"],
+            supportsNegativePrompt: false,
+            pricePerMP: 0.035,
+        },
+    },
+    {
+        // Qwen Image Edit with LoRAs — image-to-image with optional negative
+        // prompt and LoRA stack. The only LoRA-aware editing endpoint we
+        // currently expose; lives in EDIT_MODELS in the prompt bars.
+        // Endpoint: https://fal.run/fal-ai/qwen-image-edit-lora
+        id: "qwen-image-edit-lora",
+        label: "Qwen Image Edit LoRA",
+        slug: "fal-ai/qwen-image-edit-lora",
+        provider: "fal",
+        caps: ["edit", "vision"],
+        costPerRun: 0.035,
+        maxRefs: 1,
+        aspectRatios: LORA_ASPECT_RATIOS,
+        loraSpec: {
+            maxCount: 2,
+            family: "qwen",
+            defaultGuidance: 4,
+            defaultSteps: 30,
+            guidanceRange: [0, 20],
+            stepsRange: [2, 50],
+            supportsAcceleration: true,
+            accelerationOptions: ["none", "regular", "high"],
+            supportsNegativePrompt: true,
+            pricePerMP: 0.035,
+        },
     },
 
     // ── Specialized Image Tools ─────────────────────────────────────────
@@ -406,6 +563,56 @@ export function getAspectRatios(modelId: string): string[] {
 /** Get available resolution options for a model (empty = no resolution control). */
 export function getResolutions(modelId: string): ResolutionOption[] {
     return getModelById(modelId)?.resolutions ?? [];
+}
+
+/** Returns true if the model accepts a `loras` array (i.e. exposes LoraSpec). */
+export function supportsLora(modelId: string): boolean {
+    return !!getModelById(modelId)?.loraSpec;
+}
+
+/** Get the LoRA capability descriptor for a model, or undefined if non-LoRA. */
+export function getLoraSpec(modelId: string): LoraSpec | undefined {
+    return getModelById(modelId)?.loraSpec;
+}
+
+/**
+ * Approximate megapixels generated for a given aspect ratio + resolution
+ * preset. Used to project per-MP price (LoRA models bill per megapixel).
+ *
+ * Heuristic — matches what fal.ai produces in practice for our enums:
+ *   • Google "1K" / "2K" / "4K" → 1 / 4 / 16 MP
+ *   • Seedream "2K" / "3K"      → 4 / 9 MP
+ *   • Flux megapixels enum is the literal MP value
+ *   • LoRA models with no resolution selector → 1 MP (square_hd default)
+ */
+export function estimateMegapixels(
+    modelId: string,
+    resolution?: string,
+): number {
+    const entry = getModelById(modelId);
+    if (!entry) return 1;
+
+    if (resolution) {
+        // Flux megapixels: literal value
+        if (entry.slug.startsWith("black-forest-labs/")) {
+            const n = parseFloat(resolution);
+            if (Number.isFinite(n)) return n;
+        }
+        // Google nano-banana
+        if (entry.slug.startsWith("google/")) {
+            if (resolution === "1K") return 1;
+            if (resolution === "2K") return 4;
+            if (resolution === "4K") return 16;
+        }
+        // Seedream
+        if (entry.slug.startsWith("bytedance/")) {
+            if (resolution === "2K") return 4;
+            if (resolution === "3K") return 9;
+        }
+    }
+
+    // LoRA endpoints + everything else — assume ~1 MP (square_hd).
+    return 1;
 }
 
 // ─── Reference tag resolution ───────────────────────────────────────────────
