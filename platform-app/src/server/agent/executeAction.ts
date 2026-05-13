@@ -307,6 +307,13 @@ RULES:
       console.log(`[Pipeline ▶5 executeAction] FULL PROMPT: "${redactForLog(cleanPrompt)}"`);
 
       try {
+        // Pass through LoRA + advanced overrides if present. FalProvider
+        // routes LoRA-aware models through generateLora and clamps each
+        // value to its loraSpec range, so we forward whatever the workflow
+        // node / agent supplied without extra validation here.
+        const lorasParam = Array.isArray(params.loras)
+          ? (params.loras as Array<{ path: string; scale?: number }>)
+          : undefined;
         const aiResult = await generateWithFallback({
           prompt: resolveRefTags(cleanPrompt, selectedModel),
           type: "image",
@@ -314,6 +321,22 @@ RULES:
           aspectRatio: params.aspectRatio as string | undefined,
           scale: params.scale as string | undefined,
           referenceImages: hasActualRefs ? referenceImages : undefined,
+          loras: lorasParam,
+          guidanceScale: typeof params.guidanceScale === "number"
+            ? params.guidanceScale
+            : undefined,
+          numInferenceSteps: typeof params.numInferenceSteps === "number"
+            ? params.numInferenceSteps
+            : undefined,
+          negativePrompt: typeof params.negativePrompt === "string"
+            ? params.negativePrompt
+            : undefined,
+          acceleration:
+            params.acceleration === "none" ||
+            params.acceleration === "regular" ||
+            params.acceleration === "high"
+              ? params.acceleration
+              : undefined,
         });
 
         return {

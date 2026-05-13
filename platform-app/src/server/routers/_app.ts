@@ -12,6 +12,7 @@ import { projectRouter } from "./project";
 import { templateRouter } from "./template";
 import { assetRouter } from "./asset";
 import { aiRouter } from "./ai";
+import { loraPresetRouter } from "./loraPreset";
 import { workflowRouter } from "./workflow";
 import { adminRouter } from "./admin";
 import { adminTemplateRouter } from "./adminTemplate";
@@ -24,6 +25,7 @@ export const appRouter = createTRPCRouter({
   template: templateRouter,
   asset: assetRouter,
   ai: aiRouter,
+  loraPreset: loraPresetRouter,
   workflow: workflowRouter,
   admin: adminRouter,
   adminTemplate: adminTemplateRouter,

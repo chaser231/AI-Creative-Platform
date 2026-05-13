@@ -58,6 +58,64 @@ describe("imageGenerationParamsSchema", () => {
         const r = imageGenerationParamsSchema.safeParse({ prompt: "" });
         expect(r.success).toBe(true);
     });
+
+    it("accepts the new LoRA-aware models", () => {
+        for (const m of ["flux-lora", "flux-2-lora", "qwen-image-lora"] as const) {
+            const r = imageGenerationParamsSchema.safeParse({ prompt: "x", model: m });
+            expect(r.success).toBe(true);
+        }
+    });
+
+    it("accepts loras array with optional scale", () => {
+        const r = imageGenerationParamsSchema.safeParse({
+            prompt: "cinematic shot",
+            model: "flux-lora",
+            loras: [
+                { path: "https://huggingface.co/foo/bar.safetensors" },
+                { path: "https://civitai.com/api/x.safetensors", scale: 0.85 },
+            ],
+        });
+        expect(r.success).toBe(true);
+    });
+
+    it("rejects loras with non-https path", () => {
+        const r = imageGenerationParamsSchema.safeParse({
+            prompt: "x",
+            model: "flux-lora",
+            loras: [{ path: "not-a-url" }],
+        });
+        expect(r.success).toBe(false);
+    });
+
+    it("rejects scale outside [0,2]", () => {
+        const r = imageGenerationParamsSchema.safeParse({
+            prompt: "x",
+            model: "flux-lora",
+            loras: [{ path: "https://x/y.safetensors", scale: 2.5 }],
+        });
+        expect(r.success).toBe(false);
+    });
+
+    it("accepts advanced overrides (guidance/steps/negative/acceleration)", () => {
+        const r = imageGenerationParamsSchema.safeParse({
+            prompt: "x",
+            model: "qwen-image-lora",
+            guidanceScale: 4.5,
+            numInferenceSteps: 30,
+            negativePrompt: "blurry, low quality",
+            acceleration: "high",
+        });
+        expect(r.success).toBe(true);
+    });
+
+    it("rejects unknown acceleration value", () => {
+        const r = imageGenerationParamsSchema.safeParse({
+            prompt: "x",
+            model: "qwen-image-lora",
+            acceleration: "turbo",
+        });
+        expect(r.success).toBe(false);
+    });
 });
 
 describe("textGenerationParamsSchema", () => {

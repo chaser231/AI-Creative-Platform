@@ -10,13 +10,37 @@
  */
 
 // Re-export model registry & helpers (client-safe, no server deps)
-export { MODEL_REGISTRY, getModelsForCaps, getModelById } from "./ai-models";
-export type { ModelCap, ModelEntry } from "./ai-models";
+export {
+    MODEL_REGISTRY,
+    getModelsForCaps,
+    getModelById,
+    supportsLora,
+    getLoraSpec,
+    estimateMegapixels,
+} from "./ai-models";
+export type { ModelCap, ModelEntry, LoraSpec } from "./ai-models";
 
-import { MODEL_REGISTRY, getModelById } from "./ai-models";
-import type { ModelEntry } from "./ai-models";
+import { MODEL_REGISTRY, getModelById, getLoraSpec, estimateMegapixels } from "./ai-models";
+import type { ModelEntry, LoraSpec } from "./ai-models";
 
 // ─── Interfaces ─────────────────────────────────────────────────────────────
+
+/**
+ * A single LoRA weight to merge into a LoRA-aware model run.
+ *
+ * `path` accepts a public URL pointing at a `.safetensors` file (HuggingFace
+ * raw URL, CivitAI download URL, fal.media-hosted asset, or
+ * replicate.delivery). The host is validated against an allowlist by the
+ * SSRF guard before the request hits fal.ai.
+ *
+ * `scale` is the LoRA strength multiplier (typically 0..2; default 1.0).
+ * Lower values blend the LoRA more subtly; higher values push the style
+ * harder at the cost of prompt adherence.
+ */
+export interface LoraWeight {
+    path: string;
+    scale?: number;
+}
 
 export interface AIRequestParams {
     prompt: string;
@@ -40,6 +64,17 @@ export interface AIRequestParams {
     expandPadding?: { top: number; right: number; bottom: number; left: number };
     /** Scale factor for upscale (e.g. 2.0 = double resolution) */
     upscaleScale?: number;
+    // ── LoRA-aware models (fal-ai/flux-lora, fal-ai/flux-2/lora, etc.) ──
+    /** LoRA weights to merge into the run (1..loraSpec.maxCount). */
+    loras?: LoraWeight[];
+    /** CFG scale override; falls back to LoraSpec.defaultGuidance when omitted. */
+    guidanceScale?: number;
+    /** Sampler steps override; falls back to LoraSpec.defaultSteps when omitted. */
+    numInferenceSteps?: number;
+    /** Negative prompt — only honored by Qwen Image Edit LoRA. */
+    negativePrompt?: string;
+    /** Throughput knob; mapped to fal `acceleration` enum. */
+    acceleration?: "none" | "regular" | "high";
 }
 
 export interface AIResponse {
@@ -656,6 +691,11 @@ const FAL_MODEL_MAP: Record<string, string> = {
     "esrgan":          "fal-ai/esrgan",
     "seedvr":          "fal-ai/seedvr/upscale/image",
     "sima-upscaler":   "simalabs/sima-upscaler",
+    // ── LoRA endpoints ──
+    "flux-lora":              "fal-ai/flux-lora",
+    "flux-2-lora":            "fal-ai/flux-2/lora",
+    "qwen-image-lora":        "fal-ai/qwen-image-2512/lora",
+    "qwen-image-edit-lora":   "fal-ai/qwen-image-edit-lora",
 };
 
 /** Model ID → fal.ai /edit endpoint (required for reference images) */
@@ -665,6 +705,11 @@ const FAL_MODEL_MAP_EDIT: Record<string, string> = {
     "nano-banana-pro": "fal-ai/nano-banana-pro/edit",
     "seedream-5":      "fal-ai/bytedance/seedream/v5/lite/edit",
     "gpt-image-2":     "openai/gpt-image-2/edit",
+    // FLUX.1 LoRA has a dedicated img2img endpoint that keeps loras + scale.
+    "flux-lora":       "fal-ai/flux-lora/image-to-image",
+    // Qwen Image Edit LoRA is already an image-to-image endpoint, so its
+    // /edit and base mappings collapse to the same URL.
+    "qwen-image-edit-lora": "fal-ai/qwen-image-edit-lora",
 };
 
 // Models whose fal.ai endpoints don't accept `aspect_ratio` and instead use
@@ -981,6 +1026,18 @@ class FalProvider implements AIProviderImplementation {
             return { content: imageUrl, format: "url", model: modelId, provider: "fal.ai" };
         }
 
+        // ── LoRA-aware endpoints ───────────────────────────────────
+        // Centralised branch for fal-ai/flux-lora, fal-ai/flux-2/lora,
+        // fal-ai/qwen-image-2512/lora and fal-ai/qwen-image-edit-lora.
+        // These all share a similar input shape (loras[], guidance_scale,
+        // num_inference_steps, image_size enum, acceleration, optional
+        // negative_prompt) so we route them through one builder rather than
+        // duplicating per-model code paths.
+        const loraSpec = getLoraSpec(modelId);
+        if (loraSpec) {
+            return await this.generateLora(params, entry, loraSpec, apiKey);
+        }
+
         // ── Determine endpoint ─────────────────────────────────────
         // Use /edit endpoint when: reference images present, or explicit edit type
         const needsEditEndpoint =
@@ -1128,6 +1185,174 @@ class FalProvider implements AIProviderImplementation {
         throw new Error("fal.ai prediction timed out after 300 seconds");
     }
 
+    /**
+     * LoRA endpoint pipeline.
+     *
+     * Routes through `fal-ai/flux-lora`, `fal-ai/flux-2/lora`,
+     * `fal-ai/qwen-image-2512/lora` or `fal-ai/qwen-image-edit-lora` depending
+     * on the modelId. Builds a normalised input payload that respects the
+     * spec's defaults and clamps user overrides to the supported ranges.
+     *
+     * Endpoint selection rules:
+     *   • qwen-image-edit-lora — always image-to-image (FAL_MODEL_MAP[id])
+     *   • flux-lora            — img2img variant when source image is supplied
+     *   • flux-2-lora /        — text-to-image only (no img2img endpoint yet)
+     *     qwen-image-lora
+     */
+    private async generateLora(
+        params: AIRequestParams,
+        entry: ModelEntry,
+        spec: LoraSpec,
+        apiKey: string,
+    ): Promise<AIResponse> {
+        const modelId = entry.id;
+        const sourceImage = params.imageBase64
+            ?? (params.referenceImages && params.referenceImages[0]);
+        const wantsEdit = params.type === "edit" || !!sourceImage;
+
+        // ── Auto-inject Trigger Words & Translate Prompt ──
+        let finalPrompt = params.prompt || "";
+        
+        try {
+            if (params.loras && params.loras.length > 0) {
+                const paths = params.loras.map(l => l.path);
+                const { SYSTEM_LORA_CATALOG } = await import("@/lib/lora-catalog");
+                const { prisma } = await import("@/server/db");
+                
+                const systemMatches = SYSTEM_LORA_CATALOG.filter(p => paths.includes(p.path));
+                const systemWords = systemMatches.flatMap(p => p.triggerWords || []);
+                
+                const dbMatches = await prisma.loraPreset.findMany({
+                    where: { path: { in: paths } },
+                    select: { triggerWords: true }
+                });
+                const dbWords = dbMatches.flatMap(p => p.triggerWords || []);
+                
+                const allWords = [...new Set([...systemWords, ...dbWords])];
+                if (allWords.length > 0) {
+                    finalPrompt = `${allWords.join(", ")}, ${finalPrompt}`;
+                    console.log(`[fal.ai LoRA] Injected trigger words: ${allWords.join(", ")}`);
+                }
+            }
+
+            // FLUX models on fal.ai (flux-lora, flux-2-lora) heavily degrade with Cyrillic text
+            // because community LoRAs strictly expect English captions.
+            if ((modelId === "flux-lora" || modelId === "flux-2-lora") && /[а-яА-ЯёЁ]/.test(finalPrompt)) {
+                console.log(`[fal.ai LoRA] Russian prompt detected, translating: "${finalPrompt}"`);
+                const textProvider = getProvider("gemini-flash");
+                const res = await textProvider.generate({
+                    prompt: `Translate this image generation prompt to English. Reply ONLY with the English translation, no quotes, no explanations. Preserve any special tags or trigger words as they are:\n\n${finalPrompt}`,
+                    type: "text"
+                });
+                if (res.content) {
+                    finalPrompt = res.content.trim();
+                    console.log(`[fal.ai LoRA] Translation result: "${finalPrompt}"`);
+                }
+            }
+        } catch (e) {
+            console.warn(`[fal.ai LoRA] Failed to process prompt enhancements:`, e);
+            // Non-fatal, continue with original prompt if translation/db-lookup fails
+        }
+
+        // Pick endpoint
+        let falEndpoint: string;
+        if (modelId === "qwen-image-edit-lora") {
+            // Edit-only model — uses base mapping which already points at the
+            // edit endpoint.
+            falEndpoint = FAL_MODEL_MAP[modelId];
+            if (!sourceImage) {
+                throw new Error("Qwen Image Edit LoRA requires an input image");
+            }
+        } else if (wantsEdit && FAL_MODEL_MAP_EDIT[modelId]) {
+            falEndpoint = FAL_MODEL_MAP_EDIT[modelId];
+        } else {
+            falEndpoint = FAL_MODEL_MAP[modelId];
+        }
+        if (!falEndpoint) {
+            throw new Error(`No fal.ai endpoint mapped for ${modelId}`);
+        }
+
+        // Build input
+        const input: Record<string, unknown> = {
+            prompt: finalPrompt,
+            // All four LoRA endpoints accept the image_size enum (square_hd /
+            // portrait_* / landscape_*) — use the existing AR mapper.
+            image_size: falImageSizeFromAspectRatio(params.aspectRatio),
+            output_format: "png",
+            num_images: Math.max(1, Math.min(params.count ?? 1, 4)),
+        };
+
+        // Guidance + steps — clamp to the spec's range so an invalid override
+        // can't reach fal.ai (which would reject the whole request).
+        const [gMin, gMax] = spec.guidanceRange;
+        const guidance = Math.min(
+            Math.max(params.guidanceScale ?? spec.defaultGuidance, gMin),
+            gMax,
+        );
+        input.guidance_scale = guidance;
+
+        const [sMin, sMax] = spec.stepsRange;
+        const steps = Math.min(
+            Math.max(params.numInferenceSteps ?? spec.defaultSteps, sMin),
+            sMax,
+        );
+        input.num_inference_steps = steps;
+
+        if (typeof params.seed === "number") {
+            input.seed = params.seed;
+        }
+
+        // Acceleration — only set when the spec allows it (and the user picked
+        // a value the endpoint supports).
+        if (spec.supportsAcceleration && params.acceleration) {
+            const allowed = spec.accelerationOptions ?? ["none", "regular"];
+            if (allowed.includes(params.acceleration)) {
+                input.acceleration = params.acceleration;
+            }
+        }
+
+        // Negative prompt — Qwen Image Edit LoRA only.
+        if (spec.supportsNegativePrompt && params.negativePrompt) {
+            input.negative_prompt = params.negativePrompt;
+        }
+
+        // LoRA weights — normalise, clamp count, default scale to 1.
+        if (params.loras && params.loras.length > 0) {
+            const normalised = params.loras
+                .filter((l) => typeof l?.path === "string" && l.path.length > 0)
+                .slice(0, spec.maxCount)
+                .map((l) => ({
+                    path: l.path,
+                    scale: typeof l.scale === "number"
+                        ? Math.max(0, Math.min(l.scale, 2))
+                        : 1,
+                }));
+            if (normalised.length > 0) {
+                input.loras = normalised;
+            }
+        }
+
+        // Source image for img2img / edit endpoints.
+        if (sourceImage && falEndpoint.includes("image-to-image")) {
+            // FLUX.1 LoRA i2i takes `image_url` + optional `strength` (0..1).
+            input.image_url = sourceImage;
+            // Use a fairly strong strength by default so the LoRA style
+            // visibly applies; fal default is 0.85.
+        } else if (sourceImage && modelId === "qwen-image-edit-lora") {
+            input.image_url = sourceImage;
+        }
+
+        console.log(
+            `[fal.ai LoRA] ${falEndpoint} guidance=${guidance} steps=${steps}`
+            + ` loras=${(input.loras as unknown[] | undefined)?.length ?? 0}`
+            + ` accel=${input.acceleration ?? "default"}`
+            + ` source=${sourceImage ? "yes" : "no"}`,
+        );
+
+        const result = await falSubmitAndPoll(falEndpoint, input, apiKey);
+        return this.parseResult(result, entry);
+    }
+
     /** Parse fal.ai response, extracting image URL and dimensions */
     private parseResult(data: Record<string, unknown>, entry: ModelEntry): AIResponse {
         const images = data.images as { url?: string; width?: number; height?: number }[] | undefined;
@@ -1172,6 +1397,11 @@ const FAL_PRIMARY_MODELS = new Set([
     "esrgan",
     "seedvr",
     "sima-upscaler",
+    // LoRA endpoints — fal-only, no Replicate equivalent.
+    "flux-lora",
+    "flux-2-lora",
+    "qwen-image-lora",
+    "qwen-image-edit-lora",
 ]);
 
 
@@ -1195,6 +1425,13 @@ const MODEL_FALLBACK_CHAIN: Record<string, string[]> = {
     "seedvr":          ["esrgan", "sima-upscaler"],
     "sima-upscaler":   ["seedvr", "esrgan"],
     "esrgan":          ["seedvr"],
+    // LoRA fallback — when the LoRA endpoint goes down or the supplied LoRA
+    // path is invalid, fall back to the same base model without LoRAs. Style
+    // won't be applied, but the user still gets a usable image.
+    "flux-lora":              ["flux-dev", "flux-schnell"],
+    "flux-2-lora":            ["flux-2-pro", "flux-1.1-pro"],
+    "qwen-image-lora":        ["qwen-image"],
+    "qwen-image-edit-lora":   ["qwen-image-edit"],
 };
 
 /**

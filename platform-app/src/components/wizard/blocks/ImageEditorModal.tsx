@@ -17,11 +17,15 @@ import { Select } from "@/components/ui/Select";
 import { Textarea } from "@/components/ui/Textarea";
 import { ReferenceImageInput } from "@/components/ui/ReferenceImageInput";
 import { ImageStylePresetPicker } from "@/components/ui/StylePresetPicker";
-import { getMaxRefs, resolveRefTags } from "@/lib/ai-models";
+import { LoraSelectorPicker } from "@/components/ui/LoraSelectorPicker";
+import { ModelSettingsModal, type AdvancedAIParams } from "@/components/ui/ModelSettingsModal";
+import { getMaxRefs, resolveRefTags, getLoraSpec } from "@/lib/ai-models";
+import type { LoraWeight } from "@/lib/ai-providers";
 import { getImagePresetPromptSuffix } from "@/lib/stylePresets";
 import { useStylePresets } from "@/hooks/useStylePresets";
 import { uploadForAI, uploadManyForAI } from "@/utils/imageUpload";
 import type { BusinessUnit } from "@/types";
+import { Sliders } from "lucide-react";
 
 type EditorTool = "remove-bg" | "inpaint" | "text-edit" | "outpaint";
 
@@ -47,6 +51,8 @@ const IMAGE_EDIT_MODELS: { id: string; label: string; caps: EditorTool[] }[] = [
     { id: "gpt-image-2", label: "GPT Image 2", caps: ["text-edit"] },
     { id: "gpt-image", label: "GPT Image 1.5", caps: ["text-edit"] },
     { id: "qwen-image-edit", label: "Qwen Image Edit", caps: ["text-edit"] },
+    // LoRA-aware edit model — same Qwen base, supports plug-in LoRA weights
+    { id: "qwen-image-edit-lora", label: "Qwen Image Edit LoRA", caps: ["text-edit"] },
     { id: "flux-fill", label: "Flux Fill", caps: ["inpaint"] },
     { id: "bria-expand", label: "Bria Expand", caps: ["outpaint"] },
     { id: "bria-rmbg", label: "Bria Remove BG", caps: ["remove-bg"] },
@@ -85,8 +91,23 @@ export function ImageEditorModal({ imageSrc, onApply, onClose }: ImageEditorModa
     const [errorMsg, setErrorMsg] = useState<string | null>(null);
     const [referenceImages, setReferenceImages] = useState<string[]>([]);
     const [editStyleId, setEditStyleId] = useState("none");
+    // LoRA + advanced overrides — only meaningful for the LoRA edit model.
+    const [loras, setLoras] = useState<LoraWeight[]>([]);
+    const [advancedParams, setAdvancedParams] = useState<AdvancedAIParams>({});
+    const [settingsOpen, setSettingsOpen] = useState(false);
     // Workspace-aware presets
     const { imagePresets } = useStylePresets();
+
+    const loraSpec = getLoraSpec(selectedModel);
+    const loraRequestFields = loraSpec
+        ? {
+            loras: loras.length > 0 ? loras : undefined,
+            guidanceScale: advancedParams.guidanceScale,
+            numInferenceSteps: advancedParams.numInferenceSteps,
+            negativePrompt: advancedParams.negativePrompt,
+            acceleration: advancedParams.acceleration,
+        }
+        : {};
 
     const parseAiError = (e: Error) => {
         const msg = String(e.message || "");
@@ -141,6 +162,10 @@ export function ImageEditorModal({ imageSrc, onApply, onClose }: ImageEditorModa
                     maskBase64: maskUrl,
                     model: selectedModel,
                     referenceImages: refUrls,
+                    // LoRA + overrides — server filters them per action so it's
+                    // safe to send for all model picks; remove-bg/outpaint use
+                    // their own non-LoRA models and ignore these fields.
+                    ...((action === "inpaint" || action === "text-edit") ? loraRequestFields : {}),
                 }),
             });
             const data = await response.json();
@@ -358,7 +383,19 @@ export function ImageEditorModal({ imageSrc, onApply, onClose }: ImageEditorModa
                         <div className="p-4 space-y-3 flex-1 overflow-y-auto">
                             {/* Model selector */}
                             <div>
-                                <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wider mb-2">Модель</p>
+                                <div className="flex items-center justify-between mb-2">
+                                    <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wider">Модель</p>
+                                    {loraSpec && (
+                                        <button
+                                            onClick={() => setSettingsOpen(true)}
+                                            title="Параметры модели"
+                                            className="flex items-center gap-1 text-[10px] text-text-tertiary hover:text-text-primary transition-colors cursor-pointer"
+                                        >
+                                            <Sliders size={10} />
+                                            <span>Настройки</span>
+                                        </button>
+                                    )}
+                                </div>
                                 <Select
                                     size="sm"
                                     value={selectedModel}
@@ -367,6 +404,10 @@ export function ImageEditorModal({ imageSrc, onApply, onClose }: ImageEditorModa
                                         if (activeTool && !IMAGE_EDIT_MODELS.find((model) => model.id === val)?.caps.includes(activeTool)) {
                                             setActiveTool(null);
                                         }
+                                        // Reset LoRA + overrides — they're scoped to the
+                                        // outgoing model's loraSpec.
+                                        setLoras([]);
+                                        setAdvancedParams({});
                                     }}
                                     options={IMAGE_EDIT_MODELS.map(m => ({ value: m.id, label: m.label }))}
                                 />
@@ -497,6 +538,18 @@ export function ImageEditorModal({ imageSrc, onApply, onClose }: ImageEditorModa
                                             variant="inline"
                                         />
                                     </div>
+                                    {/* LoRA picker — hidden for non-LoRA models. */}
+                                    {loraSpec && (
+                                        <div>
+                                            <p className="text-[10px] font-medium text-text-secondary mb-1.5">LoRA</p>
+                                            <LoraSelectorPicker
+                                                family={loraSpec.family}
+                                                maxCount={loraSpec.maxCount}
+                                                value={loras}
+                                                onChange={setLoras}
+                                            />
+                                        </div>
+                                    )}
                                     <button
                                         onClick={handleTextEdit}
                                         disabled={isProcessing || !editPrompt.trim()}
@@ -603,6 +656,17 @@ export function ImageEditorModal({ imageSrc, onApply, onClose }: ImageEditorModa
                     </div>
                 </div>
             </div>
+
+            {/* Advanced model settings — only mounted for LoRA-aware models. */}
+            {loraSpec && (
+                <ModelSettingsModal
+                    open={settingsOpen}
+                    onClose={() => setSettingsOpen(false)}
+                    spec={loraSpec}
+                    value={advancedParams}
+                    onChange={setAdvancedParams}
+                />
+            )}
         </div>
     );
 }
