@@ -37,6 +37,7 @@ model User {
   joinRequests JoinRequest[]
   sharedTemplates TemplateShare[]
   aiPresets    AIPreset[]  @relation("PresetCreator")
+  loraPresets  LoraPreset[] @relation("LoraPresetCreator")
   figmaImports FigmaImport[]
 }
 
@@ -114,6 +115,7 @@ model Workspace {
   assets        Asset[]
   systemPrompts SystemPrompt[]
   aiPresets     AIPreset[]
+  loraPresets   LoraPreset[]
   aiWorkflows   AIWorkflow[]
   joinRequests  JoinRequest[]
   figmaImports  FigmaImport[]
@@ -390,6 +392,50 @@ model AIPreset {
   @@index([workspaceId, type, isActive, visibility])
   // Cross-workspace lookup of global presets in listPresets — filters by visibility first.
   @@index([visibility, type, isActive])
+  @@index([createdById])
+}
+
+// User-uploaded / community LoRA weights for fal.ai LoRA-aware models.
+//
+// System-curated LoRAs live in code (lib/lora-catalog.ts) — they don't need
+// per-workspace storage and ship with the app. This table is for custom URLs
+// (HuggingFace / CivitAI / fal.media .safetensors) added by workspace members.
+//
+// `family` MUST match a ModelEntry.loraSpec.family ("flux-1" | "flux-2" |
+// "qwen") so the UI can filter weights to the model the user has selected.
+// The path is validated against an SSRF allowlist on write.
+model LoraPreset {
+  id            String   @id @default(cuid())
+  name          String
+  description   String   @default("")
+  // Public URL pointing at the .safetensors. Allowlist enforced server-side
+  // (huggingface.co, civitai.com, *.fal.media, *.replicate.delivery).
+  path          String
+  // Compatibility family — only models whose loraSpec.family matches will
+  // accept this weight. Cross-family LoRAs are not interchangeable.
+  family        String   // "flux-1" | "flux-2" | "qwen"
+  // Recommended starting strength (0..2; UI seeds the slider with this).
+  defaultScale  Float    @default(1.0)
+  // Optional preview image rendered as the picker's thumbnail.
+  previewUrl    String?
+  // Words the user may want to include in their prompt to activate the LoRA
+  // (some community LoRAs require explicit triggers like "ohwx man").
+  triggerWords  String[] @default([])
+  // Visibility model mirrors AIPreset:
+  //   "personal"  — visible only to the author
+  //   "workspace" — visible to all members of the parent workspace
+  visibility    String   @default("personal")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  workspaceId String
+
+  createdBy   User?    @relation("LoraPresetCreator", fields: [createdById], references: [id])
+  createdById String?
+
+  @@index([workspaceId, family, visibility])
   @@index([createdById])
 }
 
