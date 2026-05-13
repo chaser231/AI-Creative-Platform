@@ -836,7 +836,7 @@ export function uploadImagePolicy(): SsrfPolicyOptions {
         allowedPorts: [443],
         allowedMimePrefixes: ["image/", "video/"],
         maxContentLength: 25 * 1024 * 1024,
-        headTimeoutMs: 5_000,
+        headTimeoutMs: 15_000,
     };
 }
 
@@ -847,7 +847,7 @@ export function agentAddImagePolicy(): SsrfPolicyOptions {
         allowedPorts: [443],
         allowedMimePrefixes: ["image/"],
         maxContentLength: 25 * 1024 * 1024,
-        headTimeoutMs: 5_000,
+        headTimeoutMs: 15_000,
     };
     if (envList) base.allowedHosts = envList;
     return base;
