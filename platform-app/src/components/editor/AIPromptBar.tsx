@@ -1,13 +1,16 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Sparkles, Wand2, Image as ImageIcon, Send, MessageCircle, Settings2, Ratio, Type, Grip, CheckCircle2, Circle, X, ChevronDown, Eraser, Paintbrush, Expand, Loader2 } from "lucide-react";
+import { Sparkles, Wand2, Image as ImageIcon, Send, MessageCircle, Settings2, Ratio, Type, Grip, CheckCircle2, Circle, X, ChevronDown, Eraser, Paintbrush, Expand, Loader2, Sliders } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { ReferenceImageInput } from "@/components/ui/ReferenceImageInput";
 import { RefAutocompleteTextarea, type RefAutocompleteTextareaHandle } from "@/components/ui/RefAutocompleteTextarea";
 import { ImageStylePresetPicker, TextStylePresetPicker } from "@/components/ui/StylePresetPicker";
+import { LoraSelectorPicker } from "@/components/ui/LoraSelectorPicker";
+import { ModelSettingsModal, type AdvancedAIParams } from "@/components/ui/ModelSettingsModal";
 import { useCanvasStore } from "@/store/canvasStore";
 import { useShallow } from "zustand/react/shallow";
 import { RemoteTextProvider, RemoteImageProvider } from "@/services/aiService";
-import { getModelById, getMaxRefs, getAspectRatios, getResolutions, resolveRefTags } from "@/lib/ai-models";
+import { getModelById, getMaxRefs, getAspectRatios, getResolutions, resolveRefTags, getLoraSpec } from "@/lib/ai-models";
+import type { LoraWeight } from "@/lib/ai-providers";
 import { getImagePresetPromptSuffix, getTextPresetInstruction } from "@/lib/stylePresets";
 import { useStylePresets } from "@/hooks/useStylePresets";
 import { persistImageToS3, uploadForAI, uploadManyForAI } from "@/utils/imageUpload";
@@ -36,6 +39,11 @@ const IMAGE_MODELS = [
     { id: "flux-dev", name: "Flux Dev" },
     { id: "flux-1.1-pro", name: "Flux 1.1 Pro" },
     { id: "dall-e-3", name: "DALL-E 3" },
+    // LoRA-aware variants — lower in the list so non-LoRA workflows stay
+    // unchanged for users who never open the LoRA picker.
+    { id: "flux-lora", name: "FLUX.1 LoRA" },
+    { id: "flux-2-lora", name: "FLUX.2 LoRA" },
+    { id: "qwen-image-lora", name: "Qwen Image LoRA" },
 ];
 
 // Models available for AI image editing (with "edit" cap or specialized tools)
@@ -49,6 +57,7 @@ const EDIT_MODELS = [
     { id: "gpt-image-2", name: "GPT Image 2" },
     { id: "gpt-image", name: "GPT Image 1.5" },
     { id: "qwen-image-edit", name: "Qwen Image Edit" },
+    { id: "qwen-image-edit-lora", name: "Qwen Image Edit LoRA" },
 ];
 
 // Outpaint target aspect ratios (used within the edit tab's "Expand" action)
@@ -162,6 +171,12 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
     const [referenceImages, setReferenceImages] = useState<string[]>([]);
     const [imageStyleId, setImageStyleId] = useState("none");
     const [textStyleId, setTextStyleId] = useState<string | undefined>(undefined);
+    // LoRA selection + advanced model knobs (guidance/steps/negative/etc).
+    // Both are model-scoped — clearing on every model swap keeps them
+    // honest (a Qwen LoRA path silently passed to FLUX would error out).
+    const [loras, setLoras] = useState<LoraWeight[]>([]);
+    const [advancedParams, setAdvancedParams] = useState<AdvancedAIParams>({});
+    const [settingsOpen, setSettingsOpen] = useState(false);
     const promptRef = useRef<RefAutocompleteTextareaHandle>(null);
 
     // ── Edit tab state ──
@@ -213,11 +228,36 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
         // Reset resolution
         const res = getResolutions(modelId);
         setScale(res.length > 0 ? res[0].id : "");
+        // LoRA paths and advanced overrides are scoped to the previous model.
+        // Carrying them across switches would silently send invalid weights
+        // (or use a guidance value outside the new spec's range).
+        setLoras([]);
+        setAdvancedParams({});
     };
 
     // Current model's dynamic options
     const modelAspectRatios = getAspectRatios(selectedModel);
     const modelResolutions = getResolutions(selectedModel);
+
+    // LoRA capabilities — drive picker visibility / disabled state and the
+    // gear chip that opens advanced model settings.
+    const loraSpec = getLoraSpec(selectedModel);
+    const supportsLoraInTab =
+        !!loraSpec &&
+        (activeTab === "image" ||
+            (activeTab === "edit" && (selectedModel === "qwen-image-edit-lora" || selectedModel === "flux-lora")));
+
+    // Bundle the LoRA-aware request fields into a single object so each
+    // generate/edit fetch site doesn't have to enumerate them.
+    const loraRequestFields = supportsLoraInTab
+        ? {
+            loras: loras.length > 0 ? loras : undefined,
+            guidanceScale: advancedParams.guidanceScale,
+            numInferenceSteps: advancedParams.numInferenceSteps,
+            negativePrompt: advancedParams.negativePrompt,
+            acceleration: advancedParams.acceleration,
+        }
+        : {};
 
     // ── Parse AI errors into user-friendly messages ──
     const parseAiError = (e: Error) => {
@@ -415,6 +455,11 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                     expandPadding: action === "outpaint" ? currentExpandPadding : undefined,
                     originalSize: action === "outpaint" ? outpaintOriginalSize : undefined,
                     projectId,
+                    // LoRA + advanced knobs only meaningful for inpaint/text-edit
+                    // on a LoRA-aware model. The server filters per action too.
+                    ...(action === "inpaint" || action === "text-edit"
+                        ? loraRequestFields
+                        : {}),
                 }),
             });
             const data = await response.json();
@@ -567,7 +612,7 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
         } finally {
             setIsGenerating(false);
         }
-    }, [selectedImageLayer, selectedModel, imageStyleId, imagePresets, referenceImages, expandPadding, projectId, applyEditedImageToLayer, onResult, resetExpandMode, saveGeneratedAssetMutation, trpcUtils]);
+    }, [selectedImageLayer, selectedModel, imageStyleId, imagePresets, referenceImages, expandPadding, projectId, applyEditedImageToLayer, onResult, resetExpandMode, saveGeneratedAssetMutation, trpcUtils, loraRequestFields]);
 
     // ── Edit tab handlers ──
     const handleRemoveBg = () => callImageEdit("remove-bg");
@@ -619,6 +664,7 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                     scale: scale || undefined,
                     referenceImages: referenceImages.length > 0 ? referenceImages : undefined,
                     projectId,
+                    ...loraRequestFields,
                 });
             }
 
@@ -948,6 +994,17 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                             </select>
                         </OutlinedSelector>
 
+                        {/* Advanced model settings — only visible for LoRA-aware models. */}
+                        {loraSpec && (activeTab === "image" || activeTab === "edit") && (
+                            <button
+                                onClick={() => setSettingsOpen(true)}
+                                title="Параметры модели"
+                                className="flex items-center justify-center w-7 h-7 rounded-[10px] border border-border-primary/60 text-text-tertiary hover:text-text-primary hover:bg-bg-tertiary/30 transition-all cursor-pointer"
+                            >
+                                <Sliders size={12} />
+                            </button>
+                        )}
+
                         {/* Aspect Ratio (Image tab only) */}
                         {activeTab === "image" && (
                             <OutlinedSelector icon={<Ratio size={13} />}>
@@ -985,6 +1042,18 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                                 selectedId={imageStyleId}
                                 onChange={setImageStyleId}
                                 variant="compact"
+                            />
+                        )}
+
+                        {/* LoRA picker — disabled when current model has no loraSpec.
+                            Sits next to Style on purpose: the two are complementary
+                            (preset = prompt suffix, LoRA = model weights). */}
+                        {(activeTab === "image" || activeTab === "edit") && (
+                            <LoraSelectorPicker
+                                family={loraSpec?.family ?? null}
+                                maxCount={loraSpec?.maxCount ?? 1}
+                                value={loras}
+                                onChange={setLoras}
                             />
                         )}
 
@@ -1048,6 +1117,17 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                     </div>
                 </div>
             </div>
+
+            {/* Advanced model settings modal — only mounted for LoRA-aware models. */}
+            {loraSpec && (
+                <ModelSettingsModal
+                    open={settingsOpen}
+                    onClose={() => setSettingsOpen(false)}
+                    spec={loraSpec}
+                    value={advancedParams}
+                    onChange={setAdvancedParams}
+                />
+            )}
         </div>
     );
 }

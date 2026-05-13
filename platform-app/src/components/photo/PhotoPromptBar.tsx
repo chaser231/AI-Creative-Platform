@@ -1,13 +1,16 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Sparkles, Wand2, X, Ratio, Settings2, Loader2, Maximize2 } from "lucide-react";
+import { Sparkles, Wand2, X, Ratio, Settings2, Loader2, Maximize2, Sliders } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { usePhotoStore } from "@/store/photoStore";
 import { RefAutocompleteTextarea } from "@/components/ui/RefAutocompleteTextarea";
-import { getModelById, getMaxRefs, getAspectRatios, getResolutions, resolveRefTags } from "@/lib/ai-models";
+import { getModelById, getMaxRefs, getAspectRatios, getResolutions, resolveRefTags, getLoraSpec } from "@/lib/ai-models";
+import type { LoraWeight } from "@/lib/ai-providers";
 import { persistImageToS3, uploadForAI, uploadManyForAI } from "@/utils/imageUpload";
 import { ImageStylePresetPicker } from "@/components/ui/StylePresetPicker";
+import { LoraSelectorPicker } from "@/components/ui/LoraSelectorPicker";
+import { ModelSettingsModal, type AdvancedAIParams } from "@/components/ui/ModelSettingsModal";
 import { useStylePresets } from "@/hooks/useStylePresets";
 import { getImagePresetPromptSuffix } from "@/lib/stylePresets";
 import { ReferenceImageInput } from "@/components/ui/ReferenceImageInput";
@@ -32,6 +35,9 @@ const IMAGE_MODELS = [
     { id: "flux-dev", name: "Flux Dev" },
     { id: "flux-1.1-pro", name: "Flux 1.1 Pro" },
     { id: "dall-e-3", name: "DALL-E 3" },
+    { id: "flux-lora", name: "FLUX.1 LoRA" },
+    { id: "flux-2-lora", name: "FLUX.2 LoRA" },
+    { id: "qwen-image-lora", name: "Qwen Image LoRA" },
 ];
 
 // Models that can edit an existing image (text-guided, full-image, no mask)
@@ -45,6 +51,7 @@ const EDIT_MODELS = [
     { id: "gpt-image-2", name: "GPT Image 2" },
     { id: "gpt-image", name: "GPT Image 1.5" },
     { id: "qwen-image-edit", name: "Qwen Image Edit" },
+    { id: "qwen-image-edit-lora", name: "Qwen Image Edit LoRA" },
 ];
 
 export function PhotoPromptBar({ projectId }: PhotoPromptBarProps) {
@@ -66,6 +73,11 @@ export function PhotoPromptBar({ projectId }: PhotoPromptBarProps) {
     const [referenceImages, setReferenceImages] = useState<string[]>([]);
     const [isGenerating, setIsGenerating] = useState(false);
     const [errorMsg, setErrorMsg] = useState<string | null>(null);
+    // LoRA selection + advanced overrides — local because they're scoped to
+    // the active model and shouldn't leak into other photo sessions.
+    const [loras, setLoras] = useState<LoraWeight[]>([]);
+    const [advancedParams, setAdvancedParams] = useState<AdvancedAIParams>({});
+    const [settingsOpen, setSettingsOpen] = useState(false);
     // Initialize with the first resolution of the default model so the
     // selector never renders as an empty pill.
     const [scale, setScale] = useState(
@@ -132,7 +144,24 @@ export function PhotoPromptBar({ projectId }: PhotoPromptBarProps) {
         if (!(getModelById(id)?.caps.includes("vision") ?? false)) {
             setReferenceImages([]);
         }
+        // Drop LoRA selections + advanced overrides on every swap — they
+        // belong to the previous model's loraSpec and would either be
+        // ignored (cheap) or rejected (worse, after billing).
+        setLoras([]);
+        setAdvancedParams({});
     };
+
+    // LoRA capabilities — drives picker / settings visibility.
+    const loraSpec = getLoraSpec(activeModelId);
+    const loraRequestFields = loraSpec
+        ? {
+            loras: loras.length > 0 ? loras : undefined,
+            guidanceScale: advancedParams.guidanceScale,
+            numInferenceSteps: advancedParams.numInferenceSteps,
+            negativePrompt: advancedParams.negativePrompt,
+            acceleration: advancedParams.acceleration,
+        }
+        : {};
 
     const ensureSession = async (): Promise<string | null> => {
         if (activeSessionId) return activeSessionId;
@@ -221,6 +250,7 @@ export function PhotoPromptBar({ projectId }: PhotoPromptBarProps) {
                         // Photo workspace writes the final AIMessage itself (with the
                         // persisted S3 URL). Skip server-side tracking to avoid duplicates.
                         recordMessage: false,
+                        ...loraRequestFields,
                     }),
                 });
                 const data = await response.json();
@@ -244,6 +274,7 @@ export function PhotoPromptBar({ projectId }: PhotoPromptBarProps) {
                         // Photo workspace writes the final AIMessage itself (with the
                         // persisted S3 URL). Skip server-side tracking to avoid duplicates.
                         recordMessage: false,
+                        ...loraRequestFields,
                     }),
                 });
                 const data = await response.json();
@@ -408,6 +439,17 @@ export function PhotoPromptBar({ projectId }: PhotoPromptBarProps) {
                         </span>
                     </Selector>
 
+                    {/* Advanced model settings — only for LoRA-aware models. */}
+                    {loraSpec && (
+                        <button
+                            onClick={() => setSettingsOpen(true)}
+                            title="Параметры модели"
+                            className="flex items-center justify-center w-7 h-7 rounded-[10px] border border-border-primary/60 text-text-tertiary hover:text-text-primary hover:bg-bg-tertiary/30 transition-all cursor-pointer"
+                        >
+                            <Sliders size={12} />
+                        </button>
+                    )}
+
                     {/* Aspect ratio (generate mode only) */}
                     {!isEditMode && (
                         <Selector icon={<Ratio size={12} />}>
@@ -454,6 +496,14 @@ export function PhotoPromptBar({ projectId }: PhotoPromptBarProps) {
                         variant="compact"
                     />
 
+                    {/* LoRA picker — disabled visually when active model has no loraSpec. */}
+                    <LoraSelectorPicker
+                        family={loraSpec?.family ?? null}
+                        maxCount={loraSpec?.maxCount ?? 1}
+                        value={loras}
+                        onChange={setLoras}
+                    />
+
                     <div className="flex-1" />
 
                     {errorMsg && (
@@ -495,6 +545,17 @@ export function PhotoPromptBar({ projectId }: PhotoPromptBarProps) {
                     </button>
                 </div>
             </div>
+
+            {/* Advanced model settings modal — only mounted for LoRA-aware models. */}
+            {loraSpec && (
+                <ModelSettingsModal
+                    open={settingsOpen}
+                    onClose={() => setSettingsOpen(false)}
+                    spec={loraSpec}
+                    value={advancedParams}
+                    onChange={setAdvancedParams}
+                />
+            )}
         </div>
     );
 }
