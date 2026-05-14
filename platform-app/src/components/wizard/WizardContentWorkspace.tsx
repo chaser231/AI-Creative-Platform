@@ -9,24 +9,53 @@ import {
     Expand,
     Paintbrush,
     Ratio,
+    RotateCcw,
     Settings2,
     Sparkles,
     Type,
     Upload,
+    ZoomIn,
+    ZoomOut,
 } from "lucide-react";
 import { RefAutocompleteTextarea, type RefAutocompleteTextareaHandle } from "@/components/ui/RefAutocompleteTextarea";
 import { ReferenceImageInput } from "@/components/ui/ReferenceImageInput";
 import { ImageStylePresetPicker } from "@/components/ui/StylePresetPicker";
 import { PreviewCanvas } from "@/components/editor/PreviewCanvas";
+import { trpc } from "@/lib/trpc";
+import { useProjectLibrary } from "@/hooks/useProjectLibrary";
 import { useStylePresets } from "@/hooks/useStylePresets";
 import { getMaxRefs, getModelById, getAspectRatios, getResolutions, resolveRefTags } from "@/lib/ai-models";
 import { getImagePresetPromptSuffix } from "@/lib/stylePresets";
 import { applyAllAutoLayouts } from "@/utils/layoutEngine";
 import { compressImageFile, uploadForAI, uploadManyForAI } from "@/utils/imageUpload";
+import { useThemeStore } from "@/store/themeStore";
 import type { BusinessUnit, Layer, MasterComponent } from "@/types";
 import type { TemplatePackV2 } from "@/services/templateService";
 
+/** Resolves `system` the same way as ThemeProvider / editor canvas */
+function useResolvedCanvasAppearance(): "light" | "dark" {
+    const theme = useThemeStore((s) => s.theme);
+    const [systemDark, setSystemDark] = useState(() => {
+        if (typeof window === "undefined") return false;
+        return window.matchMedia("(prefers-color-scheme: dark)").matches;
+    });
+
+    useEffect(() => {
+        if (theme !== "system") return;
+        if (typeof window === "undefined") return;
+        const mq = window.matchMedia("(prefers-color-scheme: dark)");
+        const handler = (e: MediaQueryListEvent) => setSystemDark(e.matches);
+        mq.addEventListener("change", handler);
+        return () => mq.removeEventListener("change", handler);
+    }, [theme]);
+
+    if (theme === "dark") return "dark";
+    if (theme === "light") return "light";
+    return systemDark ? "dark" : "light";
+}
+
 type EditableLayerType = "text" | "image" | "badge";
+type SidebarTab = "layers" | "assets";
 
 interface EditableLayerEntry {
     id: string;
@@ -43,6 +72,14 @@ interface MasterPreviewSource {
     layers: Layer[];
     width: number;
     height: number;
+}
+
+interface AssetRow {
+    id: string;
+    url: string;
+    filename: string;
+    createdAt?: Date | string;
+    metadata?: unknown;
 }
 
 interface WizardContentWorkspaceProps {
@@ -85,14 +122,18 @@ export function WizardContentWorkspace({
     projectBU,
     projectId,
 }: WizardContentWorkspaceProps) {
+    const canvasAppearance = useResolvedCanvasAppearance();
     const fileInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
     const previewFrameRef = useRef<HTMLDivElement | null>(null);
+    const { registerFile } = useProjectLibrary();
     const previewSource = useMemo(() => getMasterPreviewSource(selectedTemplate), [selectedTemplate]);
     const entries = useMemo(
         () => getEditableLayerEntries(selectedTemplate, previewSource.layers),
         [selectedTemplate, previewSource.layers],
     );
     const [activeLayerId, setActiveLayerId] = useState(entries[0]?.id ?? "");
+    const [sidebarTab, setSidebarTab] = useState<SidebarTab>("layers");
+    const [previewZoom, setPreviewZoom] = useState(1);
     const [uploadingLayerId, setUploadingLayerId] = useState<string | null>(null);
     const [uploadError, setUploadError] = useState<{ layerId: string; message: string } | null>(null);
     const [previewSize, setPreviewSize] = useState({ width: 820, height: 520 });
@@ -131,6 +172,12 @@ export function WizardContentWorkspace({
     }, []);
 
     const activeLayer = entries.find((entry) => entry.id === activeLayerId) ?? entries[0];
+    const activeImageLayer = activeLayer?.type === "image" ? activeLayer : undefined;
+    const assetsQuery = trpc.asset.listByProject.useQuery(
+        { projectId: projectId ?? "", sortBy: "createdAt", sortOrder: "desc" },
+        { enabled: !!projectId && sidebarTab === "assets", refetchOnWindowFocus: false },
+    );
+    const projectAssets = (assetsQuery.data ?? []) as AssetRow[];
     const draftPreviewLayers = useMemo(
         () => buildDraftPreviewLayers(previewSource.layers, entries, textValues, imageValues),
         [previewSource.layers, entries, textValues, imageValues],
@@ -149,8 +196,18 @@ export function WizardContentWorkspace({
         setUploadError(null);
         setUploadingLayerId(entry.id);
         try {
-            const compressed = await compressImageFile(file);
-            updateImageValue(entry.id, compressed);
+            if (projectId) {
+                const persistedUrl = await registerFile({
+                    projectId,
+                    file,
+                    source: "wizard-upload",
+                });
+                if (persistedUrl) {
+                    updateImageValue(entry.id, persistedUrl);
+                    return;
+                }
+            }
+            updateImageValue(entry.id, await compressImageFile(file));
         } catch (err) {
             console.error("Failed to upload image layer:", err);
             setUploadError({
@@ -162,6 +219,12 @@ export function WizardContentWorkspace({
             const input = fileInputRefs.current[entry.id];
             if (input) input.value = "";
         }
+    };
+
+    const handleApplyAssetToLayer = (asset: AssetRow) => {
+        if (!activeImageLayer) return;
+        updateImageValue(activeImageLayer.id, asset.url);
+        setSidebarTab("layers");
     };
 
     return (
@@ -184,96 +247,144 @@ export function WizardContentWorkspace({
                         </p>
                     </div>
 
-                    <LayerSection
-                        type="text"
-                        title="Тексты"
-                        entries={entries.filter((entry) => entry.type === "text")}
-                        activeLayerId={activeLayerId}
-                        collapsed={collapsedSections.text}
-                        onToggle={() => setCollapsedSections((prev) => ({ ...prev, text: !prev.text }))}
-                        onSelect={setActiveLayerId}
-                        renderEditor={(entry) => (
-                            <input
-                                value={textValues[entry.id] ?? String(entry.props.text ?? "")}
-                                onChange={(event) => updateTextValue(entry.id, event.target.value)}
-                                placeholder="Введите текст"
-                                className="h-9 w-full rounded-[var(--radius-md)] border border-border-primary bg-bg-secondary px-3 text-xs text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-1 focus:ring-border-focus"
-                            />
-                        )}
-                    />
+                    <div className="mb-3 grid grid-cols-2 gap-1 rounded-[var(--radius-lg)] border border-border-primary bg-bg-surface p-1">
+                        <SidebarTabButton active={sidebarTab === "layers"} onClick={() => setSidebarTab("layers")}>
+                            Слои
+                        </SidebarTabButton>
+                        <SidebarTabButton active={sidebarTab === "assets"} onClick={() => setSidebarTab("assets")}>
+                            Ассеты
+                        </SidebarTabButton>
+                    </div>
 
-                    <LayerSection
-                        type="image"
-                        title="Фото"
-                        entries={entries.filter((entry) => entry.type === "image")}
-                        activeLayerId={activeLayerId}
-                        collapsed={collapsedSections.image}
-                        onToggle={() => setCollapsedSections((prev) => ({ ...prev, image: !prev.image }))}
-                        onSelect={setActiveLayerId}
-                        renderEditor={(entry) => (
-                            <div className="space-y-2">
-                                <input
-                                    ref={(node) => { fileInputRefs.current[entry.id] = node; }}
-                                    type="file"
-                                    accept="image/*"
-                                    className="hidden"
-                                    onChange={(event) => void handleUploadImage(entry, event.target.files?.[0])}
-                                />
-                                <button
-                                    type="button"
-                                    onClick={() => fileInputRefs.current[entry.id]?.click()}
-                                    disabled={uploadingLayerId === entry.id}
-                                    className="flex h-9 w-full items-center justify-center gap-2 rounded-[var(--radius-md)] border border-border-primary bg-bg-secondary text-xs font-medium text-text-primary transition-colors hover:bg-bg-tertiary cursor-pointer"
-                                >
-                                    {uploadingLayerId === entry.id ? (
-                                        <Loader2 size={13} className="animate-spin text-text-secondary" />
-                                    ) : (
-                                        <Upload size={13} className="text-text-secondary" />
-                                    )}
-                                    {uploadingLayerId === entry.id ? "Загружаю..." : "Загрузить фото"}
-                                </button>
-                                {uploadError?.layerId === entry.id && (
-                                    <p className="text-[10px] font-medium leading-snug text-text-error">
-                                        {uploadError.message}
-                                    </p>
+                    {sidebarTab === "layers" ? (
+                        <>
+                            <LayerSection
+                                type="text"
+                                title="Тексты"
+                                entries={entries.filter((entry) => entry.type === "text")}
+                                activeLayerId={activeLayerId}
+                                collapsed={collapsedSections.text}
+                                onToggle={() => setCollapsedSections((prev) => ({ ...prev, text: !prev.text }))}
+                                onSelect={setActiveLayerId}
+                                renderEditor={(entry) => (
+                                    <input
+                                        value={textValues[entry.id] ?? String(entry.props.text ?? "")}
+                                        onChange={(event) => updateTextValue(entry.id, event.target.value)}
+                                        placeholder="Введите текст"
+                                        className="h-9 w-full rounded-[var(--radius-md)] border border-border-primary bg-bg-secondary px-3 text-xs text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-1 focus:ring-border-focus"
+                                    />
                                 )}
-                                {Boolean(imageValues[entry.id] || entry.props.src) && (
-                                    <div className="h-16 overflow-hidden rounded-[var(--radius-sm)] border border-border-primary bg-bg-secondary">
-                                        <img
-                                            src={imageValues[entry.id] ?? String(entry.props.src)}
-                                            alt={entry.name}
-                                            className="h-full w-full object-cover"
+                            />
+
+                            <LayerSection
+                                type="image"
+                                title="Фото"
+                                entries={entries.filter((entry) => entry.type === "image")}
+                                activeLayerId={activeLayerId}
+                                collapsed={collapsedSections.image}
+                                onToggle={() => setCollapsedSections((prev) => ({ ...prev, image: !prev.image }))}
+                                onSelect={setActiveLayerId}
+                                renderEditor={(entry) => (
+                                    <div className="space-y-2">
+                                        <input
+                                            ref={(node) => { fileInputRefs.current[entry.id] = node; }}
+                                            type="file"
+                                            accept="image/*"
+                                            className="hidden"
+                                            onChange={(event) => void handleUploadImage(entry, event.target.files?.[0])}
                                         />
+                                        <button
+                                            type="button"
+                                            onClick={() => fileInputRefs.current[entry.id]?.click()}
+                                            disabled={uploadingLayerId === entry.id}
+                                            className="flex h-9 w-full items-center justify-center gap-2 rounded-[var(--radius-md)] border border-border-primary bg-bg-secondary text-xs font-medium text-text-primary transition-colors hover:bg-bg-tertiary cursor-pointer"
+                                        >
+                                            {uploadingLayerId === entry.id ? (
+                                                <Loader2 size={13} className="animate-spin text-text-secondary" />
+                                            ) : (
+                                                <Upload size={13} className="text-text-secondary" />
+                                            )}
+                                            {uploadingLayerId === entry.id ? "Загружаю..." : "Загрузить фото"}
+                                        </button>
+                                        {uploadError?.layerId === entry.id && (
+                                            <p className="text-[10px] font-medium leading-snug text-text-error">
+                                                {uploadError.message}
+                                            </p>
+                                        )}
+                                        {Boolean(imageValues[entry.id] || entry.props.src) && (
+                                            <div className="h-16 overflow-hidden rounded-[var(--radius-sm)] border border-border-primary bg-bg-secondary">
+                                                <img
+                                                    src={imageValues[entry.id] ?? String(entry.props.src)}
+                                                    alt={entry.name}
+                                                    className="h-full w-full object-cover"
+                                                />
+                                            </div>
+                                        )}
                                     </div>
                                 )}
-                            </div>
-                        )}
-                    />
-
-                    <LayerSection
-                        type="badge"
-                        title="Бейджи"
-                        entries={entries.filter((entry) => entry.type === "badge")}
-                        activeLayerId={activeLayerId}
-                        collapsed={collapsedSections.badge}
-                        onToggle={() => setCollapsedSections((prev) => ({ ...prev, badge: !prev.badge }))}
-                        onSelect={setActiveLayerId}
-                        renderEditor={(entry) => (
-                            <input
-                                value={textValues[entry.id] ?? String(entry.props.label ?? "")}
-                                onChange={(event) => updateTextValue(entry.id, event.target.value)}
-                                placeholder="Введите бейдж"
-                                className="h-9 w-full rounded-[var(--radius-md)] border border-border-primary bg-bg-secondary px-3 text-xs text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-1 focus:ring-border-focus"
                             />
-                        )}
-                    />
+
+                            <LayerSection
+                                type="badge"
+                                title="Бейджи"
+                                entries={entries.filter((entry) => entry.type === "badge")}
+                                activeLayerId={activeLayerId}
+                                collapsed={collapsedSections.badge}
+                                onToggle={() => setCollapsedSections((prev) => ({ ...prev, badge: !prev.badge }))}
+                                onSelect={setActiveLayerId}
+                                renderEditor={(entry) => (
+                                    <input
+                                        value={textValues[entry.id] ?? String(entry.props.label ?? "")}
+                                        onChange={(event) => updateTextValue(entry.id, event.target.value)}
+                                        placeholder="Введите бейдж"
+                                        className="h-9 w-full rounded-[var(--radius-md)] border border-border-primary bg-bg-secondary px-3 text-xs text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-1 focus:ring-border-focus"
+                                    />
+                                )}
+                            />
+                        </>
+                    ) : (
+                        <WizardAssetPanel
+                            assets={projectAssets}
+                            isLoading={assetsQuery.isLoading}
+                            canApply={!!activeImageLayer}
+                            activeLayerName={activeImageLayer?.name}
+                            onApply={handleApplyAssetToLayer}
+                        />
+                    )}
                 </aside>
 
-                <main className="relative min-h-0 overflow-hidden p-6">
+                <main className="relative min-h-0 overflow-hidden p-4">
                     <div className="absolute left-6 top-6 z-10 rounded-full border border-accent-lime-hover/50 bg-accent-lime/15 px-3 py-1.5 text-xs font-medium text-accent-lime-text shadow-sm">
                         {activeLayer ? `Выбран слой: ${activeLayer.name}` : "Выберите слой"}
                     </div>
-                    <div ref={previewFrameRef} className="flex h-full items-center justify-center rounded-[var(--radius-xl)] border border-border-primary bg-[#E8EDF5]">
+                    <div className="absolute right-6 top-6 z-10 flex items-center gap-1 rounded-full border border-border-primary bg-bg-surface/90 p-1 shadow-[var(--shadow-sm)] backdrop-blur">
+                        <ZoomButton label="Уменьшить" onClick={() => setPreviewZoom((value) => Math.max(0.5, Number((value - 0.25).toFixed(2))))}>
+                            <ZoomOut size={14} />
+                        </ZoomButton>
+                        <button
+                            type="button"
+                            onClick={() => setPreviewZoom(1)}
+                            className="flex h-7 min-w-12 items-center justify-center rounded-full px-2 text-[11px] font-semibold text-text-secondary hover:bg-bg-tertiary hover:text-text-primary cursor-pointer"
+                            title="Сбросить масштаб"
+                        >
+                            {Math.round(previewZoom * 100)}%
+                        </button>
+                        <ZoomButton label="Увеличить" onClick={() => setPreviewZoom((value) => Math.min(3, Number((value + 0.25).toFixed(2))))}>
+                            <ZoomIn size={14} />
+                        </ZoomButton>
+                        <ZoomButton label="100%" onClick={() => setPreviewZoom(1)}>
+                            <RotateCcw size={13} />
+                        </ZoomButton>
+                    </div>
+                    <div
+                        ref={previewFrameRef}
+                        className="flex h-full items-center justify-center rounded-[var(--radius-xl)] border border-border-primary bg-bg-canvas"
+                        style={{
+                            backgroundImage:
+                                "radial-gradient(circle, var(--border-primary) 1px, transparent 1px)",
+                            backgroundSize: "20px 20px",
+                        }}
+                    >
                         {draftPreviewLayers.length > 0 ? (
                             <PreviewCanvas
                                 layers={draftPreviewLayers}
@@ -281,6 +392,8 @@ export function WizardContentWorkspace({
                                 artboardHeight={previewSource.height}
                                 containerWidth={previewSize.width}
                                 containerHeight={previewSize.height}
+                                zoom={previewZoom}
+                                appearance={canvasAppearance}
                             />
                         ) : (
                             <div className="text-sm text-text-tertiary">Нет слоёв для предпросмотра</div>
@@ -374,6 +487,123 @@ function LayerSection({
     );
 }
 
+function SidebarTabButton({
+    active,
+    onClick,
+    children,
+}: {
+    active: boolean;
+    onClick: () => void;
+    children: React.ReactNode;
+}) {
+    return (
+        <button
+            type="button"
+            onClick={onClick}
+            className={`rounded-[var(--radius-md)] px-3 py-1.5 text-[11px] font-semibold transition-colors cursor-pointer ${
+                active
+                    ? "bg-bg-primary text-text-primary shadow-[var(--shadow-sm)]"
+                    : "text-text-tertiary hover:bg-bg-tertiary hover:text-text-primary"
+            }`}
+        >
+            {children}
+        </button>
+    );
+}
+
+function WizardAssetPanel({
+    assets,
+    isLoading,
+    canApply,
+    activeLayerName,
+    onApply,
+}: {
+    assets: AssetRow[];
+    isLoading: boolean;
+    canApply: boolean;
+    activeLayerName?: string;
+    onApply: (asset: AssetRow) => void;
+}) {
+    if (isLoading) {
+        return (
+            <div className="flex items-center justify-center rounded-[var(--radius-lg)] border border-border-primary bg-bg-surface py-10">
+                <Loader2 size={16} className="animate-spin text-text-tertiary" />
+            </div>
+        );
+    }
+
+    if (assets.length === 0) {
+        return (
+            <div className="rounded-[var(--radius-lg)] border border-dashed border-border-primary bg-bg-surface px-4 py-8 text-center">
+                <ImageIcon size={22} className="mx-auto mb-2 text-text-tertiary" />
+                <p className="text-xs font-medium text-text-primary">История ассетов пуста</p>
+                <p className="mt-1 text-[11px] leading-relaxed text-text-tertiary">
+                    Сгенерируйте или загрузите изображение — оно появится здесь для отката.
+                </p>
+            </div>
+        );
+    }
+
+    return (
+        <div className="space-y-3">
+            <div className="rounded-[var(--radius-lg)] border border-border-primary bg-bg-surface px-3 py-2">
+                <p className="text-[11px] font-medium text-text-primary">
+                    {canApply ? `Применить к слою: ${activeLayerName}` : "Выберите image-слой"}
+                </p>
+                <p className="mt-0.5 text-[10px] leading-relaxed text-text-tertiary">
+                    Нажмите на ассет, чтобы заменить выбранное изображение.
+                </p>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+                {assets.map((asset) => (
+                    <button
+                        key={asset.id}
+                        type="button"
+                        disabled={!canApply}
+                        onClick={() => onApply(asset)}
+                        className="group relative aspect-square overflow-hidden rounded-[var(--radius-md)] border border-border-primary bg-bg-tertiary text-left transition-all hover:border-accent-primary/50 disabled:cursor-not-allowed disabled:opacity-60"
+                        title={canApply ? "Применить ассет к выбранному слою" : "Сначала выберите image-слой"}
+                    >
+                        <img
+                            src={asset.url}
+                            alt={asset.filename || "asset"}
+                            className="h-full w-full object-cover"
+                            draggable={false}
+                        />
+                        <div className="absolute inset-x-0 bottom-0 bg-black/55 px-2 py-1.5 opacity-0 transition-opacity group-hover:opacity-100">
+                            <p className="truncate text-[10px] font-medium text-white">
+                                {asset.filename || "asset"}
+                            </p>
+                        </div>
+                    </button>
+                ))}
+            </div>
+        </div>
+    );
+}
+
+function ZoomButton({
+    label,
+    onClick,
+    children,
+}: {
+    label: string;
+    onClick: () => void;
+    children: React.ReactNode;
+}) {
+    return (
+        <button
+            type="button"
+            onClick={onClick}
+            aria-label={label}
+            title={label}
+            className="flex h-7 w-7 items-center justify-center rounded-full text-text-secondary transition-colors hover:bg-bg-tertiary hover:text-text-primary cursor-pointer"
+        >
+            {children}
+        </button>
+    );
+}
+
 function WizardLayerPromptBar({
     activeLayer,
     textValues,
@@ -394,6 +624,7 @@ function WizardLayerPromptBar({
     onImageChange: (id: string, value: string) => void;
 }) {
     const promptRef = useRef<RefAutocompleteTextareaHandle>(null);
+    const { registerUrl } = useProjectLibrary();
     const { imagePresets } = useStylePresets();
     const [prompt, setPrompt] = useState("");
     const [isGenerating, setIsGenerating] = useState(false);
@@ -480,7 +711,16 @@ function WizardLayerPromptBar({
                 });
                 const data = await response.json();
                 if (data.error) throw new Error(data.requestId ? `${data.error} [request: ${data.requestId}]` : data.error);
-                if (data.content) onImageChange(activeLayer.id, data.content);
+                if (data.content) {
+                    const persisted = projectId
+                        ? await registerUrl({
+                            projectId,
+                            url: data.content,
+                            source: imageMode === "expand" ? "wizard-edit-expand" : "wizard-edit",
+                        })
+                        : null;
+                    onImageChange(activeLayer.id, persisted ?? data.content);
+                }
                 return;
             }
 
@@ -506,7 +746,16 @@ function WizardLayerPromptBar({
             });
             const data = await response.json();
             if (data.error) throw new Error(data.requestId ? `${data.error} [request: ${data.requestId}]` : data.error);
-            if (data.content) onImageChange(activeLayer.id, data.content);
+            if (data.content) {
+                const persisted = projectId
+                    ? await registerUrl({
+                        projectId,
+                        url: data.content,
+                        source: "wizard-generation",
+                    })
+                    : null;
+                onImageChange(activeLayer.id, persisted ?? data.content);
+            }
         } catch (err) {
             setError(err instanceof Error ? err.message : "Не удалось выполнить генерацию");
         } finally {
@@ -523,7 +772,7 @@ function WizardLayerPromptBar({
     const selectedLabel = activeLayer.type === "text" ? "текстом" : activeLayer.type === "badge" ? "бейджем" : "фото";
 
     return (
-        <div className="absolute bottom-6 left-1/2 z-20 w-[760px] max-w-[calc(100%-48px)] -translate-x-1/2 rounded-[20px] border border-border-primary bg-bg-surface/95 shadow-[var(--shadow-lg)] backdrop-blur-xl">
+        <div className="absolute bottom-6 left-1/2 z-20 w-[760px] max-w-[calc(100%-32px)] -translate-x-1/2 rounded-[20px] border border-border-primary bg-bg-surface/95 shadow-[var(--shadow-lg)] backdrop-blur-xl">
             <div className="flex items-center gap-2 border-b border-border-primary px-4 py-2">
                 <span className="rounded-full bg-accent-lime/20 px-2 py-1 text-[11px] font-medium text-accent-lime-text">
                     Работаем с {selectedLabel}: {activeLayer.name}

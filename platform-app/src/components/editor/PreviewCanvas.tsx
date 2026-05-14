@@ -28,6 +28,7 @@ function PreviewLayer({ layer, allLayers, loadedImages, imageStatuses, renderX, 
         width: layer.width,
         height: layer.height,
         rotation: layer.rotation,
+        opacity: layer.opacity ?? 1,
         name: layer.id, // For easy finding
     };
 
@@ -39,8 +40,8 @@ function PreviewLayer({ layer, allLayers, loadedImages, imageStatuses, renderX, 
                     {...(layer.fillEnabled === false
                         ? { fill: "transparent", fillPriority: "color" }
                         : paintToKonvaProps(layer.fill, layer.width, layer.height))}
-                    stroke={layer.stroke}
-                    strokeWidth={layer.strokeWidth}
+                    stroke={layer.strokeEnabled === false ? undefined : (layer.stroke || undefined)}
+                    strokeWidth={layer.strokeEnabled === false ? 0 : layer.strokeWidth}
                     cornerRadius={layer.cornerRadius}
                 />
             );
@@ -48,15 +49,19 @@ function PreviewLayer({ layer, allLayers, loadedImages, imageStatuses, renderX, 
             return (
                 <Text
                     {...commonProps}
-                    text={layer.text}
+                    width={layer.textAdjust === "auto_width" ? undefined : layer.width}
+                    height={layer.textAdjust === "auto_width" || layer.textAdjust === "auto_height" ? undefined : layer.height}
+                    text={layer.textTransform === "uppercase" ? layer.text.toUpperCase() : layer.textTransform === "lowercase" ? layer.text.toLowerCase() : layer.text}
                     fontSize={layer.fontSize}
                     fontFamily={layer.fontFamily}
-                    fontStyle={layer.fontWeight}
-                    fill={layer.fill}
+                    fontStyle={layer.fontWeight || "normal"}
+                    fill={layer.fillEnabled === false ? "transparent" : layer.fill}
                     align={layer.align}
-                    verticalAlign="middle"
+                    verticalAlign={layer.verticalAlign || "top"}
                     letterSpacing={layer.letterSpacing}
                     lineHeight={layer.lineHeight}
+                    wrap={layer.textAdjust === "auto_width" ? "none" : "word"}
+                    ellipsis={layer.textAdjust === "fixed" ? (layer.truncateText || false) : false}
                 />
             );
         case "image":
@@ -167,8 +172,8 @@ function PreviewLayer({ layer, allLayers, loadedImages, imageStatuses, renderX, 
                         {...(layer.fillEnabled === false
                             ? { fill: undefined, fillPriority: "color" }
                             : paintToKonvaProps(layer.fill, layer.width, layer.height))}
-                        stroke={layer.stroke}
-                        strokeWidth={layer.strokeWidth}
+                        stroke={layer.strokeEnabled === false ? undefined : (layer.stroke || undefined)}
+                        strokeWidth={layer.strokeEnabled === false ? 0 : layer.strokeWidth}
                         cornerRadius={layer.cornerRadius}
                     />
                     {childLayers.map((child) => (
@@ -195,9 +200,20 @@ interface PreviewCanvasProps {
     artboardHeight: number;
     containerWidth: number;
     containerHeight: number;
+    zoom?: number;
+    /** Matches editor canvas chrome — light mat vs dark elevated artboard plate */
+    appearance?: "light" | "dark";
 }
 
-export function PreviewCanvas({ layers, artboardWidth, artboardHeight, containerWidth, containerHeight }: PreviewCanvasProps) {
+export function PreviewCanvas({
+    layers,
+    artboardWidth,
+    artboardHeight,
+    containerWidth,
+    containerHeight,
+    zoom = 1,
+    appearance = "light",
+}: PreviewCanvasProps) {
     const stageRef = useRef<Konva.Stage>(null);
     const [loadedImages, setLoadedImages] = useState<Map<string, HTMLImageElement>>(new Map());
     const [failedImageSources, setFailedImageSources] = useState<Set<string>>(new Set());
@@ -284,8 +300,11 @@ export function PreviewCanvas({ layers, artboardWidth, artboardHeight, container
         [layers, frameChildIds],
     );
 
-    // Calculate scale to fit artboard within container (with 40px padding)
-    const padding = 40;
+    const matFill = appearance === "dark" ? "#18191E" : "#FAFAFA";
+    const matShadowOpacity = appearance === "dark" ? 0.35 : 0.05;
+
+    // Calculate scale to fit artboard within container (with padding)
+    const padding = appearance === "dark" ? 32 : 40;
     const availableWidth = Math.max(1, containerWidth - padding * 2);
     const availableHeight = Math.max(1, containerHeight - padding * 2);
     
@@ -293,7 +312,8 @@ export function PreviewCanvas({ layers, artboardWidth, artboardHeight, container
         availableWidth / artboardWidth,
         availableHeight / artboardHeight
     );
-    if (scale > 1) scale = 1; // Don't up-scale beyond 100%
+    if (scale > 1) scale = 1; // Don't up-scale beyond 100% unless explicit preview zoom is requested.
+    scale *= zoom;
 
     // Calculate centering offsets
     const stageX = (containerWidth - artboardWidth * scale) / 2;
@@ -318,10 +338,10 @@ export function PreviewCanvas({ layers, artboardWidth, artboardHeight, container
                     y={stageY}
                     width={artboardWidth * scale}
                     height={artboardHeight * scale}
-                    fill="#FAFAFA"
+                    fill={matFill}
                     shadowColor="#000"
                     shadowBlur={10}
-                    shadowOpacity={0.05}
+                    shadowOpacity={matShadowOpacity}
                     shadowOffsetY={4}
                 />
                 
