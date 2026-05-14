@@ -4,16 +4,16 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
     Badge as BadgeIcon,
     ChevronDown,
-    ChevronRight,
     Image as ImageIcon,
     Loader2,
+    Expand,
+    Paintbrush,
     Ratio,
     Settings2,
     Sparkles,
     Type,
     Upload,
 } from "lucide-react";
-import { Button } from "@/components/ui/Button";
 import { RefAutocompleteTextarea, type RefAutocompleteTextareaHandle } from "@/components/ui/RefAutocompleteTextarea";
 import { ReferenceImageInput } from "@/components/ui/ReferenceImageInput";
 import { ImageStylePresetPicker } from "@/components/ui/StylePresetPicker";
@@ -55,9 +55,6 @@ interface WizardContentWorkspaceProps {
     productDescription: string;
     projectBU: BusinessUnit;
     projectId?: string;
-    onBack: () => void;
-    onApplyAndContinue: () => void;
-    onApplyToStudio: () => void;
 }
 
 const IMAGE_GEN_MODELS = [
@@ -87,9 +84,6 @@ export function WizardContentWorkspace({
     productDescription,
     projectBU,
     projectId,
-    onBack,
-    onApplyAndContinue,
-    onApplyToStudio,
 }: WizardContentWorkspaceProps) {
     const fileInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
     const previewFrameRef = useRef<HTMLDivElement | null>(null);
@@ -172,24 +166,6 @@ export function WizardContentWorkspace({
 
     return (
         <div className="flex h-full min-h-0 flex-col overflow-hidden">
-            <div className="flex items-start justify-between gap-4 border-b border-border-primary px-6 py-4">
-                <div>
-                    <h2 className="text-lg font-semibold text-text-primary">Заполните контент</h2>
-                    <p className="mt-1 text-sm text-text-secondary">
-                        Выберите слой слева, внесите базовые правки и проверьте их в live preview.
-                    </p>
-                </div>
-                <div className="flex items-center gap-2">
-                    <Button variant="ghost" onClick={onBack}>Назад</Button>
-                    <Button variant="secondary" onClick={onApplyToStudio}>
-                        Перейти в студию
-                    </Button>
-                    <Button icon={<ChevronRight size={14} />} onClick={onApplyAndContinue}>
-                        Перейти к превью
-                    </Button>
-                </div>
-            </div>
-
             {templateLoadError && (
                 <div className="mx-6 mt-4 rounded-lg border border-yellow-500/30 bg-yellow-500/10 p-3 text-sm text-yellow-200">
                     {templateLoadError}
@@ -198,6 +174,16 @@ export function WizardContentWorkspace({
 
             <div className="grid min-h-0 flex-1 grid-cols-[320px_1fr] bg-bg-secondary">
                 <aside className="min-h-0 overflow-y-auto border-r border-border-primary bg-bg-primary p-4">
+                    <div className="mb-4 rounded-[var(--radius-xl)] border border-border-primary bg-bg-surface p-4">
+                        <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-text-tertiary">
+                            Мастер
+                        </p>
+                        <h2 className="mt-2 text-base font-semibold text-text-primary">Заполните контент</h2>
+                        <p className="mt-1 text-xs leading-relaxed text-text-secondary">
+                            Выберите слой, внесите базовые правки и проверяйте изменения в live preview.
+                        </p>
+                    </div>
+
                     <LayerSection
                         type="text"
                         title="Тексты"
@@ -537,7 +523,7 @@ function WizardLayerPromptBar({
     const selectedLabel = activeLayer.type === "text" ? "текстом" : activeLayer.type === "badge" ? "бейджем" : "фото";
 
     return (
-        <div className="absolute inset-x-8 bottom-6 z-20 rounded-[var(--radius-xl)] border border-border-primary bg-bg-surface/95 shadow-[var(--shadow-lg)] backdrop-blur-xl">
+        <div className="absolute bottom-6 left-1/2 z-20 w-[760px] max-w-[calc(100%-48px)] -translate-x-1/2 rounded-[20px] border border-border-primary bg-bg-surface/95 shadow-[var(--shadow-lg)] backdrop-blur-xl">
             <div className="flex items-center gap-2 border-b border-border-primary px-4 py-2">
                 <span className="rounded-full bg-accent-lime/20 px-2 py-1 text-[11px] font-medium text-accent-lime-text">
                     Работаем с {selectedLabel}: {activeLayer.name}
@@ -583,16 +569,19 @@ function WizardLayerPromptBar({
                             <ImageModeButton
                                 active={imageMode === "generate"}
                                 label="Генерация"
+                                icon={<Sparkles size={14} />}
                                 onClick={() => setImageMode("generate")}
                             />
                             <ImageModeButton
                                 active={imageMode === "edit"}
                                 label="Правка"
+                                icon={<Paintbrush size={14} />}
                                 onClick={() => setImageMode("edit")}
                             />
                             <ImageModeButton
                                 active={imageMode === "expand"}
                                 label="Расширить фон"
+                                icon={<Expand size={14} />}
                                 onClick={() => setImageMode("expand")}
                             />
                         </div>
@@ -692,23 +681,28 @@ function WizardLayerPromptBar({
 function ImageModeButton({
     active,
     label,
+    icon,
     onClick,
 }: {
     active: boolean;
     label: string;
+    icon: React.ReactNode;
     onClick: () => void;
 }) {
     return (
         <button
             type="button"
             onClick={onClick}
-            className={`rounded-[8px] px-2.5 text-[11px] font-medium transition-colors cursor-pointer ${
+            aria-label={label}
+            title={label}
+            className={`flex h-7 w-7 items-center justify-center rounded-[8px] transition-colors cursor-pointer ${
                 active
                     ? "bg-accent-primary/10 text-accent-primary"
                     : "text-text-secondary hover:bg-bg-tertiary"
             }`}
         >
-            {label}
+            {icon}
+            <span className="sr-only">{label}</span>
         </button>
     );
 }

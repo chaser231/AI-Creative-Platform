@@ -1,11 +1,9 @@
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
-import { ChevronRight, LayoutTemplate, Search, Star, X } from "lucide-react";
+import { useState, useMemo, useEffect, useCallback } from "react";
+import { LayoutTemplate, Search, Star, X } from "lucide-react";
 import { useTemplateStore } from "@/store/templateStore";
 import { useTemplateListSync } from "@/hooks/useTemplateSync";
-import { useCanvasStore } from "@/store/canvasStore";
-import { useShallow } from "zustand/react/shallow";
 import { useProjectStore } from "@/store/projectStore";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
@@ -14,17 +12,27 @@ import { getRecommendedPacks, searchPacks } from "@/services/templateCatalogServ
 import { type TemplatePackV2, extractSingleFormatFromPack } from "@/services/templateService";
 import type { BusinessUnit, TemplateTag } from "@/types";
 import { WizardContentWorkspace } from "@/components/wizard/WizardContentWorkspace";
-import { PreviewCanvas } from "@/components/editor/PreviewCanvas";
+
+export type WizardStep = "template" | "content";
+
+export interface WizardHeaderState {
+    step: WizardStep;
+    nextLabel: string;
+    nextDisabled: boolean;
+    canGoBack: boolean;
+    onBack: () => void;
+    onNext: () => void;
+    onSwitchToStudio: () => void;
+}
 
 interface WizardFlowProps {
     projectId?: string;
     onSwitchToStudio: () => void;
     initialTemplateId?: string | null;
+    onHeaderStateChange?: (state: WizardHeaderState | null) => void;
 }
 
-type WizardStep = "template" | "content" | "review";
-
-export function WizardFlow({ projectId, onSwitchToStudio, initialTemplateId }: WizardFlowProps) {
+export function WizardFlow({ projectId, onSwitchToStudio, initialTemplateId, onHeaderStateChange }: WizardFlowProps) {
     const { savedPacks } = useTemplateStore();
     const { backendTemplates } = useTemplateListSync();
 
@@ -34,11 +42,6 @@ export function WizardFlow({ projectId, onSwitchToStudio, initialTemplateId }: W
         const uniqueLocal = savedPacks.filter(p => !backendIds.has(p.id));
         return [...backendTemplates, ...uniqueLocal];
     }, [backendTemplates, savedPacks]);
-    const { previewLayers, previewCanvasWidth, previewCanvasHeight } = useCanvasStore(useShallow((s) => ({
-        previewLayers: s.layers,
-        previewCanvasWidth: s.canvasWidth,
-        previewCanvasHeight: s.canvasHeight,
-    })));
     const { projects } = useProjectStore();
     const [step, setStep] = useState<WizardStep>(initialTemplateId ? "content" : "template");
     const [templateMode, setTemplateMode] = useState<"single" | "pack" | "manual">("single");
@@ -160,7 +163,7 @@ export function WizardFlow({ projectId, onSwitchToStudio, initialTemplateId }: W
 
     const selectedTemplate = fullSelectedTemplate;
 
-    const handleApplyAndContinue = async (nextStep: "review" | "studio" = "review") => {
+    const handleApplyAndContinue = useCallback(async () => {
         if (templateMode !== "manual" && !selectedTemplateId) return;
 
         let packToApply: TemplatePackV2;
@@ -281,14 +284,77 @@ export function WizardFlow({ projectId, onSwitchToStudio, initialTemplateId }: W
         applyTemplatePack(packToApply, {
             contentOverrides: Object.keys(contentOverrides).length > 0 ? contentOverrides : undefined,
             onSuccess: () => {
-                if (templateMode === "manual" || nextStep === "studio") {
-                    onSwitchToStudio();
-                } else {
-                    setStep("review");
-                }
+                onSwitchToStudio();
             }
         });
-    };
+    }, [
+        fullSelectedTemplate,
+        imageValues,
+        manualSizes,
+        onSwitchToStudio,
+        selectedTemplateId,
+        templateMode,
+        textValues,
+    ]);
+
+    const nextDisabled =
+        step === "template"
+            ? templateMode === "manual"
+                ? manualSizes.length === 0
+                : !selectedTemplateId
+            : false;
+
+    const handleHeaderBack = useCallback(() => {
+        if (step === "content") {
+            setStep("template");
+        }
+    }, [step]);
+
+    const handleHeaderNext = useCallback(() => {
+        if (step === "template") {
+            if (templateMode === "manual") {
+                void handleApplyAndContinue();
+                return;
+            }
+            if (!selectedTemplateId) return;
+            setStep("content");
+            return;
+        }
+
+        void handleApplyAndContinue();
+    }, [handleApplyAndContinue, selectedTemplateId, step, templateMode]);
+
+    const handleHeaderSwitchToStudio = useCallback(() => {
+        if (step === "content") {
+            void handleApplyAndContinue();
+            return;
+        }
+        onSwitchToStudio();
+    }, [handleApplyAndContinue, onSwitchToStudio, step]);
+
+    useEffect(() => {
+        onHeaderStateChange?.({
+            step,
+            nextLabel: step === "template" && templateMode === "manual" ? "Собрать" : step === "content" ? "Применить" : "Далее",
+            nextDisabled,
+            canGoBack: step === "content",
+            onBack: handleHeaderBack,
+            onNext: handleHeaderNext,
+            onSwitchToStudio: handleHeaderSwitchToStudio,
+        });
+    }, [
+        handleHeaderBack,
+        handleHeaderNext,
+        handleHeaderSwitchToStudio,
+        nextDisabled,
+        onHeaderStateChange,
+        step,
+        templateMode,
+    ]);
+
+    useEffect(() => {
+        return () => onHeaderStateChange?.(null);
+    }, [onHeaderStateChange]);
 
     /* ─── Pack Card (V2 enhanced) ───────────────────────── */
     const PackCard = ({ pack, color }: { pack: TemplatePackV2 | TemplatePackMeta; color?: string }) => {
@@ -297,13 +363,17 @@ export function WizardFlow({ projectId, onSwitchToStudio, initialTemplateId }: W
 
         if (!v2) return null;
 
+        const selectableId = isMeta ? v2.id : (pack as TemplatePackV2).id;
         const displayColor = color || (isMeta ? (pack as TemplatePackMeta).thumbnailColor : "#6366F1");
+        const isSelected = selectedTemplateId === selectableId;
 
         return (
             <button
-                onClick={() => setSelectedTemplateId(v2.id)}
+                type="button"
+                onClick={() => setSelectedTemplateId(selectableId)}
+                aria-pressed={isSelected}
                 className={`relative p-3 rounded-xl border transition-all cursor-pointer group hover:shadow-md text-left
-                    ${selectedTemplateId === v2.id ? "border-accent-primary bg-accent-primary/5 ring-1 ring-accent-primary" : "border-border-primary hover:border-accent-primary/40 bg-bg-primary"}
+                    ${isSelected ? "border-accent-primary bg-accent-primary/5 ring-1 ring-accent-primary" : "border-border-primary hover:border-accent-primary/40 bg-bg-primary"}
                 `}
             >
                 <div
@@ -367,30 +437,6 @@ export function WizardFlow({ projectId, onSwitchToStudio, initialTemplateId }: W
                     ? "h-full border-0 rounded-none shadow-none"
                     : "max-w-5xl rounded-[var(--radius-xl)] shadow-[var(--shadow-lg)] border border-border-primary"
             }`}>
-                {/* Progress bar */}
-                <div className="flex items-center gap-0 border-b border-border-primary shrink-0">
-                    {(["template", "content", "review"] as WizardStep[]).map((s, i) => (
-                        <div
-                            key={s}
-                            className={`
-                                flex-1 flex items-center justify-center gap-2 px-4 py-3 text-xs font-medium
-                                transition-colors border-b-2
-                                ${step === s
-                                    ? "border-accent-primary text-accent-primary bg-bg-active"
-                                    : i < ["template", "content", "review"].indexOf(step)
-                                        ? "border-green-400 text-green-600 bg-green-50"
-                                        : "border-transparent text-text-tertiary"
-                                }
-                            `}
-                        >
-                            <span className="w-5 h-5 rounded-full bg-current/10 flex items-center justify-center text-[10px] font-bold">
-                                {i + 1}
-                            </span>
-                            {s === "template" ? "Выбор шаблона" : s === "content" ? "Контент" : "Превью"}
-                        </div>
-                    ))}
-                </div>
-
                 <div className={`${isContentStep ? "p-0 overflow-hidden" : "p-6 overflow-y-auto"} flex-1 min-h-0`}>
                     {/* Step 1: Template */}
                     {step === "template" && (
@@ -436,15 +482,6 @@ export function WizardFlow({ projectId, onSwitchToStudio, initialTemplateId }: W
                                             Нет одиночных шаблонов.<br />Используйте вкладку "Пакеты" или редактор для их создания.
                                         </div>
                                     )}
-                                    <div className="flex justify-end pt-2">
-                                        <Button
-                                            disabled={!selectedTemplateId}
-                                            icon={<ChevronRight size={14} />}
-                                            onClick={() => setStep("content")}
-                                        >
-                                            Продолжить
-                                        </Button>
-                                    </div>
                                 </>
                             ) : templateMode === "pack" ? (
                                 <div className="space-y-5">
@@ -533,15 +570,6 @@ export function WizardFlow({ projectId, onSwitchToStudio, initialTemplateId }: W
 
                                         </>
                                     )}
-                                    <div className="flex justify-end pt-2 border-t border-border-primary">
-                                        <Button
-                                            disabled={!selectedTemplateId}
-                                            icon={<ChevronRight size={14} />}
-                                            onClick={() => setStep("content")}
-                                        >
-                                            Продолжить
-                                        </Button>
-                                    </div>
                                 </div>
                             ) : (
                                 <div className="space-y-4">
@@ -567,15 +595,6 @@ export function WizardFlow({ projectId, onSwitchToStudio, initialTemplateId }: W
                                         ))}
                                         {manualSizes.length === 0 && <span className="text-xs text-text-tertiary">Форматы не добавлены. Добавьте хотя бы один.</span>}
                                      </div>
-                                     <div className="flex justify-end pt-2 border-t border-border-primary">
-                                        <Button
-                                            disabled={manualSizes.length === 0}
-                                            icon={<ChevronRight size={14} />}
-                                            onClick={() => handleApplyAndContinue()}
-                                        >
-                                            Собрать форматы
-                                        </Button>
-                                    </div>
                                 </div>
                             )}
                         </div>
@@ -593,41 +612,7 @@ export function WizardFlow({ projectId, onSwitchToStudio, initialTemplateId }: W
                             productDescription={productDescription}
                             projectBU={projectBU}
                             projectId={projectId}
-                            onBack={() => setStep("template")}
-                            onApplyAndContinue={() => handleApplyAndContinue("review")}
-                            onApplyToStudio={() => handleApplyAndContinue("studio")}
                         />
-                    )}
-
-                    {/* Step 3: Review */}
-                    {step === "review" && (
-                        <div className="space-y-4 h-full flex flex-col">
-                            <div>
-                                <h2 className="text-lg font-semibold text-text-primary">Ваш креатив готов!</h2>
-                                <p className="text-sm text-text-secondary mt-1">
-                                    Мастер-баннер сгенерирован. Проверьте результат перед переходом в Студию.
-                                </p>
-                            </div>
-                            
-                            <div className="flex-1 min-h-[400px] w-full bg-bg-secondary rounded-[var(--radius-lg)] border border-border-primary overflow-hidden relative">
-                                <PreviewCanvas
-                                    layers={previewLayers}
-                                    artboardWidth={previewCanvasWidth}
-                                    artboardHeight={previewCanvasHeight}
-                                    containerWidth={800} // Approximate width, could be dynamic but fixed is ok for a modal
-                                    containerHeight={400} // Approximate height
-                                />
-                            </div>
-
-                            <div className="flex justify-between pt-2">
-                                <Button variant="secondary" onClick={() => setStep("content")}>
-                                    Назад к контенту
-                                </Button>
-                                <Button onClick={onSwitchToStudio}>
-                                    Редактировать в Студии →
-                                </Button>
-                            </div>
-                        </div>
                     )}
                 </div>
             </div>

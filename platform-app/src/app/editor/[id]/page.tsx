@@ -3,7 +3,7 @@
 import { useRef, useState, use, useEffect, useCallback } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
-import { Download, Share2, Wand2, PenTool, Copy, Check, HelpCircle, Settings, History, AlertTriangle, FolderOpen, Save, Workflow } from "lucide-react";
+import { Download, Share2, Wand2, PenTool, Copy, Check, HelpCircle, Settings, History, AlertTriangle, FolderOpen, Save, Workflow, ChevronRight } from "lucide-react";
 import { TopBar } from "@/components/layout/TopBar";
 import { Button } from "@/components/ui/Button";
 import { Dialog } from "@/components/ui/Dialog";
@@ -25,7 +25,7 @@ import { AssetLibraryModal } from "@/components/editor/AssetLibraryModal";
 import { AIScenariosModal } from "@/components/workflows/AIScenariosModal";
 import { TemplateSettingsModal } from "@/components/editor/TemplateSettingsModal";
 import { MissingFontsModal } from "@/components/editor/MissingFontsModal";
-import { WizardFlow } from "@/components/wizard/WizardFlow";
+import { WizardFlow, type WizardHeaderState } from "@/components/wizard/WizardFlow";
 import { useProjectStore } from "@/store/projectStore";
 import { useCanvasStore } from "@/store/canvasStore";
 import { useShallow } from "zustand/react/shallow";
@@ -79,6 +79,7 @@ export default function EditorPage({ params }: EditorPageProps) {
     const [assetLibraryOpen, setAssetLibraryOpen] = useState(false);
     const [aiScenariosOpen, setAiScenariosOpen] = useState(false);
     const [templateSaveStatus, setTemplateSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+    const [wizardHeaderState, setWizardHeaderState] = useState<WizardHeaderState | null>(null);
     // Missing Fonts state for template loading
     const [missingFontsData, setMissingFontsData] = useState<{
         missing: RequiredFont[];
@@ -678,6 +679,14 @@ export default function EditorPage({ params }: EditorPageProps) {
     };
 
     const currentStatusLabel = statusOptions.find(o => o.value === projectStatus)?.label || projectStatus;
+    const isWizardMode = editorMode === "wizard";
+    const handleSwitchToStudio = useCallback(() => {
+        setEditorMode("studio");
+    }, [setEditorMode]);
+    const wizardSteps = [
+        { id: "template" as const, label: "Основа" },
+        { id: "content" as const, label: "Контент" },
+    ];
 
     return (
         <div className="flex flex-col h-screen overflow-hidden bg-bg-canvas">
@@ -775,11 +784,44 @@ export default function EditorPage({ params }: EditorPageProps) {
                             )}
                         </div>
                     }
-                    onUndo={undo}
-                    onRedo={redo}
+                    onUndo={isWizardMode ? undefined : undo}
+                    onRedo={isWizardMode ? undefined : redo}
                     canUndo={history.length > 0}
                     canRedo={future.length > 0}
                     centerContent={
+                        isWizardMode ? (
+                            <div className="flex items-center gap-1 rounded-[var(--radius-full)] border border-border-primary bg-bg-tertiary/70 p-1 shadow-[var(--shadow-sm)]">
+                                {wizardSteps.map((step, index) => {
+                                    const active = wizardHeaderState?.step === step.id;
+                                    const complete = step.id === "template" && wizardHeaderState?.step === "content";
+                                    return (
+                                        <div
+                                            key={step.id}
+                                            className={`
+                                                flex items-center gap-1.5 rounded-[var(--radius-full)] px-3 py-1.5 text-[11px] font-semibold transition-colors
+                                                ${active
+                                                    ? "bg-bg-surface text-text-primary shadow-[var(--shadow-sm)]"
+                                                    : complete
+                                                        ? "text-accent-primary"
+                                                        : "text-text-tertiary"
+                                                }
+                                            `}
+                                        >
+                                            <span className={`flex h-4 w-4 items-center justify-center rounded-full text-[9px] ${
+                                                active
+                                                    ? "bg-accent-lime-hover text-accent-lime-text"
+                                                    : complete
+                                                        ? "bg-accent-primary/10 text-accent-primary"
+                                                        : "bg-bg-surface text-text-tertiary"
+                                            }`}>
+                                                {complete ? <Check size={10} /> : index + 1}
+                                            </span>
+                                            {step.label}
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        ) : (
                         <div className="flex items-center bg-bg-tertiary rounded-[var(--radius-full)] p-1">
                             <button
                                 onClick={() => setEditorMode("wizard")}
@@ -787,10 +829,7 @@ export default function EditorPage({ params }: EditorPageProps) {
                                 className={`
                                     flex items-center gap-1.5 px-4 py-1.5 rounded-[var(--radius-full)] text-xs font-medium
                                     transition-all cursor-pointer
-                                    ${editorMode === "wizard"
-                                        ? "bg-bg-surface text-text-primary shadow-[var(--shadow-sm)]"
-                                        : "text-text-secondary hover:text-text-primary"
-                                    }
+                                    text-text-secondary hover:text-text-primary
                                 `}
                             >
                                 <Wand2 size={13} />
@@ -802,18 +841,44 @@ export default function EditorPage({ params }: EditorPageProps) {
                                 className={`
                                     flex items-center gap-1.5 px-4 py-1.5 rounded-[var(--radius-full)] text-xs font-medium
                                     transition-all cursor-pointer
-                                    ${editorMode === "studio"
-                                        ? "bg-bg-surface text-text-primary shadow-[var(--shadow-sm)]"
-                                        : "text-text-secondary hover:text-text-primary"
-                                    }
+                                    bg-bg-surface text-text-primary shadow-[var(--shadow-sm)]
                                 `}
                             >
                                 <PenTool size={13} />
                                 Студия
                             </button>
                         </div>
+                        )
                     }
                     actions={
+                        isWizardMode ? (
+                            <div className="flex items-center gap-2">
+                                <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={wizardHeaderState?.onBack}
+                                    disabled={!wizardHeaderState?.canGoBack}
+                                >
+                                    Назад
+                                </Button>
+                                <Button
+                                    variant="secondary"
+                                    size="sm"
+                                    icon={<PenTool size={14} />}
+                                    onClick={wizardHeaderState?.onSwitchToStudio ?? handleSwitchToStudio}
+                                >
+                                    Перейти в студию
+                                </Button>
+                                <Button
+                                    size="sm"
+                                    icon={<ChevronRight size={14} />}
+                                    onClick={wizardHeaderState?.onNext}
+                                    disabled={!wizardHeaderState || wizardHeaderState.nextDisabled}
+                                >
+                                    {wizardHeaderState?.nextLabel ?? "Далее"}
+                                </Button>
+                            </div>
+                        ) : (
                         <div className="flex items-center gap-2">
                             {isTemplateMode && templateQuery.data?.canEdit && (
                                 <Button
@@ -880,6 +945,7 @@ export default function EditorPage({ params }: EditorPageProps) {
                                 Экспорт
                             </Button>
                         </div>
+                        )
                     }
                 />
             </div>
@@ -888,8 +954,9 @@ export default function EditorPage({ params }: EditorPageProps) {
             {editorMode === "wizard" ? (
                 <WizardFlow
                     projectId={isTemplateMode ? undefined : id}
-                    onSwitchToStudio={() => setEditorMode("studio")}
+                    onSwitchToStudio={handleSwitchToStudio}
                     initialTemplateId={searchParams.get("templateId") || null}
+                    onHeaderStateChange={setWizardHeaderState}
                 />
             ) : (
                 <div className="relative flex-1 min-h-0">
