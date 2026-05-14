@@ -197,6 +197,7 @@ export async function generateTextVariants(
     count: number = 3,
     bu?: BusinessUnit,
     preset?: TextGenPreset,
+    model: string = "deepseek"
 ): Promise<string[]> {
     const buContext = bu ? getSystemPromptForBU(bu, "text") : "";
     const presetInstr = preset ? PRESET_INSTRUCTIONS[preset] : "";
@@ -211,7 +212,7 @@ export async function generateTextVariants(
 
     const result = await RemoteTextProvider.generate(
         `${systemPrompt}\n\nЗапрос пользователя: ${userPrompt}`,
-        { model: "deepseek", systemPrompt },
+        { model, systemPrompt },
     );
 
     const variants = result.content

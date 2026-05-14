@@ -19,7 +19,7 @@ import {
 } from "lucide-react";
 import { RefAutocompleteTextarea, type RefAutocompleteTextareaHandle } from "@/components/ui/RefAutocompleteTextarea";
 import { ReferenceImageInput } from "@/components/ui/ReferenceImageInput";
-import { ImageStylePresetPicker } from "@/components/ui/StylePresetPicker";
+import { ImageStylePresetPicker, TextStylePresetPicker } from "@/components/ui/StylePresetPicker";
 import { PreviewCanvas } from "@/components/editor/PreviewCanvas";
 import { trpc } from "@/lib/trpc";
 import { useProjectLibrary } from "@/hooks/useProjectLibrary";
@@ -29,7 +29,7 @@ import { getImagePresetPromptSuffix } from "@/lib/stylePresets";
 import { applyAllAutoLayouts } from "@/utils/layoutEngine";
 import { compressImageFile, uploadForAI, uploadManyForAI } from "@/utils/imageUpload";
 import { useThemeStore } from "@/store/themeStore";
-import type { BusinessUnit, Layer, MasterComponent } from "@/types";
+import type { BusinessUnit, Layer, MasterComponent, TextGenPreset } from "@/types";
 import type { TemplatePackV2 } from "@/services/templateService";
 
 /** Resolves `system` the same way as ThemeProvider / editor canvas */
@@ -93,6 +93,11 @@ interface WizardContentWorkspaceProps {
     projectBU: BusinessUnit;
     projectId?: string;
 }
+
+const TEXT_GEN_MODELS = [
+    { id: "deepseek", label: "DeepSeek V3" },
+    { id: "gemini-flash", label: "Gemini 2.5 Flash" },
+];
 
 const IMAGE_GEN_MODELS = [
     { id: "nano-banana-2", label: "Nano Banana 2" },
@@ -625,13 +630,15 @@ function WizardLayerPromptBar({
 }) {
     const promptRef = useRef<RefAutocompleteTextareaHandle>(null);
     const { registerUrl } = useProjectLibrary();
-    const { imagePresets } = useStylePresets();
+    const { imagePresets, textPresets } = useStylePresets();
     const [prompt, setPrompt] = useState("");
     const [isGenerating, setIsGenerating] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [selectedModel, setSelectedModel] = useState("flux-dev");
+    const [textModel, setTextModel] = useState("deepseek");
     const [aspectRatio, setAspectRatio] = useState("1:1");
     const [imageStyleId, setImageStyleId] = useState("none");
+    const [textStyleId, setTextStyleId] = useState<TextGenPreset | "none">("none");
     const [referenceImages, setReferenceImages] = useState<string[]>([]);
     const [scale, setScale] = useState("");
     const [showAdvanced, setShowAdvanced] = useState(false);
@@ -668,6 +675,8 @@ function WizardLayerPromptBar({
                     activeLayer.name,
                     1,
                     projectBU,
+                    textStyleId === "none" ? undefined : (textStyleId as TextGenPreset),
+                    textModel
                 );
                 if (result) onTextChange(activeLayer.id, result);
                 return;
@@ -889,6 +898,28 @@ function WizardLayerPromptBar({
                                 <Settings2 size={13} />
                             </button>
                         )}
+                    </>
+                )}
+
+                {!isImage && (
+                    <>
+                        <OutlinedSelector icon={<Settings2 size={13} />}>
+                            <select
+                                value={textModel}
+                                onChange={(event) => setTextModel(event.target.value)}
+                                className="max-w-[150px] appearance-none bg-transparent text-[12px] font-medium text-text-secondary focus:outline-none cursor-pointer"
+                            >
+                                {TEXT_GEN_MODELS.map((model) => (
+                                    <option key={model.id} value={model.id}>{model.label}</option>
+                                ))}
+                            </select>
+                        </OutlinedSelector>
+                        <TextStylePresetPicker
+                            presets={textPresets}
+                            selectedId={textStyleId}
+                            onChange={(val) => setTextStyleId((val as TextGenPreset) || "none")}
+                            variant="compact"
+                        />
                     </>
                 )}
 
