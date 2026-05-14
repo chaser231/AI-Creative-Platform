@@ -87,6 +87,13 @@ interface AssetRow {
     metadata?: unknown;
 }
 
+interface LayerGeometry {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+}
+
 interface WizardContentWorkspaceProps {
     selectedTemplate: TemplatePackV2;
     templateLoadError: string | null;
@@ -94,6 +101,9 @@ interface WizardContentWorkspaceProps {
     imageValues: Record<string, string>;
     setTextValues: React.Dispatch<React.SetStateAction<Record<string, string>>>;
     setImageValues: React.Dispatch<React.SetStateAction<Record<string, string>>>;
+    layerGeometryOverrides: Record<string, LayerGeometry>;
+    setLayerGeometry: (id: string, geometry: LayerGeometry) => void;
+    clearLayerGeometry: (id: string) => void;
     productDescription: string;
     projectBU: BusinessUnit;
     projectId?: string;
@@ -128,6 +138,9 @@ export function WizardContentWorkspace({
     imageValues,
     setTextValues,
     setImageValues,
+    layerGeometryOverrides,
+    setLayerGeometry,
+    clearLayerGeometry,
     productDescription,
     projectBU,
     projectId,
@@ -228,9 +241,21 @@ export function WizardContentWorkspace({
         { enabled: !!projectId && sidebarTab === "assets", refetchOnWindowFocus: false },
     );
     const projectAssets = (assetsQuery.data ?? []) as AssetRow[];
+    /**
+     * Geometry overrides from the expand flow only describe the master
+     * layout, so we apply them when the active preview is master and skip
+     * them otherwise (each non-master format keeps its own layerSnapshot).
+     */
     const draftPreviewLayers = useMemo(
-        () => buildDraftPreviewLayers(previewSource.layers, entries, textValues, imageValues),
-        [previewSource.layers, entries, textValues, imageValues],
+        () =>
+            buildDraftPreviewLayers(
+                previewSource.layers,
+                entries,
+                textValues,
+                imageValues,
+                previewSource.id === masterPreviewSource?.id ? layerGeometryOverrides : undefined,
+            ),
+        [previewSource.layers, previewSource.id, masterPreviewSource?.id, entries, textValues, imageValues, layerGeometryOverrides],
     );
 
     const updateTextValue = (id: string, value: string) => {
@@ -246,6 +271,9 @@ export function WizardContentWorkspace({
         setUploadError(null);
         setUploadingLayerId(entry.id);
         try {
+            // A fresh upload invalidates any prior expand geometry — the new
+            // image is its own canvas, not an extension of the previous one.
+            clearLayerGeometry(entry.id);
             if (projectId) {
                 const persistedUrl = await registerFile({
                     projectId,
@@ -273,6 +301,7 @@ export function WizardContentWorkspace({
 
     const handleApplyAssetToLayer = (asset: AssetRow) => {
         if (!activeImageLayer) return;
+        clearLayerGeometry(activeImageLayer.id);
         updateImageValue(activeImageLayer.id, asset.url);
         setSidebarTab("layers");
     };
@@ -469,6 +498,8 @@ export function WizardContentWorkspace({
                         masterCanvasSize={masterCanvasSize}
                         onTextChange={updateTextValue}
                         onImageChange={updateImageValue}
+                        onLayerGeometryChange={setLayerGeometry}
+                        onLayerGeometryReset={clearLayerGeometry}
                     />
                 </main>
             </div>
@@ -806,6 +837,8 @@ function WizardLayerPromptBar({
     masterCanvasSize,
     onTextChange,
     onImageChange,
+    onLayerGeometryChange,
+    onLayerGeometryReset,
 }: {
     activeLayer?: EditableLayerEntry;
     textValues: Record<string, string>;
@@ -817,6 +850,8 @@ function WizardLayerPromptBar({
     masterCanvasSize: { width: number; height: number };
     onTextChange: (id: string, value: string) => void;
     onImageChange: (id: string, value: string) => void;
+    onLayerGeometryChange: (id: string, geometry: LayerGeometry) => void;
+    onLayerGeometryReset: (id: string) => void;
 }) {
     const promptRef = useRef<RefAutocompleteTextareaHandle>(null);
     const { registerUrl } = useProjectLibrary();
@@ -934,6 +969,15 @@ function WizardLayerPromptBar({
                     })
                     : null;
                 onImageChange(activeLayer.id, persisted ?? expandResult.src);
+                // Grow the master layer to match the new (extended) image so
+                // it actually shows up in the preview instead of being cropped
+                // back into the original tiny rect by object-fit cover.
+                onLayerGeometryChange(activeLayer.id, {
+                    x: layerX - padLeft,
+                    y: layerY - padTop,
+                    width: layerWidth + padLeft + padRight,
+                    height: layerHeight + padTop + padBottom,
+                });
                 return;
             }
 
@@ -974,6 +1018,9 @@ function WizardLayerPromptBar({
                             source: "wizard-edit",
                         })
                         : null;
+                    // text-edit returns a fresh image with potentially different
+                    // aspect ratio — drop any stale expand geometry.
+                    onLayerGeometryReset(activeLayer.id);
                     onImageChange(activeLayer.id, persisted ?? data.content);
                 }
                 return;
@@ -1009,6 +1056,8 @@ function WizardLayerPromptBar({
                         source: "wizard-generation",
                     })
                     : null;
+                // Brand new image — wipe any stale expand geometry.
+                onLayerGeometryReset(activeLayer.id);
                 onImageChange(activeLayer.id, persisted ?? data.content);
             }
         } catch (err) {
@@ -1392,6 +1441,7 @@ function buildDraftPreviewLayers(
     entries: EditableLayerEntry[],
     textValues: Record<string, string>,
     imageValues: Record<string, string>,
+    layerGeometryOverrides?: Record<string, LayerGeometry>,
 ): Layer[] {
     const entryBySlot = new Map(entries.filter((entry) => entry.slotId).map((entry) => [entry.slotId, entry]));
     const nextLayers = layers.map((layer) => {
@@ -1405,6 +1455,9 @@ function buildDraftPreviewLayers(
         ].filter(Boolean) as string[];
         const textValue = candidateIds.map((id) => textValues[id]).find((value) => value !== undefined);
         const imageValue = candidateIds.map((id) => imageValues[id]).find((value) => value !== undefined);
+        const geometryOverride = layerGeometryOverrides
+            ? candidateIds.map((id) => layerGeometryOverrides[id]).find((value) => value !== undefined)
+            : undefined;
 
         if (layer.type === "text" && textValue !== undefined) {
             return { ...layer, text: textValue };
@@ -1412,8 +1465,16 @@ function buildDraftPreviewLayers(
         if (layer.type === "badge" && textValue !== undefined) {
             return { ...layer, label: textValue };
         }
-        if (layer.type === "image" && imageValue !== undefined && !layer.isFixedAsset) {
-            return { ...layer, src: imageValue };
+        if (layer.type === "image" && !layer.isFixedAsset) {
+            const next = { ...layer } as typeof layer;
+            if (imageValue !== undefined) next.src = imageValue;
+            if (geometryOverride) {
+                next.x = geometryOverride.x;
+                next.y = geometryOverride.y;
+                next.width = geometryOverride.width;
+                next.height = geometryOverride.height;
+            }
+            return next;
         }
         return { ...layer };
     });

@@ -53,8 +53,35 @@ export function WizardFlow({ projectId, onSwitchToStudio, initialTemplateId, onH
     const [manualH, setManualH] = useState("1080");
     const [textValues, setTextValues] = useState<Record<string, string>>({});
     const [imageValues, setImageValues] = useState<Record<string, string>>({});
+    /**
+     * Per-layer geometry overrides for the master snapshot, set by the
+     * "Расширить фон" flow when the AI returns an image larger than the
+     * original layer. Keyed by candidate id (layer.id, masterComponent.id,
+     * or any id that matches the master snapshot during apply).
+     * Only the master format is updated — non-master snapshots keep their
+     * own layouts and just benefit from the higher-resolution src.
+     */
+    const [layerGeometryOverrides, setLayerGeometryOverrides] = useState<
+        Record<string, { x: number; y: number; width: number; height: number }>
+    >({});
     const [productDescription, setProductDescription] = useState("");
     const [packSearch, setPackSearch] = useState("");
+
+    const setLayerGeometry = useCallback(
+        (id: string, geometry: { x: number; y: number; width: number; height: number }) => {
+            setLayerGeometryOverrides((prev) => ({ ...prev, [id]: geometry }));
+        },
+        [],
+    );
+
+    const clearLayerGeometry = useCallback((id: string) => {
+        setLayerGeometryOverrides((prev) => {
+            if (!(id in prev)) return prev;
+            const next = { ...prev };
+            delete next[id];
+            return next;
+        });
+    }, []);
 
     // Get project BU for recommendations
     const activeProject = projects.find(p => p.id === projectId);
@@ -266,20 +293,53 @@ export function WizardFlow({ projectId, onSwitchToStudio, initialTemplateId, onH
 
         // Also apply content by mc.id directly to masterComponents (for hydration path)
         packToApply.masterComponents = packToApply.masterComponents.map(mc => {
+            const geom = layerGeometryOverrides[mc.id];
+            const baseProps = geom ? { ...mc.props, ...geom } : mc.props;
             if ((mc.type === "text" || mc.type === "badge") && textValues[mc.id] !== undefined) {
-                return { 
-                    ...mc, 
-                    props: { 
-                        ...mc.props, 
-                        [mc.type === "text" ? "text" : "label"]: textValues[mc.id] 
-                    } 
+                return {
+                    ...mc,
+                    props: {
+                        ...baseProps,
+                        [mc.type === "text" ? "text" : "label"]: textValues[mc.id]
+                    }
                 };
             }
             if (mc.type === "image" && imageValues[mc.id] !== undefined && !(mc.props as any).isFixedAsset) {
-                return { ...mc, props: { ...mc.props, src: imageValues[mc.id] } };
+                return { ...mc, props: { ...baseProps, src: imageValues[mc.id] } };
+            }
+            if (geom) {
+                return { ...mc, props: baseProps };
             }
             return mc;
         });
+
+        // Apply geometry overrides to the master snapshot (only). Non-master
+        // resizes intentionally keep their own per-format layer layouts —
+        // the bigger src they receive just gives them more pixels to crop into.
+        if (Object.keys(layerGeometryOverrides).length > 0 && Array.isArray(dataAny.resizes)) {
+            const masterResize =
+                dataAny.resizes.find((r: any) => r.isMaster) ?? dataAny.resizes[0];
+            if (masterResize?.layerSnapshot && Array.isArray(masterResize.layerSnapshot)) {
+                for (const layer of masterResize.layerSnapshot) {
+                    const geom = layerGeometryOverrides[layer.id];
+                    if (!geom) continue;
+                    layer.x = geom.x;
+                    layer.y = geom.y;
+                    layer.width = geom.width;
+                    layer.height = geom.height;
+                }
+            }
+        }
+        if (dataAny.layers && Array.isArray(dataAny.layers) && Object.keys(layerGeometryOverrides).length > 0) {
+            for (const layer of dataAny.layers) {
+                const geom = layerGeometryOverrides[layer.id];
+                if (!geom) continue;
+                layer.x = geom.x;
+                layer.y = geom.y;
+                layer.width = geom.width;
+                layer.height = geom.height;
+            }
+        }
 
         applyTemplatePack(packToApply, {
             contentOverrides: Object.keys(contentOverrides).length > 0 ? contentOverrides : undefined,
@@ -290,6 +350,7 @@ export function WizardFlow({ projectId, onSwitchToStudio, initialTemplateId, onH
     }, [
         fullSelectedTemplate,
         imageValues,
+        layerGeometryOverrides,
         manualSizes,
         onSwitchToStudio,
         selectedTemplateId,
@@ -609,6 +670,9 @@ export function WizardFlow({ projectId, onSwitchToStudio, initialTemplateId, onH
                             imageValues={imageValues}
                             setTextValues={setTextValues}
                             setImageValues={setImageValues}
+                            layerGeometryOverrides={layerGeometryOverrides}
+                            setLayerGeometry={setLayerGeometry}
+                            clearLayerGeometry={clearLayerGeometry}
                             productDescription={productDescription}
                             projectBU={projectBU}
                             projectId={projectId}
