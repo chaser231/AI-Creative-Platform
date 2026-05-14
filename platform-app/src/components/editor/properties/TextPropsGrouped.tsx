@@ -326,16 +326,13 @@ export function TextPropsGrouped({
                                 onChange={(e) => onChange({ opacity: Number(e.target.value) / 100 })}
                                 className="flex-1 h-1.5 accent-accent-primary cursor-pointer"
                             />
-                            <input
-                                type="number"
+                            <TypographyNumberInput
                                 min={0}
-                                max={100}
                                 value={Math.round((layer.opacity ?? 1) * 100)}
-                                onChange={(e) => {
-                                    const v = Math.max(0, Math.min(100, Number(e.target.value)));
-                                    onChange({ opacity: v / 100 });
+                                onChange={(v) => {
+                                    const finalV = Math.max(0, Math.min(100, v));
+                                    onChange({ opacity: finalV / 100 });
                                 }}
-                                className="w-12 h-8 px-1 rounded-[var(--radius-sm)] border border-border-primary bg-bg-primary text-[11px] text-text-primary text-center focus:outline-none focus:ring-1 focus:ring-border-focus"
                             />
                         </div>
 
@@ -405,15 +402,59 @@ function TypographyNumberInput({
     min?: number;
     step?: number;
 }) {
+    const formatValue = (v: number) => (Number.isInteger(v) ? String(v) : Number(v.toFixed(2)).toString());
+    const [localValue, setLocalValue] = useState(formatValue(value));
+    const [isFocused, setIsFocused] = useState(false);
+
+    useEffect(() => {
+        if (!isFocused) {
+            setLocalValue(formatValue(value));
+        }
+    }, [value, isFocused]);
+
+    const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const val = e.target.value;
+        setLocalValue(val);
+        if (val !== "" && val !== "-") {
+            let num = Number(val);
+            if (!isNaN(num)) {
+                onChange(num);
+            }
+        }
+    };
+
+    const handleBlur = () => {
+        setIsFocused(false);
+        if (localValue === "" || localValue === "-") {
+            setLocalValue(formatValue(value));
+        } else {
+            let num = Number(localValue);
+            if (!isNaN(num)) {
+                if (min !== undefined) num = Math.max(min, num);
+                onChange(num);
+                setLocalValue(formatValue(num));
+            } else {
+                setLocalValue(formatValue(value));
+            }
+        }
+    };
+
     return (
         <div className="h-12 flex items-center gap-2 px-3 rounded-[var(--radius-lg)] border border-border-primary bg-bg-primary">
             {icon}
             <input
                 type="number"
-                value={Number.isInteger(value) ? value : Number(value.toFixed(2))}
+                value={localValue}
                 min={min}
                 step={step}
-                onChange={(e) => onChange(Number(e.target.value))}
+                onFocus={() => setIsFocused(true)}
+                onBlur={handleBlur}
+                onChange={handleChange}
+                onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                        e.currentTarget.blur();
+                    }
+                }}
                 className="min-w-0 flex-1 bg-transparent text-[15px] text-text-primary focus:outline-none"
             />
             {suffix && <span className="text-[12px] text-text-tertiary">{suffix}</span>}

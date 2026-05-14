@@ -27,6 +27,7 @@ import { Select } from "@/components/ui/Select";
 import { useRef, useState } from "react";
 import type { ArtboardBackgroundFit, BackgroundSwatchValue } from "@/types";
 import { uploadForAI } from "@/utils/imageUpload";
+import { SmartNumberInput } from "@/components/ui/SmartNumberInput";
 import { CompactInput } from "./CompactInput";
 import { ColorInput } from "./ColorInput";
 import { PaintInput } from "./PaintInput";
@@ -204,18 +205,18 @@ export function PropertiesPanel() {
                         <div className="grid grid-cols-2 gap-2">
                             <div>
                                 <label className="text-[9px] text-text-tertiary uppercase tracking-wider font-medium mb-1 block">X</label>
-                                <input type="number" value={Math.round(selectedLayer.x)} onChange={(e) => updateLayer(selectedLayer.id, { x: Number(e.target.value) })}
+                                <SmartNumberInput value={Math.round(selectedLayer.x)} onChange={(v) => updateLayer(selectedLayer.id, { x: v })}
                                     className="w-full h-8 px-2 rounded-[var(--radius-md)] border border-border-primary bg-bg-secondary text-[11px] text-text-primary text-center focus:outline-none focus:ring-1 focus:ring-border-focus" />
                             </div>
                             <div>
                                 <label className="text-[9px] text-text-tertiary uppercase tracking-wider font-medium mb-1 block">Y</label>
-                                <input type="number" value={Math.round(selectedLayer.y)} onChange={(e) => updateLayer(selectedLayer.id, { y: Number(e.target.value) })}
+                                <SmartNumberInput value={Math.round(selectedLayer.y)} onChange={(v) => updateLayer(selectedLayer.id, { y: v })}
                                     className="w-full h-8 px-2 rounded-[var(--radius-md)] border border-border-primary bg-bg-secondary text-[11px] text-text-primary text-center focus:outline-none focus:ring-1 focus:ring-border-focus" />
                             </div>
                         </div>
                         <div>
                             <label className="text-[9px] text-text-tertiary uppercase tracking-wider font-medium mb-1 block">Поворот (°)</label>
-                            <input type="number" value={Math.round(selectedLayer.rotation)} onChange={(e) => updateLayer(selectedLayer.id, { rotation: Number(e.target.value) })}
+                            <SmartNumberInput value={Math.round(selectedLayer.rotation)} onChange={(v) => updateLayer(selectedLayer.id, { rotation: v })}
                                 className="w-full h-8 px-2 rounded-[var(--radius-md)] border border-border-primary bg-bg-secondary text-[11px] text-text-primary text-center focus:outline-none focus:ring-1 focus:ring-border-focus" />
                         </div>
                     </div>
@@ -236,12 +237,12 @@ export function PropertiesPanel() {
                         <div className="grid grid-cols-2 gap-2">
                             <div>
                                 <label className="text-[9px] text-text-tertiary uppercase tracking-wider font-medium mb-1 block">Ширина</label>
-                                <input type="number" value={Math.round(selectedLayer.width)} onChange={(e) => updateLayer(selectedLayer.id, { width: Number(e.target.value) })}
+                                <SmartNumberInput value={Math.round(selectedLayer.width)} onChange={(v) => updateLayer(selectedLayer.id, { width: v })}
                                     className="w-full h-8 px-2 rounded-[var(--radius-md)] border border-border-primary bg-bg-secondary text-[11px] text-text-primary text-center focus:outline-none focus:ring-1 focus:ring-border-focus" />
                             </div>
                             <div>
                                 <label className="text-[9px] text-text-tertiary uppercase tracking-wider font-medium mb-1 block">Высота</label>
-                                <input type="number" value={Math.round(selectedLayer.height)} onChange={(e) => updateLayer(selectedLayer.id, { height: Number(e.target.value) })}
+                                <SmartNumberInput value={Math.round(selectedLayer.height)} onChange={(v) => updateLayer(selectedLayer.id, { height: v })}
                                     className="w-full h-8 px-2 rounded-[var(--radius-md)] border border-border-primary bg-bg-secondary text-[11px] text-text-primary text-center focus:outline-none focus:ring-1 focus:ring-border-focus" />
                             </div>
                         </div>

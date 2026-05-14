@@ -93,7 +93,8 @@ function LayerRow({
 
     const isFrame = layer.type === "frame";
     const childLayers = isFrame
-        ? (layer as FrameLayer).childIds
+        ? [...(layer as FrameLayer).childIds]
+            .reverse()
             .map((id) => layers.find((l) => l.id === id))
             .filter(Boolean) as typeof layers
         : [];
@@ -211,7 +212,7 @@ function LayerRow({
 
         if (targetParent) {
             const targetIndex = targetParent.childIds.findIndex((childId) => childId === layer.id);
-            const insertIndex = placement === "before" ? targetIndex : targetIndex + 1;
+            const insertIndex = placement === "before" ? targetIndex + 1 : targetIndex;
             moveLayerToFrame(movingId, targetParent.id, insertIndex);
         } else {
             if (currentParent) {
@@ -222,7 +223,7 @@ function LayerRow({
             const targetIndex = layers.findIndex((candidate) => candidate.id === layer.id);
 
             if (sourceIndex >= 0 && targetIndex >= 0) {
-                const adjustedTarget = placement === "before" ? targetIndex : targetIndex + 1;
+                const adjustedTarget = placement === "before" ? targetIndex + 1 : targetIndex;
                 const normalizedTarget = sourceIndex < adjustedTarget ? adjustedTarget - 1 : adjustedTarget;
                 reorderLayers(sourceIndex, normalizedTarget);
             }

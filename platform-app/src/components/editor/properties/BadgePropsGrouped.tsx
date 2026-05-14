@@ -7,6 +7,7 @@ import { Select } from "@/components/ui/Select";
 import type { BadgeLayer } from "@/types";
 import { ColorInput } from "./ColorInput";
 import { PaintInput } from "./PaintInput";
+import { SmartNumberInput } from "@/components/ui/SmartNumberInput";
 
 export function BadgePropsGrouped({
     layer,
@@ -67,14 +68,13 @@ export function BadgePropsGrouped({
                                     onChange={(e) => onChange({ opacity: Number(e.target.value) / 100 })}
                                     className="flex-1 h-1.5 accent-accent-primary cursor-pointer"
                                 />
-                                <input
-                                    type="number"
+                                <SmartNumberInput
                                     min={0}
                                     max={100}
                                     value={Math.round((layer.opacity ?? 1) * 100)}
-                                    onChange={(e) => {
-                                        const v = Math.max(0, Math.min(100, Number(e.target.value)));
-                                        onChange({ opacity: v / 100 });
+                                    onChange={(v) => {
+                                        const finalV = Math.max(0, Math.min(100, v));
+                                        onChange({ opacity: finalV / 100 });
                                     }}
                                     className="w-12 h-7 px-1 rounded-[var(--radius-sm)] border border-border-primary bg-bg-secondary text-[10px] text-text-primary text-center focus:outline-none focus:ring-1 focus:ring-border-focus"
                                 />
