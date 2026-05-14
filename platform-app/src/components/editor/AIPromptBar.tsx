@@ -15,7 +15,7 @@ import type { LoraWeight } from "@/lib/ai-providers";
 import { getImagePresetPromptSuffix, getTextPresetInstruction } from "@/lib/stylePresets";
 import { useStylePresets } from "@/hooks/useStylePresets";
 import { persistImageToS3, uploadForAI, uploadManyForAI } from "@/utils/imageUpload";
-import { compositeExpandResult } from "@/utils/imageComposite";
+import { outpaintImage } from "@/utils/outpaintPipeline";
 import { useProjectLibrary } from "@/hooks/useProjectLibrary";
 import { trpc } from "@/lib/trpc";
 import type { ImageLayer } from "@/types";
@@ -329,20 +329,66 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
         setIsGenerating(true);
         setEditError(null);
 
-        // Snapshot expand padding BEFORE the API call (resetExpandMode clears it)
-        const currentExpandPadding = { ...expandPadding };
-
         try {
             const styleSuffix = getImagePresetPromptSuffix(imageStyleId, imagePresets);
             const rawPrompt = editPrompt || "";
             const styledPrompt = styleSuffix && rawPrompt ? `${rawPrompt}. Style: ${styleSuffix}` : rawPrompt;
             const resolvedPrompt = resolveRefTags(styledPrompt, selectedModel);
 
+            // ── Outpaint: delegated to the shared pipeline so the wizard
+            // and the studio stay byte-compatible with each other ──
+            if (action === "outpaint") {
+                const currentExpandPadding = { ...expandPadding };
+                const outpaintResult = await outpaintImage({
+                    imageSrc: selectedImageLayer.src,
+                    canvasPadding: currentExpandPadding,
+                    layerSize: { width: selectedImageLayer.width, height: selectedImageLayer.height },
+                    prompt: resolvedPrompt,
+                    projectId,
+                    onProgress: (stage, info) => console.log(`[Outpaint/${stage}]`, info ?? ""),
+                });
+
+                await applyEditedImageToLayer(outpaintResult.src, {
+                    action: "outpaint",
+                    padding: currentExpandPadding,
+                });
+                resetExpandMode();
+
+                if (projectId) {
+                    try {
+                        const storeLayer = useCanvasStore
+                            .getState()
+                            .layers.find((l) => l.id === selectedImageLayer.id) as ImageLayer | undefined;
+                        let persistedUrl = storeLayer?.src ?? outpaintResult.src;
+                        if (!persistedUrl.startsWith("https://storage.yandexcloud.net")) {
+                            persistedUrl = await persistImageToS3(persistedUrl, projectId);
+                        }
+                        await saveGeneratedAssetMutation.mutateAsync({
+                            projectId,
+                            url: persistedUrl,
+                            prompt: rawPrompt || action,
+                            model: outpaintResult.model,
+                            source: "banner-edit-expand",
+                        });
+                        await Promise.all([
+                            trpcUtils.asset.listByProject.invalidate({ projectId }),
+                            trpcUtils.asset.listByWorkspace.invalidate().catch(() => undefined),
+                        ]);
+                    } catch (saveErr) {
+                        console.warn("[AIPromptBar] Asset save failed:", saveErr);
+                    }
+                }
+
+                onResult({
+                    type: "edit",
+                    content: outpaintResult.src,
+                    prompt: rawPrompt || action,
+                    model: outpaintResult.model,
+                });
+                return;
+            }
+
             let finalImageBase64 = selectedImageLayer.src;
-            let outpaintOriginalSize: [number, number] | undefined;
-            let outpaintDownscaleRatio = 1;
-            let outpaintOriginalSrc: string | null = null;
-            let outpaintOriginalPixelPadding: { top: number; right: number; bottom: number; left: number } | null = null;
             let editDownscaleRatio = 1;
 
             try {
@@ -353,89 +399,28 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                     img.onerror = reject;
                     img.src = selectedImageLayer.src;
                 });
-                
+
                 let realW = img.naturalWidth;
                 let realH = img.naturalHeight;
 
-                if (action === "outpaint") {
-                    console.log(`[Outpaint] Real image pixels: ${img.naturalWidth}×${img.naturalHeight}, canvas layer: ${selectedImageLayer.width}×${selectedImageLayer.height}`);
-                    
-                    const pixelScaleX = realW / selectedImageLayer.width;
-                    const pixelScaleY = realH / selectedImageLayer.height;
+                const MAX_DIMENSION = 2048;
+                if (realW > MAX_DIMENSION || realH > MAX_DIMENSION) {
+                    editDownscaleRatio = Math.min(MAX_DIMENSION / realW, MAX_DIMENSION / realH);
+                    realW = Math.round(realW * editDownscaleRatio);
+                    realH = Math.round(realH * editDownscaleRatio);
 
-                    let targetPadTop = currentExpandPadding.top * pixelScaleY;
-                    let targetPadRight = currentExpandPadding.right * pixelScaleX;
-                    let targetPadBottom = currentExpandPadding.bottom * pixelScaleY;
-                    let targetPadLeft = currentExpandPadding.left * pixelScaleX;
-
-                    const finalW = realW + targetPadLeft + targetPadRight;
-                    const finalH = realH + targetPadTop + targetPadBottom;
-
-                    const MAX_FINAL_DIMENSION = 3500;
-                    const PRESERVE_THRESHOLD = 0.85;
-
-                    if (finalW > MAX_FINAL_DIMENSION || finalH > MAX_FINAL_DIMENSION) {
-                        outpaintDownscaleRatio = Math.min(MAX_FINAL_DIMENSION / finalW, MAX_FINAL_DIMENSION / finalH);
-
-                        if (outpaintDownscaleRatio < PRESERVE_THRESHOLD) {
-                            outpaintOriginalSrc = selectedImageLayer.src;
-                            outpaintOriginalPixelPadding = {
-                                top: targetPadTop, right: targetPadRight,
-                                bottom: targetPadBottom, left: targetPadLeft,
-                            };
-                            console.log(`[Outpaint] Preserve pipeline activated (ratio=${outpaintDownscaleRatio.toFixed(3)})`);
-                        }
-
-                        realW = Math.round(realW * outpaintDownscaleRatio);
-                        realH = Math.round(realH * outpaintDownscaleRatio);
-
-                        targetPadTop *= outpaintDownscaleRatio;
-                        targetPadRight *= outpaintDownscaleRatio;
-                        targetPadBottom *= outpaintDownscaleRatio;
-                        targetPadLeft *= outpaintDownscaleRatio;
-
-                        const canvas = document.createElement("canvas");
-                        canvas.width = realW;
-                        canvas.height = realH;
-                        const ctx = canvas.getContext("2d");
-                        if (ctx) {
-                            ctx.drawImage(img, 0, 0, realW, realH);
-                            finalImageBase64 = canvas.toDataURL("image/png");
-                            console.log(`[Outpaint] Downscaled base image to ${realW}×${realH} (ratio=${outpaintDownscaleRatio.toFixed(3)})`);
-                        }
-                    }
-
-                    outpaintOriginalSize = [realW, realH];
-                    
-                    currentExpandPadding.top = Math.round(targetPadTop);
-                    currentExpandPadding.right = Math.round(targetPadRight);
-                    currentExpandPadding.bottom = Math.round(targetPadBottom);
-                    currentExpandPadding.left = Math.round(targetPadLeft);
-
-                    console.log(`[Outpaint] Final pixel-space padding: T=${currentExpandPadding.top} R=${currentExpandPadding.right} B=${currentExpandPadding.bottom} L=${currentExpandPadding.left}`);
-                } else {
-                    const MAX_DIMENSION = 2048;
-                    if (realW > MAX_DIMENSION || realH > MAX_DIMENSION) {
-                        editDownscaleRatio = Math.min(MAX_DIMENSION / realW, MAX_DIMENSION / realH);
-                        realW = Math.round(realW * editDownscaleRatio);
-                        realH = Math.round(realH * editDownscaleRatio);
-                        
-                        const canvas = document.createElement("canvas");
-                        canvas.width = realW;
-                        canvas.height = realH;
-                        const ctx = canvas.getContext("2d");
-                        if (ctx) {
-                            ctx.drawImage(img, 0, 0, realW, realH);
-                            finalImageBase64 = canvas.toDataURL("image/png");
-                            console.log(`[Image Edit] Downscaled base image to ${realW}×${realH} (ratio=${editDownscaleRatio.toFixed(3)})`);
-                        }
+                    const canvas = document.createElement("canvas");
+                    canvas.width = realW;
+                    canvas.height = realH;
+                    const ctx = canvas.getContext("2d");
+                    if (ctx) {
+                        ctx.drawImage(img, 0, 0, realW, realH);
+                        finalImageBase64 = canvas.toDataURL("image/png");
+                        console.log(`[Image Edit] Downscaled base image to ${realW}×${realH} (ratio=${editDownscaleRatio.toFixed(3)})`);
                     }
                 }
             } catch (e) {
                 console.error("Downscaling image failed, using original base64", e);
-                if (action === "outpaint") {
-                    outpaintOriginalSize = [Math.round(selectedImageLayer.width), Math.round(selectedImageLayer.height)];
-                }
             }
 
             // Pre-upload images to S3 to avoid sending multi-MB base64 through the server
@@ -451,10 +436,8 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                     action,
                     prompt: resolvedPrompt,
                     imageBase64: imageUrl,
-                    model: action === "remove-bg" ? "bria-rmbg" : (action === "outpaint" ? "bria-expand" : selectedModel),
+                    model: action === "remove-bg" ? "bria-rmbg" : selectedModel,
                     referenceImages: refUrls,
-                    expandPadding: action === "outpaint" ? currentExpandPadding : undefined,
-                    originalSize: action === "outpaint" ? outpaintOriginalSize : undefined,
                     projectId,
                     // LoRA + advanced knobs only meaningful for inpaint/text-edit
                     // on a LoRA-aware model. The server filters per action too.
@@ -468,66 +451,10 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
             if (data.content) {
                 let finalContent = data.content;
 
-                // ── Preserve Original pipeline (outpaint) ──
-                // When the image was downscaled for expand, upscale the result
-                // back and composite the original hi-res image on top.
-                if (action === "outpaint" && outpaintOriginalSrc) {
-                    console.log(`[Outpaint/Preserve] Starting upscale of expand result...`);
-                    try {
-                        const upscaleScale = Math.ceil(1 / outpaintDownscaleRatio);
-                        const upscaleImageUrl = await uploadForAI(data.content, projectId);
-                        const upscaleRes = await fetch("/api/ai/image-edit", {
-                            method: "POST",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({
-                                action: "upscale",
-                                imageBase64: upscaleImageUrl,
-                                model: "seedvr",
-                                upscaleScale: Math.min(upscaleScale, 4),
-                                projectId,
-                            }),
-                        });
-                        const upscaleData = await upscaleRes.json();
-
-                        if (upscaleData.content && !upscaleData.error) {
-                            console.log(`[Outpaint/Preserve] Upscale complete, persisting to S3 before compositing...`);
-                            // Rehost the upscaled result on our S3 before loading it into a canvas.
-                            // Third-party CDNs (fal.ai media hosts) occasionally stall the request
-                            // or omit CORS headers, which causes <img crossOrigin="anonymous"> to
-                            // hang indefinitely. Going through our bucket guarantees reliable
-                            // cross-origin loading and deterministic pipeline latency.
-                            let expandedSrcForComposite = upscaleData.content as string;
-                            try {
-                                expandedSrcForComposite = await persistImageToS3(
-                                    upscaleData.content as string,
-                                    projectId ?? "ai-tmp",
-                                );
-                            } catch (persistErr) {
-                                console.warn(
-                                    `[Outpaint/Preserve] Could not rehost upscale result, falling back to source URL:`,
-                                    persistErr,
-                                );
-                            }
-
-                            console.log(`[Outpaint/Preserve] Compositing original over result...`);
-                            finalContent = await compositeExpandResult({
-                                expandedSrc: expandedSrcForComposite,
-                                originalSrc: outpaintOriginalSrc,
-                                pixelPadding: outpaintOriginalPixelPadding!,
-                            });
-                            console.log(`[Outpaint/Preserve] Composite complete — original quality preserved`);
-                        } else {
-                            console.warn(`[Outpaint/Preserve] Upscale failed, using raw expand result:`, upscaleData.error);
-                        }
-                    } catch (preserveErr) {
-                        console.warn(`[Outpaint/Preserve] Pipeline failed, falling back to raw expand result:`, preserveErr);
-                    }
-                }
-
                 // ── Restore resolution for edit/inpaint/text-edit ──
                 // When the image was downscaled to fit API limits, upscale the
                 // result back to approximately the original resolution.
-                if (action !== "outpaint" && editDownscaleRatio < 1) {
+                if (editDownscaleRatio < 1) {
                     console.log(`[Edit/Upscale] Image was downscaled (ratio=${editDownscaleRatio.toFixed(3)}), restoring resolution...`);
                     try {
                         const upscaleScale = Math.min(Math.ceil(1 / editDownscaleRatio), 4);
@@ -556,11 +483,7 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                     }
                 }
 
-                await applyEditedImageToLayer(finalContent, action === "outpaint" ? {
-                    action: "outpaint",
-                    padding: expandPadding,
-                } : undefined);
-                if (action === "outpaint") resetExpandMode();
+                await applyEditedImageToLayer(finalContent);
 
                 // ── Persist as workspace asset so the result shows up in the library ──
                 // applyEditedImageToLayer already uploaded the content to S3 and called
@@ -576,15 +499,14 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                             persistedUrl = await persistImageToS3(persistedUrl, projectId);
                         }
                         const sourceTag =
-                            action === "outpaint" ? "banner-edit-expand"
-                            : action === "inpaint" ? "banner-edit-inpaint"
+                            action === "inpaint" ? "banner-edit-inpaint"
                             : action === "remove-bg" ? "banner-edit-removebg"
                             : "banner-edit-textedit";
                         await saveGeneratedAssetMutation.mutateAsync({
                             projectId,
                             url: persistedUrl,
                             prompt: rawPrompt || action,
-                            model: data.model ?? (action === "outpaint" ? "bria-expand" : selectedModel),
+                            model: data.model ?? selectedModel,
                             source: sourceTag,
                         });
                         await Promise.all([
