@@ -13,6 +13,7 @@ import {
   SYSTEM_TEXT_PRESETS,
   isSystemPresetId,
 } from "@/lib/stylePresets";
+import { persistThumbnailToS3 } from "@/server/utils/persistThumbnail";
 
 /**
  * Ensure the caller has access to the given project (is a member of its workspace).
@@ -340,9 +341,20 @@ export const aiRouter = createTRPCRouter({
         });
       }
 
+      // Guarantee any external/temporary AI provider URL gets copied into our
+      // own S3 bucket before being written to the database. Otherwise the URL
+      // expires after ~24-48h and the thumbnail silently disappears from the
+      // UI. Helper is idempotent for already-persisted URLs and local app
+      // assets, and throws TRPCError on failure (no silent fallback).
+      const persistedThumbnail = await persistThumbnailToS3(
+        input.thumbnailUrl,
+        input.workspaceId,
+      );
+
       return ctx.prisma.aIPreset.create({
         data: {
           ...input,
+          thumbnailUrl: persistedThumbnail ?? undefined,
           createdById: ctx.user.id,
         },
       });
@@ -401,7 +413,15 @@ export const aiRouter = createTRPCRouter({
         });
       }
 
-      const { id, ...data } = input;
+      const { id, thumbnailUrl: incomingThumb, ...rest } = input;
+      // Persist incoming thumbnail (if any). undefined means "no change", so
+      // we only call persistThumbnailToS3 when the client actually sent a
+      // value. Empty string is treated as "clear thumbnail".
+      const data: typeof rest & { thumbnailUrl?: string | null } = { ...rest };
+      if (incomingThumb !== undefined) {
+        data.thumbnailUrl = (await persistThumbnailToS3(incomingThumb, preset.workspaceId)) ?? null;
+      }
+
       return ctx.prisma.aIPreset.update({
         where: { id },
         data,
@@ -490,6 +510,11 @@ export const aiRouter = createTRPCRouter({
         });
       }
 
+      const persistedThumbnail = await persistThumbnailToS3(
+        input.thumbnailUrl ?? null,
+        `system-${input.systemId}`,
+      );
+
       return ctx.prisma.aIPreset.upsert({
         where: { id: input.systemId },
         create: {
@@ -501,7 +526,7 @@ export const aiRouter = createTRPCRouter({
           config: input.config,
           category: systemSource.category,
           order: systemSource.order,
-          thumbnailUrl: input.thumbnailUrl ?? null,
+          thumbnailUrl: persistedThumbnail,
           visibility: "global",
           isSystem: true,
           isActive: true,
@@ -511,7 +536,7 @@ export const aiRouter = createTRPCRouter({
           name: input.name,
           description: input.description,
           config: input.config,
-          thumbnailUrl: input.thumbnailUrl ?? null,
+          thumbnailUrl: persistedThumbnail,
           // Re-assert the platform-level invariants in case a previous
           // out-of-band write changed them. visibility/isSystem/category
           // are not user-configurable for system overrides.
@@ -545,5 +570,80 @@ export const aiRouter = createTRPCRouter({
 
       await ctx.prisma.aIPreset.deleteMany({ where: { id: input.systemId } });
       return { success: true };
+    }),
+
+  /**
+   * One-shot backfill: scan every preset in the DB whose `thumbnailUrl` is
+   * pointing at a temporary/external location (Replicate, fal.media, OpenAI
+   * blob storage, …) and copy the bytes into our own S3 bucket so they
+   * survive past the provider's TTL.
+   *
+   * Behaviour per row:
+   *  - Skip rows whose thumbnailUrl is empty, an in-app `/style-presets/...`
+   *    path, or already on `storage.yandexcloud.net`.
+   *  - Otherwise call `persistThumbnailToS3`. On success, replace the URL.
+   *    On failure (link already expired, 404, MIME mismatch) we set the
+   *    column to `null` so the UI falls back to the icon/placeholder
+   *    instead of rendering a broken <img>.
+   *
+   * SUPER_ADMIN only; runs synchronously and returns a summary. Safe to
+   * call repeatedly — idempotent rows are skipped on subsequent runs.
+   */
+  backfillPresetThumbnails: superAdminProcedure
+    .input(z.object({ dryRun: z.boolean().default(false) }).default({ dryRun: false }))
+    .mutation(async ({ ctx, input }) => {
+      const presets = await ctx.prisma.aIPreset.findMany({
+        where: {
+          type: "image",
+          NOT: { thumbnailUrl: null },
+        },
+        select: { id: true, workspaceId: true, thumbnailUrl: true, name: true },
+      });
+
+      const summary = {
+        scanned: presets.length,
+        skipped: 0,
+        repaired: [] as Array<{ id: string; name: string; oldUrl: string; newUrl: string }>,
+        cleared: [] as Array<{ id: string; name: string; oldUrl: string; reason: string }>,
+      };
+
+      for (const p of presets) {
+        const oldUrl = p.thumbnailUrl ?? "";
+        if (!oldUrl) {
+          summary.skipped++;
+          continue;
+        }
+        // Already permanent — nothing to do.
+        if (oldUrl.startsWith("/") || oldUrl.includes("storage.yandexcloud.net")) {
+          summary.skipped++;
+          continue;
+        }
+
+        try {
+          const newUrl = await persistThumbnailToS3(oldUrl, p.workspaceId || "styles");
+          if (!newUrl || newUrl === oldUrl) {
+            summary.skipped++;
+            continue;
+          }
+          if (!input.dryRun) {
+            await ctx.prisma.aIPreset.update({
+              where: { id: p.id },
+              data: { thumbnailUrl: newUrl },
+            });
+          }
+          summary.repaired.push({ id: p.id, name: p.name, oldUrl, newUrl });
+        } catch (err) {
+          const reason = err instanceof Error ? err.message : String(err);
+          if (!input.dryRun) {
+            await ctx.prisma.aIPreset.update({
+              where: { id: p.id },
+              data: { thumbnailUrl: null },
+            });
+          }
+          summary.cleared.push({ id: p.id, name: p.name, oldUrl, reason });
+        }
+      }
+
+      return summary;
     }),
 });
