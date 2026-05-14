@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
     Badge as BadgeIcon,
     ChevronDown,
+    ChevronUp,
     Image as ImageIcon,
     Loader2,
     Expand,
@@ -68,7 +69,11 @@ interface EditableLayerEntry {
     props: Record<string, unknown>;
 }
 
-interface MasterPreviewSource {
+interface PreviewFormatSource {
+    id: string;
+    name: string;
+    label: string;
+    isMaster: boolean;
     layers: Layer[];
     width: number;
     height: number;
@@ -131,10 +136,13 @@ export function WizardContentWorkspace({
     const fileInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
     const previewFrameRef = useRef<HTMLDivElement | null>(null);
     const { registerFile } = useProjectLibrary();
-    const previewSource = useMemo(() => getMasterPreviewSource(selectedTemplate), [selectedTemplate]);
+    const previewFormats = useMemo(() => getPreviewFormatSources(selectedTemplate), [selectedTemplate]);
+    const [activePreviewFormatId, setActivePreviewFormatId] = useState(previewFormats[0]?.id ?? "");
+    const masterPreviewSource = previewFormats[0];
+    const previewSource = previewFormats.find((format) => format.id === activePreviewFormatId) ?? masterPreviewSource;
     const entries = useMemo(
-        () => getEditableLayerEntries(selectedTemplate, previewSource.layers),
-        [selectedTemplate, previewSource.layers],
+        () => getEditableLayerEntries(selectedTemplate, masterPreviewSource?.layers ?? []),
+        [selectedTemplate, masterPreviewSource?.layers],
     );
     const [activeLayerId, setActiveLayerId] = useState(entries[0]?.id ?? "");
     const [sidebarTab, setSidebarTab] = useState<SidebarTab>("layers");
@@ -147,6 +155,20 @@ export function WizardContentWorkspace({
         image: false,
         badge: false,
     });
+
+    useEffect(() => {
+        setActivePreviewFormatId(previewFormats[0]?.id ?? "");
+    }, [selectedTemplate.id, previewFormats]);
+
+    useEffect(() => {
+        if (previewFormats.length === 0) {
+            setActivePreviewFormatId("");
+            return;
+        }
+        if (!previewFormats.some((format) => format.id === activePreviewFormatId)) {
+            setActivePreviewFormatId(previewFormats[0].id);
+        }
+    }, [activePreviewFormatId, previewFormats]);
 
     useEffect(() => {
         if (entries.length === 0) {
@@ -359,7 +381,7 @@ export function WizardContentWorkspace({
                 </aside>
 
                 <main className="relative min-h-0 overflow-hidden p-4">
-                    <div className="absolute left-6 top-6 z-10 rounded-full border border-accent-lime-hover/50 bg-accent-lime/15 px-3 py-1.5 text-xs font-medium text-accent-lime-text shadow-sm">
+                    <div className="absolute left-6 top-6 z-10 rounded-full border border-accent-lime-hover/50 bg-accent-lime/15 px-3 py-1.5 text-xs font-medium text-text-primary shadow-sm">
                         {activeLayer ? `Выбран слой: ${activeLayer.name}` : "Выберите слой"}
                     </div>
                     <div className="absolute right-6 top-6 z-10 flex items-center gap-1 rounded-full border border-border-primary bg-bg-surface/90 p-1 shadow-[var(--shadow-sm)] backdrop-blur">
@@ -383,7 +405,7 @@ export function WizardContentWorkspace({
                     </div>
                     <div
                         ref={previewFrameRef}
-                        className="flex h-full items-center justify-center rounded-[var(--radius-xl)] border border-border-primary bg-bg-canvas"
+                        className={`flex h-full items-center justify-center rounded-[var(--radius-xl)] border border-border-primary bg-bg-canvas ${previewFormats.length > 1 ? "pr-20" : ""}`}
                         style={{
                             backgroundImage:
                                 "radial-gradient(circle, var(--border-primary) 1px, transparent 1px)",
@@ -395,7 +417,7 @@ export function WizardContentWorkspace({
                                 layers={draftPreviewLayers}
                                 artboardWidth={previewSource.width}
                                 artboardHeight={previewSource.height}
-                                containerWidth={previewSize.width}
+                                containerWidth={previewFormats.length > 1 ? Math.max(320, previewSize.width - 80) : previewSize.width}
                                 containerHeight={previewSize.height}
                                 zoom={previewZoom}
                                 appearance={canvasAppearance}
@@ -404,6 +426,14 @@ export function WizardContentWorkspace({
                             <div className="text-sm text-text-tertiary">Нет слоёв для предпросмотра</div>
                         )}
                     </div>
+
+                    {previewFormats.length > 1 && (
+                        <FormatThumbnailRail
+                            formats={previewFormats}
+                            activeFormatId={previewSource.id}
+                            onSelect={setActivePreviewFormatId}
+                        />
+                    )}
 
                     <WizardLayerPromptBar
                         activeLayer={activeLayer}
@@ -609,6 +639,137 @@ function ZoomButton({
     );
 }
 
+function FormatThumbnailRail({
+    formats,
+    activeFormatId,
+    onSelect,
+}: {
+    formats: PreviewFormatSource[];
+    activeFormatId: string;
+    onSelect: (id: string) => void;
+}) {
+    const railRef = useRef<HTMLDivElement | null>(null);
+    const [scrollIndex, setScrollIndex] = useState(0);
+    const [visibleCount, setVisibleCount] = useState(6);
+
+    useEffect(() => {
+        const node = railRef.current;
+        if (!node) return;
+
+        const updateVisibleCount = () => {
+            const rect = node.getBoundingClientRect();
+            // ~72px item height + 8px gap, with space reserved for arrow controls.
+            setVisibleCount(Math.max(1, Math.floor((rect.height - 64) / 80)));
+        };
+
+        updateVisibleCount();
+        const observer = new ResizeObserver(updateVisibleCount);
+        observer.observe(node);
+        return () => observer.disconnect();
+    }, []);
+
+    useEffect(() => {
+        setScrollIndex((value) => Math.min(value, Math.max(0, formats.length - visibleCount)));
+    }, [formats.length, visibleCount]);
+
+    useEffect(() => {
+        const activeIndex = formats.findIndex((format) => format.id === activeFormatId);
+        if (activeIndex < 0) return;
+        setScrollIndex((value) => {
+            if (activeIndex < value) return activeIndex;
+            if (activeIndex >= value + visibleCount) {
+                return Math.min(activeIndex, Math.max(0, formats.length - visibleCount));
+            }
+            return value;
+        });
+    }, [activeFormatId, formats, visibleCount]);
+
+    const canScrollUp = scrollIndex > 0;
+    const canScrollDown = scrollIndex + visibleCount < formats.length;
+    const visibleFormats = formats.slice(scrollIndex, scrollIndex + visibleCount);
+
+    const scrollByPage = (direction: 1 | -1) => {
+        setScrollIndex((value) => {
+            const maxIndex = Math.max(0, formats.length - visibleCount);
+            return Math.min(maxIndex, Math.max(0, value + direction * Math.max(1, visibleCount - 1)));
+        });
+    };
+
+    return (
+        <div
+            ref={railRef}
+            className="absolute bottom-24 right-5 top-20 z-20 flex w-16 flex-col items-center gap-2"
+            aria-label="Форматы шаблон-пакета"
+            role="listbox"
+        >
+            {canScrollUp && (
+                <button
+                    type="button"
+                    onClick={() => scrollByPage(-1)}
+                    className="flex h-7 w-14 items-center justify-center rounded-[var(--radius-sm)] border border-border-primary bg-bg-surface/90 text-text-secondary shadow-[var(--shadow-sm)] backdrop-blur transition-colors hover:bg-bg-tertiary hover:text-text-primary cursor-pointer"
+                    aria-label="Показать предыдущие форматы"
+                >
+                    <ChevronUp size={14} />
+                </button>
+            )}
+
+            <div className="flex min-h-0 flex-col gap-3">
+                {visibleFormats.map((format) => {
+                    const active = format.id === activeFormatId;
+                    const aspectScale = Math.min(34 / format.width, 34 / format.height);
+                    const thumbWidth = Math.max(10, Math.round(format.width * aspectScale));
+                    const thumbHeight = Math.max(10, Math.round(format.height * aspectScale));
+
+                    return (
+                        <div key={format.id} className="flex flex-col items-center gap-1">
+                            <button
+                                type="button"
+                                role="option"
+                                onClick={() => onSelect(format.id)}
+                                aria-label={`Показать формат ${format.label}`}
+                                aria-selected={active}
+                                aria-current={active ? "true" : undefined}
+                                title={`${format.name} · ${format.label}`}
+                                className={`group flex h-14 w-14 shrink-0 items-center justify-center rounded-[var(--radius-md)] border bg-bg-surface/90 shadow-[var(--shadow-sm)] backdrop-blur transition-all cursor-pointer ${
+                                    active
+                                        ? "border-accent-lime-hover ring-2 ring-accent-lime/35"
+                                        : "border-border-primary hover:border-border-secondary hover:bg-bg-tertiary"
+                                }`}
+                            >
+                                <span
+                                    className={`relative flex items-center justify-center rounded-[6px] border transition-colors ${
+                                        active
+                                            ? "border-accent-lime-hover bg-accent-lime/20"
+                                            : "border-border-secondary bg-bg-secondary group-hover:border-border-primary"
+                                    }`}
+                                    style={{ width: thumbWidth, height: thumbHeight }}
+                                >
+                                    <span className="absolute left-[18%] top-[20%] h-[12%] w-[48%] rounded-full bg-text-tertiary/35" />
+                                    <span className="absolute bottom-[18%] left-[18%] h-[18%] w-[64%] rounded-sm bg-text-tertiary/20" />
+                                </span>
+                            </button>
+                            <span className="w-full truncate text-center text-[9px] font-medium text-text-tertiary" title={format.label}>
+                                {format.label.replace(/\s/g, "")}
+                            </span>
+                        </div>
+                    );
+                })}
+            </div>
+
+            {canScrollDown && (
+                <button
+                    type="button"
+                    onClick={() => scrollByPage(1)}
+                    className="flex h-7 w-14 items-center justify-center rounded-[var(--radius-sm)] border border-border-primary bg-bg-surface/90 text-text-secondary shadow-[var(--shadow-sm)] backdrop-blur transition-colors hover:bg-bg-tertiary hover:text-text-primary cursor-pointer"
+                    aria-label="Показать следующие форматы"
+                >
+                    <ChevronDown size={14} />
+                </button>
+            )}
+        </div>
+    );
+}
+
 function WizardLayerPromptBar({
     activeLayer,
     textValues,
@@ -783,7 +944,7 @@ function WizardLayerPromptBar({
     return (
         <div className="absolute bottom-6 left-1/2 z-20 w-[760px] max-w-[calc(100%-32px)] -translate-x-1/2 rounded-[20px] border border-border-primary bg-bg-surface/95 shadow-[var(--shadow-lg)] backdrop-blur-xl">
             <div className="flex items-center gap-2 border-b border-border-primary px-4 py-2">
-                <span className="rounded-full bg-accent-lime/20 px-2 py-1 text-[11px] font-medium text-accent-lime-text">
+                <span className="rounded-full bg-accent-lime/20 px-2 py-1 text-[11px] font-medium text-text-primary">
                     Работаем с {selectedLabel}: {activeLayer.name}
                 </span>
                 {currentImage && (
@@ -1002,37 +1163,71 @@ function OutlinedSelector({
     );
 }
 
-function getMasterPreviewSource(template: TemplatePackV2): MasterPreviewSource {
+function getPreviewFormatSources(template: TemplatePackV2): PreviewFormatSource[] {
     const data = template as TemplatePackV2 & {
         layers?: Layer[];
         canvasWidth?: number;
         canvasHeight?: number;
     };
-    const masterResize = template.resizes?.find((resize) => resize.isMaster) ?? template.resizes?.[0];
-    const resizeWithSnapshot = masterResize?.layerSnapshot?.length
-        ? masterResize
-        : template.resizes?.find((resize) => resize.layerSnapshot?.length);
+    const resizes = template.resizes ?? [];
+    const masterResize = resizes.find((resize) => resize.isMaster) ?? resizes[0];
+    const fallbackLayers =
+        data.layers?.length
+            ? data.layers
+            : template.masterComponents.map(masterComponentToLayer).filter(Boolean) as Layer[];
+    const fallbackWidth = data.canvasWidth ?? masterResize?.width ?? template.baseWidth ?? 1080;
+    const fallbackHeight = data.canvasHeight ?? masterResize?.height ?? template.baseHeight ?? 1080;
+    const sources: PreviewFormatSource[] = [];
 
-    if (resizeWithSnapshot?.layerSnapshot?.length) {
-        return {
-            layers: resizeWithSnapshot.layerSnapshot,
-            width: resizeWithSnapshot.width,
-            height: resizeWithSnapshot.height,
-        };
+    const pushSource = (source: PreviewFormatSource) => {
+        if (sources.some((existing) => existing.id === source.id)) return;
+        sources.push(source);
+    };
+
+    if (masterResize?.layerSnapshot?.length) {
+        pushSource(resizeToPreviewSource(masterResize, true));
+    } else {
+        pushSource({
+            id: masterResize?.id ?? "master",
+            name: masterResize?.name ?? "Мастер",
+            label: masterResize?.label ?? `${fallbackWidth} × ${fallbackHeight}`,
+            isMaster: true,
+            layers: fallbackLayers,
+            width: fallbackWidth,
+            height: fallbackHeight,
+        });
     }
 
-    if (data.layers?.length) {
-        return {
-            layers: data.layers,
-            width: data.canvasWidth ?? template.baseWidth ?? 1080,
-            height: data.canvasHeight ?? template.baseHeight ?? 1080,
-        };
+    for (const resize of resizes) {
+        if (!resize.layerSnapshot?.length) continue;
+        pushSource(resizeToPreviewSource(resize, resize.id === masterResize?.id || resize.isMaster === true));
     }
 
+    return sources.length > 0
+        ? sources
+        : [{
+            id: "master",
+            name: "Мастер",
+            label: `${fallbackWidth} × ${fallbackHeight}`,
+            isMaster: true,
+            layers: fallbackLayers,
+            width: fallbackWidth,
+            height: fallbackHeight,
+        }];
+}
+
+function resizeToPreviewSource(
+    resize: NonNullable<TemplatePackV2["resizes"]>[number],
+    isMaster: boolean,
+): PreviewFormatSource {
     return {
-        layers: template.masterComponents.map(masterComponentToLayer).filter(Boolean) as Layer[],
-        width: template.baseWidth ?? 1080,
-        height: template.baseHeight ?? 1080,
+        id: resize.id,
+        name: isMaster ? (resize.name || "Мастер") : (resize.name || "Формат"),
+        label: resize.label ?? `${resize.width} × ${resize.height}`,
+        isMaster,
+        layers: resize.layerSnapshot ?? [],
+        width: resize.width,
+        height: resize.height,
     };
 }
 
