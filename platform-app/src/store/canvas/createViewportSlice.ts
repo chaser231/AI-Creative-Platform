@@ -124,7 +124,7 @@ export const createViewportSlice: StateCreator<CanvasStore, [], [], ViewportSlic
 
         for (let i = layers.length - 1; i >= 0; i--) {
             const l = layers[i];
-            if (l.type !== "frame" || excludeIds.has(l.id)) continue;
+            if (l.type !== "frame" || excludeIds.has(l.id) || !l.visible || l.locked) continue;
             const frame = l as FrameLayer;
             if (
                 x >= frame.x &&
