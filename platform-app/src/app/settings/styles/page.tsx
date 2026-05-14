@@ -19,7 +19,7 @@ import { useState, useRef, useMemo } from "react";
 import {
   Plus, Trash2, Pencil, Type as TypeIcon,
   Loader2, X, ImageIcon, Save, User, Users,
-  Globe, Lock, Upload, Sparkles, RotateCcw, ShieldCheck,
+  Globe, Lock, Upload, Sparkles, RotateCcw, ShieldCheck, RefreshCw,
 } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { useWorkspace } from "@/providers/WorkspaceProvider";
@@ -35,7 +35,7 @@ import {
 import { Select } from "@/components/ui/Select";
 import { Textarea } from "@/components/ui/Textarea";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
-import { compressImageFile, uploadForAI, persistImageToS3 } from "@/utils/imageUpload";
+import { compressImageFile, uploadForAI } from "@/utils/imageUpload";
 import type { DBPresetConfig } from "@/lib/stylePresets";
 
 type PresetTab = "image" | "text";
@@ -87,6 +87,7 @@ export default function StylePresetsPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isUploadingThumb, setIsUploadingThumb] = useState(false);
   const [isGeneratingThumb, setIsGeneratingThumb] = useState(false);
+  const [thumbError, setThumbError] = useState<string | null>(null);
 
   // ─── Current user ────────────────────────────────────────
   const meQuery = trpc.auth.me.useQuery(undefined, { refetchOnWindowFocus: false });
@@ -113,6 +114,18 @@ export default function StylePresetsPage() {
   const deleteMut = trpc.ai.deletePreset.useMutation({ onSuccess: refetchAll });
   const upsertSystemMut = trpc.ai.upsertSystemPresetOverride.useMutation({ onSuccess: refetchAll });
   const resetSystemMut = trpc.ai.resetSystemPresetOverride.useMutation({ onSuccess: refetchAll });
+  const backfillMut = trpc.ai.backfillPresetThumbnails.useMutation({ onSuccess: refetchAll });
+  const [backfillReport, setBackfillReport] = useState<{ repaired: number; cleared: number; scanned: number } | null>(null);
+
+  const handleBackfillThumbs = async () => {
+    setBackfillReport(null);
+    const result = await backfillMut.mutateAsync({ dryRun: false });
+    setBackfillReport({
+      scanned: result.scanned,
+      repaired: result.repaired.length,
+      cleared: result.cleared.length,
+    });
+  };
 
   const isSaving = createMut.isPending || updateMut.isPending || upsertSystemMut.isPending;
 
@@ -124,42 +137,50 @@ export default function StylePresetsPage() {
       ? { promptSuffix: editing.promptSuffix }
       : { instruction: editing.instruction, icon: editing.icon };
 
-    if (editing.kind === "system") {
-      // System override is keyed by the hardcoded system id; upsertSystemPresetOverride
-      // ignores category / visibility (those are dictated by the registry).
-      if (!editing.id) return;
-      await upsertSystemMut.mutateAsync({
-        systemId: editing.id,
-        type: editing.type,
-        workspaceId,
-        name: editing.name.trim(),
-        description: editing.description.trim(),
-        config,
-        thumbnailUrl: editing.thumbnailUrl ?? null,
-      });
-    } else if (editing.id) {
-      await updateMut.mutateAsync({
-        id: editing.id,
-        name: editing.name.trim(),
-        description: editing.description.trim(),
-        config,
-        category: editing.category,
-        visibility: editing.visibility,
-        thumbnailUrl: editing.thumbnailUrl,
-      });
-    } else {
-      await createMut.mutateAsync({
-        workspaceId,
-        name: editing.name.trim(),
-        description: editing.description.trim(),
-        type: editing.type,
-        config,
-        category: editing.category,
-        visibility: editing.visibility,
-        thumbnailUrl: editing.thumbnailUrl,
-      });
+    try {
+      if (editing.kind === "system") {
+        // System override is keyed by the hardcoded system id; upsertSystemPresetOverride
+        // ignores category / visibility (those are dictated by the registry).
+        if (!editing.id) return;
+        await upsertSystemMut.mutateAsync({
+          systemId: editing.id,
+          type: editing.type,
+          workspaceId,
+          name: editing.name.trim(),
+          description: editing.description.trim(),
+          config,
+          thumbnailUrl: editing.thumbnailUrl ?? null,
+        });
+      } else if (editing.id) {
+        await updateMut.mutateAsync({
+          id: editing.id,
+          name: editing.name.trim(),
+          description: editing.description.trim(),
+          config,
+          category: editing.category,
+          visibility: editing.visibility,
+          thumbnailUrl: editing.thumbnailUrl,
+        });
+      } else {
+        await createMut.mutateAsync({
+          workspaceId,
+          name: editing.name.trim(),
+          description: editing.description.trim(),
+          type: editing.type,
+          config,
+          category: editing.category,
+          visibility: editing.visibility,
+          thumbnailUrl: editing.thumbnailUrl,
+        });
+      }
+      setEditing(null);
+    } catch (err) {
+      // The mutation hook (createMut/updateMut/upsertSystemMut) already
+      // captures and exposes `.error` for the inline UI; we just need to
+      // keep the editor open so the user can fix the input (e.g. expired
+      // thumbnail URL) and retry.
+      console.error("Failed to save preset:", err);
     }
-    setEditing(null);
   };
 
   // ─── Reset system override ──────────────────────────────────
@@ -178,10 +199,18 @@ export default function StylePresetsPage() {
   };
 
   // ─── Thumbnail handlers ──────────────────────────────────────
+  //
+  // NOTE: client-side persistence is best-effort only. The tRPC mutations
+  // (createPreset / updatePreset / upsertSystemPresetOverride) re-run
+  // `persistThumbnailToS3` server-side and throw if the URL can't be
+  // copied into our S3 bucket. That's what guarantees the thumbnail
+  // never rots — the local preview just shows whatever the AI returned
+  // until the user clicks "Сохранить".
   const handleThumbUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !editing) return;
 
+    setThumbError(null);
     try {
       setIsUploadingThumb(true);
       const base64 = await compressImageFile(file, 800);
@@ -189,9 +218,13 @@ export default function StylePresetsPage() {
       setEditing({ ...editing, thumbnailUrl: publicUrl });
     } catch (err) {
       console.error("Failed to upload thumbnail:", err);
+      setThumbError(
+        err instanceof Error
+          ? `Не удалось загрузить миниатюру: ${err.message}`
+          : "Не удалось загрузить миниатюру",
+      );
     } finally {
       setIsUploadingThumb(false);
-      // Reset input
       if (fileInputRef.current) fileInputRef.current.value = "";
     }
   };
@@ -199,6 +232,7 @@ export default function StylePresetsPage() {
   const handleGenerateThumb = async () => {
     if (!editing || !editing.promptSuffix.trim()) return;
 
+    setThumbError(null);
     try {
       setIsGeneratingThumb(true);
       const basePrompt = "A visually appealing thumbnail image representing the following style:";
@@ -210,7 +244,7 @@ export default function StylePresetsPage() {
         body: JSON.stringify({
           prompt: finalPrompt,
           type: "image",
-          model: "flux-schnell", // Fast model for thumbnails
+          model: "flux-schnell",
           aspectRatio: "1:1",
           count: 1,
         }),
@@ -220,12 +254,21 @@ export default function StylePresetsPage() {
       if (data.error) throw new Error(data.error);
 
       if (data.content) {
-        // The API returns a base64 or URL depending on the model, we persist it to S3
-        const publicUrl = await persistImageToS3(data.content, workspaceId || "styles");
-        setEditing({ ...editing, thumbnailUrl: publicUrl });
+        // Show the raw URL/base64 as a live preview. The actual S3 copy
+        // happens server-side inside the save mutation — that's where the
+        // expiring Replicate/fal URL gets converted into a permanent
+        // storage.yandexcloud.net URL. If we tried to do it here too we'd
+        // double-upload (and reproduce the silent-fallback bug we just
+        // fixed when the client request fails).
+        setEditing({ ...editing, thumbnailUrl: data.content });
       }
     } catch (err) {
       console.error("Failed to generate thumbnail:", err);
+      setThumbError(
+        err instanceof Error
+          ? `Генерация миниатюры не удалась: ${err.message}`
+          : "Генерация миниатюры не удалась",
+      );
     } finally {
       setIsGeneratingThumb(false);
     }
@@ -343,12 +386,37 @@ export default function StylePresetsPage() {
       <TopBar breadcrumbs={[{ label: "Настройки" }, { label: "AI Стили" }]} showBackToProjects={false} showHistoryNavigation={true} />
       <div className="flex-1 overflow-y-auto">
         <div className="max-w-3xl mx-auto px-6 py-8 space-y-6">
-          <div>
-            <h1 className="text-2xl font-bold text-text-primary mb-1">AI Стили генерации</h1>
-            <p className="text-sm text-text-secondary">
-              Настройте стили генерации. Личные стили видны только вам, командные — всем
-              участникам воркспейса, глобальные — всем пользователям платформы.
-            </p>
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h1 className="text-2xl font-bold text-text-primary mb-1">AI Стили генерации</h1>
+              <p className="text-sm text-text-secondary">
+                Настройте стили генерации. Личные стили видны только вам, командные — всем
+                участникам воркспейса, глобальные — всем пользователям платформы.
+              </p>
+            </div>
+            {isSuperAdmin && (
+              <div className="flex flex-col items-end gap-1.5">
+                <button
+                  onClick={handleBackfillThumbs}
+                  disabled={backfillMut.isPending}
+                  className="h-9 px-3 flex items-center gap-1.5 text-xs font-medium rounded-[var(--radius-md)] border border-border-primary bg-bg-surface text-text-primary hover:bg-bg-tertiary transition-colors disabled:opacity-50 cursor-pointer"
+                  title="Перезалить миниатюры, у которых ссылка ведёт во временное хранилище провайдера"
+                >
+                  {backfillMut.isPending ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
+                  Починить миниатюры
+                </button>
+                {backfillReport && (
+                  <p className="text-[10px] text-text-tertiary text-right max-w-[260px]">
+                    Проверено {backfillReport.scanned}, восстановлено {backfillReport.repaired}, очищено {backfillReport.cleared}.
+                  </p>
+                )}
+                {backfillMut.error && (
+                  <p className="text-[10px] text-red-500 text-right max-w-[260px]">
+                    {backfillMut.error.message}
+                  </p>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Tabs */}
@@ -798,6 +866,11 @@ export default function StylePresetsPage() {
                           <Sparkles size={14} /> Сгенерировать AI
                         </button>
                       </div>
+                      {thumbError && (
+                        <p className="text-[11px] font-medium leading-snug text-red-500">
+                          {thumbError}
+                        </p>
+                      )}
                     </div>
                   </div>
 
