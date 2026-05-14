@@ -94,28 +94,19 @@ export function Toolbar({
             const scale = Math.min(maxSize / img.width, maxSize / img.height, 1);
             const width = img.width * scale;
             const height = img.height * scale;
-            const layerId = addImageLayer(localPreview, width, height);
+                    const layerId = addImageLayer(localPreview, width, height);
 
-            if (!projectId) return;
-            import("@/utils/imageUpload").then(({ uploadForAI }) => {
-                // Also upload to S3 directly so that AI scenarios can use it immediately
-                // without waiting for the slower registerFile pipeline
-                uploadForAI(localPreview, projectId).then((s3Url) => {
-                    if (s3Url && s3Url !== localPreview) {
-                        useCanvasStore.getState().updateLayer(layerId, { src: s3Url });
-                    }
-                });
-            });
+                    if (!projectId) return;
 
-            void registerFile({ projectId, file, source: "upload" }).then(
-                (permanentUrl) => {
-                    if (!permanentUrl || !layerId) return;
-                    useCanvasStore
-                        .getState()
-                        .updateLayer(layerId, { src: permanentUrl });
-                    URL.revokeObjectURL(localPreview);
-                },
-            );
+                    void registerFile({ projectId, file, source: "upload" }).then(
+                        (permanentUrl) => {
+                            if (!permanentUrl || !layerId) return;
+                            useCanvasStore
+                                .getState()
+                                .updateLayer(layerId, { src: permanentUrl });
+                            URL.revokeObjectURL(localPreview);
+                        },
+                    );
         };
         img.src = localPreview;
     };
