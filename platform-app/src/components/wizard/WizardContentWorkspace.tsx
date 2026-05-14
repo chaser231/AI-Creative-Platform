@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
     Badge as BadgeIcon,
     ChevronDown,
+    ChevronUp,
     Image as ImageIcon,
     Loader2,
     Expand,
@@ -19,7 +20,7 @@ import {
 } from "lucide-react";
 import { RefAutocompleteTextarea, type RefAutocompleteTextareaHandle } from "@/components/ui/RefAutocompleteTextarea";
 import { ReferenceImageInput } from "@/components/ui/ReferenceImageInput";
-import { ImageStylePresetPicker } from "@/components/ui/StylePresetPicker";
+import { ImageStylePresetPicker, TextStylePresetPicker } from "@/components/ui/StylePresetPicker";
 import { PreviewCanvas } from "@/components/editor/PreviewCanvas";
 import { trpc } from "@/lib/trpc";
 import { useProjectLibrary } from "@/hooks/useProjectLibrary";
@@ -27,9 +28,9 @@ import { useStylePresets } from "@/hooks/useStylePresets";
 import { getMaxRefs, getModelById, getAspectRatios, getResolutions, resolveRefTags } from "@/lib/ai-models";
 import { getImagePresetPromptSuffix } from "@/lib/stylePresets";
 import { applyAllAutoLayouts } from "@/utils/layoutEngine";
-import { compressImageFile, uploadForAI, uploadManyForAI } from "@/utils/imageUpload";
+import { compressImageFile, persistImageToS3, uploadForAI, uploadManyForAI } from "@/utils/imageUpload";
 import { useThemeStore } from "@/store/themeStore";
-import type { BusinessUnit, Layer, MasterComponent } from "@/types";
+import type { BusinessUnit, Layer, MasterComponent, TextGenPreset } from "@/types";
 import type { TemplatePackV2 } from "@/services/templateService";
 
 /** Resolves `system` the same way as ThemeProvider / editor canvas */
@@ -68,7 +69,11 @@ interface EditableLayerEntry {
     props: Record<string, unknown>;
 }
 
-interface MasterPreviewSource {
+interface PreviewFormatSource {
+    id: string;
+    name: string;
+    label: string;
+    isMaster: boolean;
     layers: Layer[];
     width: number;
     height: number;
@@ -82,6 +87,13 @@ interface AssetRow {
     metadata?: unknown;
 }
 
+interface LayerGeometry {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+}
+
 interface WizardContentWorkspaceProps {
     selectedTemplate: TemplatePackV2;
     templateLoadError: string | null;
@@ -89,10 +101,18 @@ interface WizardContentWorkspaceProps {
     imageValues: Record<string, string>;
     setTextValues: React.Dispatch<React.SetStateAction<Record<string, string>>>;
     setImageValues: React.Dispatch<React.SetStateAction<Record<string, string>>>;
+    layerGeometryOverrides: Record<string, LayerGeometry>;
+    setLayerGeometry: (id: string, geometry: LayerGeometry) => void;
+    clearLayerGeometry: (id: string) => void;
     productDescription: string;
     projectBU: BusinessUnit;
     projectId?: string;
 }
+
+const TEXT_GEN_MODELS = [
+    { id: "deepseek", label: "DeepSeek V3" },
+    { id: "gemini-flash", label: "Gemini 2.5 Flash" },
+];
 
 const IMAGE_GEN_MODELS = [
     { id: "nano-banana-2", label: "Nano Banana 2" },
@@ -118,6 +138,9 @@ export function WizardContentWorkspace({
     imageValues,
     setTextValues,
     setImageValues,
+    layerGeometryOverrides,
+    setLayerGeometry,
+    clearLayerGeometry,
     productDescription,
     projectBU,
     projectId,
@@ -126,10 +149,36 @@ export function WizardContentWorkspace({
     const fileInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
     const previewFrameRef = useRef<HTMLDivElement | null>(null);
     const { registerFile } = useProjectLibrary();
-    const previewSource = useMemo(() => getMasterPreviewSource(selectedTemplate), [selectedTemplate]);
+    const previewFormats = useMemo(() => getPreviewFormatSources(selectedTemplate), [selectedTemplate]);
+    const [activePreviewFormatId, setActivePreviewFormatId] = useState(previewFormats[0]?.id ?? "");
+    const masterPreviewSource = previewFormats[0];
+    const previewSource = previewFormats.find((format) => format.id === activePreviewFormatId) ?? masterPreviewSource;
+    /**
+     * The largest width and tallest height across the pack — these are the
+     * target dimensions for the wizard's "expand background" generation.
+     * Width and height are picked independently so a pack containing
+     * 1920×1080 + 1080×1920 yields 1920×1920 (covers any format with no crop).
+     */
+    const packMaxSize = useMemo(() => {
+        if (previewFormats.length === 0) return { width: 0, height: 0 };
+        let maxW = 0;
+        let maxH = 0;
+        for (const format of previewFormats) {
+            if (format.width > maxW) maxW = format.width;
+            if (format.height > maxH) maxH = format.height;
+        }
+        return { width: maxW, height: maxH };
+    }, [previewFormats]);
+    const masterCanvasSize = useMemo(
+        () => ({
+            width: masterPreviewSource?.width ?? 0,
+            height: masterPreviewSource?.height ?? 0,
+        }),
+        [masterPreviewSource?.width, masterPreviewSource?.height],
+    );
     const entries = useMemo(
-        () => getEditableLayerEntries(selectedTemplate, previewSource.layers),
-        [selectedTemplate, previewSource.layers],
+        () => getEditableLayerEntries(selectedTemplate, masterPreviewSource?.layers ?? []),
+        [selectedTemplate, masterPreviewSource?.layers],
     );
     const [activeLayerId, setActiveLayerId] = useState(entries[0]?.id ?? "");
     const [sidebarTab, setSidebarTab] = useState<SidebarTab>("layers");
@@ -142,6 +191,20 @@ export function WizardContentWorkspace({
         image: false,
         badge: false,
     });
+
+    useEffect(() => {
+        setActivePreviewFormatId(previewFormats[0]?.id ?? "");
+    }, [selectedTemplate.id, previewFormats]);
+
+    useEffect(() => {
+        if (previewFormats.length === 0) {
+            setActivePreviewFormatId("");
+            return;
+        }
+        if (!previewFormats.some((format) => format.id === activePreviewFormatId)) {
+            setActivePreviewFormatId(previewFormats[0].id);
+        }
+    }, [activePreviewFormatId, previewFormats]);
 
     useEffect(() => {
         if (entries.length === 0) {
@@ -178,9 +241,21 @@ export function WizardContentWorkspace({
         { enabled: !!projectId && sidebarTab === "assets", refetchOnWindowFocus: false },
     );
     const projectAssets = (assetsQuery.data ?? []) as AssetRow[];
+    /**
+     * Geometry overrides from the expand flow only describe the master
+     * layout, so we apply them when the active preview is master and skip
+     * them otherwise (each non-master format keeps its own layerSnapshot).
+     */
     const draftPreviewLayers = useMemo(
-        () => buildDraftPreviewLayers(previewSource.layers, entries, textValues, imageValues),
-        [previewSource.layers, entries, textValues, imageValues],
+        () =>
+            buildDraftPreviewLayers(
+                previewSource.layers,
+                entries,
+                textValues,
+                imageValues,
+                previewSource.id === masterPreviewSource?.id ? layerGeometryOverrides : undefined,
+            ),
+        [previewSource.layers, previewSource.id, masterPreviewSource?.id, entries, textValues, imageValues, layerGeometryOverrides],
     );
 
     const updateTextValue = (id: string, value: string) => {
@@ -196,6 +271,9 @@ export function WizardContentWorkspace({
         setUploadError(null);
         setUploadingLayerId(entry.id);
         try {
+            // A fresh upload invalidates any prior expand geometry — the new
+            // image is its own canvas, not an extension of the previous one.
+            clearLayerGeometry(entry.id);
             if (projectId) {
                 const persistedUrl = await registerFile({
                     projectId,
@@ -223,6 +301,7 @@ export function WizardContentWorkspace({
 
     const handleApplyAssetToLayer = (asset: AssetRow) => {
         if (!activeImageLayer) return;
+        clearLayerGeometry(activeImageLayer.id);
         updateImageValue(activeImageLayer.id, asset.url);
         setSidebarTab("layers");
     };
@@ -354,7 +433,7 @@ export function WizardContentWorkspace({
                 </aside>
 
                 <main className="relative min-h-0 overflow-hidden p-4">
-                    <div className="absolute left-6 top-6 z-10 rounded-full border border-accent-lime-hover/50 bg-accent-lime/15 px-3 py-1.5 text-xs font-medium text-accent-lime-text shadow-sm">
+                    <div className="absolute left-6 top-6 z-10 rounded-full border border-accent-lime-hover/50 bg-accent-lime/15 px-3 py-1.5 text-xs font-medium text-text-primary shadow-sm">
                         {activeLayer ? `Выбран слой: ${activeLayer.name}` : "Выберите слой"}
                     </div>
                     <div className="absolute right-6 top-6 z-10 flex items-center gap-1 rounded-full border border-border-primary bg-bg-surface/90 p-1 shadow-[var(--shadow-sm)] backdrop-blur">
@@ -378,7 +457,7 @@ export function WizardContentWorkspace({
                     </div>
                     <div
                         ref={previewFrameRef}
-                        className="flex h-full items-center justify-center rounded-[var(--radius-xl)] border border-border-primary bg-bg-canvas"
+                        className={`flex h-full items-center justify-center rounded-[var(--radius-xl)] border border-border-primary bg-bg-canvas ${previewFormats.length > 1 ? "pr-20" : ""}`}
                         style={{
                             backgroundImage:
                                 "radial-gradient(circle, var(--border-primary) 1px, transparent 1px)",
@@ -390,7 +469,7 @@ export function WizardContentWorkspace({
                                 layers={draftPreviewLayers}
                                 artboardWidth={previewSource.width}
                                 artboardHeight={previewSource.height}
-                                containerWidth={previewSize.width}
+                                containerWidth={previewFormats.length > 1 ? Math.max(320, previewSize.width - 80) : previewSize.width}
                                 containerHeight={previewSize.height}
                                 zoom={previewZoom}
                                 appearance={canvasAppearance}
@@ -400,6 +479,14 @@ export function WizardContentWorkspace({
                         )}
                     </div>
 
+                    {previewFormats.length > 1 && (
+                        <FormatThumbnailRail
+                            formats={previewFormats}
+                            activeFormatId={previewSource.id}
+                            onSelect={setActivePreviewFormatId}
+                        />
+                    )}
+
                     <WizardLayerPromptBar
                         activeLayer={activeLayer}
                         textValues={textValues}
@@ -407,8 +494,12 @@ export function WizardContentWorkspace({
                         projectBU={projectBU}
                         projectId={projectId}
                         productDescription={productDescription}
+                        packMaxSize={packMaxSize}
+                        masterCanvasSize={masterCanvasSize}
                         onTextChange={updateTextValue}
                         onImageChange={updateImageValue}
+                        onLayerGeometryChange={setLayerGeometry}
+                        onLayerGeometryReset={clearLayerGeometry}
                     />
                 </main>
             </div>
@@ -604,6 +695,137 @@ function ZoomButton({
     );
 }
 
+function FormatThumbnailRail({
+    formats,
+    activeFormatId,
+    onSelect,
+}: {
+    formats: PreviewFormatSource[];
+    activeFormatId: string;
+    onSelect: (id: string) => void;
+}) {
+    const railRef = useRef<HTMLDivElement | null>(null);
+    const [scrollIndex, setScrollIndex] = useState(0);
+    const [visibleCount, setVisibleCount] = useState(6);
+
+    useEffect(() => {
+        const node = railRef.current;
+        if (!node) return;
+
+        const updateVisibleCount = () => {
+            const rect = node.getBoundingClientRect();
+            // ~72px item height + 8px gap, with space reserved for arrow controls.
+            setVisibleCount(Math.max(1, Math.floor((rect.height - 64) / 80)));
+        };
+
+        updateVisibleCount();
+        const observer = new ResizeObserver(updateVisibleCount);
+        observer.observe(node);
+        return () => observer.disconnect();
+    }, []);
+
+    useEffect(() => {
+        setScrollIndex((value) => Math.min(value, Math.max(0, formats.length - visibleCount)));
+    }, [formats.length, visibleCount]);
+
+    useEffect(() => {
+        const activeIndex = formats.findIndex((format) => format.id === activeFormatId);
+        if (activeIndex < 0) return;
+        setScrollIndex((value) => {
+            if (activeIndex < value) return activeIndex;
+            if (activeIndex >= value + visibleCount) {
+                return Math.min(activeIndex, Math.max(0, formats.length - visibleCount));
+            }
+            return value;
+        });
+    }, [activeFormatId, formats, visibleCount]);
+
+    const canScrollUp = scrollIndex > 0;
+    const canScrollDown = scrollIndex + visibleCount < formats.length;
+    const visibleFormats = formats.slice(scrollIndex, scrollIndex + visibleCount);
+
+    const scrollByPage = (direction: 1 | -1) => {
+        setScrollIndex((value) => {
+            const maxIndex = Math.max(0, formats.length - visibleCount);
+            return Math.min(maxIndex, Math.max(0, value + direction * Math.max(1, visibleCount - 1)));
+        });
+    };
+
+    return (
+        <div
+            ref={railRef}
+            className="absolute bottom-24 right-5 top-20 z-20 flex w-16 flex-col items-center gap-2"
+            aria-label="Форматы шаблон-пакета"
+            role="listbox"
+        >
+            {canScrollUp && (
+                <button
+                    type="button"
+                    onClick={() => scrollByPage(-1)}
+                    className="flex h-7 w-14 items-center justify-center rounded-[var(--radius-sm)] border border-border-primary bg-bg-surface/90 text-text-secondary shadow-[var(--shadow-sm)] backdrop-blur transition-colors hover:bg-bg-tertiary hover:text-text-primary cursor-pointer"
+                    aria-label="Показать предыдущие форматы"
+                >
+                    <ChevronUp size={14} />
+                </button>
+            )}
+
+            <div className="flex min-h-0 flex-col gap-3">
+                {visibleFormats.map((format) => {
+                    const active = format.id === activeFormatId;
+                    const aspectScale = Math.min(34 / format.width, 34 / format.height);
+                    const thumbWidth = Math.max(10, Math.round(format.width * aspectScale));
+                    const thumbHeight = Math.max(10, Math.round(format.height * aspectScale));
+
+                    return (
+                        <div key={format.id} className="flex flex-col items-center gap-1">
+                            <button
+                                type="button"
+                                role="option"
+                                onClick={() => onSelect(format.id)}
+                                aria-label={`Показать формат ${format.label}`}
+                                aria-selected={active}
+                                aria-current={active ? "true" : undefined}
+                                title={`${format.name} · ${format.label}`}
+                                className={`group flex h-14 w-14 shrink-0 items-center justify-center rounded-[var(--radius-md)] border bg-bg-surface/90 shadow-[var(--shadow-sm)] backdrop-blur transition-all cursor-pointer ${
+                                    active
+                                        ? "border-accent-lime-hover ring-2 ring-accent-lime/35"
+                                        : "border-border-primary hover:border-border-secondary hover:bg-bg-tertiary"
+                                }`}
+                            >
+                                <span
+                                    className={`relative flex items-center justify-center rounded-[6px] border transition-colors ${
+                                        active
+                                            ? "border-accent-lime-hover bg-accent-lime/20"
+                                            : "border-border-secondary bg-bg-secondary group-hover:border-border-primary"
+                                    }`}
+                                    style={{ width: thumbWidth, height: thumbHeight }}
+                                >
+                                    <span className="absolute left-[18%] top-[20%] h-[12%] w-[48%] rounded-full bg-text-tertiary/35" />
+                                    <span className="absolute bottom-[18%] left-[18%] h-[18%] w-[64%] rounded-sm bg-text-tertiary/20" />
+                                </span>
+                            </button>
+                            <span className="w-full truncate text-center text-[9px] font-medium text-text-tertiary" title={format.label}>
+                                {format.label.replace(/\s/g, "")}
+                            </span>
+                        </div>
+                    );
+                })}
+            </div>
+
+            {canScrollDown && (
+                <button
+                    type="button"
+                    onClick={() => scrollByPage(1)}
+                    className="flex h-7 w-14 items-center justify-center rounded-[var(--radius-sm)] border border-border-primary bg-bg-surface/90 text-text-secondary shadow-[var(--shadow-sm)] backdrop-blur transition-colors hover:bg-bg-tertiary hover:text-text-primary cursor-pointer"
+                    aria-label="Показать следующие форматы"
+                >
+                    <ChevronDown size={14} />
+                </button>
+            )}
+        </div>
+    );
+}
+
 function WizardLayerPromptBar({
     activeLayer,
     textValues,
@@ -611,8 +833,12 @@ function WizardLayerPromptBar({
     projectBU,
     projectId,
     productDescription,
+    packMaxSize,
+    masterCanvasSize,
     onTextChange,
     onImageChange,
+    onLayerGeometryChange,
+    onLayerGeometryReset,
 }: {
     activeLayer?: EditableLayerEntry;
     textValues: Record<string, string>;
@@ -620,18 +846,24 @@ function WizardLayerPromptBar({
     projectBU: BusinessUnit;
     projectId?: string;
     productDescription: string;
+    packMaxSize: { width: number; height: number };
+    masterCanvasSize: { width: number; height: number };
     onTextChange: (id: string, value: string) => void;
     onImageChange: (id: string, value: string) => void;
+    onLayerGeometryChange: (id: string, geometry: LayerGeometry) => void;
+    onLayerGeometryReset: (id: string) => void;
 }) {
     const promptRef = useRef<RefAutocompleteTextareaHandle>(null);
     const { registerUrl } = useProjectLibrary();
-    const { imagePresets } = useStylePresets();
+    const { imagePresets, textPresets } = useStylePresets();
     const [prompt, setPrompt] = useState("");
     const [isGenerating, setIsGenerating] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [selectedModel, setSelectedModel] = useState("flux-dev");
+    const [textModel, setTextModel] = useState("deepseek");
     const [aspectRatio, setAspectRatio] = useState("1:1");
     const [imageStyleId, setImageStyleId] = useState("none");
+    const [textStyleId, setTextStyleId] = useState<TextGenPreset | "none">("none");
     const [referenceImages, setReferenceImages] = useState<string[]>([]);
     const [scale, setScale] = useState("");
     const [showAdvanced, setShowAdvanced] = useState(false);
@@ -668,12 +900,99 @@ function WizardLayerPromptBar({
                     activeLayer.name,
                     1,
                     projectBU,
+                    textStyleId === "none" ? undefined : (textStyleId as TextGenPreset),
+                    textModel
                 );
                 if (result) onTextChange(activeLayer.id, result);
                 return;
             }
 
-            if (imageMode !== "generate") {
+            if (imageMode === "expand") {
+                if (!currentImage) {
+                    setError("Для расширения фона сначала загрузите или сгенерируйте изображение слоя");
+                    return;
+                }
+
+                const layerWidth = Number(activeLayer.props.width ?? 0);
+                const layerHeight = Number(activeLayer.props.height ?? 0);
+                const layerX = Number(activeLayer.props.x ?? 0);
+                const layerY = Number(activeLayer.props.y ?? 0);
+
+                if (layerWidth <= 0 || layerHeight <= 0) {
+                    setError("Не удалось определить размеры слоя для расширения");
+                    return;
+                }
+
+                const targetW = Math.max(packMaxSize.width, layerWidth);
+                const targetH = Math.max(packMaxSize.height, layerHeight);
+                const hPad = Math.max(0, targetW - layerWidth);
+                const vPad = Math.max(0, targetH - layerHeight);
+
+                if (hPad === 0 && vPad === 0) {
+                    setError("Изображение уже покрывает максимальный формат пакета — расширение не требуется");
+                    return;
+                }
+
+                const spaceLeft = Math.max(0, layerX);
+                const spaceRight = Math.max(0, masterCanvasSize.width - layerX - layerWidth);
+                const spaceTop = Math.max(0, layerY);
+                const spaceBottom = Math.max(0, masterCanvasSize.height - layerY - layerHeight);
+                // When the layer is fullbleed on an axis (no space on either
+                // side), fall back to a centered split so we don't divide
+                // by zero and dump all padding on one edge.
+                const horizDenom = spaceLeft + spaceRight;
+                const vertDenom = spaceTop + spaceBottom;
+                const padLeft = horizDenom > 0
+                    ? Math.round((hPad * spaceLeft) / horizDenom)
+                    : Math.round(hPad / 2);
+                const padRight = hPad - padLeft;
+                const padTop = vertDenom > 0
+                    ? Math.round((vPad * spaceTop) / vertDenom)
+                    : Math.round(vPad / 2);
+                const padBottom = vPad - padTop;
+
+                const { outpaintImage } = await import("@/utils/outpaintPipeline");
+                const expandResult = await outpaintImage({
+                    imageSrc: currentImage,
+                    canvasPadding: { top: padTop, right: padRight, bottom: padBottom, left: padLeft },
+                    layerSize: { width: layerWidth, height: layerHeight },
+                    prompt: basePrompt || undefined,
+                    projectId,
+                    onProgress: (stage, info) => console.log(`[Wizard/Expand/${stage}]`, info ?? ""),
+                });
+
+                // The result may be a data URI (preserve-original pipeline
+                // composites client-side via canvas.toDataURL → 10MB+ JPEG).
+                // Push it through S3 first so we never store a raw data URI
+                // in layer.src — auto-save in the studio chokes on huge JSON
+                // payloads (Unterminated string at position ~10MB).
+                let persistedSrc = expandResult.src;
+                try {
+                    persistedSrc = await persistImageToS3(expandResult.src, projectId ?? "ai-tmp");
+                } catch (persistErr) {
+                    console.warn("[Wizard/Expand] persistImageToS3 failed, falling back to expand result:", persistErr);
+                }
+                const registered = projectId
+                    ? await registerUrl({
+                        projectId,
+                        url: persistedSrc,
+                        source: "wizard-edit-expand",
+                    })
+                    : null;
+                onImageChange(activeLayer.id, registered ?? persistedSrc);
+                // Grow the master layer to match the new (extended) image so
+                // it actually shows up in the preview instead of being cropped
+                // back into the original tiny rect by object-fit cover.
+                onLayerGeometryChange(activeLayer.id, {
+                    x: layerX - padLeft,
+                    y: layerY - padTop,
+                    width: layerWidth + padLeft + padRight,
+                    height: layerHeight + padTop + padBottom,
+                });
+                return;
+            }
+
+            if (imageMode === "edit") {
                 if (!currentImage) {
                     setError("Для редактирования сначала загрузите или сгенерируйте изображение слоя");
                     return;
@@ -685,14 +1004,6 @@ function WizardLayerPromptBar({
                         ? uploadManyForAI(referenceImages, projectId || "ai-tmp")
                         : Promise.resolve(undefined),
                 ]);
-                const layerWidth = Number(activeLayer.props.width ?? 1024);
-                const layerHeight = Number(activeLayer.props.height ?? 1024);
-                const expandPadding = {
-                    top: Math.round(layerHeight * 0.2),
-                    right: Math.round(layerWidth * 0.2),
-                    bottom: Math.round(layerHeight * 0.2),
-                    left: Math.round(layerWidth * 0.2),
-                };
                 const editModel = getModelById(selectedModel)?.caps.includes("edit")
                     ? selectedModel
                     : "nano-banana-2";
@@ -700,12 +1011,11 @@ function WizardLayerPromptBar({
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({
-                        action: imageMode === "expand" ? "outpaint" : "text-edit",
-                        prompt: imageMode === "expand" ? basePrompt || "Extend the background seamlessly" : basePrompt,
+                        action: "text-edit",
+                        prompt: basePrompt,
                         imageBase64: imageUrl,
-                        model: imageMode === "expand" ? "bria-expand" : editModel,
+                        model: editModel,
                         referenceImages: refUrls,
-                        expandPadding: imageMode === "expand" ? expandPadding : undefined,
                         projectId,
                     }),
                 });
@@ -716,9 +1026,12 @@ function WizardLayerPromptBar({
                         ? await registerUrl({
                             projectId,
                             url: data.content,
-                            source: imageMode === "expand" ? "wizard-edit-expand" : "wizard-edit",
+                            source: "wizard-edit",
                         })
                         : null;
+                    // text-edit returns a fresh image with potentially different
+                    // aspect ratio — drop any stale expand geometry.
+                    onLayerGeometryReset(activeLayer.id);
                     onImageChange(activeLayer.id, persisted ?? data.content);
                 }
                 return;
@@ -754,6 +1067,8 @@ function WizardLayerPromptBar({
                         source: "wizard-generation",
                     })
                     : null;
+                // Brand new image — wipe any stale expand geometry.
+                onLayerGeometryReset(activeLayer.id);
                 onImageChange(activeLayer.id, persisted ?? data.content);
             }
         } catch (err) {
@@ -774,7 +1089,7 @@ function WizardLayerPromptBar({
     return (
         <div className="absolute bottom-6 left-1/2 z-20 w-[760px] max-w-[calc(100%-32px)] -translate-x-1/2 rounded-[20px] border border-border-primary bg-bg-surface/95 shadow-[var(--shadow-lg)] backdrop-blur-xl">
             <div className="flex items-center gap-2 border-b border-border-primary px-4 py-2">
-                <span className="rounded-full bg-accent-lime/20 px-2 py-1 text-[11px] font-medium text-accent-lime-text">
+                <span className="rounded-full bg-accent-lime/20 px-2 py-1 text-[11px] font-medium text-text-primary">
                     Работаем с {selectedLabel}: {activeLayer.name}
                 </span>
                 {currentImage && (
@@ -784,6 +1099,11 @@ function WizardLayerPromptBar({
                             : imageMode === "expand"
                                 ? "Фон будет расширен AI и заменит изображение слоя"
                                 : "AI отредактирует текущее изображение слоя"}
+                    </span>
+                )}
+                {isImage && imageMode === "expand" && packMaxSize.width > 0 && packMaxSize.height > 0 && (
+                    <span className="ml-auto rounded-full border border-border-primary bg-bg-primary px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-text-secondary">
+                        Цель: {packMaxSize.width} × {packMaxSize.height}
                     </span>
                 )}
             </div>
@@ -834,17 +1154,19 @@ function WizardLayerPromptBar({
                                 onClick={() => setImageMode("expand")}
                             />
                         </div>
-                        <OutlinedSelector icon={<Settings2 size={13} />}>
-                            <select
-                                value={selectedModel}
-                                onChange={(event) => setSelectedModel(event.target.value)}
-                                className="max-w-[150px] appearance-none bg-transparent text-[12px] font-medium text-text-secondary focus:outline-none cursor-pointer"
-                            >
-                                {IMAGE_GEN_MODELS.map((model) => (
-                                    <option key={model.id} value={model.id}>{model.label}</option>
-                                ))}
-                            </select>
-                        </OutlinedSelector>
+                        {imageMode !== "expand" && (
+                            <OutlinedSelector icon={<Settings2 size={13} />}>
+                                <select
+                                    value={selectedModel}
+                                    onChange={(event) => setSelectedModel(event.target.value)}
+                                    className="max-w-[150px] appearance-none bg-transparent text-[12px] font-medium text-text-secondary focus:outline-none cursor-pointer"
+                                >
+                                    {IMAGE_GEN_MODELS.map((model) => (
+                                        <option key={model.id} value={model.id}>{model.label}</option>
+                                    ))}
+                                </select>
+                            </OutlinedSelector>
+                        )}
                         {imageMode === "generate" && (
                             <>
                                 <OutlinedSelector icon={<Ratio size={13} />}>
@@ -866,7 +1188,7 @@ function WizardLayerPromptBar({
                                 />
                             </>
                         )}
-                        {supportsVision && (
+                        {imageMode !== "expand" && supportsVision && (
                             <ReferenceImageInput
                                 images={referenceImages}
                                 onChange={setReferenceImages}
@@ -889,6 +1211,28 @@ function WizardLayerPromptBar({
                                 <Settings2 size={13} />
                             </button>
                         )}
+                    </>
+                )}
+
+                {!isImage && (
+                    <>
+                        <OutlinedSelector icon={<Settings2 size={13} />}>
+                            <select
+                                value={textModel}
+                                onChange={(event) => setTextModel(event.target.value)}
+                                className="max-w-[150px] appearance-none bg-transparent text-[12px] font-medium text-text-secondary focus:outline-none cursor-pointer"
+                            >
+                                {TEXT_GEN_MODELS.map((model) => (
+                                    <option key={model.id} value={model.id}>{model.label}</option>
+                                ))}
+                            </select>
+                        </OutlinedSelector>
+                        <TextStylePresetPicker
+                            presets={textPresets}
+                            selectedId={textStyleId}
+                            onChange={(val) => setTextStyleId((val as TextGenPreset) || "none")}
+                            variant="compact"
+                        />
                     </>
                 )}
 
@@ -971,37 +1315,71 @@ function OutlinedSelector({
     );
 }
 
-function getMasterPreviewSource(template: TemplatePackV2): MasterPreviewSource {
+function getPreviewFormatSources(template: TemplatePackV2): PreviewFormatSource[] {
     const data = template as TemplatePackV2 & {
         layers?: Layer[];
         canvasWidth?: number;
         canvasHeight?: number;
     };
-    const masterResize = template.resizes?.find((resize) => resize.isMaster) ?? template.resizes?.[0];
-    const resizeWithSnapshot = masterResize?.layerSnapshot?.length
-        ? masterResize
-        : template.resizes?.find((resize) => resize.layerSnapshot?.length);
+    const resizes = template.resizes ?? [];
+    const masterResize = resizes.find((resize) => resize.isMaster) ?? resizes[0];
+    const fallbackLayers =
+        data.layers?.length
+            ? data.layers
+            : template.masterComponents.map(masterComponentToLayer).filter(Boolean) as Layer[];
+    const fallbackWidth = data.canvasWidth ?? masterResize?.width ?? template.baseWidth ?? 1080;
+    const fallbackHeight = data.canvasHeight ?? masterResize?.height ?? template.baseHeight ?? 1080;
+    const sources: PreviewFormatSource[] = [];
 
-    if (resizeWithSnapshot?.layerSnapshot?.length) {
-        return {
-            layers: resizeWithSnapshot.layerSnapshot,
-            width: resizeWithSnapshot.width,
-            height: resizeWithSnapshot.height,
-        };
+    const pushSource = (source: PreviewFormatSource) => {
+        if (sources.some((existing) => existing.id === source.id)) return;
+        sources.push(source);
+    };
+
+    if (masterResize?.layerSnapshot?.length) {
+        pushSource(resizeToPreviewSource(masterResize, true));
+    } else {
+        pushSource({
+            id: masterResize?.id ?? "master",
+            name: masterResize?.name ?? "Мастер",
+            label: masterResize?.label ?? `${fallbackWidth} × ${fallbackHeight}`,
+            isMaster: true,
+            layers: fallbackLayers,
+            width: fallbackWidth,
+            height: fallbackHeight,
+        });
     }
 
-    if (data.layers?.length) {
-        return {
-            layers: data.layers,
-            width: data.canvasWidth ?? template.baseWidth ?? 1080,
-            height: data.canvasHeight ?? template.baseHeight ?? 1080,
-        };
+    for (const resize of resizes) {
+        if (!resize.layerSnapshot?.length) continue;
+        pushSource(resizeToPreviewSource(resize, resize.id === masterResize?.id || resize.isMaster === true));
     }
 
+    return sources.length > 0
+        ? sources
+        : [{
+            id: "master",
+            name: "Мастер",
+            label: `${fallbackWidth} × ${fallbackHeight}`,
+            isMaster: true,
+            layers: fallbackLayers,
+            width: fallbackWidth,
+            height: fallbackHeight,
+        }];
+}
+
+function resizeToPreviewSource(
+    resize: NonNullable<TemplatePackV2["resizes"]>[number],
+    isMaster: boolean,
+): PreviewFormatSource {
     return {
-        layers: template.masterComponents.map(masterComponentToLayer).filter(Boolean) as Layer[],
-        width: template.baseWidth ?? 1080,
-        height: template.baseHeight ?? 1080,
+        id: resize.id,
+        name: isMaster ? (resize.name || "Мастер") : (resize.name || "Формат"),
+        label: resize.label ?? `${resize.width} × ${resize.height}`,
+        isMaster,
+        layers: resize.layerSnapshot ?? [],
+        width: resize.width,
+        height: resize.height,
     };
 }
 
@@ -1074,6 +1452,7 @@ function buildDraftPreviewLayers(
     entries: EditableLayerEntry[],
     textValues: Record<string, string>,
     imageValues: Record<string, string>,
+    layerGeometryOverrides?: Record<string, LayerGeometry>,
 ): Layer[] {
     const entryBySlot = new Map(entries.filter((entry) => entry.slotId).map((entry) => [entry.slotId, entry]));
     const nextLayers = layers.map((layer) => {
@@ -1087,6 +1466,9 @@ function buildDraftPreviewLayers(
         ].filter(Boolean) as string[];
         const textValue = candidateIds.map((id) => textValues[id]).find((value) => value !== undefined);
         const imageValue = candidateIds.map((id) => imageValues[id]).find((value) => value !== undefined);
+        const geometryOverride = layerGeometryOverrides
+            ? candidateIds.map((id) => layerGeometryOverrides[id]).find((value) => value !== undefined)
+            : undefined;
 
         if (layer.type === "text" && textValue !== undefined) {
             return { ...layer, text: textValue };
@@ -1094,8 +1476,16 @@ function buildDraftPreviewLayers(
         if (layer.type === "badge" && textValue !== undefined) {
             return { ...layer, label: textValue };
         }
-        if (layer.type === "image" && imageValue !== undefined && !layer.isFixedAsset) {
-            return { ...layer, src: imageValue };
+        if (layer.type === "image" && !layer.isFixedAsset) {
+            const next = { ...layer } as typeof layer;
+            if (imageValue !== undefined) next.src = imageValue;
+            if (geometryOverride) {
+                next.x = geometryOverride.x;
+                next.y = geometryOverride.y;
+                next.width = geometryOverride.width;
+                next.height = geometryOverride.height;
+            }
+            return next;
         }
         return { ...layer };
     });
