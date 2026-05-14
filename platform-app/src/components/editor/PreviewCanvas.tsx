@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Stage, Layer, Rect, Text, Image as KonvaImage, Group } from "react-konva";
-import type { Layer as LayerType, ImageLayer } from "@/types";
+import type { FrameLayer, ImageLayer, Layer as LayerType } from "@/types";
 import { computeImageFitProps } from "@/utils/imageFitUtils";
 import { paintToKonvaProps } from "@/utils/paint";
 import Konva from "konva";
@@ -11,17 +11,20 @@ type ImageLoadStatus = "loading" | "loaded" | "error";
 
 interface PreviewLayerProps {
     layer: LayerType;
+    allLayers: LayerType[];
     loadedImages: Map<string, HTMLImageElement>;
     imageStatuses: Record<string, ImageLoadStatus>;
+    renderX?: number;
+    renderY?: number;
 }
 
-function PreviewLayer({ layer, loadedImages, imageStatuses }: PreviewLayerProps) {
-    if (!layer.visible) return null;
+function PreviewLayer({ layer, allLayers, loadedImages, imageStatuses, renderX, renderY }: PreviewLayerProps) {
+    if (layer.visible === false) return null;
 
     const commonProps = {
         id: layer.id,
-        x: layer.x,
-        y: layer.y,
+        x: renderX ?? layer.x,
+        y: renderY ?? layer.y,
         width: layer.width,
         height: layer.height,
         rotation: layer.rotation,
@@ -144,6 +147,12 @@ function PreviewLayer({ layer, loadedImages, imageStatuses }: PreviewLayerProps)
                 </Group>
             );
         case "frame":
+            const frameLayer = layer as FrameLayer;
+            const childIds = Array.isArray(frameLayer.childIds) ? frameLayer.childIds : [];
+            const childLayers = childIds
+                .map((id) => allLayers.find((candidate) => candidate.id === id))
+                .filter(Boolean) as LayerType[];
+
             return (
                 <Group
                     {...commonProps}
@@ -162,6 +171,17 @@ function PreviewLayer({ layer, loadedImages, imageStatuses }: PreviewLayerProps)
                         strokeWidth={layer.strokeWidth}
                         cornerRadius={layer.cornerRadius}
                     />
+                    {childLayers.map((child) => (
+                        <PreviewLayer
+                            key={child.id}
+                            layer={child}
+                            allLayers={allLayers}
+                            loadedImages={loadedImages}
+                            imageStatuses={imageStatuses}
+                            renderX={child.x - frameLayer.x}
+                            renderY={child.y - frameLayer.y}
+                        />
+                    ))}
                 </Group>
             );
         default:
@@ -182,7 +202,7 @@ export function PreviewCanvas({ layers, artboardWidth, artboardHeight, container
     const [loadedImages, setLoadedImages] = useState<Map<string, HTMLImageElement>>(new Map());
     const [failedImageSources, setFailedImageSources] = useState<Set<string>>(new Set());
     const imageSources = useMemo(
-        () => Array.from(new Set(layers.filter((layer): layer is ImageLayer => layer.type === "image" && layer.visible && !!layer.src).map((layer) => layer.src))),
+        () => Array.from(new Set(layers.filter((layer): layer is ImageLayer => layer.type === "image" && layer.visible !== false && !!layer.src).map((layer) => layer.src))),
         [layers]
     );
 
@@ -246,6 +266,24 @@ export function PreviewCanvas({ layers, artboardWidth, artboardHeight, container
         return next;
     }, [imageSources, activeLoadedImages, failedImageSources]);
 
+    const frameChildIds = useMemo(() => {
+        const ids = new Set<string>();
+        layers.forEach((layer) => {
+            if (layer.type === "frame") {
+                const childIds = (layer as FrameLayer).childIds;
+                if (Array.isArray(childIds)) {
+                    childIds.forEach((childId) => ids.add(childId));
+                }
+            }
+        });
+        return ids;
+    }, [layers]);
+
+    const topLevelLayers = useMemo(
+        () => layers.filter((layer) => !frameChildIds.has(layer.id)),
+        [layers, frameChildIds],
+    );
+
     // Calculate scale to fit artboard within container (with 40px padding)
     const padding = 40;
     const availableWidth = Math.max(1, containerWidth - padding * 2);
@@ -291,10 +329,11 @@ export function PreviewCanvas({ layers, artboardWidth, artboardHeight, container
                 <Group x={stageX} y={stageY} scaleX={scale} scaleY={scale}>
                     {/* Artboard clip bounds */}
                     <Group clipX={0} clipY={0} clipWidth={artboardWidth} clipHeight={artboardHeight}>
-                        {layers.map((layer) => (
+                        {topLevelLayers.map((layer) => (
                             <PreviewLayer
                                 key={layer.id}
                                 layer={layer}
+                                allLayers={layers}
                                 loadedImages={activeLoadedImages}
                                 imageStatuses={activeImageStatuses}
                             />

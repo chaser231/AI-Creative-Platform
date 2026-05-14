@@ -1,8 +1,7 @@
 "use client";
 
-import { useState, useMemo, useEffect, useCallback } from "react";
-import { useRouter } from "next/navigation";
-import { ChevronRight, LayoutTemplate, FileText, ImagePlus, Sparkles, Search, Star, X } from "lucide-react";
+import { useState, useMemo, useEffect } from "react";
+import { ChevronRight, LayoutTemplate, Search, Star, X } from "lucide-react";
 import { useTemplateStore } from "@/store/templateStore";
 import { useTemplateListSync } from "@/hooks/useTemplateSync";
 import { useCanvasStore } from "@/store/canvasStore";
@@ -13,13 +12,9 @@ import { Input } from "@/components/ui/Input";
 import { DEFAULT_PACKS, type TemplatePackMeta } from "@/constants/defaultPacks";
 import { getRecommendedPacks, searchPacks } from "@/services/templateCatalogService";
 import { type TemplatePackV2, extractSingleFormatFromPack } from "@/services/templateService";
-import type { BusinessUnit, FrameLayer, Layer, TemplateTag } from "@/types";
-import { TextContentBlock } from "@/components/wizard/blocks/TextContentBlock";
-import { ImageContentBlock } from "@/components/wizard/blocks/ImageContentBlock";
-import { BadgeContentBlock } from "@/components/wizard/blocks/BadgeContentBlock";
-import { TextGroupSlot } from "@/components/wizard/blocks/TextGroupSlot";
+import type { BusinessUnit, TemplateTag } from "@/types";
+import { WizardContentWorkspace } from "@/components/wizard/WizardContentWorkspace";
 import { PreviewCanvas } from "@/components/editor/PreviewCanvas";
-import type { FrameComponentProps } from "@/types";
 
 interface WizardFlowProps {
     projectId?: string;
@@ -39,8 +34,7 @@ export function WizardFlow({ projectId, onSwitchToStudio, initialTemplateId }: W
         const uniqueLocal = savedPacks.filter(p => !backendIds.has(p.id));
         return [...backendTemplates, ...uniqueLocal];
     }, [backendTemplates, savedPacks]);
-    const { resetCanvas, previewLayers, previewCanvasWidth, previewCanvasHeight } = useCanvasStore(useShallow((s) => ({
-        resetCanvas: s.resetCanvas,
+    const { previewLayers, previewCanvasWidth, previewCanvasHeight } = useCanvasStore(useShallow((s) => ({
         previewLayers: s.layers,
         previewCanvasWidth: s.canvasWidth,
         previewCanvasHeight: s.canvasHeight,
@@ -57,7 +51,6 @@ export function WizardFlow({ projectId, onSwitchToStudio, initialTemplateId }: W
     const [textValues, setTextValues] = useState<Record<string, string>>({});
     const [imageValues, setImageValues] = useState<Record<string, string>>({});
     const [productDescription, setProductDescription] = useState("");
-    const [isGenerating, setIsGenerating] = useState(false);
     const [packSearch, setPackSearch] = useState("");
 
     // Get project BU for recommendations
@@ -167,51 +160,7 @@ export function WizardFlow({ projectId, onSwitchToStudio, initialTemplateId }: W
 
     const selectedTemplate = fullSelectedTemplate;
 
-    const handleGenerateContent = async () => {
-        if (!productDescription || !selectedTemplate) return;
-        setIsGenerating(true);
-        try {
-            const { RemoteTextProvider } = await import("@/services/aiService");
-            const newValues = { ...textValues };
-
-            for (const mc of selectedTemplate.masterComponents) {
-                if (mc.type !== "text") continue;
-                const name = mc.name.toLowerCase();
-                
-                if (name.includes("head") || name.includes("заголовок") || name.includes("title")) {
-                    const params = { model: "openai", context: "You are a marketing copywriter. Generate a short, punchy headline (2-3 words, CAPS) for a banner." };
-                    const res = await RemoteTextProvider.generate(`Create a headline for: ${productDescription}`, params);
-                    newValues[mc.id] = res.content.replace(/"/g, '').trim();
-                } else if (name.includes("cta") || name.includes("кнопк") || name.includes("button")) {
-                    const params = { model: "openai", context: "Generate a short Call to Action button text (max 2 words, no quotes)." };
-                    const res = await RemoteTextProvider.generate(`CTA for: ${productDescription}`, params);
-                    newValues[mc.id] = res.content.replace(/"/g, '').trim();
-                } else if (name.includes("subhead") || name.includes("подзаголовок") || name.includes("desc") || name.includes("описан")) {
-                    const params = { model: "openai", context: "Generate a short subtitle/description (5-7 words)." };
-                    const res = await RemoteTextProvider.generate(`Subtitle for: ${productDescription}`, params);
-                    newValues[mc.id] = res.content.replace(/"/g, '').trim();
-                }
-            }
-            setTextValues(newValues);
-        } catch (err) {
-            console.error("AI Generation failed", err);
-            alert("Не удалось сгенерировать контент. Проверьте API.");
-        } finally {
-            setIsGenerating(false);
-        }
-    };
-
-    const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>, id: string) => {
-        const file = e.target.files?.[0];
-        if (!file) return;
-        import("@/utils/imageUpload").then(({ compressImageFile }) => {
-            compressImageFile(file).then((compressedBase64) => {
-                setImageValues(prev => ({ ...prev, [id]: compressedBase64 }));
-            });
-        });
-    };
-
-    const handleApplyAndContinue = async () => {
+    const handleApplyAndContinue = async (nextStep: "review" | "studio" = "review") => {
         if (templateMode !== "manual" && !selectedTemplateId) return;
 
         let packToApply: TemplatePackV2;
@@ -261,17 +210,13 @@ export function WizardFlow({ projectId, onSwitchToStudio, initialTemplateId }: W
             }
         }
 
-        // Source 2: Scan layers[] directly for raw canvas state (covers pre-fix templates
-        // where MC IDs may not match, and ensures layers[] gets overrides applied)
-        const dataAny = packToApply as any;
-        if (dataAny.layers && Array.isArray(dataAny.layers)) {
-            for (const layer of dataAny.layers) {
+        const applyDraftsFromLayers = (layers: any[]) => {
+            for (const layer of layers) {
                 const sid = layer.slotId;
                 if (!sid || sid === "none") continue;
 
                 if ((layer.type === "text" || layer.type === "badge") && textValues[layer.id] !== undefined) {
                     contentOverrides[sid] = textValues[layer.id];
-                    // Also mutate layer directly for raw canvas state path
                     layer[layer.type === "text" ? "text" : "label"] = textValues[layer.id];
                 }
                 if (layer.type === "image" && imageValues[layer.id] !== undefined && !layer.isFixedAsset) {
@@ -279,21 +224,39 @@ export function WizardFlow({ projectId, onSwitchToStudio, initialTemplateId }: W
                     layer.src = imageValues[layer.id];
                 }
             }
+        };
 
-            // Also apply to all format snapshots in resizes
-            if (dataAny.resizes && Array.isArray(dataAny.resizes)) {
-                for (const resize of dataAny.resizes) {
-                    if (resize.layerSnapshot && Array.isArray(resize.layerSnapshot)) {
-                        for (const layer of resize.layerSnapshot) {
-                            if (layer.isFixedAsset) continue;
-                            const sid = layer.slotId;
-                            if (!sid || sid === "none" || !contentOverrides[sid]) continue;
-                            const val = contentOverrides[sid];
-                            if (layer.type === "text") layer.text = val;
-                            else if (layer.type === "image") layer.src = val;
-                            else if (layer.type === "badge") layer.label = val;
-                        }
-                    }
+        const applyOverridesToSnapshot = (layers: any[]) => {
+            for (const layer of layers) {
+                if (layer.isFixedAsset) continue;
+                const sid = layer.slotId;
+                if (!sid || sid === "none" || !contentOverrides[sid]) continue;
+                const val = contentOverrides[sid];
+                if (layer.type === "text") layer.text = val;
+                else if (layer.type === "image") layer.src = val;
+                else if (layer.type === "badge") layer.label = val;
+            }
+        };
+
+        // Source 2: Scan layers[] and layerSnapshot[] directly for raw canvas state
+        // where MC IDs may not match, and ensures snapshots get overrides applied.
+        const dataAny = packToApply as any;
+        if (dataAny.layers && Array.isArray(dataAny.layers)) {
+            applyDraftsFromLayers(dataAny.layers);
+        }
+
+        if (dataAny.resizes && Array.isArray(dataAny.resizes)) {
+            for (const resize of dataAny.resizes) {
+                if (resize.layerSnapshot && Array.isArray(resize.layerSnapshot)) {
+                    applyDraftsFromLayers(resize.layerSnapshot);
+                }
+            }
+        }
+
+        if (dataAny.resizes && Array.isArray(dataAny.resizes)) {
+            for (const resize of dataAny.resizes) {
+                if (resize.layerSnapshot && Array.isArray(resize.layerSnapshot)) {
+                    applyOverridesToSnapshot(resize.layerSnapshot);
                 }
             }
         }
@@ -318,7 +281,7 @@ export function WizardFlow({ projectId, onSwitchToStudio, initialTemplateId }: W
         applyTemplatePack(packToApply, {
             contentOverrides: Object.keys(contentOverrides).length > 0 ? contentOverrides : undefined,
             onSuccess: () => {
-                if (templateMode === "manual") {
+                if (templateMode === "manual" || nextStep === "studio") {
                     onSwitchToStudio();
                 } else {
                     setStep("review");
@@ -395,10 +358,15 @@ export function WizardFlow({ projectId, onSwitchToStudio, initialTemplateId }: W
         "yandex-lavka": "Лавка",
         "other": "Другое",
     };
+    const isContentStep = step === "content" && !!selectedTemplate;
 
     return (
-        <div className="flex-1 flex items-center justify-center bg-bg-secondary p-8 overflow-hidden">
-            <div className="w-full max-w-5xl bg-bg-primary rounded-[var(--radius-xl)] shadow-[var(--shadow-lg)] border border-border-primary overflow-hidden flex flex-col max-h-full">
+        <div className={`flex-1 flex items-center justify-center bg-bg-secondary overflow-hidden ${isContentStep ? "p-0" : "p-8"}`}>
+            <div className={`w-full bg-bg-primary overflow-hidden flex flex-col max-h-full ${
+                isContentStep
+                    ? "h-full border-0 rounded-none shadow-none"
+                    : "max-w-5xl rounded-[var(--radius-xl)] shadow-[var(--shadow-lg)] border border-border-primary"
+            }`}>
                 {/* Progress bar */}
                 <div className="flex items-center gap-0 border-b border-border-primary shrink-0">
                     {(["template", "content", "review"] as WizardStep[]).map((s, i) => (
@@ -423,7 +391,7 @@ export function WizardFlow({ projectId, onSwitchToStudio, initialTemplateId }: W
                     ))}
                 </div>
 
-                <div className="p-6 overflow-y-auto flex-1">
+                <div className={`${isContentStep ? "p-0 overflow-hidden" : "p-6 overflow-y-auto"} flex-1 min-h-0`}>
                     {/* Step 1: Template */}
                     {step === "template" && (
                         <div className="space-y-4">
@@ -603,7 +571,7 @@ export function WizardFlow({ projectId, onSwitchToStudio, initialTemplateId }: W
                                         <Button
                                             disabled={manualSizes.length === 0}
                                             icon={<ChevronRight size={14} />}
-                                            onClick={handleApplyAndContinue}
+                                            onClick={() => handleApplyAndContinue()}
                                         >
                                             Собрать форматы
                                         </Button>
@@ -615,213 +583,20 @@ export function WizardFlow({ projectId, onSwitchToStudio, initialTemplateId }: W
 
                     {/* Step 2: Content */}
                     {step === "content" && selectedTemplate && (
-                        <div className="space-y-4">
-                            <div>
-                                <h2 className="text-lg font-semibold text-text-primary">Заполните контент</h2>
-                                <p className="text-sm text-text-secondary mt-1">
-                                    Добавьте тексты и изображения для «{selectedTemplate.name}».
-                                </p>
-                            </div>
-                            {templateLoadError && (
-                                <div className="p-3 rounded-lg bg-yellow-500/10 border border-yellow-500/30 text-yellow-200 text-sm">
-                                    {templateLoadError}
-                                </div>
-                            )}
-                            <div className="space-y-3">
-                                {(() => {
-                                    // ── Resolve master format layers ──
-                                    // Only show content fields for the master format;
-                                    // instance formats inherit content via bindings
-                                    const dataAny = selectedTemplate as any;
-                                    const getMasterLayers = (): Layer[] => {
-                                        if (dataAny.resizes && Array.isArray(dataAny.resizes)) {
-                                            const masterResize = dataAny.resizes.find((r: any) => r.isMaster);
-                                            if (masterResize?.layerSnapshot && Array.isArray(masterResize.layerSnapshot)) {
-                                                return masterResize.layerSnapshot as Layer[];
-                                            }
-                                            // Fallback: first resize with layerSnapshot
-                                            const anyResize = dataAny.resizes.find((r: any) => Array.isArray(r.layerSnapshot) && r.layerSnapshot.length > 0);
-                                            if (anyResize) {
-                                                return anyResize.layerSnapshot as Layer[];
-                                            }
-                                        }
-                                        if (dataAny.layers && Array.isArray(dataAny.layers)) {
-                                            return dataAny.layers as Layer[];
-                                        }
-                                        return [];
-                                    };
-                                    const masterLayers = getMasterLayers();
-
-                                    // ── Determine data source ──
-                                    // masterComponents is rebuilt from layers on each save (post-fix),
-                                    // but for pre-fix templates it may be stale. Check if MC has content entries.
-                                    const CONTENT_TYPES = ["text", "image", "badge"];
-                                    const mcContentEntries = selectedTemplate.masterComponents.filter(
-                                        mc => CONTENT_TYPES.includes(mc.type)
-                                    );
-                                    const useMC = mcContentEntries.length > 0;
-
-                                    const groupedIds = new Set<string>();
-                                    const groups: { groupId: string; members: typeof selectedTemplate.masterComponents }[] = [];
-
-                                    if (useMC) {
-                                        // ── MC-based path (legacy + post-fix) ──
-                                        const frameMCs = selectedTemplate.masterComponents.filter(
-                                            mc => mc.type === "frame" && (mc.props as FrameComponentProps).groupSlotId
-                                        );
-
-                                        for (const frame of frameMCs) {
-                                            const frameProps = frame.props as FrameComponentProps;
-                                            let childIds = new Set<string>();
-
-                                            // Discover children via layerTree, fallback to childIds
-                                            if (selectedTemplate.layerTree && selectedTemplate.layerTree.length > 0) {
-                                                interface TreeNode { masterId?: string; layer?: { masterId?: string }; children?: TreeNode[] }
-                                                const findNode = (nodes: TreeNode[], mId: string): TreeNode | null => {
-                                                    for (const n of nodes) {
-                                                        if (n.masterId === mId || n.layer?.masterId === mId) return n;
-                                                        if (n.children) { const f = findNode(n.children, mId); if (f) return f; }
-                                                    }
-                                                    return null;
-                                                };
-                                                const frameNode = findNode(selectedTemplate.layerTree, frame.id);
-                                                if (frameNode?.children) {
-                                                    frameNode.children.forEach((c: TreeNode) => {
-                                                        if (c.masterId) childIds.add(c.masterId);
-                                                        if (c.layer?.masterId) childIds.add(c.layer.masterId);
-                                                    });
-                                                }
-                                            } else {
-                                                (frameProps.childIds || []).forEach((cid: string) => childIds.add(cid));
-                                            }
-
-                                            const textMembers = selectedTemplate.masterComponents.filter(mc => {
-                                                if (mc.type !== "text") return false;
-                                                return childIds.has(mc.id) || (mc.slotId && childIds.has(mc.slotId));
-                                            });
-
-                                            if (textMembers.length > 0) {
-                                                groups.push({ groupId: frameProps.groupSlotId!, members: textMembers });
-                                                textMembers.forEach(tm => groupedIds.add(tm.id));
-                                            }
-                                        }
-                                    } else if (masterLayers.length > 0) {
-                                        // ── Layers-based path (pre-fix raw canvas state) ──
-                                        const frameLayers = masterLayers.filter(
-                                            (l: any) => l.type === "frame" && l.groupSlotId
-                                        );
-
-                                        for (const fl of frameLayers) {
-                                            const fProps = fl as FrameLayer;
-                                            const cIds = fProps.childIds || [];
-                                            const textChildren = masterLayers.filter(
-                                                (l: Layer) => cIds.includes(l.id) && l.type === "text"
-                                            );
-                                            if (textChildren.length > 0) {
-                                                const syntheticMembers = textChildren.map((tl: any) => ({
-                                                    id: tl.id, type: "text" as const, name: tl.name,
-                                                    slotId: tl.slotId, props: tl,
-                                                }));
-                                                groups.push({ groupId: fProps.groupSlotId!, members: syntheticMembers as any });
-                                                textChildren.forEach((tl: Layer) => groupedIds.add(tl.id));
-                                            }
-                                        }
-                                    }
-
-                                    // ── Build ungrouped content ──
-                                    let ungrouped: typeof selectedTemplate.masterComponents;
-                                    if (useMC) {
-                                        ungrouped = selectedTemplate.masterComponents.filter(
-                                            mc => CONTENT_TYPES.includes(mc.type) && !groupedIds.has(mc.id)
-                                        );
-                                    } else {
-                                        // Build from masterLayers
-                                        const layerUngrouped = masterLayers.filter(
-                                            (l: Layer) => CONTENT_TYPES.includes(l.type)
-                                                && !groupedIds.has(l.id)
-                                                && l.slotId && l.slotId !== "none"
-                                        );
-                                        ungrouped = layerUngrouped.map((l: any) => ({
-                                            id: l.id, type: l.type, name: l.name,
-                                            slotId: l.slotId, props: l,
-                                        })) as any;
-                                    }
-
-                                    return (
-                                        <>
-                                            {groups.map(group => (
-                                                <TextGroupSlot
-                                                    key={group.groupId}
-                                                        groupId={group.groupId}
-                                                        members={group.members}
-                                                        textValues={textValues}
-                                                        onTextChange={(mcId, val) => setTextValues(prev => ({ ...prev, [mcId]: val }))}
-                                                        onBatchTextChange={(updates) => setTextValues(prev => ({ ...prev, ...updates }))}
-                                                        businessUnit={projectBU}
-                                                        productDescription={productDescription}
-                                                    />
-                                            ))}
-
-                                            {/* Render ungrouped content blocks */}
-                                            {ungrouped.map(mc => {
-                                                if (mc.type === "text") {
-                                                    return (
-                                                        <TextContentBlock
-                                                            key={mc.id}
-                                                            id={mc.id}
-                                                            name={mc.name}
-                                                            props={mc.props as any}
-                                                            value={textValues[mc.id] ?? ""}
-                                                            onChange={(val) => setTextValues(prev => ({ ...prev, [mc.id]: val }))}
-                                                            businessUnit={projectBU}
-                                                            productDescription={productDescription}
-                                                        />
-                                                    );
-                                                }
-                                                if (mc.type === "badge") {
-                                                    return (
-                                                        <BadgeContentBlock
-                                                            key={mc.id}
-                                                            id={mc.id}
-                                                            name={mc.name}
-                                                            props={mc.props as any}
-                                                            value={textValues[mc.id] ?? ""}
-                                                            onChange={(val) => setTextValues(prev => ({ ...prev, [mc.id]: val }))}
-                                                            businessUnit={projectBU}
-                                                        />
-                                                    );
-                                                }
-                                                if (mc.type === "image") {
-                                                    return (
-                                                        <ImageContentBlock
-                                                            key={mc.id}
-                                                            id={mc.id}
-                                                            name={mc.name}
-                                                            props={mc.props as any}
-                                                            value={imageValues[mc.id] ?? ""}
-                                                            onChange={(val) => setImageValues(prev => ({ ...prev, [mc.id]: val }))}
-                                                            businessUnit={projectBU}
-                                                            productDescription={productDescription}
-                                                            projectId={projectId}
-                                                        />
-                                                    );
-                                                }
-                                                return null;
-                                            })}
-                                        </>
-                                    );
-                                })()}
-                            </div>
-                            <div className="flex justify-between pt-2">
-                                <Button variant="ghost" onClick={() => setStep("template")}>Назад</Button>
-                                <Button
-                                    icon={<ChevronRight size={14} />}
-                                    onClick={handleApplyAndContinue}
-                                >
-                                    Сгенерировать
-                                </Button>
-                            </div>
-                        </div>
+                        <WizardContentWorkspace
+                            selectedTemplate={selectedTemplate}
+                            templateLoadError={templateLoadError}
+                            textValues={textValues}
+                            imageValues={imageValues}
+                            setTextValues={setTextValues}
+                            setImageValues={setImageValues}
+                            productDescription={productDescription}
+                            projectBU={projectBU}
+                            projectId={projectId}
+                            onBack={() => setStep("template")}
+                            onApplyAndContinue={() => handleApplyAndContinue("review")}
+                            onApplyToStudio={() => handleApplyAndContinue("studio")}
+                        />
                     )}
 
                     {/* Step 3: Review */}
