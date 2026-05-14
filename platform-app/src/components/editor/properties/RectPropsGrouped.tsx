@@ -6,6 +6,7 @@ import { Popover, PopoverButton } from "@/components/ui/Popover";
 import type { RectangleLayer } from "@/types";
 import { ColorInput } from "./ColorInput";
 import { PaintInput } from "./PaintInput";
+import { SmartNumberInput } from "@/components/ui/SmartNumberInput";
 
 export function RectPropsGrouped({
     layer,
@@ -43,14 +44,13 @@ export function RectPropsGrouped({
                                     onChange={(e) => onChange({ opacity: Number(e.target.value) / 100 })}
                                     className="flex-1 h-1.5 accent-accent-primary cursor-pointer"
                                 />
-                                <input
-                                    type="number"
+                                <SmartNumberInput
                                     min={0}
                                     max={100}
                                     value={Math.round((layer.opacity ?? 1) * 100)}
-                                    onChange={(e) => {
-                                        const v = Math.max(0, Math.min(100, Number(e.target.value)));
-                                        onChange({ opacity: v / 100 });
+                                    onChange={(v) => {
+                                        const finalV = Math.max(0, Math.min(100, v));
+                                        onChange({ opacity: finalV / 100 });
                                     }}
                                     className="w-12 h-7 px-1 rounded-[var(--radius-sm)] border border-border-primary bg-bg-secondary text-[10px] text-text-primary text-center focus:outline-none focus:ring-1 focus:ring-border-focus"
                                 />
@@ -93,7 +93,7 @@ export function RectPropsGrouped({
                         {/* Corner Radius */}
                         <div>
                             <label className="text-[9px] text-text-tertiary uppercase tracking-wider font-medium mb-1.5 block">Радиус</label>
-                            <input type="number" min={0} value={layer.cornerRadius} onChange={(e) => onChange({ cornerRadius: Math.max(0, Number(e.target.value)) })}
+                            <SmartNumberInput min={0} value={layer.cornerRadius} onChange={(v) => onChange({ cornerRadius: Math.max(0, v) })}
                                 className="w-full h-8 px-2 rounded-[var(--radius-md)] border border-border-primary bg-bg-secondary text-[11px] text-text-primary text-center focus:outline-none focus:ring-1 focus:ring-border-focus" />
                         </div>
                     </div>

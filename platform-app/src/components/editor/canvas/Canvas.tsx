@@ -66,6 +66,7 @@ function CanvasLayer({
 }: CanvasLayerProps) {
     const shapeRef = useRef<Konva.Shape>(null);
     const groupRef = useRef<Konva.Group>(null);
+    const activeTool = useCanvasStore((s) => s.activeTool);
 
     if (!layer.visible) return null;
 
@@ -77,7 +78,8 @@ function CanvasLayer({
         height: layer.height,
         rotation: layer.rotation,
         opacity: layer.opacity ?? 1,
-        draggable: !layer.locked && !isEditing && !isAutoLayoutChild,
+        draggable: !layer.locked && !isEditing && !isAutoLayoutChild && activeTool === "select",
+        listening: activeTool === "select",
         onClick: onSelect,
         onTap: onSelect,
         onDragStart,
@@ -990,6 +992,11 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
     }, [layers, artboardProps.clipContent, canvasWidth, canvasHeight, stageX, stageY, zoom]);
 
     const handleLayerSelect = useCallback((e: Konva.KonvaEventObject<MouseEvent>) => {
+        const { activeTool } = useCanvasStore.getState();
+        if (activeTool !== "select") {
+            e.cancelBubble = true;
+            return;
+        }
 
         // If this click was already blocked by clip bounds in mouseDown, skip
         if (clipBlocked.current) {
@@ -1031,6 +1038,13 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
     }, [toggleSelection, selectLayer, layers, isClickOutsideClipBounds]);
 
     const handleLayerDragStart = useCallback((e: Konva.KonvaEventObject<DragEvent>) => {
+        const { activeTool } = useCanvasStore.getState();
+        if (activeTool !== "select") {
+            e.target.stopDrag();
+            e.cancelBubble = true;
+            return;
+        }
+
         setStageDraggable(false);
         isDragging.current = true;
         setHoveredLayerId(null); // Clear hover during drag

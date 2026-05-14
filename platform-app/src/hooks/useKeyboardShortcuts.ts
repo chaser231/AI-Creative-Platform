@@ -152,6 +152,23 @@ export function useKeyboardShortcuts() {
                 return;
             }
 
+            // ─── Hierarchy reorder (Cmd + ] / Cmd + [) ───
+            if (isMeta && e.code === "BracketRight") {
+                e.preventDefault();
+                if (selectedLayerIds.length > 0) {
+                    selectedLayerIds.forEach(id => reorderLayer(id, e.altKey || e.shiftKey ? "top" : "up"));
+                }
+                return;
+            }
+
+            if (isMeta && e.code === "BracketLeft") {
+                e.preventDefault();
+                if (selectedLayerIds.length > 0) {
+                    selectedLayerIds.forEach(id => reorderLayer(id, e.altKey || e.shiftKey ? "bottom" : "down"));
+                }
+                return;
+            }
+
             // ─── Escape: cancel drawing mode or deselect ──
             if (e.key === "Escape") {
                 if (activeTool !== "select") {
