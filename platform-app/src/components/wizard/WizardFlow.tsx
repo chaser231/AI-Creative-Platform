@@ -12,6 +12,10 @@ import { getRecommendedPacks, searchPacks } from "@/services/templateCatalogServ
 import { type TemplatePackV2, extractSingleFormatFromPack } from "@/services/templateService";
 import type { BusinessUnit, TemplateTag } from "@/types";
 import { WizardContentWorkspace } from "@/components/wizard/WizardContentWorkspace";
+import {
+    projectExpansionToResize,
+    type LayerExpansionOverride,
+} from "@/utils/wizardExpand";
 
 export type WizardStep = "template" | "content";
 
@@ -54,22 +58,24 @@ export function WizardFlow({ projectId, onSwitchToStudio, initialTemplateId, onH
     const [textValues, setTextValues] = useState<Record<string, string>>({});
     const [imageValues, setImageValues] = useState<Record<string, string>>({});
     /**
-     * Per-layer geometry overrides for the master snapshot, set by the
-     * "Расширить фон" flow when the AI returns an image larger than the
-     * original layer. Keyed by candidate id (layer.id, masterComponent.id,
-     * or any id that matches the master snapshot during apply).
-     * Only the master format is updated — non-master snapshots keep their
-     * own layouts and just benefit from the higher-resolution src.
+     * Per-layer expand overrides set by the "Расширить фон" flow when the
+     * AI returns an image larger than the original layer. Keyed by the
+     * master layer/component id used as the anchor, but each entry also
+     * carries `slotId`/`masterId` so we can match the same logical layer
+     * in any non-master resize snapshot — see {@link projectExpansionToResize}.
+     *
+     * `prev`/`next` allow non-master snapshots to receive the same
+     * proportional change via the studio's `relative_size` cascade.
      */
     const [layerGeometryOverrides, setLayerGeometryOverrides] = useState<
-        Record<string, { x: number; y: number; width: number; height: number }>
+        Record<string, LayerExpansionOverride>
     >({});
     const [productDescription, setProductDescription] = useState("");
     const [packSearch, setPackSearch] = useState("");
 
     const setLayerGeometry = useCallback(
-        (id: string, geometry: { x: number; y: number; width: number; height: number }) => {
-            setLayerGeometryOverrides((prev) => ({ ...prev, [id]: geometry }));
+        (id: string, override: LayerExpansionOverride) => {
+            setLayerGeometryOverrides((prev) => ({ ...prev, [id]: override }));
         },
         [],
     );
@@ -293,8 +299,8 @@ export function WizardFlow({ projectId, onSwitchToStudio, initialTemplateId, onH
 
         // Also apply content by mc.id directly to masterComponents (for hydration path)
         packToApply.masterComponents = packToApply.masterComponents.map(mc => {
-            const geom = layerGeometryOverrides[mc.id];
-            const baseProps = geom ? { ...mc.props, ...geom } : mc.props;
+            const override = layerGeometryOverrides[mc.id];
+            const baseProps = override ? { ...mc.props, ...override.next } : mc.props;
             if ((mc.type === "text" || mc.type === "badge") && textValues[mc.id] !== undefined) {
                 return {
                     ...mc,
@@ -307,37 +313,58 @@ export function WizardFlow({ projectId, onSwitchToStudio, initialTemplateId, onH
             if (mc.type === "image" && imageValues[mc.id] !== undefined && !(mc.props as any).isFixedAsset) {
                 return { ...mc, props: { ...baseProps, src: imageValues[mc.id] } };
             }
-            if (geom) {
+            if (override) {
                 return { ...mc, props: baseProps };
             }
             return mc;
         });
 
-        // Apply geometry overrides to the master snapshot (only). Non-master
-        // resizes intentionally keep their own per-format layer layouts —
-        // the bigger src they receive just gives them more pixels to crop into.
-        if (Object.keys(layerGeometryOverrides).length > 0 && Array.isArray(dataAny.resizes)) {
+        // Apply expand overrides to every snapshot in the pack:
+        //   - master snapshot gets `next` directly (it's where the wizard
+        //     measured the new geometry)
+        //   - every non-master snapshot is projected through the same
+        //     master→instance cascade that runs in the studio so the
+        //     extended image actually fills each resize instead of being
+        //     cropped back into the original tiny slot by object-fit cover.
+        const hasOverrides = Object.keys(layerGeometryOverrides).length > 0;
+        if (hasOverrides && Array.isArray(dataAny.resizes)) {
             const masterResize =
                 dataAny.resizes.find((r: any) => r.isMaster) ?? dataAny.resizes[0];
+            const masterArtboard = masterResize
+                ? { width: masterResize.width, height: masterResize.height }
+                : { width: dataAny.canvasWidth ?? 0, height: dataAny.canvasHeight ?? 0 };
+
             if (masterResize?.layerSnapshot && Array.isArray(masterResize.layerSnapshot)) {
                 for (const layer of masterResize.layerSnapshot) {
-                    const geom = layerGeometryOverrides[layer.id];
-                    if (!geom) continue;
-                    layer.x = geom.x;
-                    layer.y = geom.y;
-                    layer.width = geom.width;
-                    layer.height = geom.height;
+                    const override = layerGeometryOverrides[layer.id];
+                    if (!override) continue;
+                    layer.x = override.next.x;
+                    layer.y = override.next.y;
+                    layer.width = override.next.width;
+                    layer.height = override.next.height;
                 }
             }
+
+            for (const resize of dataAny.resizes) {
+                if (resize === masterResize) continue;
+                if (!Array.isArray(resize.layerSnapshot)) continue;
+                resize.layerSnapshot = projectExpansionToResize({
+                    resizeLayers: resize.layerSnapshot,
+                    resizeBindings: resize.layerBindings,
+                    resizeArtboard: { width: resize.width, height: resize.height },
+                    masterArtboard,
+                    overrides: layerGeometryOverrides,
+                });
+            }
         }
-        if (dataAny.layers && Array.isArray(dataAny.layers) && Object.keys(layerGeometryOverrides).length > 0) {
+        if (hasOverrides && dataAny.layers && Array.isArray(dataAny.layers)) {
             for (const layer of dataAny.layers) {
-                const geom = layerGeometryOverrides[layer.id];
-                if (!geom) continue;
-                layer.x = geom.x;
-                layer.y = geom.y;
-                layer.width = geom.width;
-                layer.height = geom.height;
+                const override = layerGeometryOverrides[layer.id];
+                if (!override) continue;
+                layer.x = override.next.x;
+                layer.y = override.next.y;
+                layer.width = override.next.width;
+                layer.height = override.next.height;
             }
         }
 

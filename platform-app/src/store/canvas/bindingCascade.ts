@@ -38,8 +38,11 @@ export function getPropsForBinding(binding: LayerBinding): readonly string[] {
  * then apply the same proportional change to the instance's OWN geometry.
  *
  * Master grew 30% to the left → instance also grows 30% to the left from its own rect.
+ *
+ * Exported so the wizard can reuse the same math when projecting the
+ * "Расширить фон" override onto every non-master resize snapshot.
  */
-function computeExpansionDelta(
+export function computeExpansionDelta(
     prevMaster: { x: number; y: number; width: number; height: number },
     newMaster: { x: number; y: number; width: number; height: number },
     instance: { x: number; y: number; width: number; height: number },
