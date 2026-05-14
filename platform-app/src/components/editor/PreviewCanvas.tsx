@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Stage, Layer, Rect, Text, Image as KonvaImage, Group } from "react-konva";
-import type { Layer as LayerType, ImageLayer } from "@/types";
+import type { FrameLayer, ImageLayer, Layer as LayerType } from "@/types";
 import { computeImageFitProps } from "@/utils/imageFitUtils";
 import { paintToKonvaProps } from "@/utils/paint";
 import Konva from "konva";
@@ -11,20 +11,24 @@ type ImageLoadStatus = "loading" | "loaded" | "error";
 
 interface PreviewLayerProps {
     layer: LayerType;
+    allLayers: LayerType[];
     loadedImages: Map<string, HTMLImageElement>;
     imageStatuses: Record<string, ImageLoadStatus>;
+    renderX?: number;
+    renderY?: number;
 }
 
-function PreviewLayer({ layer, loadedImages, imageStatuses }: PreviewLayerProps) {
-    if (!layer.visible) return null;
+function PreviewLayer({ layer, allLayers, loadedImages, imageStatuses, renderX, renderY }: PreviewLayerProps) {
+    if (layer.visible === false) return null;
 
     const commonProps = {
         id: layer.id,
-        x: layer.x,
-        y: layer.y,
+        x: renderX ?? layer.x,
+        y: renderY ?? layer.y,
         width: layer.width,
         height: layer.height,
         rotation: layer.rotation,
+        opacity: layer.opacity ?? 1,
         name: layer.id, // For easy finding
     };
 
@@ -36,8 +40,8 @@ function PreviewLayer({ layer, loadedImages, imageStatuses }: PreviewLayerProps)
                     {...(layer.fillEnabled === false
                         ? { fill: "transparent", fillPriority: "color" }
                         : paintToKonvaProps(layer.fill, layer.width, layer.height))}
-                    stroke={layer.stroke}
-                    strokeWidth={layer.strokeWidth}
+                    stroke={layer.strokeEnabled === false ? undefined : (layer.stroke || undefined)}
+                    strokeWidth={layer.strokeEnabled === false ? 0 : layer.strokeWidth}
                     cornerRadius={layer.cornerRadius}
                 />
             );
@@ -45,15 +49,19 @@ function PreviewLayer({ layer, loadedImages, imageStatuses }: PreviewLayerProps)
             return (
                 <Text
                     {...commonProps}
-                    text={layer.text}
+                    width={layer.textAdjust === "auto_width" ? undefined : layer.width}
+                    height={layer.textAdjust === "auto_width" || layer.textAdjust === "auto_height" ? undefined : layer.height}
+                    text={layer.textTransform === "uppercase" ? layer.text.toUpperCase() : layer.textTransform === "lowercase" ? layer.text.toLowerCase() : layer.text}
                     fontSize={layer.fontSize}
                     fontFamily={layer.fontFamily}
-                    fontStyle={layer.fontWeight}
-                    fill={layer.fill}
+                    fontStyle={layer.fontWeight || "normal"}
+                    fill={layer.fillEnabled === false ? "transparent" : layer.fill}
                     align={layer.align}
-                    verticalAlign="middle"
+                    verticalAlign={layer.verticalAlign || "top"}
                     letterSpacing={layer.letterSpacing}
                     lineHeight={layer.lineHeight}
+                    wrap={layer.textAdjust === "auto_width" ? "none" : "word"}
+                    ellipsis={layer.textAdjust === "fixed" ? (layer.truncateText || false) : false}
                 />
             );
         case "image":
@@ -144,6 +152,12 @@ function PreviewLayer({ layer, loadedImages, imageStatuses }: PreviewLayerProps)
                 </Group>
             );
         case "frame":
+            const frameLayer = layer as FrameLayer;
+            const childIds = Array.isArray(frameLayer.childIds) ? frameLayer.childIds : [];
+            const childLayers = childIds
+                .map((id) => allLayers.find((candidate) => candidate.id === id))
+                .filter(Boolean) as LayerType[];
+
             return (
                 <Group
                     {...commonProps}
@@ -158,10 +172,21 @@ function PreviewLayer({ layer, loadedImages, imageStatuses }: PreviewLayerProps)
                         {...(layer.fillEnabled === false
                             ? { fill: undefined, fillPriority: "color" }
                             : paintToKonvaProps(layer.fill, layer.width, layer.height))}
-                        stroke={layer.stroke}
-                        strokeWidth={layer.strokeWidth}
+                        stroke={layer.strokeEnabled === false ? undefined : (layer.stroke || undefined)}
+                        strokeWidth={layer.strokeEnabled === false ? 0 : layer.strokeWidth}
                         cornerRadius={layer.cornerRadius}
                     />
+                    {childLayers.map((child) => (
+                        <PreviewLayer
+                            key={child.id}
+                            layer={child}
+                            allLayers={allLayers}
+                            loadedImages={loadedImages}
+                            imageStatuses={imageStatuses}
+                            renderX={child.x - frameLayer.x}
+                            renderY={child.y - frameLayer.y}
+                        />
+                    ))}
                 </Group>
             );
         default:
@@ -175,14 +200,25 @@ interface PreviewCanvasProps {
     artboardHeight: number;
     containerWidth: number;
     containerHeight: number;
+    zoom?: number;
+    /** Matches editor canvas chrome — light mat vs dark elevated artboard plate */
+    appearance?: "light" | "dark";
 }
 
-export function PreviewCanvas({ layers, artboardWidth, artboardHeight, containerWidth, containerHeight }: PreviewCanvasProps) {
+export function PreviewCanvas({
+    layers,
+    artboardWidth,
+    artboardHeight,
+    containerWidth,
+    containerHeight,
+    zoom = 1,
+    appearance = "light",
+}: PreviewCanvasProps) {
     const stageRef = useRef<Konva.Stage>(null);
     const [loadedImages, setLoadedImages] = useState<Map<string, HTMLImageElement>>(new Map());
     const [failedImageSources, setFailedImageSources] = useState<Set<string>>(new Set());
     const imageSources = useMemo(
-        () => Array.from(new Set(layers.filter((layer): layer is ImageLayer => layer.type === "image" && layer.visible && !!layer.src).map((layer) => layer.src))),
+        () => Array.from(new Set(layers.filter((layer): layer is ImageLayer => layer.type === "image" && layer.visible !== false && !!layer.src).map((layer) => layer.src))),
         [layers]
     );
 
@@ -246,8 +282,29 @@ export function PreviewCanvas({ layers, artboardWidth, artboardHeight, container
         return next;
     }, [imageSources, activeLoadedImages, failedImageSources]);
 
-    // Calculate scale to fit artboard within container (with 40px padding)
-    const padding = 40;
+    const frameChildIds = useMemo(() => {
+        const ids = new Set<string>();
+        layers.forEach((layer) => {
+            if (layer.type === "frame") {
+                const childIds = (layer as FrameLayer).childIds;
+                if (Array.isArray(childIds)) {
+                    childIds.forEach((childId) => ids.add(childId));
+                }
+            }
+        });
+        return ids;
+    }, [layers]);
+
+    const topLevelLayers = useMemo(
+        () => layers.filter((layer) => !frameChildIds.has(layer.id)),
+        [layers, frameChildIds],
+    );
+
+    const matFill = appearance === "dark" ? "#18191E" : "#FAFAFA";
+    const matShadowOpacity = appearance === "dark" ? 0.35 : 0.05;
+
+    // Calculate scale to fit artboard within container (with padding)
+    const padding = appearance === "dark" ? 32 : 40;
     const availableWidth = Math.max(1, containerWidth - padding * 2);
     const availableHeight = Math.max(1, containerHeight - padding * 2);
     
@@ -255,7 +312,8 @@ export function PreviewCanvas({ layers, artboardWidth, artboardHeight, container
         availableWidth / artboardWidth,
         availableHeight / artboardHeight
     );
-    if (scale > 1) scale = 1; // Don't up-scale beyond 100%
+    if (scale > 1) scale = 1; // Don't up-scale beyond 100% unless explicit preview zoom is requested.
+    scale *= zoom;
 
     // Calculate centering offsets
     const stageX = (containerWidth - artboardWidth * scale) / 2;
@@ -280,10 +338,10 @@ export function PreviewCanvas({ layers, artboardWidth, artboardHeight, container
                     y={stageY}
                     width={artboardWidth * scale}
                     height={artboardHeight * scale}
-                    fill="#FAFAFA"
+                    fill={matFill}
                     shadowColor="#000"
                     shadowBlur={10}
-                    shadowOpacity={0.05}
+                    shadowOpacity={matShadowOpacity}
                     shadowOffsetY={4}
                 />
                 
@@ -291,10 +349,11 @@ export function PreviewCanvas({ layers, artboardWidth, artboardHeight, container
                 <Group x={stageX} y={stageY} scaleX={scale} scaleY={scale}>
                     {/* Artboard clip bounds */}
                     <Group clipX={0} clipY={0} clipWidth={artboardWidth} clipHeight={artboardHeight}>
-                        {layers.map((layer) => (
+                        {topLevelLayers.map((layer) => (
                             <PreviewLayer
                                 key={layer.id}
                                 layer={layer}
+                                allLayers={layers}
                                 loadedImages={activeLoadedImages}
                                 imageStatuses={activeImageStatuses}
                             />
