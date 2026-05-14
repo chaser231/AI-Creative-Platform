@@ -190,7 +190,7 @@ export async function uploadExternalUrlToS3(
         if (url) uploadCache.set(cacheKey, url);
         return url || null;
     } catch (err) {
-        console.error("uploadExternalUrlToS3 failed:", err);
+        console.warn("[imageUpload] uploadExternalUrlToS3 failed, falling back to original URL:", err);
         return null;
     }
 }

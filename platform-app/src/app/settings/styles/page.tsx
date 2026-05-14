@@ -35,7 +35,7 @@ import {
 import { Select } from "@/components/ui/Select";
 import { Textarea } from "@/components/ui/Textarea";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
-import { compressImageFile, uploadForAI } from "@/utils/imageUpload";
+import { compressImageFile, uploadForAI, persistImageToS3 } from "@/utils/imageUpload";
 import type { DBPresetConfig } from "@/lib/stylePresets";
 
 type PresetTab = "image" | "text";
@@ -220,8 +220,8 @@ export default function StylePresetsPage() {
       if (data.error) throw new Error(data.error);
 
       if (data.content) {
-        // The API returns a base64 or URL depending on the model, we upload it
-        const publicUrl = await uploadForAI(data.content, workspaceId || "styles");
+        // The API returns a base64 or URL depending on the model, we persist it to S3
+        const publicUrl = await persistImageToS3(data.content, workspaceId || "styles");
         setEditing({ ...editing, thumbnailUrl: publicUrl });
       }
     } catch (err) {
