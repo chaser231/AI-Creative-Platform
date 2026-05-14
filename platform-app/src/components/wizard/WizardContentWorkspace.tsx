@@ -28,7 +28,7 @@ import { useStylePresets } from "@/hooks/useStylePresets";
 import { getMaxRefs, getModelById, getAspectRatios, getResolutions, resolveRefTags } from "@/lib/ai-models";
 import { getImagePresetPromptSuffix } from "@/lib/stylePresets";
 import { applyAllAutoLayouts } from "@/utils/layoutEngine";
-import { compressImageFile, uploadForAI, uploadManyForAI } from "@/utils/imageUpload";
+import { compressImageFile, persistImageToS3, uploadForAI, uploadManyForAI } from "@/utils/imageUpload";
 import { useThemeStore } from "@/store/themeStore";
 import type { BusinessUnit, Layer, MasterComponent, TextGenPreset } from "@/types";
 import type { TemplatePackV2 } from "@/services/templateService";
@@ -961,14 +961,25 @@ function WizardLayerPromptBar({
                     onProgress: (stage, info) => console.log(`[Wizard/Expand/${stage}]`, info ?? ""),
                 });
 
-                const persisted = projectId
+                // The result may be a data URI (preserve-original pipeline
+                // composites client-side via canvas.toDataURL → 10MB+ JPEG).
+                // Push it through S3 first so we never store a raw data URI
+                // in layer.src — auto-save in the studio chokes on huge JSON
+                // payloads (Unterminated string at position ~10MB).
+                let persistedSrc = expandResult.src;
+                try {
+                    persistedSrc = await persistImageToS3(expandResult.src, projectId ?? "ai-tmp");
+                } catch (persistErr) {
+                    console.warn("[Wizard/Expand] persistImageToS3 failed, falling back to expand result:", persistErr);
+                }
+                const registered = projectId
                     ? await registerUrl({
                         projectId,
-                        url: expandResult.src,
+                        url: persistedSrc,
                         source: "wizard-edit-expand",
                     })
                     : null;
-                onImageChange(activeLayer.id, persisted ?? expandResult.src);
+                onImageChange(activeLayer.id, registered ?? persistedSrc);
                 // Grow the master layer to match the new (extended) image so
                 // it actually shows up in the preview instead of being cropped
                 // back into the original tiny rect by object-fit cover.
