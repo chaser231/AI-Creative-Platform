@@ -992,6 +992,11 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
     }, [layers, artboardProps.clipContent, canvasWidth, canvasHeight, stageX, stageY, zoom]);
 
     const handleLayerSelect = useCallback((e: Konva.KonvaEventObject<MouseEvent>) => {
+        // Ignore right clicks for selection to preserve multi-selection for context menus
+        if (e.evt?.button === 2) {
+            return;
+        }
+
         const { activeTool } = useCanvasStore.getState();
         if (activeTool !== "select") {
             e.cancelBubble = true;
@@ -1975,36 +1980,36 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
             if (!stage) return;
             const target = e.target;
 
-            if (target === stage) {
-                // Right-click on background with active selection:
-                // Check if click falls inside the bounding box of selected layers
-                if (selectedLayerIds.length > 0) {
-                    const pointer = stage.getPointerPosition();
-                    if (pointer) {
-                        const sceneX = (pointer.x - stage.x()) / stage.scaleX();
-                        const sceneY = (pointer.y - stage.y()) / stage.scaleY();
+            // Check if right-click is inside the bounding box of an existing multi-selection
+            if (selectedLayerIds.length > 1) {
+                const pointer = stage.getPointerPosition();
+                if (pointer) {
+                    const sceneX = (pointer.x - stage.x()) / stage.scaleX();
+                    const sceneY = (pointer.y - stage.y()) / stage.scaleY();
 
-                        const selectedLayers = layers.filter(l => selectedLayerIds.includes(l.id));
-                        if (selectedLayers.length > 0) {
-                            // Compute union bounding box of all selected layers
-                            const PAD = 10; // Extra padding so it's easier to hit
-                            const minX = Math.min(...selectedLayers.map(l => l.x)) - PAD;
-                            const minY = Math.min(...selectedLayers.map(l => l.y)) - PAD;
-                            const maxX = Math.max(...selectedLayers.map(l => l.x + l.width)) + PAD;
-                            const maxY = Math.max(...selectedLayers.map(l => l.y + l.height)) + PAD;
+                    const selectedLayers = layers.filter(l => selectedLayerIds.includes(l.id));
+                    if (selectedLayers.length > 0) {
+                        // Compute union bounding box of all selected layers
+                        const PAD = 10; // Extra padding so it's easier to hit
+                        const minX = Math.min(...selectedLayers.map(l => l.x)) - PAD;
+                        const minY = Math.min(...selectedLayers.map(l => l.y)) - PAD;
+                        const maxX = Math.max(...selectedLayers.map(l => l.x + l.width)) + PAD;
+                        const maxY = Math.max(...selectedLayers.map(l => l.y + l.height)) + PAD;
 
-                            if (sceneX >= minX && sceneX <= maxX && sceneY >= minY && sceneY <= maxY) {
-                                // Click is inside selection area — show multi-selection menu
-                                setContextMenu({
-                                    x: e.evt.clientX,
-                                    y: e.evt.clientY,
-                                    layerIds: [...selectedLayerIds],
-                                });
-                                return;
-                            }
+                        if (sceneX >= minX && sceneX <= maxX && sceneY >= minY && sceneY <= maxY) {
+                            // Click is inside selection area — show multi-selection menu
+                            setContextMenu({
+                                x: e.evt.clientX,
+                                y: e.evt.clientY,
+                                layerIds: [...selectedLayerIds],
+                            });
+                            return;
                         }
                     }
                 }
+            }
+
+            if (target === stage) {
                 setContextMenu(null);
                 return;
             }
