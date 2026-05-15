@@ -106,6 +106,47 @@ function safeHost(src: string | null | undefined): string {
     }
 }
 
+const S3_HOST = "storage.yandexcloud.net";
+
+/**
+ * Guarantee a canvas-safe src before we draw it. Tainted-canvas SecurityErrors
+ * during compositeExpandResult were a major source of preserve-pipeline
+ * fallbacks — they happen whenever we draw a cross-origin image whose response
+ * is missing the right CORS headers.
+ *
+ * Rules:
+ *   - Data URIs and S3-hosted URLs are already canvas-safe → return as-is.
+ *   - Anything else must be rehosted onto our S3 (via persistImageToS3, which
+ *     internally uses presigned PUT or the /api/upload proxy). We retry once
+ *     for transient network errors.
+ *   - If rehosting can't produce an S3 URL but the source was a data URI we
+ *     already handled above; for cross-origin URLs we throw so the outer
+ *     catch logs structured telemetry instead of silently tainting the canvas.
+ */
+async function persistOrThrow(
+    src: string,
+    projectId: string,
+    label: string,
+): Promise<string> {
+    if (src.startsWith("data:")) return src;
+    if (src.includes(S3_HOST)) return src;
+
+    let result = await persistImageToS3(src, projectId);
+    if (result.includes(S3_HOST)) return result;
+
+    // Transient failure — retry once.
+    result = await persistImageToS3(src, projectId);
+    if (result.includes(S3_HOST)) return result;
+
+    // The /api/upload proxy with {url} body (used by uploadExternalUrlToS3
+    // inside persistImageToS3) is our last line of defence. If we got here,
+    // both attempts returned the input unchanged. Surface this so the outer
+    // catch in outpaintImage records structured telemetry.
+    throw new Error(
+        `persist-failed: ${label} (could not rehost cross-origin source onto S3)`,
+    );
+}
+
 export async function outpaintImage(params: OutpaintParams): Promise<OutpaintResult> {
     const {
         imageSrc,
@@ -243,22 +284,25 @@ export async function outpaintImage(params: OutpaintParams): Promise<OutpaintRes
             const upscaleData = await upscaleRes.json();
 
             if (upscaleData.content && !upscaleData.error) {
-                expandedSrcForComposite = upscaleData.content as string;
-                try {
-                    expandedSrcForComposite = await persistImageToS3(
-                        upscaleData.content as string,
-                        projectId ?? "ai-tmp",
-                    );
-                } catch (persistErr) {
-                    console.error("[outpaintPipeline] persist-failed-expanded", {
-                        message: persistErr instanceof Error ? persistErr.message : String(persistErr),
-                        originalHost: safeHost(preserveOriginalSrc),
-                    });
-                }
+                // Hard requirement: both srcs must be canvas-safe before we
+                // compose. Throwing here is intentional — it routes to the
+                // outer catch which emits structured telemetry instead of
+                // silently producing a tainted canvas.
+                expandedSrcForComposite = await persistOrThrow(
+                    upscaleData.content as string,
+                    projectId ?? "ai-tmp",
+                    "expanded-upscale",
+                );
+
+                const originalSrcForComposite = await persistOrThrow(
+                    preserveOriginalSrc,
+                    projectId ?? "ai-tmp",
+                    "preserve-original",
+                );
 
                 finalContent = await compositeExpandResult({
                     expandedSrc: expandedSrcForComposite,
-                    originalSrc: preserveOriginalSrc,
+                    originalSrc: originalSrcForComposite,
                     pixelPadding: preserveOriginalPixelPadding,
                 });
                 onProgress?.("preserve-composite-done");
