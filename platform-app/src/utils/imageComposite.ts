@@ -59,8 +59,12 @@ export interface CompositeExpandParams {
  * This ensures the center preserves 100% original quality while the
  * AI-generated border fills the edges seamlessly.
  *
- * Returns a JPEG data URI (quality 0.92) to reduce memory pressure
- * compared to PNG for large images.
+ * Returns a PNG data URI by default — PNG is lossless, which matters for the
+ * seam between the original (untouched) center and the AI-generated border:
+ * JPEG/WebP introduce blocking artifacts right at that boundary because the
+ * 8x8 DCT block straddles a region with very different statistics on either
+ * side. For very large canvases (>15 MB PNG payload) we fall back to WebP at
+ * 0.95 quality to avoid blowing up downstream memory budgets.
  */
 export async function compositeExpandResult(
     params: CompositeExpandParams,
@@ -90,5 +94,12 @@ export async function compositeExpandResult(
     const destY = Math.round(pad.top);
     ctx.drawImage(originalImg, destX, destY, origW, origH);
 
-    return canvas.toDataURL("image/jpeg", 0.92);
+    // Rough byte estimate: base64 data URI length × 0.75 ≈ decoded bytes.
+    // 15 MB is the safety cap above which we accept lossy WebP to keep memory
+    // pressure manageable on lower-end devices.
+    const png = canvas.toDataURL("image/png");
+    if (png.length * 0.75 > 15 * 1024 * 1024) {
+        return canvas.toDataURL("image/webp", 0.95);
+    }
+    return png;
 }
