@@ -7,7 +7,14 @@
  * AI-produced and the center retains pixel-perfect original quality.
  */
 
-const IMAGE_LOAD_TIMEOUT_MS = 30_000;
+// Shortened from 30s in 2026-05: a 30s wait masked real failures (broken CORS,
+// expired Replicate URLs, network drops) as "slow loads". With retry x2 below,
+// a true 10s+ load now becomes a 22s total wall time (10 + 1 + 10 + 1) before
+// surfacing, which is still well under the previous single-attempt timeout
+// but with much better differentiation between transient and permanent
+// failures.
+const IMAGE_LOAD_TIMEOUT_MS = 10_000;
+const RETRY_BACKOFF_MS = 1_000;
 
 function loadImage(src: string): Promise<HTMLImageElement> {
     return new Promise((resolve, reject) => {
@@ -31,6 +38,32 @@ function loadImage(src: string): Promise<HTMLImageElement> {
         };
         img.src = src;
     });
+}
+
+/**
+ * Load an image with up to `attempts` retries, each separated by
+ * RETRY_BACKOFF_MS. Distinguishes transient network slowdowns (succeed on
+ * retry) from real failures (consistently fail) — the previous single-attempt
+ * 30s timeout treated both the same way and left us guessing in telemetry.
+ */
+async function loadImageWithRetry(
+    src: string,
+    attempts: number = 2,
+): Promise<HTMLImageElement> {
+    let lastErr: unknown;
+    for (let i = 0; i <= attempts; i++) {
+        try {
+            return await loadImage(src);
+        } catch (err) {
+            lastErr = err;
+            if (i < attempts) {
+                await new Promise((r) => setTimeout(r, RETRY_BACKOFF_MS));
+            }
+        }
+    }
+    throw lastErr instanceof Error
+        ? lastErr
+        : new Error(`Failed to load image after ${attempts + 1} attempts: ${src.slice(0, 80)}...`);
 }
 
 export interface CompositeExpandParams {
@@ -70,8 +103,8 @@ export async function compositeExpandResult(
     params: CompositeExpandParams,
 ): Promise<string> {
     const [expandedImg, originalImg] = await Promise.all([
-        loadImage(params.expandedSrc),
-        loadImage(params.originalSrc),
+        loadImageWithRetry(params.expandedSrc),
+        loadImageWithRetry(params.originalSrc),
     ]);
 
     const origW = originalImg.naturalWidth;
