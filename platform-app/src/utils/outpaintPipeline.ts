@@ -5,12 +5,12 @@
  *   1. Load source image, derive natural pixel dimensions
  *   2. Convert canvas-space padding to image-pixel padding
  *   3. If final dimensions exceed the model's safe ceiling, downscale base
- *      image and (when the downscale is aggressive enough) remember the
- *      original to composite back on top later
+ *      image (the original is kept for compositing back on top later)
  *   4. POST to /api/ai/image-edit with action=outpaint, model=bria-expand
- *   5. Optionally upscale the result and composite the original at native
- *      resolution into the center to keep pixel-perfect quality (only the
- *      generated border is AI)
+ *   5. If the request was downscaled — upscale the AI border back to native
+ *      resolution; otherwise skip the upscale call
+ *   6. Composite the original over the (upscaled) expand so only the
+ *      generated border is AI and the centre stays pixel-perfect
  *
  * Returning a `{ src, model, pixelPadding }` triple lets callers update
  * downstream layer geometry consistently. The function never throws on a
@@ -23,8 +23,6 @@ import { compositeExpandResult } from "./imageComposite";
 
 /** Upper bound for any side of the input we send to bria-expand. */
 const MAX_FINAL_DIMENSION = 3500;
-/** When downscale ratio drops below this, switch on the preserve-original pipeline. */
-const PRESERVE_THRESHOLD = 0.85;
 
 export interface OutpaintCanvasPadding {
     top: number;
@@ -124,23 +122,25 @@ export async function outpaintImage(params: OutpaintParams): Promise<OutpaintRes
     const finalH = realH + targetPadTop + targetPadBottom;
 
     let baseImageSrc = imageSrc;
-    let preserveOriginalSrc: string | null = null;
-    let preserveOriginalPixelPadding: OutpaintCanvasPadding | null = null;
     let downscaleRatio = 1;
+
+    // Always preserve the original — every outpaint result composites the
+    // pixel-perfect source over the AI border so the centre stays sharp,
+    // regardless of whether we had to downscale to fit Bria's ceiling.
+    // We capture the padding here in pre-downscale image-pixel space, which
+    // is what compositeExpandResult expects (it sizes the canvas to
+    // originalImg.naturalWidth + pad.left + pad.right).
+    const preserveOriginalSrc: string = imageSrc;
+    const preserveOriginalPixelPadding: OutpaintCanvasPadding = {
+        top: targetPadTop,
+        right: targetPadRight,
+        bottom: targetPadBottom,
+        left: targetPadLeft,
+    };
+    onProgress?.("preserve-pipeline-armed", { ratio: 1 });
 
     if (finalW > MAX_FINAL_DIMENSION || finalH > MAX_FINAL_DIMENSION) {
         downscaleRatio = Math.min(MAX_FINAL_DIMENSION / finalW, MAX_FINAL_DIMENSION / finalH);
-
-        if (downscaleRatio < PRESERVE_THRESHOLD) {
-            preserveOriginalSrc = imageSrc;
-            preserveOriginalPixelPadding = {
-                top: targetPadTop,
-                right: targetPadRight,
-                bottom: targetPadBottom,
-                left: targetPadLeft,
-            };
-            onProgress?.("preserve-pipeline-armed", { ratio: downscaleRatio });
-        }
 
         realW = Math.round(realW * downscaleRatio);
         realH = Math.round(realH * downscaleRatio);
@@ -193,8 +193,13 @@ export async function outpaintImage(params: OutpaintParams): Promise<OutpaintRes
 
     let finalContent: string = data.content;
 
-    if (preserveOriginalSrc && preserveOriginalPixelPadding) {
-        try {
+    try {
+        let expandedSrcForComposite: string = data.content as string;
+
+        // Upscale only when Bria worked at a downscaled resolution. At
+        // native resolution the AI output already matches the original
+        // pixel grid, so an extra upscale call is wasted latency.
+        if (downscaleRatio < 1) {
             onProgress?.("preserve-upscale-start");
             const upscaleScale = Math.min(Math.ceil(1 / downscaleRatio), 4);
             const upscaleImageUrl = await uploadForAI(data.content as string, projectId);
@@ -212,37 +217,38 @@ export async function outpaintImage(params: OutpaintParams): Promise<OutpaintRes
             const upscaleData = await upscaleRes.json();
 
             if (upscaleData.content && !upscaleData.error) {
-                let expandedSrcForComposite = upscaleData.content as string;
-                try {
-                    expandedSrcForComposite = await persistImageToS3(
-                        upscaleData.content as string,
-                        projectId ?? "ai-tmp",
-                    );
-                } catch (persistErr) {
-                    console.warn(
-                        "[outpaintPipeline] Could not rehost upscale result, falling back to source URL:",
-                        persistErr,
-                    );
-                }
-
-                finalContent = await compositeExpandResult({
-                    expandedSrc: expandedSrcForComposite,
-                    originalSrc: preserveOriginalSrc,
-                    pixelPadding: preserveOriginalPixelPadding,
-                });
-                onProgress?.("preserve-composite-done");
+                expandedSrcForComposite = upscaleData.content as string;
             } else {
                 console.warn(
-                    "[outpaintPipeline] Upscale failed, using raw expand result:",
+                    "[outpaintPipeline] Upscale failed, compositing onto raw expand result:",
                     upscaleData.error,
                 );
             }
-        } catch (preserveErr) {
+        }
+
+        try {
+            expandedSrcForComposite = await persistImageToS3(
+                expandedSrcForComposite,
+                projectId ?? "ai-tmp",
+            );
+        } catch (persistErr) {
             console.warn(
-                "[outpaintPipeline] Preserve pipeline failed, falling back to raw expand result:",
-                preserveErr,
+                "[outpaintPipeline] Could not rehost expand result, falling back to source URL:",
+                persistErr,
             );
         }
+
+        finalContent = await compositeExpandResult({
+            expandedSrc: expandedSrcForComposite,
+            originalSrc: preserveOriginalSrc,
+            pixelPadding: preserveOriginalPixelPadding,
+        });
+        onProgress?.("preserve-composite-done");
+    } catch (preserveErr) {
+        console.warn(
+            "[outpaintPipeline] Preserve pipeline failed, falling back to raw expand result:",
+            preserveErr,
+        );
     }
 
     return {

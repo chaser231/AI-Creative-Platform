@@ -126,6 +126,20 @@ const IMAGE_GEN_MODELS = [
 const CONTENT_TYPES = ["text", "image", "badge"] as const;
 type ImagePromptMode = "generate" | "edit" | "expand";
 
+/**
+ * Extra canvas-space pixels added to each axis on top of `packMaxSize`
+ * before sending the layer to outpaint. The cascade applies the master's
+ * geometry delta proportionally to each resize's local layer rect, so
+ * when a resize's image slot is small or off-centre, a delta sized
+ * exactly to packMaxSize can still leave bare canvas in some formats.
+ * A buffer of 700 px (350 px per side) overshoots the bounding box
+ * generously enough to guarantee every resize's slot crosses its
+ * artboard edges after the cascade. Stays well under
+ * MAX_FINAL_DIMENSION (3500) for any realistic pack, so we don't trigger
+ * the downscale → upscale path.
+ */
+const EXPAND_SAFETY_BUFFER_PX = 700;
+
 export function WizardContentWorkspace({
     selectedTemplate,
     templateLoadError,
@@ -952,8 +966,11 @@ function WizardLayerPromptBar({
                     return;
                 }
 
-                const targetW = Math.max(packMaxSize.width, layerWidth);
-                const targetH = Math.max(packMaxSize.height, layerHeight);
+                // Overshoot the pack's bounding box so every resize keeps
+                // bare canvas covered after the relative_size cascade —
+                // see EXPAND_SAFETY_BUFFER_PX for the rationale.
+                const targetW = Math.max(packMaxSize.width, layerWidth) + EXPAND_SAFETY_BUFFER_PX;
+                const targetH = Math.max(packMaxSize.height, layerHeight) + EXPAND_SAFETY_BUFFER_PX;
                 const hPad = Math.max(0, targetW - layerWidth);
                 const vPad = Math.max(0, targetH - layerHeight);
 
@@ -962,22 +979,21 @@ function WizardLayerPromptBar({
                     return;
                 }
 
-                const spaceLeft = Math.max(0, layerX);
-                const spaceRight = Math.max(0, masterCanvasSize.width - layerX - layerWidth);
-                const spaceTop = Math.max(0, layerY);
-                const spaceBottom = Math.max(0, masterCanvasSize.height - layerY - layerHeight);
-                // When the layer is fullbleed on an axis (no space on either
-                // side), fall back to a centered split so we don't divide
-                // by zero and dump all padding on one edge.
-                const horizDenom = spaceLeft + spaceRight;
-                const vertDenom = spaceTop + spaceBottom;
-                const padLeft = horizDenom > 0
-                    ? Math.round((hPad * spaceLeft) / horizDenom)
-                    : Math.round(hPad / 2);
+                // Distribute padding symmetrically around the image layer
+                // instead of proportionally to the free space in the master
+                // canvas. The master can be any format in the pack (incl.
+                // the widest or tallest), so anchoring the split to
+                // master-canvas geometry biases the expand toward whichever
+                // edge happens to be empty in that particular master — the
+                // expand visibly "leaks" downward when master is the
+                // widest banner and the tallest format is taller than it.
+                //
+                // Symmetric padding keeps the original product centred in
+                // the new extended image, which is what every downstream
+                // resize wants when the cascade replays the same delta.
+                const padLeft = Math.floor(hPad / 2);
                 const padRight = hPad - padLeft;
-                const padTop = vertDenom > 0
-                    ? Math.round((vPad * spaceTop) / vertDenom)
-                    : Math.round(vPad / 2);
+                const padTop = Math.floor(vPad / 2);
                 const padBottom = vPad - padTop;
 
                 const { outpaintImage } = await import("@/utils/outpaintPipeline");
