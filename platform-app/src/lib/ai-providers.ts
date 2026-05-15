@@ -691,6 +691,7 @@ const FAL_MODEL_MAP: Record<string, string> = {
     "flux-kontext-pro": "fal-ai/flux-pro/kontext",
     "esrgan":          "fal-ai/esrgan",
     "seedvr":          "fal-ai/seedvr/upscale/image",
+    "topaz-hf-v2":     "fal-ai/topaz/upscale/image",
     "sima-upscaler":   "simalabs/sima-upscaler",
     // ── LoRA endpoints ──
     "flux-lora":              "fal-ai/flux-lora",
@@ -974,6 +975,25 @@ class FalProvider implements AIProviderImplementation {
                 // avoid JPEG re-encoding that would soften the seam.
                 upscaleInput.output_format = "png";
                 // Default noise_scale (0.1) is generally good, leave at provider default.
+            } else if (modelId === "topaz-hf-v2") {
+                // Topaz HF v2 on fal.ai (`fal-ai/topaz/upscale/image`).
+                //   - `model` selects the upscaler variant; we always pin to
+                //     "High Fidelity V2" because that's the structure-preserving
+                //     option and the whole point of routing through Topaz.
+                //   - `upscale_factor` is a float in [1..4]. fal.ai default is 2.
+                //   - `face_enhancement` defaults to TRUE — we force it OFF
+                //     because we're upscaling outpaint border strips (mostly
+                //     sky/grass/background); enabling face touch-up could
+                //     hallucinate artifacts in the seam region. The original
+                //     image (with any actual faces) is composited back on top.
+                //   - `output_format=png` for a lossless seam (same reason as
+                //     seedvr above).
+                upscaleInput.model = "High Fidelity V2";
+                if (params.upscaleScale) {
+                    upscaleInput.upscale_factor = Math.min(Math.max(params.upscaleScale, 1), 4);
+                }
+                upscaleInput.face_enhancement = false;
+                upscaleInput.output_format = "png";
             } else if (modelId === "sima-upscaler") {
                 // Sima: scale is integer, supports only 2 or 4
                 const raw = params.upscaleScale ?? 2;
@@ -1417,6 +1437,7 @@ const FAL_PRIMARY_MODELS = new Set([
     "bria-rmbg",
     "esrgan",
     "seedvr",
+    "topaz-hf-v2",
     "sima-upscaler",
     // LoRA endpoints — fal-only, no Replicate equivalent.
     "flux-lora",
@@ -1444,7 +1465,13 @@ const MODEL_FALLBACK_CHAIN: Record<string, string[]> = {
     "outpainter":      ["bria-expand"],
     "bria-rmbg":       ["rembg"],
     "rembg":           ["bria-rmbg"],
-    "seedvr":          ["esrgan", "sima-upscaler"],
+    // Topaz HF v2 is the primary outpaint upscaler (structure-preserving).
+    // SeedVR is the closest sibling on the upscale fan; esrgan is a hard
+    // fallback. We deliberately put topaz at the top of seedvr's chain so
+    // an outpaint job that explicitly requests seedvr (legacy callers) still
+    // benefits from the structure-preserving option when seedvr is down.
+    "topaz-hf-v2":     ["seedvr", "esrgan"],
+    "seedvr":          ["topaz-hf-v2", "esrgan", "sima-upscaler"],
     "sima-upscaler":   ["seedvr", "esrgan"],
     "esrgan":          ["seedvr"],
     // LoRA fallback — when the LoRA endpoint goes down or the supplied LoRA
