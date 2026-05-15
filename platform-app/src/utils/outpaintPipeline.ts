@@ -320,7 +320,15 @@ export async function outpaintImage(params: OutpaintParams): Promise<OutpaintRes
                 body: JSON.stringify({
                     action: "upscale",
                     imageBase64: upscaleImageUrl,
-                    model: "seedvr",
+                    // Topaz HF v2 is structure-preserving — it doesn't
+                    // hallucinate new detail like SeedVR does. That's the
+                    // exact property we want for an upscaler whose output
+                    // is going to get its centre overwritten by the truly
+                    // original anyway, so any creative liberties on the
+                    // border would jar against the untouched centre.
+                    // Fallback chain (in MODEL_FALLBACK_CHAIN) drops to
+                    // seedvr → esrgan if topaz is unavailable.
+                    model: "topaz-hf-v2",
                     upscaleScale,
                     projectId,
                 }),
