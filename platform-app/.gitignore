@@ -36,6 +36,16 @@ yarn-error.log*
 # vercel
 .vercel
 
+# Throwaway dev-time output. Per-subdir .gitignore files handle the actual
+# ignore (e.g. tmp/outpaint-ab/.gitignore for the outpaint A/B harness) so
+# the marker files stay tracked and git descends into the directory to
+# enforce them. Don't add a blanket `/tmp/` here — it would shadow the
+# per-subdir markers and they'd never get committed.
+/tmp/*
+!/tmp/*/
+/tmp/*/*
+!/tmp/*/.gitignore
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts
