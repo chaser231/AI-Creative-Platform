@@ -184,9 +184,11 @@ export function computeFeatherMaskData(
  * which blends seamlessly with the bria-generated border.
  *
  * Note on `featherPx` clamping: if the requested feather is larger than half
- * of the smaller dimension, the gradients would overlap in the centre and
- * leave it semi-transparent. We clamp to `min(width, height) / 2` to keep
- * the centre fully opaque.
+ * of the smaller dimension, the gradients from opposite sides would overlap
+ * in the centre and leave it semi-transparent. We clamp to
+ * `floor((min(width, height) - 1) / 2)` — the `-1` accounts for the bottom/
+ * right edges being indexed at H-1/W-1 rather than H/W, which would otherwise
+ * leave the centre row 1px under-opaque even at the natural-looking limit.
  */
 export function buildFeatherMask(
     width: number,
@@ -209,7 +211,12 @@ export function buildFeatherMask(
 }
 
 function clampFeatherPx(width: number, height: number, featherPx: number): number {
-    const maxFeather = Math.floor(Math.min(width, height) / 2);
+    // `-1` because the bottom/right edges are indexed at H-1/W-1: with the
+    // un-tightened bound the gradients from opposite sides meet at the centre
+    // row with factor < 1 (e.g. for H=20 and featherPx=10 the centre pixel has
+    // bottom factor 9/10 = 0.9). Floor((min-1)/2) guarantees an unfeathered
+    // interior at least one pixel wide.
+    const maxFeather = Math.floor((Math.min(width, height) - 1) / 2);
     return Math.max(0, Math.min(featherPx, maxFeather));
 }
 
