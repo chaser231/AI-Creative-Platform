@@ -69,9 +69,25 @@ const FLUX2_FINAL_DIMENSION = 2560;
  * parameter is bounded to 0..2048 by the API schema). In practice the
  * total-canvas cap above (FLUX2_FINAL_DIMENSION = 2560) fires before
  * this one for any non-tiny base image, but we keep the constant so
- * multipass / fallback logic can guard against pathological cases.
+ * the post-downscale defensive guard further down can catch it.
  */
 const FLUX2_PER_SIDE_CAP = 2048;
+
+/**
+ * Minimum acceptable downscale ratio when routing a too-big request
+ * through flux-2-pro's downscale-and-upscale path. Anything below
+ * means the source would be shrunk to less than this fraction of
+ * native, and the AI border would have to be magnified by
+ * `1 / ratio` afterwards — Topaz HF v2 holds structure well up to
+ * ~3× magnification but starts blurring beyond that. When the
+ * required ratio is below the threshold we fall back to bria-expand
+ * at native resolution instead, accepting bria's content artefacts
+ * over a soft / smeared upscaled border.
+ *
+ * 0.30 corresponds to ≤ 3.33× upscale of the border ring, which is
+ * still inside Topaz HF v2's sweet spot.
+ */
+const FLUX2_MIN_DOWNSCALE_RATIO = 0.30;
 
 /** Returns the final-canvas dimension cap for the given model id. */
 function getFinalCap(model: string): number {
@@ -625,42 +641,68 @@ export async function outpaintImage(params: OutpaintParams): Promise<OutpaintRes
 
     // ============== PRE-FLIGHT MODEL SELECTION ==============
     // flux-2-pro-outpaint hard-rejects any final canvas > 2560 px with
-    // HTTP 422. Multipass orchestration can't escape that ceiling
-    // either — pass 2's input is pass 1's full-size output, so pass 2's
-    // dim = 2560 + extra > 2560. The right call when the request would
-    // exceed the cap is to fall back to bria-expand (which handles up to
-    // ~5000) at *native resolution* — the composite step covers the
-    // centre with original pixels anyway, and the AI border quality is
-    // better at native res than after a downscale → upscale round-trip.
+    // HTTP 422. We have two options:
     //
-    // We do this BEFORE the multipass predicate so we don't waste
-    // sub-pass calls trying to fit flux into a request that physically
-    // can't fit. The downscale block further down still handles the
-    // residual case where bria-expand itself would exceed
-    // MAX_FINAL_DIMENSION (e.g. a 5500 px source).
+    //   (A) Swap to bria-expand at native resolution.
+    //   (B) Keep flux: downscale source → flux at ≤2560 → upscale back
+    //       to native → composite original on top.
+    //
+    // We pick (B) for quality. Bria's borders frequently hallucinate
+    // weird objects ("странные искажённые объекты"); flux extends
+    // backgrounds far more coherently. The composite step covers the
+    // entire centre with original pixels at native resolution, so the
+    // upscale-loss only affects the AI-generated border ring — exactly
+    // the area where flux's coherence beats bria's artefacts.
+    //
+    // Rules for path (B):
+    //   - The downscale block further down already supports flux via
+    //     `getFinalCap("flux-2-pro-outpaint") === 2560`, so we don't
+    //     need to do the downscale here. We just need to make sure
+    //     multipass DOESN'T fire for flux (it can't escape 2560 either,
+    //     since pass 2 = pass 1 output + extra > 2560).
+    //   - If the required downscale is so aggressive that the source
+    //     becomes too small for flux to see structure at all
+    //     (downscaleRatio < FLUX2_MIN_DOWNSCALE_RATIO), we DO fall
+    //     back to bria-expand. At that point the source is < 30% of
+    //     native and the upscale would have to magnify the border by
+    //     >3.3× — Topaz HF v2 starts losing structure beyond that.
+    //
+    // The downscale block respects `getFinalCap(chosenModel)`, so it
+    // automatically downscales to 2560 for flux and 4800 for bria.
     if (chosenModel === "flux-2-pro-outpaint") {
-        const flux2Cap = FLUX2_FINAL_DIMENSION;
-        if (finalW > flux2Cap || finalH > flux2Cap) {
-            console.warn("[outpaintPipeline] flux2-final-cap-fallback", {
-                finalW: Math.round(finalW),
-                finalH: Math.round(finalH),
-                cap: flux2Cap,
-                reason: "would-exceed-2560",
-            });
-            chosenModel = "bria-expand";
+        const wouldExceedCap = finalW > FLUX2_FINAL_DIMENSION || finalH > FLUX2_FINAL_DIMENSION;
+        if (wouldExceedCap) {
+            const projectedRatio = Math.min(
+                FLUX2_FINAL_DIMENSION / finalW,
+                FLUX2_FINAL_DIMENSION / finalH,
+            );
+            if (projectedRatio < FLUX2_MIN_DOWNSCALE_RATIO) {
+                console.warn("[outpaintPipeline] flux2-downscale-too-aggressive-fallback", {
+                    finalW: Math.round(finalW),
+                    finalH: Math.round(finalH),
+                    projectedRatio: projectedRatio.toFixed(3),
+                    threshold: FLUX2_MIN_DOWNSCALE_RATIO,
+                });
+                chosenModel = "bria-expand";
+            } else {
+                console.log("[outpaintPipeline] flux2-downscale-path", {
+                    finalW: Math.round(finalW),
+                    finalH: Math.round(finalH),
+                    projectedRatio: projectedRatio.toFixed(3),
+                    note: "source will be downscaled to fit 2560, then result upscaled back",
+                });
+            }
         }
     }
     // ============== END PRE-FLIGHT ==============
 
     // ============== MULTIPASS ORCHESTRATION (Phase 5) ==============
-    // After pre-flight: chosenModel may be flux-2-pro (small expand) or
-    // bria-expand (anything else). Multipass only triggers when the
-    // request still exceeds the chosen model's final cap — for flux that
-    // can no longer happen (pre-flight already swapped to bria), so the
-    // FLUX2_PER_SIDE_CAP branch is effectively defunct here. We keep
-    // the cap-split policy in splitPadForPass1 as a defensive last
-    // resort for the edge case where someone calls outpaintImage with
-    // an unconventional model that still needs the per-side guard.
+    // Multipass is ONLY useful for bria — splitting a >4800 final size
+    // into two smaller passes lets each pass stay under the cap. For
+    // flux it can't escape the 2560 ceiling (pass 2 = pass 1 output +
+    // extra > 2560), so we route flux through the downscale-and-upscale
+    // path instead (handled below by the existing downscale block,
+    // since `getFinalCap("flux-2-pro-outpaint") === 2560`).
     const maxImagePixelPad = Math.max(
         targetPadTop,
         targetPadRight,
@@ -669,9 +711,8 @@ export async function outpaintImage(params: OutpaintParams): Promise<OutpaintRes
     );
     const finalCap = getFinalCap(chosenModel);
     const needsMultipass =
-        finalW > finalCap ||
-        finalH > finalCap ||
-        (chosenModel === "flux-2-pro-outpaint" && maxImagePixelPad > FLUX2_PER_SIDE_CAP);
+        chosenModel !== "flux-2-pro-outpaint" &&
+        (finalW > finalCap || finalH > finalCap);
 
     if (needsMultipass && passDepth === 0) {
         const { pass1: pass1Pad, pass2: pass2Pad } = splitPadForPass1(
