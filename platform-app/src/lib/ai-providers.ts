@@ -684,6 +684,7 @@ const FAL_MODEL_MAP: Record<string, string> = {
     "seedream-5":      "fal-ai/bytedance/seedream/v5/lite/text-to-image",
     "gpt-image-2":     "openai/gpt-image-2",
     "bria-expand":     "fal-ai/bria/expand",
+    "flux-2-pro-outpaint": "fal-ai/flux-2-pro/outpaint",
     "bria-rmbg":       "fal-ai/bria/background/remove",
     "bria-product-shot": "fal-ai/bria/product-shot",
     "fal-birefnet":    "fal-ai/birefnet/v2",
@@ -824,30 +825,45 @@ class FalProvider implements AIProviderImplementation {
             return { content: imageUrl, format: "url", model: modelId, provider: "fal.ai" };
         }
 
-        // ── Outpainting (bria-expand on fal.ai) ────────────────────
+        // ── Outpainting (bria-expand / flux-2-pro-outpaint on fal.ai) ───
         if (params.type === "outpainting") {
             const falEndpoint = FAL_MODEL_MAP[modelId];
             if (!falEndpoint) throw new Error(`Model ${modelId} is not available on fal.ai for outpainting`);
-            
+
             const outpaintInput: Record<string, unknown> = {
                 image_url: params.imageBase64, // fal.ai accepts base64 data URIs
             };
-            if (params.prompt) outpaintInput.prompt = params.prompt;
-            
-            // Convert expandPadding to canvas_size + original_image_location
-            // NOTE: fal.ai bria/expand requires all pixel values to be integers
-            if (params.expandPadding && params.originalSize) {
-                const [origW, origH] = params.originalSize;
-                const pad = params.expandPadding;
-                outpaintInput.canvas_size = [Math.round(origW + pad.left + pad.right), Math.round(origH + pad.top + pad.bottom)];
-                outpaintInput.original_image_location = [Math.round(pad.left), Math.round(pad.top)];
-                outpaintInput.original_image_size = [Math.round(origW), Math.round(origH)];
-            } else if (params.canvasSize) {
-                outpaintInput.canvas_size = (params.canvasSize as number[]).map(Math.round);
-                if (params.originalSize) outpaintInput.original_image_size = (params.originalSize as number[]).map(Math.round);
-                if (params.originalLocation) outpaintInput.original_image_location = (params.originalLocation as number[]).map(Math.round);
-            } else if (params.aspectRatio) {
-                outpaintInput.aspect_ratio = params.aspectRatio;
+
+            if (modelId === "flux-2-pro-outpaint") {
+                // Flux 2 Pro Outpaint takes per-side expansion in pixels directly
+                // and produces a coherent extension without prompt or canvas_size.
+                // Per-side cap is 2048; callers (outpaintPipeline) are expected
+                // to enforce that before reaching this branch.
+                const pad = params.expandPadding ?? { top: 0, right: 0, bottom: 0, left: 0 };
+                outpaintInput.expand_top = Math.round(pad.top);
+                outpaintInput.expand_bottom = Math.round(pad.bottom);
+                outpaintInput.expand_left = Math.round(pad.left);
+                outpaintInput.expand_right = Math.round(pad.right);
+                outpaintInput.output_format = "png";
+                outpaintInput.auto_crop = false;
+            } else {
+                if (params.prompt) outpaintInput.prompt = params.prompt;
+
+                // Convert expandPadding to canvas_size + original_image_location
+                // NOTE: fal.ai bria/expand requires all pixel values to be integers
+                if (params.expandPadding && params.originalSize) {
+                    const [origW, origH] = params.originalSize;
+                    const pad = params.expandPadding;
+                    outpaintInput.canvas_size = [Math.round(origW + pad.left + pad.right), Math.round(origH + pad.top + pad.bottom)];
+                    outpaintInput.original_image_location = [Math.round(pad.left), Math.round(pad.top)];
+                    outpaintInput.original_image_size = [Math.round(origW), Math.round(origH)];
+                } else if (params.canvasSize) {
+                    outpaintInput.canvas_size = (params.canvasSize as number[]).map(Math.round);
+                    if (params.originalSize) outpaintInput.original_image_size = (params.originalSize as number[]).map(Math.round);
+                    if (params.originalLocation) outpaintInput.original_image_location = (params.originalLocation as number[]).map(Math.round);
+                } else if (params.aspectRatio) {
+                    outpaintInput.aspect_ratio = params.aspectRatio;
+                }
             }
 
             console.log(`[fal.ai] Outpainting via ${falEndpoint}, padding=${JSON.stringify(params.expandPadding)}`);
@@ -870,9 +886,11 @@ class FalProvider implements AIProviderImplementation {
             const requestId = submitData.request_id;
 
             if (!requestId) {
-                // Synchronous result — no polling needed
+                // Synchronous result — no polling needed.
+                // Response shape varies by model: bria-expand → { image: { url } },
+                // flux-2-pro-outpaint → { images: [{ url }] }.
                 console.log(`[fal.ai] Outpaint returned synchronously`);
-                const imageUrl = submitData.image?.url;
+                const imageUrl = submitData.images?.[0]?.url ?? submitData.image?.url;
                 if (!imageUrl) throw new Error("fal.ai outpaint returned no image (sync)");
                 return { content: imageUrl, format: "url" as const, model: modelId, provider: "fal.ai" };
             }
@@ -920,8 +938,10 @@ class FalProvider implements AIProviderImplementation {
             if (!resultRes.ok) throw new Error(`fal.ai outpaint result failed (${resultRes.status})`);
             const result = await resultRes.json();
             console.log(`[fal.ai] Outpaint response keys: ${Object.keys(result).join(", ")}`);
-            
-            const imageUrl = result.image?.url;
+
+            // Response shape varies by model: bria-expand → { image: { url } },
+            // flux-2-pro-outpaint → { images: [{ url }] }.
+            const imageUrl = result.images?.[0]?.url ?? result.image?.url;
             if (!imageUrl) throw new Error(`fal.ai outpaint returned no image. Response: ${JSON.stringify(result).slice(0, 300)}`);
             
             return {
@@ -1393,6 +1413,7 @@ const FAL_PRIMARY_MODELS = new Set([
     "seedream-5",
     "gpt-image-2",
     "bria-expand",
+    "flux-2-pro-outpaint",
     "bria-rmbg",
     "esrgan",
     "seedvr",
@@ -1418,7 +1439,8 @@ const MODEL_FALLBACK_CHAIN: Record<string, string[]> = {
     "seedream":        ["seedream-5"],
     "gpt-image-2":     ["gpt-image"],
     "gpt-image":       ["gpt-image-2"],
-    "bria-expand":     ["outpainter"],
+    "flux-2-pro-outpaint": ["bria-expand", "outpainter"],
+    "bria-expand":     ["flux-2-pro-outpaint", "outpainter"],
     "outpainter":      ["bria-expand"],
     "bria-rmbg":       ["rembg"],
     "rembg":           ["bria-rmbg"],

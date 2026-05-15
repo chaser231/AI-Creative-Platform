@@ -409,6 +409,14 @@ export const MODEL_REGISTRY: ModelEntry[] = [
         costPerRun: 0.04,
     },
     {
+        id: "flux-2-pro-outpaint",
+        label: "Flux 2 Pro Outpaint",
+        slug: "fal-ai/flux-2-pro/outpaint",
+        provider: "replicate",
+        caps: ["outpaint"],
+        costPerRun: 0.075,
+    },
+    {
         id: "outpainter",
         label: "Outpainter",
         slug: "zsxkib/outpainter",
