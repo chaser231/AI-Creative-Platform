@@ -21,8 +21,15 @@
 import { uploadForAI, persistImageToS3 } from "./imageUpload";
 import { compositeExpandResult } from "./imageComposite";
 
-/** Upper bound for any side of the input we send to bria-expand. */
-const MAX_FINAL_DIMENSION = 3500;
+/**
+ * Upper bound for any side of the final outpaint canvas before we downscale
+ * the base image. flux-2-pro-outpaint has no fixed output ceiling (only the
+ * per-side 2048 cap below); bria-expand officially handles 5000×5000. We keep
+ * 200 px headroom under bria's limit so a flux→bria fallback still fits, and
+ * pick 4800 to drastically cut how often the downscale-and-upscale path runs
+ * (vs the old 3500 ceiling which kicked in for almost every banner-sized job).
+ */
+const MAX_FINAL_DIMENSION = 4800;
 /** When downscale ratio drops below this, switch on the preserve-original pipeline. */
 const PRESERVE_THRESHOLD = 0.85;
 /**
