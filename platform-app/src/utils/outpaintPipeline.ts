@@ -19,7 +19,7 @@
  */
 
 import { uploadForAI, persistImageToS3 } from "./imageUpload";
-import { compositeExpandResult } from "./imageComposite";
+import { compositeExpandResult, computeFeatherPx } from "./imageComposite";
 
 /**
  * Upper bound for any side of the final outpaint canvas before we downscale
@@ -169,6 +169,226 @@ async function persistOrThrow(
     );
 }
 
+/**
+ * Border-only upscale optimisation.
+ *
+ * After the feathered composite (compositeExpandResult) the centre of the
+ * bria/flux output is OVERWRITTEN by the truly-original pixels (modulo a
+ * `featherPx` ring). Upscaling the centre is wasted compute. This helper
+ * crops the four border strips out of the bria result, upscales each one
+ * in parallel, and stitches them back at the full final resolution. The
+ * centre of the stitched canvas is left transparent — the composite step
+ * draws the fully-opaque original on top of it anyway.
+ *
+ * Layout (no overlap — corners belong to top/bottom):
+ *   +-----------------------+
+ *   |          top          |
+ *   +------+--------+-------+
+ *   | left | centre | right |
+ *   +------+--------+-------+
+ *   |        bottom         |
+ *   +-----------------------+
+ *
+ * On any failure (single strip, network, codec) the helper throws and the
+ * caller falls back to upscaling the whole expanded result. A throw here is
+ * NEVER fatal to the outpaint job — it just means we paid for a bigger
+ * upscale than strictly necessary.
+ */
+async function upscaleBordersOnly(opts: {
+    /** Bria/flux outpaint result image src (URL or data URI). */
+    briaSrc: string;
+    /** Final stitched canvas size (post-upscale, full resolution). */
+    finalSize: { w: number; h: number };
+    /**
+     * "Definitely-overwritten" centre rectangle in final-canvas coordinates.
+     * Pixels inside this rect get fully-opaque original drawn on top by the
+     * composite step, so we can leave the bria pixels there transparent.
+     */
+    centreRect: { x: number; y: number; w: number; h: number };
+    /** Upscale factor passed to the upscale endpoint (1..4). */
+    upscaleScale: number;
+    /** S3 namespace for any temporary strip uploads. */
+    projectId: string;
+    onProgress?: (stage: string, info?: Record<string, unknown>) => void;
+}): Promise<string> {
+    const { briaSrc, finalSize, centreRect, upscaleScale, projectId, onProgress } = opts;
+
+    // Persist bria result to S3 first to guarantee a CORS-safe load.
+    // Strip cropping needs getImageData on the loaded image; a tainted canvas
+    // would throw SecurityError. fal.media URLs are CORS-friendly in practice
+    // but persistOrThrow gives us a uniform guarantee.
+    const briaSafeSrc = await persistOrThrow(briaSrc, projectId, "bria-result-for-strips");
+    const briaImg = await loadImage(briaSafeSrc);
+    const briaW = briaImg.naturalWidth;
+    const briaH = briaImg.naturalHeight;
+
+    const finalW = finalSize.w;
+    const finalH = finalSize.h;
+    const finalCentreXEnd = centreRect.x + centreRect.w;
+    const finalCentreYEnd = centreRect.y + centreRect.h;
+
+    // Map centre-rect endpoints from final-space to bria-space. Endpoints
+    // (not widths) are rounded to avoid sub-pixel gaps between strips and
+    // keep the centre-cutout pixel-aligned.
+    const briaCentreX = Math.round((centreRect.x * briaW) / finalW);
+    const briaCentreY = Math.round((centreRect.y * briaH) / finalH);
+    const briaCentreXEnd = Math.round((finalCentreXEnd * briaW) / finalW);
+    const briaCentreYEnd = Math.round((finalCentreYEnd * briaH) / finalH);
+
+    type Strip = {
+        name: "top" | "bottom" | "left" | "right";
+        // Source crop rectangle inside the bria result.
+        src: { x: number; y: number; w: number; h: number };
+        // Destination rectangle inside the final stitched canvas.
+        dst: { x: number; y: number; w: number; h: number };
+    };
+
+    const strips: Strip[] = [
+        {
+            name: "top",
+            src: { x: 0, y: 0, w: briaW, h: briaCentreY },
+            dst: { x: 0, y: 0, w: finalW, h: centreRect.y },
+        },
+        {
+            name: "bottom",
+            src: { x: 0, y: briaCentreYEnd, w: briaW, h: briaH - briaCentreYEnd },
+            dst: { x: 0, y: finalCentreYEnd, w: finalW, h: finalH - finalCentreYEnd },
+        },
+        {
+            name: "left",
+            src: { x: 0, y: briaCentreY, w: briaCentreX, h: briaCentreYEnd - briaCentreY },
+            dst: { x: 0, y: centreRect.y, w: centreRect.x, h: centreRect.h },
+        },
+        {
+            name: "right",
+            src: {
+                x: briaCentreXEnd,
+                y: briaCentreY,
+                w: briaW - briaCentreXEnd,
+                h: briaCentreYEnd - briaCentreY,
+            },
+            dst: {
+                x: finalCentreXEnd,
+                y: centreRect.y,
+                w: finalW - finalCentreXEnd,
+                h: centreRect.h,
+            },
+        },
+    ];
+
+    // A side with pad=0 still has a featherPx-wide strip on that side
+    // (the feather ring on the original). A truly-empty strip (zero in
+    // either dimension) only appears at degenerate canvas sizes — skip it.
+    const validStrips = strips.filter(
+        (s) => s.src.w > 0 && s.src.h > 0 && s.dst.w > 0 && s.dst.h > 0,
+    );
+
+    if (validStrips.length === 0) {
+        throw new Error("upscaleBordersOnly: no non-empty strips (degenerate centre)");
+    }
+
+    // Cost-savings telemetry: centreFraction is the fraction of pixel area
+    // we no longer pay an upscale call on (because the original overwrites
+    // it). For a 1192×300 image with 200px pad on each side and featherPx=24,
+    // centreFraction ≈ 0.26 → we save ~26% of the upscale work.
+    const totalArea = finalW * finalH;
+    const centreArea = centreRect.w * centreRect.h;
+    const centreFraction = totalArea > 0 ? centreArea / totalArea : 0;
+    const stripsTelemetry = validStrips.map((s) => ({
+        name: s.name,
+        srcW: s.src.w,
+        srcH: s.src.h,
+        dstW: s.dst.w,
+        dstH: s.dst.h,
+    }));
+    console.log("[outpaintPipeline] border-only-upscale", {
+        briaW,
+        briaH,
+        finalW,
+        finalH,
+        centreFraction: Math.round(centreFraction * 1000) / 1000,
+        borderFraction: Math.round((1 - centreFraction) * 1000) / 1000,
+        upscaleScale,
+        strips: stripsTelemetry,
+    });
+    onProgress?.("border-strips-prepared", {
+        strips: validStrips.length,
+        centreFraction,
+    });
+
+    // Crop, upload, and upscale every strip in parallel. Promise.all rejects
+    // on the first failure → caller falls back to whole-image upscale. This
+    // is intentional: a partial border-strip upscale would leave a visible
+    // seam, so all-or-nothing is safer than mix-and-match.
+    const upscaledStrips = await Promise.all(
+        validStrips.map(async (strip) => {
+            const cropCanvas = document.createElement("canvas");
+            cropCanvas.width = strip.src.w;
+            cropCanvas.height = strip.src.h;
+            const cctx = cropCanvas.getContext("2d");
+            if (!cctx) {
+                throw new Error(`upscaleBordersOnly: 2d context unavailable for strip ${strip.name}`);
+            }
+            // Pixel-exact crop — no resampling at this stage.
+            cctx.imageSmoothingEnabled = false;
+            cctx.drawImage(
+                briaImg,
+                strip.src.x, strip.src.y, strip.src.w, strip.src.h,
+                0, 0, strip.src.w, strip.src.h,
+            );
+            const cropDataUri = cropCanvas.toDataURL("image/png");
+
+            const cropUrl = await uploadForAI(cropDataUri, projectId);
+            const upscaleRes = await fetch("/api/ai/image-edit", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    action: "upscale",
+                    imageBase64: cropUrl,
+                    model: "topaz-hf-v2",
+                    upscaleScale,
+                    projectId,
+                }),
+            });
+            const upscaleData = await upscaleRes.json();
+            if (upscaleData.error || !upscaleData.content) {
+                throw new Error(
+                    `upscaleBordersOnly: strip ${strip.name} failed (${upscaleData.error ?? "empty response"})`,
+                );
+            }
+            const safeStripSrc = await persistOrThrow(
+                upscaleData.content as string,
+                projectId,
+                `strip-${strip.name}-upscaled`,
+            );
+            const stripImg = await loadImage(safeStripSrc);
+            return { strip, img: stripImg };
+        }),
+    );
+
+    // Stitch onto a finalSize-sized canvas. Centre stays transparent — the
+    // composite step draws fully-opaque original pixels on top of it; the
+    // featherPx ring around the centre IS covered by border strips.
+    const stitchCanvas = document.createElement("canvas");
+    stitchCanvas.width = finalW;
+    stitchCanvas.height = finalH;
+    const sctx = stitchCanvas.getContext("2d");
+    if (!sctx) throw new Error("upscaleBordersOnly: 2d context unavailable for stitch canvas");
+    // The upscaled strip dimensions don't exactly match dst.w/dst.h (Topaz
+    // upscale_factor is rounded up), so drawImage downsamples slightly to
+    // fit. High-quality smoothing keeps the seam between adjacent strips
+    // (which all overlap by 0 px in dst-space) visually clean.
+    sctx.imageSmoothingEnabled = true;
+    sctx.imageSmoothingQuality = "high";
+
+    for (const { strip, img } of upscaledStrips) {
+        sctx.drawImage(img, strip.dst.x, strip.dst.y, strip.dst.w, strip.dst.h);
+    }
+
+    onProgress?.("border-strips-stitched", { finalW, finalH });
+    return stitchCanvas.toDataURL("image/png");
+}
+
 export async function outpaintImage(params: OutpaintParams): Promise<OutpaintResult> {
     const {
         imageSrc,
@@ -313,35 +533,104 @@ export async function outpaintImage(params: OutpaintParams): Promise<OutpaintRes
         try {
             onProgress?.("preserve-upscale-start");
             const upscaleScale = Math.min(Math.ceil(1 / downscaleRatio), 4);
-            const upscaleImageUrl = await uploadForAI(data.content as string, projectId);
-            const upscaleRes = await fetch("/api/ai/image-edit", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    action: "upscale",
-                    imageBase64: upscaleImageUrl,
-                    // Topaz HF v2 is structure-preserving — it doesn't
-                    // hallucinate new detail like SeedVR does. That's the
-                    // exact property we want for an upscaler whose output
-                    // is going to get its centre overwritten by the truly
-                    // original anyway, so any creative liberties on the
-                    // border would jar against the untouched centre.
-                    // Fallback chain (in MODEL_FALLBACK_CHAIN) drops to
-                    // seedvr → esrgan if topaz is unavailable.
-                    model: "topaz-hf-v2",
-                    upscaleScale,
-                    projectId,
-                }),
-            });
-            const upscaleData = await upscaleRes.json();
 
-            if (upscaleData.content && !upscaleData.error) {
+            // Reconstruct the full (pre-downscale) original dimensions and
+            // the final canvas size that compositeExpandResult will produce.
+            // realW/H here are post-downscale, so divide by downscaleRatio
+            // to recover the original-resolution figures.
+            const origW = downscaleRatio > 0 ? realW / downscaleRatio : realW;
+            const origH = downscaleRatio > 0 ? realH / downscaleRatio : realH;
+            const pad = preserveOriginalPixelPadding;
+            const finalW = Math.round(origW + pad.left + pad.right);
+            const finalH = Math.round(origH + pad.top + pad.bottom);
+            const featherPx = computeFeatherPx(origW, origH);
+
+            // Border-only upscale path: skip compute on the centre that the
+            // composite step will overwrite anyway. Falls through to the
+            // whole-image path on any failure (or if the feather radius is
+            // larger than half the original — then every centre pixel might
+            // be feathered and we need bria coverage everywhere).
+            let upscaledContent: string | null = null;
+            const canBorderOnly =
+                featherPx * 2 < origW &&
+                featherPx * 2 < origH &&
+                origW > 2 * featherPx &&
+                origH > 2 * featherPx;
+
+            if (canBorderOnly) {
+                const centreRect = {
+                    x: Math.round(pad.left + featherPx),
+                    y: Math.round(pad.top + featherPx),
+                    w: Math.round(origW - 2 * featherPx),
+                    h: Math.round(origH - 2 * featherPx),
+                };
+                try {
+                    upscaledContent = await upscaleBordersOnly({
+                        briaSrc: data.content as string,
+                        finalSize: { w: finalW, h: finalH },
+                        centreRect,
+                        upscaleScale,
+                        projectId: projectId ?? "ai-tmp",
+                        onProgress,
+                    });
+                } catch (borderErr) {
+                    // Border-only is a best-effort optimisation; on failure
+                    // we just pay for the whole-image upscale instead. Log
+                    // via the same structured telemetry as preserve-fallback
+                    // so production monitoring can spot recurring causes.
+                    console.warn("[outpaintPipeline] border-only-upscale-fallback", {
+                        reason: classifyPreserveErr(borderErr),
+                        message: borderErr instanceof Error ? borderErr.message : String(borderErr),
+                        downscaleRatio,
+                        finalW,
+                        finalH,
+                    });
+                    upscaledContent = null;
+                }
+            } else {
+                onProgress?.("border-only-skipped-feather-too-large", {
+                    featherPx,
+                    origW,
+                    origH,
+                });
+            }
+
+            if (!upscaledContent) {
+                // Whole-image upscale fallback — the legacy path. Topaz HF
+                // v2 stays the model (still structure-preserving); we just
+                // pay for upscaling pixels that will get overwritten.
+                const upscaleImageUrl = await uploadForAI(data.content as string, projectId);
+                const upscaleRes = await fetch("/api/ai/image-edit", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        action: "upscale",
+                        imageBase64: upscaleImageUrl,
+                        model: "topaz-hf-v2",
+                        upscaleScale,
+                        projectId,
+                    }),
+                });
+                const upscaleData = await upscaleRes.json();
+                if (upscaleData.content && !upscaleData.error) {
+                    upscaledContent = upscaleData.content as string;
+                } else {
+                    console.error("[outpaintPipeline] upscale-failed", {
+                        error: upscaleData.error,
+                        requestId: upscaleData.requestId,
+                        originalHost: safeHost(preserveOriginalSrc),
+                        downscaleRatio,
+                    });
+                }
+            }
+
+            if (upscaledContent) {
                 // Hard requirement: both srcs must be canvas-safe before we
                 // compose. Throwing here is intentional — it routes to the
                 // outer catch which emits structured telemetry instead of
                 // silently producing a tainted canvas.
                 expandedSrcForComposite = await persistOrThrow(
-                    upscaleData.content as string,
+                    upscaledContent,
                     projectId ?? "ai-tmp",
                     "expanded-upscale",
                 );
@@ -358,13 +647,6 @@ export async function outpaintImage(params: OutpaintParams): Promise<OutpaintRes
                     pixelPadding: preserveOriginalPixelPadding,
                 });
                 onProgress?.("preserve-composite-done");
-            } else {
-                console.error("[outpaintPipeline] upscale-failed", {
-                    error: upscaleData.error,
-                    requestId: upscaleData.requestId,
-                    originalHost: safeHost(preserveOriginalSrc),
-                    downscaleRatio,
-                });
             }
         } catch (preserveErr) {
             const reason = classifyPreserveErr(preserveErr);

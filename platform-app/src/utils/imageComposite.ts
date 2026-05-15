@@ -220,7 +220,18 @@ function clampFeatherPx(width: number, height: number, featherPx: number): numbe
     return Math.max(0, Math.min(featherPx, maxFeather));
 }
 
-function computeFeatherPx(origW: number, origH: number): number {
+/**
+ * Pixel radius of the feather fade applied around the original when the
+ * composite step blends original-on-top-of-bria. Exported so the outpaint
+ * pipeline can compute the same "definitely-overwritten" centre rectangle
+ * for the border-only upscale optimisation — the centre minus this feather
+ * ring is the region where the original is fully opaque, hence the bria
+ * pixels underneath are wasted compute and don't need to be upscaled.
+ *
+ * Formula: clamped to [24, 64] px, sized to ~4% of the smaller dimension.
+ * If both callers ever drift, the seam will gain a visible step.
+ */
+export function computeFeatherPx(origW: number, origH: number): number {
     return Math.round(Math.max(24, Math.min(64, Math.min(origW, origH) * 0.04)));
 }
 
