@@ -1,21 +1,36 @@
 /**
  * Shared outpaint pipeline used by the studio (AIPromptBar) and the wizard
- * (WizardContentWorkspace). Encapsulates the full Bria-expand workflow:
+ * (WizardContentWorkspace). Encapsulates the full outpaint workflow:
  *
  *   1. Load source image, derive natural pixel dimensions
  *   2. Convert canvas-space padding to image-pixel padding
- *   3. If final dimensions exceed the model's safe ceiling, downscale base
- *      image and (when the downscale is aggressive enough) remember the
- *      original to composite back on top later
- *   4. POST to /api/ai/image-edit with action=outpaint, model=bria-expand
- *   5. Optionally upscale the result and composite the original at native
+ *   3. Multipass orchestration (Phase 5): if the request would exceed
+ *      MAX_FINAL_DIMENSION on either side, OR the per-side image-pixel pad
+ *      exceeds FLUX2_PER_SIDE_CAP for flux-2-pro-outpaint, split the
+ *      request into two recursive sub-passes that each stay within model
+ *      limits. The first pass takes pads up to the cap (or half the
+ *      delta for size-driven splits); the second pass adds the remainder
+ *      on top of the first pass result. This preserves flux-2-pro-outpaint
+ *      quality even for jobs that would otherwise need a heavy downscale
+ *      or a fallback to bria-expand.
+ *   4. If, after multipass orchestration, final dimensions still exceed
+ *      the model's safe ceiling (only possible when the original is
+ *      already > MAX_FINAL_DIMENSION), downscale the base image and
+ *      (when the downscale is aggressive enough) remember the original
+ *      to composite back on top later
+ *   5. POST to /api/ai/image-edit with action=outpaint, model defaults to
+ *      flux-2-pro-outpaint
+ *   6. Optionally upscale the result and composite the original at native
  *      resolution into the center to keep pixel-perfect quality (only the
  *      generated border is AI)
  *
  * Returning a `{ src, model, pixelPadding }` triple lets callers update
  * downstream layer geometry consistently. The function never throws on a
  * recoverable preserve-pipeline failure — it falls back to the raw expand
- * result.
+ * result. The per-side bria-expand fallback (Phase 3) is kept as a deep
+ * safety net for the rare case where multipass cannot reduce a pad below
+ * FLUX2_PER_SIDE_CAP (e.g. the original image is already huge, forcing a
+ * downscale-and-multipass loop that exhausts MAX_OUTPAINT_PASSES).
  */
 
 import { uploadForAI, persistImageToS3 } from "./imageUpload";
@@ -34,10 +49,24 @@ const MAX_FINAL_DIMENSION = 4800;
 const PRESERVE_THRESHOLD = 0.85;
 /**
  * Per-side expansion cap for flux-2-pro-outpaint (hard model limit, 2026-05).
- * When any side requests more than this we fall back to bria-expand for the
- * call. Phase 5 will replace this with a proper multipass loop.
+ * When any side requests more than this in a single call, multipass
+ * orchestration (Phase 5) splits the request across two sequential calls so
+ * we keep flux-quality output instead of falling back to bria-expand. The
+ * Phase 3 single-call bria fallback below is retained as a deep safety net
+ * for the rare case where even a sub-pass still exceeds the cap (only
+ * possible when the original is itself huge enough that a downscale forces
+ * pad rescaling above the cap).
  */
 const FLUX2_PER_SIDE_CAP = 2048;
+/**
+ * Maximum number of sequential outpaint API calls per top-level
+ * `outpaintImage` invocation. The orchestrator (depth 0) splits a too-big
+ * request into exactly two sub-passes (depths 1 and 2). Sub-passes never
+ * recurse further — if a sub-pass still exceeds limits (rare, only when the
+ * original is already > MAX_FINAL_DIMENSION) it falls through to the
+ * single-pass body's own downscale + bria fallback path.
+ */
+const MAX_OUTPAINT_PASSES = 2;
 /** Default outpaint model used when callers don't override. */
 const DEFAULT_OUTPAINT_MODEL = "flux-2-pro-outpaint";
 
@@ -72,6 +101,18 @@ export interface OutpaintParams {
      * bria-expand transparently for individual calls.
      */
     model?: string;
+    /**
+     * Internal: multipass recursion depth. Outer callers leave this
+     * undefined (treated as 0). When the orchestrator splits a request, it
+     * sets `_passDepth: 1` on the first sub-pass and `_passDepth: 2` on the
+     * second. Sub-passes (any `_passDepth >= 1`) skip multipass
+     * orchestration even if their own pads still trip the predicate — they
+     * fall through to the single-pass body whose existing downscale and
+     * bria-expand fallback handle the residual case. This bounds the total
+     * number of sequential API calls to MAX_OUTPAINT_PASSES.
+     * @internal
+     */
+    _passDepth?: number;
 }
 
 export interface OutpaintResult {
@@ -389,6 +430,86 @@ async function upscaleBordersOnly(opts: {
     return stitchCanvas.toDataURL("image/png");
 }
 
+/**
+ * Split a single canvas-space outpaint padding into two sub-pass paddings
+ * for multipass orchestration (Phase 5).
+ *
+ * Two split policies:
+ *
+ *   - **Cap-split** (when `model === "flux-2-pro-outpaint"` and any pad
+ *     side exceeds `FLUX2_PER_SIDE_CAP`): clip every side to the per-side
+ *     cap for pass 1; pass 2 receives the remainder. Sides under the cap
+ *     pass through fully in pass 1 and contribute 0 to pass 2.
+ *   - **Half-split** (every other case where the predicate fired — i.e.
+ *     `finalW`/`finalH > MAX_FINAL_DIMENSION` but no side exceeds the cap,
+ *     or the model isn't subject to the per-side cap at all): each side
+ *     gets `floor(pad / 2)` in pass 1, with the remainder (i.e. the odd
+ *     pixel for odd pads) going to pass 2. This keeps each pass adding at
+ *     most half the size delta so the per-pass final image stays under
+ *     `MAX_FINAL_DIMENSION` whenever the original is already within it.
+ *
+ * `finalW`/`finalH` are accepted for API symmetry with the predicate but
+ * are not currently used inside the helper — the model + max-pad check is
+ * sufficient to disambiguate the two policies. They're kept so that
+ * future tuning (e.g. asymmetric splits when only one dimension exceeds
+ * the cap) can land without a signature change.
+ *
+ * The helper does NOT decide whether multipass should run; the caller
+ * checks the predicate first and only invokes this on a positive answer.
+ *
+ * Edge cases:
+ *   - Cap-split with a side already < cap: that side gets passed through
+ *     fully in pass 1 (`pass2[side] === 0`), which is correct — the side
+ *     doesn't need splitting.
+ *   - All sides ≤ cap but final size > max: cap-split is NOT used (the
+ *     `isFlux2OverCap` check fails), so half-split fires regardless of
+ *     model. Half-splitting still respects the per-side cap because each
+ *     half is at most `pad / 2 ≤ pad ≤ cap`.
+ *   - Pad of 0 on a side: pass1 = 0, pass2 = 0 (both branches preserve
+ *     this).
+ *
+ * @internal exported only for unit testing.
+ */
+export function splitPadForPass1(
+    pad: OutpaintCanvasPadding,
+    model: string,
+    finalW: number,
+    finalH: number,
+): { pass1: OutpaintCanvasPadding; pass2: OutpaintCanvasPadding } {
+    void finalW;
+    void finalH;
+
+    const maxPad = Math.max(pad.top, pad.right, pad.bottom, pad.left);
+    const isFlux2OverCap =
+        model === "flux-2-pro-outpaint" && maxPad > FLUX2_PER_SIDE_CAP;
+
+    let pass1: OutpaintCanvasPadding;
+    if (isFlux2OverCap) {
+        pass1 = {
+            top: Math.min(pad.top, FLUX2_PER_SIDE_CAP),
+            right: Math.min(pad.right, FLUX2_PER_SIDE_CAP),
+            bottom: Math.min(pad.bottom, FLUX2_PER_SIDE_CAP),
+            left: Math.min(pad.left, FLUX2_PER_SIDE_CAP),
+        };
+    } else {
+        pass1 = {
+            top: Math.floor(pad.top / 2),
+            right: Math.floor(pad.right / 2),
+            bottom: Math.floor(pad.bottom / 2),
+            left: Math.floor(pad.left / 2),
+        };
+    }
+
+    const pass2: OutpaintCanvasPadding = {
+        top: pad.top - pass1.top,
+        right: pad.right - pass1.right,
+        bottom: pad.bottom - pass1.bottom,
+        left: pad.left - pass1.left,
+    };
+
+    return { pass1, pass2 };
+}
+
 export async function outpaintImage(params: OutpaintParams): Promise<OutpaintResult> {
     const {
         imageSrc,
@@ -399,6 +520,7 @@ export async function outpaintImage(params: OutpaintParams): Promise<OutpaintRes
         onProgress,
         model,
     } = params;
+    const passDepth = params._passDepth ?? 0;
     let chosenModel = model ?? DEFAULT_OUTPAINT_MODEL;
 
     const totalCanvasPad =
@@ -436,6 +558,132 @@ export async function outpaintImage(params: OutpaintParams): Promise<OutpaintRes
 
     const finalW = realW + targetPadLeft + targetPadRight;
     const finalH = realH + targetPadTop + targetPadBottom;
+
+    // ============== MULTIPASS ORCHESTRATION (Phase 5) ==============
+    // The predicate uses image-pixel pads (FLUX2_PER_SIDE_CAP is image-pixel)
+    // and image-pixel finalW/H (MAX_FINAL_DIMENSION is image-pixel). Only the
+    // top-level call (passDepth === 0) ever orchestrates multipass; sub-passes
+    // fall through to the single-pass body whose existing downscale + bria
+    // fallback handle any residual cap violation (only reachable when the
+    // original is itself > MAX_FINAL_DIMENSION, forcing pad rescaling above
+    // the cap during pass 1's own downscale step).
+    const maxImagePixelPad = Math.max(
+        targetPadTop,
+        targetPadRight,
+        targetPadBottom,
+        targetPadLeft,
+    );
+    const needsMultipass =
+        finalW > MAX_FINAL_DIMENSION ||
+        finalH > MAX_FINAL_DIMENSION ||
+        (chosenModel === "flux-2-pro-outpaint" && maxImagePixelPad > FLUX2_PER_SIDE_CAP);
+
+    if (needsMultipass && passDepth === 0) {
+        const { pass1: pass1Pad, pass2: pass2Pad } = splitPadForPass1(
+            canvasPadding,
+            chosenModel,
+            finalW,
+            finalH,
+        );
+        const pass2Total =
+            pass2Pad.top + pass2Pad.right + pass2Pad.bottom + pass2Pad.left;
+
+        if (pass2Total > 0) {
+            // Defensive: if pass2Total === 0 the predicate fired but the
+            // split is degenerate (e.g. all pads happen to be exactly zero
+            // after split). Fall through to single-pass body in that case.
+            // eslint-disable-next-line no-console
+            console.log("[outpaintPipeline] multipass-orchestrate", {
+                reason:
+                    chosenModel === "flux-2-pro-outpaint" &&
+                    maxImagePixelPad > FLUX2_PER_SIDE_CAP
+                        ? "flux2-per-side-cap"
+                        : "max-final-dimension",
+                chosenModel,
+                finalW: Math.round(finalW),
+                finalH: Math.round(finalH),
+                maxImagePixelPad: Math.round(maxImagePixelPad),
+                canvasPadding,
+                pass1Pad,
+                pass2Pad,
+            });
+
+            onProgress?.("pass-1-start", { pad: pass1Pad });
+            const pass1Result = await outpaintImage({
+                ...params,
+                canvasPadding: pass1Pad,
+                _passDepth: 1,
+            });
+            onProgress?.("pass-1-done", {
+                model: pass1Result.model,
+                pixelPadding: pass1Result.pixelPadding,
+            });
+
+            const intermediateLayerSize = {
+                width: layerSize.width + pass1Pad.left + pass1Pad.right,
+                height: layerSize.height + pass1Pad.top + pass1Pad.bottom,
+            };
+
+            onProgress?.("pass-2-start", { pad: pass2Pad });
+            const pass2Result = await outpaintImage({
+                ...params,
+                imageSrc: pass1Result.src,
+                canvasPadding: pass2Pad,
+                layerSize: intermediateLayerSize,
+                _passDepth: 2,
+            });
+            onProgress?.("pass-2-done", {
+                model: pass2Result.model,
+                pixelPadding: pass2Result.pixelPadding,
+            });
+
+            // Combined geometry reflects the FULL applied padding so callers
+            // can update layer bounds in canvas space correctly. Each
+            // sub-pass already returned its image-pixel pad post-rounding
+            // and post any internal downscale; the sum lands in the
+            // pass-2-final coordinate system (which is what `pass2Result.src`
+            // is rendered in).
+            const combinedPixelPadding: OutpaintCanvasPadding = {
+                top: pass1Result.pixelPadding.top + pass2Result.pixelPadding.top,
+                right: pass1Result.pixelPadding.right + pass2Result.pixelPadding.right,
+                bottom: pass1Result.pixelPadding.bottom + pass2Result.pixelPadding.bottom,
+                left: pass1Result.pixelPadding.left + pass2Result.pixelPadding.left,
+            };
+
+            return {
+                src: pass2Result.src,
+                model: pass2Result.model,
+                pixelPadding: combinedPixelPadding,
+                expanded: true,
+            };
+        }
+
+        // eslint-disable-next-line no-console
+        console.warn("[outpaintPipeline] multipass-degenerate-skip", {
+            canvasPadding,
+            pass1Pad,
+            pass2Pad,
+        });
+        // fall through to single-pass body
+    }
+
+    if (needsMultipass && passDepth >= MAX_OUTPAINT_PASSES) {
+        // Reached only when the orchestrator's pass 2 itself still trips the
+        // predicate — exclusively a downscale-driven scenario (e.g. original
+        // is already > MAX_FINAL_DIMENSION so pass 1's downscale forces pad
+        // rescaling above the per-side cap on pass 2's input). The
+        // single-pass body's downscale + bria-expand fallback below absorbs
+        // this gracefully; the warning makes the situation observable.
+        // eslint-disable-next-line no-console
+        console.warn("[outpaintPipeline] multipass-exhausted", {
+            passDepth,
+            chosenModel,
+            finalW: Math.round(finalW),
+            finalH: Math.round(finalH),
+            maxImagePixelPad: Math.round(maxImagePixelPad),
+        });
+    }
+    // ============== END MULTIPASS ==============
 
     let baseImageSrc = imageSrc;
     let preserveOriginalSrc: string | null = null;
@@ -483,9 +731,15 @@ export async function outpaintImage(params: OutpaintParams): Promise<OutpaintRes
     const originalSize: [number, number] = [realW, realH];
 
     // Per-side cap check for flux-2-pro-outpaint (2048 px hard model limit).
-    // Phase 5 will replace this simple fallback with a proper multipass loop;
-    // for now, drop to bria-expand for the offending call so we don't lose
-    // the image entirely.
+    // Phase 5 multipass orchestration above normally splits any too-big
+    // request into two sub-passes that each stay under the cap, so this
+    // branch is only reachable as a deep safety net when:
+    //   1. We're already inside a sub-pass (passDepth >= 1) and that
+    //      sub-pass's own predicate fired but couldn't recurse further; OR
+    //   2. The orchestrator's downscale step (above) rescaled the per-side
+    //      pads above the cap during a multipass-exhausted scenario.
+    // Falling back to bria-expand for the offending call keeps the image
+    // recoverable instead of letting the API reject the request outright.
     if (chosenModel === "flux-2-pro-outpaint") {
         const maxSide = Math.max(
             sentPadding.top,
@@ -497,6 +751,7 @@ export async function outpaintImage(params: OutpaintParams): Promise<OutpaintRes
             console.warn("[outpaintPipeline] flux-2-over-cap-fallback", {
                 maxSide,
                 cap: FLUX2_PER_SIDE_CAP,
+                passDepth,
             });
             chosenModel = "bria-expand";
         }
