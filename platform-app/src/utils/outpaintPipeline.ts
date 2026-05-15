@@ -45,8 +45,6 @@ import { compositeExpandResult, computeFeatherPx } from "./imageComposite";
  * (vs the old 3500 ceiling which kicked in for almost every banner-sized job).
  */
 const MAX_FINAL_DIMENSION = 4800;
-/** When downscale ratio drops below this, switch on the preserve-original pipeline. */
-const PRESERVE_THRESHOLD = 0.85;
 /**
  * Per-side expansion cap for flux-2-pro-outpaint (hard model limit, 2026-05).
  * When any side requests more than this in a single call, multipass
@@ -534,9 +532,53 @@ export async function outpaintImage(params: OutpaintParams): Promise<OutpaintRes
         };
     }
 
+    // Persist the input src onto our S3 BEFORE anything touches it. Two
+    // bugs converge here, both reproducible by triggering outpaint twice
+    // in a row in Studio:
+    //
+    //   1. Browser-side: when layer.src is a fal.media temp URL (e.g.
+    //      from a previous fallback that bypassed the composite), the
+    //      `loadImage(imageSrc)` call below fails with "Failed to load
+    //      image" because we set crossOrigin="anonymous" and fal.media
+    //      doesn't return CORS headers — Chrome aborts the load.
+    //   2. Server-side: when we forward that same URL to fal.ai's
+    //      flux-2-pro-outpaint, the model server can't fetch its own
+    //      expired temp URL (or the URL has aged past whatever cache
+    //      TTL fal.media uses) and returns HTTP 422 with a validation
+    //      error — see the matching error-body capture in ai-providers.ts.
+    //
+    // We run this for every pass (including sub-passes) — persistOrThrow
+    // is a noop for already-S3 / data: srcs, and the recursive
+    // multipass call may itself receive a non-S3 src on a fallback path
+    // where pass 1's composite was skipped.
+    let safeImageSrc = imageSrc;
+    try {
+        safeImageSrc = await persistOrThrow(
+            imageSrc,
+            projectId ?? "ai-tmp",
+            "outpaint-input",
+        );
+        if (safeImageSrc !== imageSrc) {
+            onProgress?.("input-persisted", {
+                fromHost: safeHost(imageSrc),
+                toHost: safeHost(safeImageSrc),
+                passDepth,
+            });
+        }
+    } catch (e) {
+        // Don't fail loud — fall back to the raw src and let loadImage
+        // decide. If loadImage *does* succeed we can still continue
+        // (e.g. data URIs, same-origin URLs). The structured log makes
+        // it obvious when persist itself is the regression.
+        const reason = e instanceof Error ? e.message : String(e);
+        console.warn(
+            `[outpaintPipeline] input-persist-failed reason=${reason} host=${safeHost(imageSrc)} passDepth=${passDepth} — falling back to raw src`,
+        );
+    }
+
     let img: HTMLImageElement;
     try {
-        img = await loadImage(imageSrc);
+        img = await loadImage(safeImageSrc);
     } catch (e) {
         throw new Error(
             `outpaintImage: source image failed to load (${(e as Error).message})`,
@@ -685,24 +727,35 @@ export async function outpaintImage(params: OutpaintParams): Promise<OutpaintRes
     }
     // ============== END MULTIPASS ==============
 
-    let baseImageSrc = imageSrc;
-    let preserveOriginalSrc: string | null = null;
-    let preserveOriginalPixelPadding: OutpaintCanvasPadding | null = null;
+    let baseImageSrc = safeImageSrc;
     let downscaleRatio = 1;
+
+    // Always arm the preserve-original composite. The preserve step
+    // (drop the source image at native resolution onto the AI border)
+    // used to fire only when we had to downscale to fit Bria's
+    // ceiling — small expands skipped it entirely and shipped a soft
+    // AI result. That regression is exactly the "композ игнорируется"
+    // symptom in the studio. We capture the padding here in
+    // pre-downscale image-pixel space, which is what
+    // compositeExpandResult expects (it sizes the canvas to
+    // originalImg.naturalWidth + pad.left + pad.right).
+    //
+    // The downstream upscale call is the one that's conditional on
+    // downscaleRatio < 1 — see the `if (downscaleRatio < 1)` branch
+    // below. Native-resolution requests stay fast because we skip
+    // the upscale and feed the raw bria/flux output straight into
+    // the composite.
+    const preserveOriginalSrc: string = safeImageSrc;
+    const preserveOriginalPixelPadding: OutpaintCanvasPadding = {
+        top: targetPadTop,
+        right: targetPadRight,
+        bottom: targetPadBottom,
+        left: targetPadLeft,
+    };
+    onProgress?.("preserve-pipeline-armed", { ratio: 1 });
 
     if (finalW > MAX_FINAL_DIMENSION || finalH > MAX_FINAL_DIMENSION) {
         downscaleRatio = Math.min(MAX_FINAL_DIMENSION / finalW, MAX_FINAL_DIMENSION / finalH);
-
-        if (downscaleRatio < PRESERVE_THRESHOLD) {
-            preserveOriginalSrc = imageSrc;
-            preserveOriginalPixelPadding = {
-                top: targetPadTop,
-                right: targetPadRight,
-                bottom: targetPadBottom,
-                left: targetPadLeft,
-            };
-            onProgress?.("preserve-pipeline-armed", { ratio: downscaleRatio });
-        }
 
         realW = Math.round(realW * downscaleRatio);
         realH = Math.round(realH * downscaleRatio);
@@ -782,13 +835,10 @@ export async function outpaintImage(params: OutpaintParams): Promise<OutpaintRes
 
     let finalContent: string = data.content;
 
-    if (preserveOriginalSrc && preserveOriginalPixelPadding) {
+    {
         // Hoisted so the outer catch can include it in structured telemetry.
         let expandedSrcForComposite: string | null = null;
         try {
-            onProgress?.("preserve-upscale-start");
-            const upscaleScale = Math.min(Math.ceil(1 / downscaleRatio), 4);
-
             // Reconstruct the full (pre-downscale) original dimensions and
             // the final canvas size that compositeExpandResult will produce.
             // realW/H here are post-downscale, so divide by downscaleRatio
@@ -800,83 +850,97 @@ export async function outpaintImage(params: OutpaintParams): Promise<OutpaintRes
             const finalH = Math.round(origH + pad.top + pad.bottom);
             const featherPx = computeFeatherPx(origW, origH);
 
-            // Border-only upscale path: skip compute on the centre that the
-            // composite step will overwrite anyway. Falls through to the
-            // whole-image path on any failure (or if the feather radius is
-            // larger than half the original — then every centre pixel might
-            // be feathered and we need bria coverage everywhere).
             let upscaledContent: string | null = null;
-            const canBorderOnly =
-                featherPx * 2 < origW &&
-                featherPx * 2 < origH &&
-                origW > 2 * featherPx &&
-                origH > 2 * featherPx;
 
-            if (canBorderOnly) {
-                const centreRect = {
-                    x: Math.round(pad.left + featherPx),
-                    y: Math.round(pad.top + featherPx),
-                    w: Math.round(origW - 2 * featherPx),
-                    h: Math.round(origH - 2 * featherPx),
-                };
-                try {
-                    upscaledContent = await upscaleBordersOnly({
-                        briaSrc: data.content as string,
-                        finalSize: { w: finalW, h: finalH },
-                        centreRect,
-                        upscaleScale,
-                        projectId: projectId ?? "ai-tmp",
-                        onProgress,
+            if (downscaleRatio < 1) {
+                onProgress?.("preserve-upscale-start");
+                const upscaleScale = Math.min(Math.ceil(1 / downscaleRatio), 4);
+
+                // Border-only upscale path: skip compute on the centre that the
+                // composite step will overwrite anyway. Falls through to the
+                // whole-image path on any failure (or if the feather radius is
+                // larger than half the original — then every centre pixel might
+                // be feathered and we need bria coverage everywhere).
+                const canBorderOnly =
+                    featherPx * 2 < origW &&
+                    featherPx * 2 < origH &&
+                    origW > 2 * featherPx &&
+                    origH > 2 * featherPx;
+
+                if (canBorderOnly) {
+                    const centreRect = {
+                        x: Math.round(pad.left + featherPx),
+                        y: Math.round(pad.top + featherPx),
+                        w: Math.round(origW - 2 * featherPx),
+                        h: Math.round(origH - 2 * featherPx),
+                    };
+                    try {
+                        upscaledContent = await upscaleBordersOnly({
+                            briaSrc: data.content as string,
+                            finalSize: { w: finalW, h: finalH },
+                            centreRect,
+                            upscaleScale,
+                            projectId: projectId ?? "ai-tmp",
+                            onProgress,
+                        });
+                    } catch (borderErr) {
+                        // Border-only is a best-effort optimisation; on failure
+                        // we just pay for the whole-image upscale instead. Log
+                        // via the same structured telemetry as preserve-fallback
+                        // so production monitoring can spot recurring causes.
+                        console.warn("[outpaintPipeline] border-only-upscale-fallback", {
+                            reason: classifyPreserveErr(borderErr),
+                            message: borderErr instanceof Error ? borderErr.message : String(borderErr),
+                            downscaleRatio,
+                            finalW,
+                            finalH,
+                        });
+                        upscaledContent = null;
+                    }
+                } else {
+                    onProgress?.("border-only-skipped-feather-too-large", {
+                        featherPx,
+                        origW,
+                        origH,
                     });
-                } catch (borderErr) {
-                    // Border-only is a best-effort optimisation; on failure
-                    // we just pay for the whole-image upscale instead. Log
-                    // via the same structured telemetry as preserve-fallback
-                    // so production monitoring can spot recurring causes.
-                    console.warn("[outpaintPipeline] border-only-upscale-fallback", {
-                        reason: classifyPreserveErr(borderErr),
-                        message: borderErr instanceof Error ? borderErr.message : String(borderErr),
-                        downscaleRatio,
-                        finalW,
-                        finalH,
+                }
+
+                if (!upscaledContent) {
+                    // Whole-image upscale fallback — the legacy path. Topaz HF
+                    // v2 stays the model (still structure-preserving); we just
+                    // pay for upscaling pixels that will get overwritten.
+                    const upscaleImageUrl = await uploadForAI(data.content as string, projectId);
+                    const upscaleRes = await fetch("/api/ai/image-edit", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            action: "upscale",
+                            imageBase64: upscaleImageUrl,
+                            model: "topaz-hf-v2",
+                            upscaleScale,
+                            projectId,
+                        }),
                     });
-                    upscaledContent = null;
+                    const upscaleData = await upscaleRes.json();
+                    if (upscaleData.content && !upscaleData.error) {
+                        upscaledContent = upscaleData.content as string;
+                    } else {
+                        console.error("[outpaintPipeline] upscale-failed", {
+                            error: upscaleData.error,
+                            requestId: upscaleData.requestId,
+                            originalHost: safeHost(preserveOriginalSrc),
+                            downscaleRatio,
+                        });
+                    }
                 }
             } else {
-                onProgress?.("border-only-skipped-feather-too-large", {
-                    featherPx,
-                    origW,
-                    origH,
-                });
-            }
-
-            if (!upscaledContent) {
-                // Whole-image upscale fallback — the legacy path. Topaz HF
-                // v2 stays the model (still structure-preserving); we just
-                // pay for upscaling pixels that will get overwritten.
-                const upscaleImageUrl = await uploadForAI(data.content as string, projectId);
-                const upscaleRes = await fetch("/api/ai/image-edit", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                        action: "upscale",
-                        imageBase64: upscaleImageUrl,
-                        model: "topaz-hf-v2",
-                        upscaleScale,
-                        projectId,
-                    }),
-                });
-                const upscaleData = await upscaleRes.json();
-                if (upscaleData.content && !upscaleData.error) {
-                    upscaledContent = upscaleData.content as string;
-                } else {
-                    console.error("[outpaintPipeline] upscale-failed", {
-                        error: upscaleData.error,
-                        requestId: upscaleData.requestId,
-                        originalHost: safeHost(preserveOriginalSrc),
-                        downscaleRatio,
-                    });
-                }
+                // No downscale happened → bria/flux already produced the
+                // result at native resolution. Skip the upscale call
+                // entirely and feed the raw model output straight into
+                // the composite. This is what makes small wizard expands
+                // (the most common case) fast and lossless.
+                onProgress?.("preserve-no-upscale-needed");
+                upscaledContent = data.content as string;
             }
 
             if (upscaledContent) {
