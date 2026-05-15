@@ -17,6 +17,8 @@ import { useStylePresets } from "@/hooks/useStylePresets";
 import { persistImageToS3, uploadForAI, uploadManyForAI } from "@/utils/imageUpload";
 import { outpaintImage } from "@/utils/outpaintPipeline";
 import { getOutpaintModel } from "@/utils/outpaintModel";
+import { mapOutpaintStage, type OutpaintProgressState } from "@/utils/outpaintProgress";
+import { OutpaintProgressIndicator } from "@/components/ui/OutpaintProgressIndicator";
 import { useProjectLibrary } from "@/hooks/useProjectLibrary";
 import { trpc } from "@/lib/trpc";
 import type { ImageLayer } from "@/types";
@@ -170,6 +172,9 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
     const [scale, setScale] = useState("");
     const [applyToSelection, setApplyToSelection] = useState(false);
     const [isGenerating, setIsGenerating] = useState(false);
+    // Outpaint pipeline progress (only set during action === "outpaint";
+    // null otherwise so the indicator collapses out of the layout).
+    const [outpaintProgress, setOutpaintProgress] = useState<OutpaintProgressState | null>(null);
     const [referenceImages, setReferenceImages] = useState<string[]>([]);
     const [imageStyleId, setImageStyleId] = useState("none");
     const [textStyleId, setTextStyleId] = useState<string | undefined>(undefined);
@@ -340,6 +345,10 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
             // and the studio stay byte-compatible with each other ──
             if (action === "outpaint") {
                 const currentExpandPadding = { ...expandPadding };
+                // Reset progress state at the start of each outpaint so
+                // a previous run's "Готово" doesn't briefly flash before
+                // the first stage label lands.
+                setOutpaintProgress({ label: "Подготавливаем изображение", percent: 5 });
                 const outpaintResult = await outpaintImage({
                     imageSrc: selectedImageLayer.src,
                     canvasPadding: currentExpandPadding,
@@ -347,7 +356,14 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                     prompt: resolvedPrompt,
                     projectId,
                     model: getOutpaintModel(),
-                    onProgress: (stage, info) => console.log(`[Outpaint/${stage}]`, info ?? ""),
+                    onProgress: (stage, info) => {
+                        console.log(`[Outpaint/${stage}]`, info ?? "");
+                        // Internal/diagnostic stages return null —
+                        // keep the previous user-facing label visible
+                        // so the bar doesn't flicker.
+                        const next = mapOutpaintStage(stage);
+                        if (next) setOutpaintProgress(next);
+                    },
                 });
 
                 await applyEditedImageToLayer(outpaintResult.src, {
@@ -536,6 +552,10 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
             setEditError(parseAiError(error));
         } finally {
             setIsGenerating(false);
+            // Outpaint progress is per-action; clear it regardless of
+            // whether this run was an outpaint (cheap, prevents stale
+            // labels leaking into a subsequent edit-tab interaction).
+            setOutpaintProgress(null);
         }
     }, [selectedImageLayer, selectedModel, imageStyleId, imagePresets, referenceImages, expandPadding, projectId, applyEditedImageToLayer, onResult, resetExpandMode, saveGeneratedAssetMutation, trpcUtils, loraRequestFields]);
 
@@ -909,6 +929,19 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                                 </div>
                             </div>
                         )}
+                    </div>
+                )}
+
+                {/* ── Outpaint progress: only rendered while a flux/bria
+                    pipeline run is in flight. The indicator collapses to
+                    null when outpaintProgress === null so it doesn't
+                    take up layout space outside of expand-mode runs. */}
+                {outpaintProgress && (
+                    <div className="px-4 pb-2">
+                        <OutpaintProgressIndicator
+                            label={outpaintProgress.label}
+                            percent={outpaintProgress.percent}
+                        />
                     </div>
                 )}
 

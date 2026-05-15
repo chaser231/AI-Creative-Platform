@@ -30,6 +30,8 @@ import { getImagePresetPromptSuffix } from "@/lib/stylePresets";
 import { applyAllAutoLayouts } from "@/utils/layoutEngine";
 import { compressImageFile, uploadForAI, uploadManyForAI } from "@/utils/imageUpload";
 import { getOutpaintModel } from "@/utils/outpaintModel";
+import { mapOutpaintStage, type OutpaintProgressState } from "@/utils/outpaintProgress";
+import { OutpaintProgressIndicator } from "@/components/ui/OutpaintProgressIndicator";
 import { projectExpansionToResize, type LayerExpansionOverride } from "@/utils/wizardExpand";
 import { useThemeStore } from "@/store/themeStore";
 import type { BusinessUnit, Layer, LayerBinding, MasterComponent, TextGenPreset } from "@/types";
@@ -899,6 +901,9 @@ function WizardLayerPromptBar({
     const { imagePresets, textPresets } = useStylePresets();
     const [prompt, setPrompt] = useState("");
     const [isGenerating, setIsGenerating] = useState(false);
+    // Outpaint pipeline progress (only set during imageMode === "expand";
+    // null otherwise so the indicator collapses out of the layout).
+    const [outpaintProgress, setOutpaintProgress] = useState<OutpaintProgressState | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [selectedModel, setSelectedModel] = useState("flux-dev");
     const [textModel, setTextModel] = useState("deepseek");
@@ -995,6 +1000,11 @@ function WizardLayerPromptBar({
                 const padBottom = vPad - padTop;
 
                 const { outpaintImage } = await import("@/utils/outpaintPipeline");
+                // Seed an initial label so the user sees feedback the
+                // moment the request fires — the first event from the
+                // pipeline ("input-persisted") only lands ~200-500 ms
+                // later, which feels like a hang on slow connections.
+                setOutpaintProgress({ label: "Подготавливаем изображение", percent: 5 });
                 const expandResult = await outpaintImage({
                     imageSrc: currentImage,
                     canvasPadding: { top: padTop, right: padRight, bottom: padBottom, left: padLeft },
@@ -1002,7 +1012,14 @@ function WizardLayerPromptBar({
                     prompt: basePrompt || undefined,
                     projectId,
                     model: getOutpaintModel(),
-                    onProgress: (stage, info) => console.log(`[Wizard/Expand/${stage}]`, info ?? ""),
+                    onProgress: (stage, info) => {
+                        console.log(`[Wizard/Expand/${stage}]`, info ?? "");
+                        // Internal/diagnostic stages return null — keep
+                        // the previous label visible so the bar doesn't
+                        // flicker on noisy internal transitions.
+                        const next = mapOutpaintStage(stage);
+                        if (next) setOutpaintProgress(next);
+                    },
                 });
 
                 // outpaintImage now persists its composite output to S3
@@ -1128,6 +1145,10 @@ function WizardLayerPromptBar({
             setError(err instanceof Error ? err.message : "Не удалось выполнить генерацию");
         } finally {
             setIsGenerating(false);
+            // Outpaint progress is per-mode; clear it regardless of
+            // whether this run was an expand (cheap, prevents stale
+            // labels leaking into a subsequent generate/edit run).
+            setOutpaintProgress(null);
         }
     };
 
@@ -1181,6 +1202,18 @@ function WizardLayerPromptBar({
             {error && (
                 <div className="mx-4 mb-2 rounded-[var(--radius-md)] border border-text-error/20 bg-text-error/10 px-3 py-2">
                     <p className="text-[11px] font-medium text-text-error">{error}</p>
+                </div>
+            )}
+
+            {/* Outpaint progress: only rendered while imageMode === "expand"
+                is in flight. Collapses out of layout when null so the
+                regular generate/edit flows aren't pushed down. */}
+            {outpaintProgress && (
+                <div className="px-4 pb-2">
+                    <OutpaintProgressIndicator
+                        label={outpaintProgress.label}
+                        percent={outpaintProgress.percent}
+                    />
                 </div>
             )}
 
