@@ -29,8 +29,9 @@ import { getMaxRefs, getModelById, getAspectRatios, getResolutions, resolveRefTa
 import { getImagePresetPromptSuffix } from "@/lib/stylePresets";
 import { applyAllAutoLayouts } from "@/utils/layoutEngine";
 import { compressImageFile, persistImageToS3, uploadForAI, uploadManyForAI } from "@/utils/imageUpload";
+import { projectExpansionToResize, type LayerExpansionOverride } from "@/utils/wizardExpand";
 import { useThemeStore } from "@/store/themeStore";
-import type { BusinessUnit, Layer, MasterComponent, TextGenPreset } from "@/types";
+import type { BusinessUnit, Layer, LayerBinding, MasterComponent, TextGenPreset } from "@/types";
 import type { TemplatePackV2 } from "@/services/templateService";
 
 /** Resolves `system` the same way as ThemeProvider / editor canvas */
@@ -77,6 +78,7 @@ interface PreviewFormatSource {
     layers: Layer[];
     width: number;
     height: number;
+    layerBindings?: LayerBinding[];
 }
 
 interface AssetRow {
@@ -87,13 +89,6 @@ interface AssetRow {
     metadata?: unknown;
 }
 
-interface LayerGeometry {
-    x: number;
-    y: number;
-    width: number;
-    height: number;
-}
-
 interface WizardContentWorkspaceProps {
     selectedTemplate: TemplatePackV2;
     templateLoadError: string | null;
@@ -101,8 +96,8 @@ interface WizardContentWorkspaceProps {
     imageValues: Record<string, string>;
     setTextValues: React.Dispatch<React.SetStateAction<Record<string, string>>>;
     setImageValues: React.Dispatch<React.SetStateAction<Record<string, string>>>;
-    layerGeometryOverrides: Record<string, LayerGeometry>;
-    setLayerGeometry: (id: string, geometry: LayerGeometry) => void;
+    layerGeometryOverrides: Record<string, LayerExpansionOverride>;
+    setLayerGeometry: (id: string, override: LayerExpansionOverride) => void;
     clearLayerGeometry: (id: string) => void;
     productDescription: string;
     projectBU: BusinessUnit;
@@ -242,21 +237,55 @@ export function WizardContentWorkspace({
     );
     const projectAssets = (assetsQuery.data ?? []) as AssetRow[];
     /**
-     * Geometry overrides from the expand flow only describe the master
-     * layout, so we apply them when the active preview is master and skip
-     * them otherwise (each non-master format keeps its own layerSnapshot).
+     * Apply expand overrides to the active preview format:
+     *   - master format gets the override's `next` rect directly
+     *     (that's where the wizard measured the new geometry)
+     *   - every non-master format is projected through the studio's
+     *     master→instance cascade so the user sees exactly how the
+     *     extended image will land in this resize before clicking
+     *     "Применить".
      */
-    const draftPreviewLayers = useMemo(
-        () =>
-            buildDraftPreviewLayers(
+    const draftPreviewLayers = useMemo(() => {
+        const overridesForActive = Object.keys(layerGeometryOverrides).length === 0
+            ? undefined
+            : layerGeometryOverrides;
+
+        if (!overridesForActive) {
+            return buildDraftPreviewLayers(previewSource.layers, entries, textValues, imageValues);
+        }
+
+        if (previewSource.id === masterPreviewSource?.id) {
+            return buildDraftPreviewLayers(
                 previewSource.layers,
                 entries,
                 textValues,
                 imageValues,
-                previewSource.id === masterPreviewSource?.id ? layerGeometryOverrides : undefined,
-            ),
-        [previewSource.layers, previewSource.id, masterPreviewSource?.id, entries, textValues, imageValues, layerGeometryOverrides],
-    );
+                overridesForActive,
+            );
+        }
+
+        const projected = projectExpansionToResize({
+            resizeLayers: previewSource.layers,
+            resizeBindings: previewSource.layerBindings,
+            resizeArtboard: { width: previewSource.width, height: previewSource.height },
+            masterArtboard: masterCanvasSize,
+            overrides: overridesForActive,
+        });
+
+        return buildDraftPreviewLayers(projected, entries, textValues, imageValues);
+    }, [
+        previewSource.id,
+        previewSource.layers,
+        previewSource.layerBindings,
+        previewSource.width,
+        previewSource.height,
+        masterPreviewSource?.id,
+        masterCanvasSize,
+        entries,
+        textValues,
+        imageValues,
+        layerGeometryOverrides,
+    ]);
 
     const updateTextValue = (id: string, value: string) => {
         setTextValues((prev) => ({ ...prev, [id]: value }));
@@ -850,7 +879,7 @@ function WizardLayerPromptBar({
     masterCanvasSize: { width: number; height: number };
     onTextChange: (id: string, value: string) => void;
     onImageChange: (id: string, value: string) => void;
-    onLayerGeometryChange: (id: string, geometry: LayerGeometry) => void;
+    onLayerGeometryChange: (id: string, override: LayerExpansionOverride) => void;
     onLayerGeometryReset: (id: string) => void;
 }) {
     const promptRef = useRef<RefAutocompleteTextareaHandle>(null);
@@ -983,11 +1012,25 @@ function WizardLayerPromptBar({
                 // Grow the master layer to match the new (extended) image so
                 // it actually shows up in the preview instead of being cropped
                 // back into the original tiny rect by object-fit cover.
+                //
+                // We record both the original rect (`prev`) and the expanded
+                // rect (`next`) so non-master snapshots can replay the same
+                // geometry change via the studio's master→instance cascade
+                // (see {@link projectExpansionToResize}).
+                const masterId =
+                    typeof activeLayer.props.masterId === "string"
+                        ? (activeLayer.props.masterId as string)
+                        : activeLayer.masterComponentId;
                 onLayerGeometryChange(activeLayer.id, {
-                    x: layerX - padLeft,
-                    y: layerY - padTop,
-                    width: layerWidth + padLeft + padRight,
-                    height: layerHeight + padTop + padBottom,
+                    prev: { x: layerX, y: layerY, width: layerWidth, height: layerHeight },
+                    next: {
+                        x: layerX - padLeft,
+                        y: layerY - padTop,
+                        width: layerWidth + padLeft + padRight,
+                        height: layerHeight + padTop + padBottom,
+                    },
+                    slotId: activeLayer.slotId,
+                    masterId,
                 });
                 return;
             }
@@ -1380,6 +1423,7 @@ function resizeToPreviewSource(
         layers: resize.layerSnapshot ?? [],
         width: resize.width,
         height: resize.height,
+        layerBindings: resize.layerBindings,
     };
 }
 
@@ -1452,7 +1496,7 @@ function buildDraftPreviewLayers(
     entries: EditableLayerEntry[],
     textValues: Record<string, string>,
     imageValues: Record<string, string>,
-    layerGeometryOverrides?: Record<string, LayerGeometry>,
+    layerGeometryOverrides?: Record<string, LayerExpansionOverride>,
 ): Layer[] {
     const entryBySlot = new Map(entries.filter((entry) => entry.slotId).map((entry) => [entry.slotId, entry]));
     const nextLayers = layers.map((layer) => {
@@ -1480,10 +1524,10 @@ function buildDraftPreviewLayers(
             const next = { ...layer } as typeof layer;
             if (imageValue !== undefined) next.src = imageValue;
             if (geometryOverride) {
-                next.x = geometryOverride.x;
-                next.y = geometryOverride.y;
-                next.width = geometryOverride.width;
-                next.height = geometryOverride.height;
+                next.x = geometryOverride.next.x;
+                next.y = geometryOverride.next.y;
+                next.width = geometryOverride.next.width;
+                next.height = geometryOverride.next.height;
             }
             return next;
         }
