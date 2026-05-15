@@ -74,6 +74,23 @@ const FLUX2_FINAL_DIMENSION = 2560;
 const FLUX2_PER_SIDE_CAP = 2048;
 
 /**
+ * Total-area cap for flux-2-pro-outpaint's expanded canvas
+ * (final_w × final_h ≤ 4,194,304 = 2048²). The model rejects anything
+ * larger with HTTP 422 and a `value_error` pointing at
+ * `expanded canvas area (WxH) exceeds the maximum allowed area (4194304 pixels)`.
+ *
+ * This is the *third* and most restrictive flux constraint, separate
+ * from the 2048 per-side cap and the 2560 per-axis cap. A 2560×2305
+ * canvas passes both per-side AND per-axis but blows past the area
+ * cap (5.9 MP > 4 MP), which is exactly the failure mode reported in
+ * production logs.
+ *
+ * Practically: any rectangle inside ~2048×2048 fits, but tall-or-wide
+ * canvases (e.g. 2560×1638 or 1638×2560) are the limit.
+ */
+const FLUX2_MAX_PIXELS = 4_194_304;
+
+/**
  * Minimum acceptable downscale ratio when routing a too-big request
  * through flux-2-pro's downscale-and-upscale path. Anything below
  * means the source would be shrunk to less than this fraction of
@@ -93,6 +110,33 @@ const FLUX2_MIN_DOWNSCALE_RATIO = 0.30;
 function getFinalCap(model: string): number {
     if (model === "flux-2-pro-outpaint") return FLUX2_FINAL_DIMENSION;
     return MAX_FINAL_DIMENSION;
+}
+
+/**
+ * Compute the largest downscale ratio (≤ 1) that lets `finalW`/`finalH`
+ * fit ALL of the model's caps. For bria/topaz this is just the per-axis
+ * dimension cap. For flux-2-pro it's the min of:
+ *   - per-axis dim cap     (2560)
+ *   - total-area cap       (4 MP, sqrt(4194304 / area))
+ *
+ * Returns 1 when the request already fits — callers branch on
+ * `< 1` to decide whether downscale is needed.
+ *
+ * Math note: when only the area constraint binds, the resulting ratio
+ * is `sqrt(cap / area)` — that's the linear ratio that scales each
+ * axis isotropically so the *area* ends up at the cap.
+ */
+function computeDownscaleRatio(model: string, finalW: number, finalH: number): number {
+    const dimCap = getFinalCap(model);
+    let ratio = Math.min(dimCap / finalW, dimCap / finalH, 1);
+    if (model === "flux-2-pro-outpaint") {
+        const area = finalW * finalH;
+        if (area > FLUX2_MAX_PIXELS) {
+            const areaRatio = Math.sqrt(FLUX2_MAX_PIXELS / area);
+            ratio = Math.min(ratio, areaRatio);
+        }
+    }
+    return ratio;
 }
 /**
  * Maximum number of sequential outpaint API calls per top-level
@@ -670,18 +714,22 @@ export async function outpaintImage(params: OutpaintParams): Promise<OutpaintRes
     // The downscale block respects `getFinalCap(chosenModel)`, so it
     // automatically downscales to 2560 for flux and 4800 for bria.
     if (chosenModel === "flux-2-pro-outpaint") {
-        const wouldExceedCap = finalW > FLUX2_FINAL_DIMENSION || finalH > FLUX2_FINAL_DIMENSION;
-        if (wouldExceedCap) {
-            const projectedRatio = Math.min(
-                FLUX2_FINAL_DIMENSION / finalW,
-                FLUX2_FINAL_DIMENSION / finalH,
-            );
+        const projectedRatio = computeDownscaleRatio("flux-2-pro-outpaint", finalW, finalH);
+        if (projectedRatio < 1) {
+            // Identify which cap binds first so the log is actionable.
+            // The area cap is the most restrictive in practice
+            // (e.g. 2560×2305 passes per-axis but fails area at 5.9 MP).
+            const dimRatio = Math.min(FLUX2_FINAL_DIMENSION / finalW, FLUX2_FINAL_DIMENSION / finalH);
+            const areaRatio = Math.sqrt(FLUX2_MAX_PIXELS / (finalW * finalH));
+            const bindingCap = areaRatio < dimRatio ? "area-4MP" : "per-axis-2560";
+
             if (projectedRatio < FLUX2_MIN_DOWNSCALE_RATIO) {
                 console.warn("[outpaintPipeline] flux2-downscale-too-aggressive-fallback", {
                     finalW: Math.round(finalW),
                     finalH: Math.round(finalH),
                     projectedRatio: projectedRatio.toFixed(3),
                     threshold: FLUX2_MIN_DOWNSCALE_RATIO,
+                    bindingCap,
                 });
                 chosenModel = "bria-expand";
             } else {
@@ -689,7 +737,8 @@ export async function outpaintImage(params: OutpaintParams): Promise<OutpaintRes
                     finalW: Math.round(finalW),
                     finalH: Math.round(finalH),
                     projectedRatio: projectedRatio.toFixed(3),
-                    note: "source will be downscaled to fit 2560, then result upscaled back",
+                    bindingCap,
+                    note: "source will be downscaled to satisfy flux caps, then result upscaled back",
                 });
             }
         }
@@ -848,15 +897,13 @@ export async function outpaintImage(params: OutpaintParams): Promise<OutpaintRes
     };
     onProgress?.("preserve-pipeline-armed", { ratio: 1 });
 
-    // Downscale to fit the chosen model's final cap (4800 for bria,
-    // 2560 for flux-2-pro). Pre-flight already swapped flux→bria when
-    // possible, so for flux this branch is only reachable in degenerate
-    // cases (e.g. an unconventional model id forced by the caller); for
-    // bria it kicks in only on >4800 final canvases (4800 px banners
-    // and bigger).
-    const downscaleCap = getFinalCap(chosenModel);
-    if (finalW > downscaleCap || finalH > downscaleCap) {
-        downscaleRatio = Math.min(downscaleCap / finalW, downscaleCap / finalH);
+    // Downscale to fit ALL the chosen model's caps. For bria/topaz
+    // that's just the per-axis 4800 cap. For flux-2-pro it's the min
+    // of per-axis 2560, total-area 4 MP, and per-side 2048 (defensive).
+    // computeDownscaleRatio bakes all of these into a single ratio.
+    const projectedRatio = computeDownscaleRatio(chosenModel, finalW, finalH);
+    if (projectedRatio < 1) {
+        downscaleRatio = projectedRatio;
 
         realW = Math.round(realW * downscaleRatio);
         realH = Math.round(realH * downscaleRatio);
@@ -876,8 +923,8 @@ export async function outpaintImage(params: OutpaintParams): Promise<OutpaintRes
                 width: realW,
                 height: realH,
                 ratio: downscaleRatio,
-                cap: downscaleCap,
                 model: chosenModel,
+                postArea: realW * realH,
             });
         }
     }
