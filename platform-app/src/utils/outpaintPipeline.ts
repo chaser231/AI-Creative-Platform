@@ -25,6 +25,14 @@ import { compositeExpandResult } from "./imageComposite";
 const MAX_FINAL_DIMENSION = 3500;
 /** When downscale ratio drops below this, switch on the preserve-original pipeline. */
 const PRESERVE_THRESHOLD = 0.85;
+/**
+ * Per-side expansion cap for flux-2-pro-outpaint (hard model limit, 2026-05).
+ * When any side requests more than this we fall back to bria-expand for the
+ * call. Phase 5 will replace this with a proper multipass loop.
+ */
+const FLUX2_PER_SIDE_CAP = 2048;
+/** Default outpaint model used when callers don't override. */
+const DEFAULT_OUTPAINT_MODEL = "flux-2-pro-outpaint";
 
 export interface OutpaintCanvasPadding {
     top: number;
@@ -50,6 +58,13 @@ export interface OutpaintParams {
     projectId?: string;
     /** Optional callback for progress logging. */
     onProgress?: (stage: string, info?: Record<string, unknown>) => void;
+    /**
+     * Outpaint model id. Defaults to "flux-2-pro-outpaint" — overrides are
+     * primarily a kill-switch (e.g. NEXT_PUBLIC_OUTPAINT_MODEL=bria-expand).
+     * If the chosen model has a per-side cap the pipeline may fall back to
+     * bria-expand transparently for individual calls.
+     */
+    model?: string;
 }
 
 export interface OutpaintResult {
@@ -155,7 +170,9 @@ export async function outpaintImage(params: OutpaintParams): Promise<OutpaintRes
         prompt,
         projectId,
         onProgress,
+        model,
     } = params;
+    let chosenModel = model ?? DEFAULT_OUTPAINT_MODEL;
 
     const totalCanvasPad =
         canvasPadding.top + canvasPadding.right + canvasPadding.bottom + canvasPadding.left;
@@ -238,6 +255,26 @@ export async function outpaintImage(params: OutpaintParams): Promise<OutpaintRes
     };
     const originalSize: [number, number] = [realW, realH];
 
+    // Per-side cap check for flux-2-pro-outpaint (2048 px hard model limit).
+    // Phase 5 will replace this simple fallback with a proper multipass loop;
+    // for now, drop to bria-expand for the offending call so we don't lose
+    // the image entirely.
+    if (chosenModel === "flux-2-pro-outpaint") {
+        const maxSide = Math.max(
+            sentPadding.top,
+            sentPadding.right,
+            sentPadding.bottom,
+            sentPadding.left,
+        );
+        if (maxSide > FLUX2_PER_SIDE_CAP) {
+            console.warn("[outpaintPipeline] flux-2-over-cap-fallback", {
+                maxSide,
+                cap: FLUX2_PER_SIDE_CAP,
+            });
+            chosenModel = "bria-expand";
+        }
+    }
+
     const imageUrl = await uploadForAI(baseImageSrc, projectId ?? "ai-tmp");
 
     const response = await fetch("/api/ai/image-edit", {
@@ -247,7 +284,7 @@ export async function outpaintImage(params: OutpaintParams): Promise<OutpaintRes
             action: "outpaint",
             prompt: prompt && prompt.trim().length > 0 ? prompt : "Fill seamlessly",
             imageBase64: imageUrl,
-            model: "bria-expand",
+            model: chosenModel,
             expandPadding: sentPadding,
             originalSize,
             projectId,
@@ -342,7 +379,7 @@ export async function outpaintImage(params: OutpaintParams): Promise<OutpaintRes
 
     return {
         src: finalContent,
-        model: (data.model as string) ?? "bria-expand",
+        model: (data.model as string) ?? chosenModel,
         pixelPadding: sentPadding,
         expanded: true,
     };
