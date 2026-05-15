@@ -28,7 +28,7 @@ import { useStylePresets } from "@/hooks/useStylePresets";
 import { getMaxRefs, getModelById, getAspectRatios, getResolutions, resolveRefTags } from "@/lib/ai-models";
 import { getImagePresetPromptSuffix } from "@/lib/stylePresets";
 import { applyAllAutoLayouts } from "@/utils/layoutEngine";
-import { compressImageFile, persistImageToS3, uploadForAI, uploadManyForAI } from "@/utils/imageUpload";
+import { compressImageFile, uploadForAI, uploadManyForAI } from "@/utils/imageUpload";
 import { getOutpaintModel } from "@/utils/outpaintModel";
 import { projectExpansionToResize, type LayerExpansionOverride } from "@/utils/wizardExpand";
 import { useThemeStore } from "@/store/themeStore";
@@ -1005,25 +1005,20 @@ function WizardLayerPromptBar({
                     onProgress: (stage, info) => console.log(`[Wizard/Expand/${stage}]`, info ?? ""),
                 });
 
-                // The result may be a data URI (preserve-original pipeline
-                // composites client-side via canvas.toDataURL → 10MB+ JPEG).
-                // Push it through S3 first so we never store a raw data URI
-                // in layer.src — auto-save in the studio chokes on huge JSON
-                // payloads (Unterminated string at position ~10MB).
-                let persistedSrc = expandResult.src;
-                try {
-                    persistedSrc = await persistImageToS3(expandResult.src, projectId ?? "ai-tmp");
-                } catch (persistErr) {
-                    console.warn("[Wizard/Expand] persistImageToS3 failed, falling back to expand result:", persistErr);
-                }
+                // outpaintImage now persists its composite output to S3
+                // before returning, so expandResult.src is always a URL
+                // (never a data URI). This eliminates the
+                // `Unterminated string at position ~10MB` tRPC failure
+                // that fired when ai.addMessage tried to serialize a
+                // multi-megabyte data URI from the layer state.
                 const registered = projectId
                     ? await registerUrl({
                         projectId,
-                        url: persistedSrc,
+                        url: expandResult.src,
                         source: "wizard-edit-expand",
                     })
                     : null;
-                onImageChange(activeLayer.id, registered ?? persistedSrc);
+                onImageChange(activeLayer.id, registered ?? expandResult.src);
                 // Grow the master layer to match the new (extended) image so
                 // it actually shows up in the preview instead of being cropped
                 // back into the original tiny rect by object-fit cover.
