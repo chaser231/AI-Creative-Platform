@@ -40,6 +40,14 @@ const eslintConfig = defineConfig([
     },
   },
 
+  // Dev-time scripts (scripts/**): console output is the user-facing surface
+  {
+    files: ["scripts/**/*.ts"],
+    rules: {
+      "no-console": "off",
+    },
+  },
+
   // Override default ignores of eslint-config-next.
   globalIgnores([
     ".next/**",
