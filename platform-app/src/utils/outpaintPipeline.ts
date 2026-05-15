@@ -992,6 +992,12 @@ export async function outpaintImage(params: OutpaintParams): Promise<OutpaintRes
 
     const imageUrl = await uploadForAI(baseImageSrc, projectId ?? "ai-tmp");
 
+    // outpaint-api-start: emitted just before the actual model call so
+    // UI consumers can swap to the "AI is generating" message — this is
+    // the longest stage in the pipeline (~25-40s on flux-2-pro), so the
+    // sooner we surface it the less the user perceives the dead time.
+    onProgress?.("outpaint-api-start", { model: chosenModel, finalW: originalSize[0], finalH: originalSize[1] });
+
     const response = await fetch("/api/ai/image-edit", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1005,6 +1011,7 @@ export async function outpaintImage(params: OutpaintParams): Promise<OutpaintRes
             projectId,
         }),
     });
+    onProgress?.("outpaint-api-done", { model: chosenModel });
     const data = await response.json();
     if (data.error) {
         throw new Error(data.requestId ? `${data.error} [request: ${data.requestId}]` : data.error);

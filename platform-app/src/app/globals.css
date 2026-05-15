@@ -447,3 +447,21 @@ h3 {
 .animate-slide-up {
   animation: slideUp 250ms ease-out;
 }
+
+/* Outpaint progress shimmer — used by OutpaintProgressIndicator while
+   the long flux/bria call holds the bar at 30% for ~25-40s. The
+   shimmer stripe is 33% wide and sweeps from -33% to 100% across the
+   bar, making the static fill feel "alive". Duration is short enough
+   to feel responsive but slow enough not to be distracting. */
+@keyframes outpaintProgressShimmer {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(400%);
+  }
+}
+
+.animate-outpaint-progress-shimmer {
+  animation: outpaintProgressShimmer 1.6s ease-in-out infinite;
+}
