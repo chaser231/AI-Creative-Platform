@@ -91,6 +91,22 @@ const FLUX2_PER_SIDE_CAP = 2048;
 const FLUX2_MAX_PIXELS = 4_194_304;
 
 /**
+ * Safety margin applied to flux-2-pro's caps when computing the
+ * downscale ratio. Without it, a request that's mathematically *just*
+ * under the cap can still trip a 422: `sentPadding` rounds each side
+ * with Math.round, which can drift up to ~0.5 px per side. On a
+ * 2048-px axis that compounds to ~1.5 px of unaccounted growth =
+ * ~3000 extra pixels of area = enough to push 4,194,304 → 4,194,937
+ * (the actual production failure with 2159×1943).
+ *
+ * 0.97 = 3% slack on both dim and area caps. On a 2048-px axis this
+ * is ~62 px of headroom, far above the worst-case rounding drift.
+ * Quality cost is negligible (the source downscales by an extra 1.5%
+ * which is invisible after Topaz upscale + composite).
+ */
+const FLUX2_SAFETY_MARGIN = 0.97;
+
+/**
  * Minimum acceptable downscale ratio when routing a too-big request
  * through flux-2-pro's downscale-and-upscale path. Anything below
  * means the source would be shrunk to less than this fraction of
@@ -114,29 +130,37 @@ function getFinalCap(model: string): number {
 
 /**
  * Compute the largest downscale ratio (≤ 1) that lets `finalW`/`finalH`
- * fit ALL of the model's caps. For bria/topaz this is just the per-axis
- * dimension cap. For flux-2-pro it's the min of:
- *   - per-axis dim cap     (2560)
- *   - total-area cap       (4 MP, sqrt(4194304 / area))
+ * fit ALL of the model's caps with enough headroom that post-rounding
+ * `sentPadding` can't trip them. For bria/topaz this is just the
+ * per-axis dimension cap (no safety margin — bria is lenient about a
+ * few pixels of overshoot). For flux-2-pro it's the min of:
+ *   - per-axis dim cap × FLUX2_SAFETY_MARGIN  (≈ 2483)
+ *   - total-area cap   × FLUX2_SAFETY_MARGIN  (≈ 4.07 MP)
  *
  * Returns 1 when the request already fits — callers branch on
  * `< 1` to decide whether downscale is needed.
  *
- * Math note: when only the area constraint binds, the resulting ratio
- * is `sqrt(cap / area)` — that's the linear ratio that scales each
- * axis isotropically so the *area* ends up at the cap.
+ * Math note: when the area constraint binds, the resulting ratio is
+ * `sqrt(safeAreaCap / area)` — that's the linear ratio that scales
+ * each axis isotropically so the *area* lands at the cap.
+ *
+ * Why the safety margin lives here (not in sentPadding rounding):
+ * applying `Math.floor` to sentPadding would force EVERY request
+ * (including bria) to be 1-2 px short of what the user asked for.
+ * The downscale-time margin only kicks in for flux when a cap binds,
+ * and even then only takes 1.5% off the linear ratio.
  */
 function computeDownscaleRatio(model: string, finalW: number, finalH: number): number {
     const dimCap = getFinalCap(model);
-    let ratio = Math.min(dimCap / finalW, dimCap / finalH, 1);
     if (model === "flux-2-pro-outpaint") {
+        const safeDim = dimCap * FLUX2_SAFETY_MARGIN;
+        const safeArea = FLUX2_MAX_PIXELS * FLUX2_SAFETY_MARGIN;
+        const dimRatio = Math.min(safeDim / finalW, safeDim / finalH, 1);
         const area = finalW * finalH;
-        if (area > FLUX2_MAX_PIXELS) {
-            const areaRatio = Math.sqrt(FLUX2_MAX_PIXELS / area);
-            ratio = Math.min(ratio, areaRatio);
-        }
+        const areaRatio = area > safeArea ? Math.sqrt(safeArea / area) : 1;
+        return Math.min(dimRatio, areaRatio);
     }
-    return ratio;
+    return Math.min(dimCap / finalW, dimCap / finalH, 1);
 }
 /**
  * Maximum number of sequential outpaint API calls per top-level
@@ -717,11 +741,13 @@ export async function outpaintImage(params: OutpaintParams): Promise<OutpaintRes
         const projectedRatio = computeDownscaleRatio("flux-2-pro-outpaint", finalW, finalH);
         if (projectedRatio < 1) {
             // Identify which cap binds first so the log is actionable.
-            // The area cap is the most restrictive in practice
-            // (e.g. 2560×2305 passes per-axis but fails area at 5.9 MP).
-            const dimRatio = Math.min(FLUX2_FINAL_DIMENSION / finalW, FLUX2_FINAL_DIMENSION / finalH);
-            const areaRatio = Math.sqrt(FLUX2_MAX_PIXELS / (finalW * finalH));
-            const bindingCap = areaRatio < dimRatio ? "area-4MP" : "per-axis-2560";
+            // Both ratios use the same SAFETY_MARGIN as the helper so
+            // the binding-cap label matches the helper's actual choice.
+            const safeDim = FLUX2_FINAL_DIMENSION * FLUX2_SAFETY_MARGIN;
+            const safeArea = FLUX2_MAX_PIXELS * FLUX2_SAFETY_MARGIN;
+            const rawDimRatio = Math.min(safeDim / finalW, safeDim / finalH);
+            const rawAreaRatio = Math.sqrt(safeArea / (finalW * finalH));
+            const bindingCap = rawAreaRatio < rawDimRatio ? "area-4MP" : "per-axis-2560";
 
             if (projectedRatio < FLUX2_MIN_DOWNSCALE_RATIO) {
                 console.warn("[outpaintPipeline] flux2-downscale-too-aggressive-fallback", {
