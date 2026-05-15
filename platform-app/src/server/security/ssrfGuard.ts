@@ -768,6 +768,24 @@ export async function safeFetch(
     };
 
     return new Promise<Response>((resolve, reject) => {
+        // Single-shot settle guard. Without this, a late `error` event
+        // emitted after the response has already resolved (e.g. socket
+        // close after stream end) could double-call reject(), which
+        // Node surfaces as an `unhandledRejection`.
+        let settled = false;
+        const safeResolve = (r: Response) => {
+            if (settled) return;
+            settled = true;
+            signal.removeEventListener("abort", onAbort);
+            resolve(r);
+        };
+        const safeReject = (err: Error) => {
+            if (settled) return;
+            settled = true;
+            signal.removeEventListener("abort", onAbort);
+            reject(err);
+        };
+
         const req = (secure ? https : http).request(reqOpts, (res) => {
             const status = res.statusCode ?? 0;
             const headers = new Headers();
@@ -791,22 +809,38 @@ export async function safeFetch(
                     res.destroy();
                 },
             });
-            resolve(new Response(stream, { status, headers }));
+            safeResolve(new Response(stream, { status, headers }));
         });
 
-        const onAbort = () => req.destroy(new Error("aborted"));
+        // Abort handler: destroy the request *without* an Error argument.
+        //
+        // Previously we did `req.destroy(new Error("aborted"))` so the
+        // `error` event would fire and trigger our reject path, but the
+        // synchronous Error construction at this site shows up in
+        // Next.js dev as `uncaughtException: Error: aborted` because
+        // Node emits the destroy-Error to multiple sinks (req, socket,
+        // agent) and the dev overlay can latch onto a sink without an
+        // error listener. By destroying with no argument and rejecting
+        // explicitly we guarantee a single, attributable rejection
+        // path with no spurious uncaughtException noise.
+        const onAbort = () => {
+            req.destroy();
+            safeReject(
+                new SsrfBlockedError(
+                    "UPSTREAM_ERROR",
+                    `request aborted (timeout or upstream cancellation)`,
+                    rawUrl,
+                ),
+            );
+        };
         if (signal.aborted) {
             onAbort();
-            reject(
-                new SsrfBlockedError("UPSTREAM_ERROR", "request aborted", rawUrl),
-            );
             return;
         }
         signal.addEventListener("abort", onAbort, { once: true });
 
         req.on("error", (err) => {
-            signal.removeEventListener("abort", onAbort);
-            reject(
+            safeReject(
                 new SsrfBlockedError(
                     "UPSTREAM_ERROR",
                     `safeFetch failed: ${err instanceof Error ? err.message : String(err)}`,
