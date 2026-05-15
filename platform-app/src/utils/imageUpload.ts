@@ -338,9 +338,20 @@ export const migrateBase64ToS3Map = migrateImagesToS3Map;
 
 /**
  * Validates and compresses an image file before uploading/storing it in the state.
- * Returns a significantly smaller WebP/JPEG data URL for canvas rendering, preventing 10MB JSON payloads.
+ * Returns a WebP data URL for canvas rendering, preventing 10MB JSON payloads
+ * while preserving enough detail for downstream outpaint/upscale pipelines.
+ *
+ * Defaults (raised from 2000 / 0.82 in 2026-05 for outpaint preservation):
+ *   - maxDim = 4000  — keeps native detail for typical 4K-class assets so the
+ *                      preserve-original pipeline has something worth
+ *                      compositing back in.
+ *   - quality = 0.95 — near-lossless WebP; the extra bytes are worth it when
+ *                      this image becomes the source for AI editing/upscale.
+ *
+ * Callers that need smaller artifacts (avatars, lora thumbnails, etc.) should
+ * pass an explicit `maxDim` override.
  */
-export async function compressImageFile(file: File, maxDim: number = 2000): Promise<string> {
+export async function compressImageFile(file: File, maxDim: number = 4000): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => {
@@ -367,10 +378,11 @@ export async function compressImageFile(file: File, maxDim: number = 2000): Prom
 
         ctx.clearRect(0, 0, width, height);
         ctx.drawImage(img, 0, 0, width, height);
-        
-        // Use webp with 0.82 quality to radically reduce file size for fast JSON saves
-        // while preserving alpha channel for PNG uploads.
-        resolve(canvas.toDataURL("image/webp", 0.82));
+
+        // WebP @ 0.95 is near-lossless yet still ~4× smaller than PNG for
+        // photographic content; the original 0.82 was destroying high-freq
+        // detail that the outpaint preserve pipeline relies on.
+        resolve(canvas.toDataURL("image/webp", 0.95));
       };
       
       // If image loading fails, output original base64
