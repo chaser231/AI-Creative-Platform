@@ -16,6 +16,7 @@ import { getImagePresetPromptSuffix, getTextPresetInstruction } from "@/lib/styl
 import { useStylePresets } from "@/hooks/useStylePresets";
 import { persistImageToS3, uploadForAI, uploadManyForAI } from "@/utils/imageUpload";
 import { outpaintImage } from "@/utils/outpaintPipeline";
+import { getOutpaintModel } from "@/utils/outpaintModel";
 import { useProjectLibrary } from "@/hooks/useProjectLibrary";
 import { trpc } from "@/lib/trpc";
 import type { ImageLayer } from "@/types";
@@ -345,6 +346,7 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                     layerSize: { width: selectedImageLayer.width, height: selectedImageLayer.height },
                     prompt: resolvedPrompt,
                     projectId,
+                    model: getOutpaintModel(),
                     onProgress: (stage, info) => console.log(`[Outpaint/${stage}]`, info ?? ""),
                 });
 

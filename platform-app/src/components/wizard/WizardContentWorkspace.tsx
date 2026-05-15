@@ -29,6 +29,7 @@ import { getMaxRefs, getModelById, getAspectRatios, getResolutions, resolveRefTa
 import { getImagePresetPromptSuffix } from "@/lib/stylePresets";
 import { applyAllAutoLayouts } from "@/utils/layoutEngine";
 import { compressImageFile, persistImageToS3, uploadForAI, uploadManyForAI } from "@/utils/imageUpload";
+import { getOutpaintModel } from "@/utils/outpaintModel";
 import { projectExpansionToResize, type LayerExpansionOverride } from "@/utils/wizardExpand";
 import { useThemeStore } from "@/store/themeStore";
 import type { BusinessUnit, Layer, LayerBinding, MasterComponent, TextGenPreset } from "@/types";
@@ -987,6 +988,7 @@ function WizardLayerPromptBar({
                     layerSize: { width: layerWidth, height: layerHeight },
                     prompt: basePrompt || undefined,
                     projectId,
+                    model: getOutpaintModel(),
                     onProgress: (stage, info) => console.log(`[Wizard/Expand/${stage}]`, info ?? ""),
                 });
 
