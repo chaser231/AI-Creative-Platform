@@ -77,6 +77,35 @@ function loadImage(src: string): Promise<HTMLImageElement> {
     });
 }
 
+/**
+ * Classify a preserve-pipeline failure for structured telemetry. Distinguishes
+ * the failure modes we have actually seen in production so deploys with new
+ * symptoms surface a recognisable `reason` tag immediately.
+ */
+function classifyPreserveErr(e: unknown): string {
+    if (e instanceof DOMException && e.name === "SecurityError") return "tainted-canvas";
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg.includes("timed out")) return "image-load-timeout";
+    if (msg.includes("Failed to load image")) return "image-load-error";
+    if (msg.includes("2d context")) return "context-null";
+    if (msg.includes("toDataURL")) return "todataurl-memory";
+    return "unknown";
+}
+
+/**
+ * Extract the host of a src for telemetry without ever throwing.
+ * Data URIs are bucketed under "data-uri" since they have no host.
+ */
+function safeHost(src: string | null | undefined): string {
+    if (!src) return "none";
+    if (src.startsWith("data:")) return "data-uri";
+    try {
+        return new URL(src).host;
+    } catch {
+        return "invalid-url";
+    }
+}
+
 export async function outpaintImage(params: OutpaintParams): Promise<OutpaintResult> {
     const {
         imageSrc,
@@ -194,6 +223,8 @@ export async function outpaintImage(params: OutpaintParams): Promise<OutpaintRes
     let finalContent: string = data.content;
 
     if (preserveOriginalSrc && preserveOriginalPixelPadding) {
+        // Hoisted so the outer catch can include it in structured telemetry.
+        let expandedSrcForComposite: string | null = null;
         try {
             onProgress?.("preserve-upscale-start");
             const upscaleScale = Math.min(Math.ceil(1 / downscaleRatio), 4);
@@ -212,17 +243,17 @@ export async function outpaintImage(params: OutpaintParams): Promise<OutpaintRes
             const upscaleData = await upscaleRes.json();
 
             if (upscaleData.content && !upscaleData.error) {
-                let expandedSrcForComposite = upscaleData.content as string;
+                expandedSrcForComposite = upscaleData.content as string;
                 try {
                     expandedSrcForComposite = await persistImageToS3(
                         upscaleData.content as string,
                         projectId ?? "ai-tmp",
                     );
                 } catch (persistErr) {
-                    console.warn(
-                        "[outpaintPipeline] Could not rehost upscale result, falling back to source URL:",
-                        persistErr,
-                    );
+                    console.error("[outpaintPipeline] persist-failed-expanded", {
+                        message: persistErr instanceof Error ? persistErr.message : String(persistErr),
+                        originalHost: safeHost(preserveOriginalSrc),
+                    });
                 }
 
                 finalContent = await compositeExpandResult({
@@ -232,16 +263,36 @@ export async function outpaintImage(params: OutpaintParams): Promise<OutpaintRes
                 });
                 onProgress?.("preserve-composite-done");
             } else {
-                console.warn(
-                    "[outpaintPipeline] Upscale failed, using raw expand result:",
-                    upscaleData.error,
-                );
+                console.error("[outpaintPipeline] upscale-failed", {
+                    error: upscaleData.error,
+                    requestId: upscaleData.requestId,
+                    originalHost: safeHost(preserveOriginalSrc),
+                    downscaleRatio,
+                });
             }
         } catch (preserveErr) {
-            console.warn(
-                "[outpaintPipeline] Preserve pipeline failed, falling back to raw expand result:",
-                preserveErr,
-            );
+            const reason = classifyPreserveErr(preserveErr);
+            const message = preserveErr instanceof Error ? preserveErr.message : String(preserveErr);
+            // Estimate canvas dims: realW/H here are post-downscale, so divide
+            // by downscaleRatio to recover the original-resolution canvas size
+            // that compositeExpandResult would have used.
+            const origEstW = downscaleRatio > 0 ? realW / downscaleRatio : realW;
+            const origEstH = downscaleRatio > 0 ? realH / downscaleRatio : realH;
+            const canvasW = preserveOriginalPixelPadding
+                ? Math.round(origEstW + preserveOriginalPixelPadding.left + preserveOriginalPixelPadding.right)
+                : 0;
+            const canvasH = preserveOriginalPixelPadding
+                ? Math.round(origEstH + preserveOriginalPixelPadding.top + preserveOriginalPixelPadding.bottom)
+                : 0;
+            console.error("[outpaintPipeline] preserve-fallback", {
+                reason,
+                message,
+                expandedHost: safeHost(expandedSrcForComposite),
+                originalHost: safeHost(preserveOriginalSrc),
+                canvasW,
+                canvasH,
+                downscaleRatio,
+            });
         }
     }
 
