@@ -1,0 +1,50 @@
+[
+  {
+    "id": "kettle-wood",
+    "url": "https://example.com/kettle.jpg",
+    "pad": { "top": 200, "right": 800, "bottom": 200, "left": 0 },
+    "note": "Kitchen scene with detailed wood + glass — bad case from screenshots"
+  },
+  {
+    "id": "bottles",
+    "url": "https://example.com/bottles.jpg",
+    "pad": { "top": 200, "right": 200, "bottom": 200, "left": 200 },
+    "note": "Glass + greenery — bad case from screenshots"
+  },
+  {
+    "id": "ecom-mug",
+    "url": "https://example.com/mug.jpg",
+    "pad": { "top": 100, "right": 400, "bottom": 100, "left": 400 },
+    "note": "Typical ecom 1:1 → wide banner"
+  },
+  {
+    "id": "ecom-shoe",
+    "url": "https://example.com/shoe.jpg",
+    "pad": { "top": 50, "right": 50, "bottom": 50, "left": 50 },
+    "note": "Symmetric small expand"
+  },
+  {
+    "id": "package",
+    "url": "https://example.com/package.jpg",
+    "pad": { "top": 0, "right": 600, "bottom": 0, "left": 0 },
+    "note": "Single-side large expand"
+  },
+  {
+    "id": "text-on-bg",
+    "url": "https://example.com/text.jpg",
+    "pad": { "top": 200, "right": 200, "bottom": 200, "left": 200 },
+    "note": "Image with text — JPEG artefacts on edges"
+  },
+  {
+    "id": "model-portrait",
+    "url": "https://example.com/portrait.jpg",
+    "pad": { "top": 0, "right": 800, "bottom": 0, "left": 800 },
+    "note": "Person portrait → wide banner"
+  },
+  {
+    "id": "fabric-texture",
+    "url": "https://example.com/fabric.jpg",
+    "pad": { "top": 100, "right": 100, "bottom": 100, "left": 100 },
+    "note": "Repeating texture — seams very visible"
+  }
+]

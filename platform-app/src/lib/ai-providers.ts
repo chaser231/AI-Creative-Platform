@@ -684,12 +684,14 @@ const FAL_MODEL_MAP: Record<string, string> = {
     "seedream-5":      "fal-ai/bytedance/seedream/v5/lite/text-to-image",
     "gpt-image-2":     "openai/gpt-image-2",
     "bria-expand":     "fal-ai/bria/expand",
+    "flux-2-pro-outpaint": "fal-ai/flux-2-pro/outpaint",
     "bria-rmbg":       "fal-ai/bria/background/remove",
     "bria-product-shot": "fal-ai/bria/product-shot",
     "fal-birefnet":    "fal-ai/birefnet/v2",
     "flux-kontext-pro": "fal-ai/flux-pro/kontext",
     "esrgan":          "fal-ai/esrgan",
     "seedvr":          "fal-ai/seedvr/upscale/image",
+    "topaz-hf-v2":     "fal-ai/topaz/upscale/image",
     "sima-upscaler":   "simalabs/sima-upscaler",
     // ── LoRA endpoints ──
     "flux-lora":              "fal-ai/flux-lora",
@@ -824,30 +826,45 @@ class FalProvider implements AIProviderImplementation {
             return { content: imageUrl, format: "url", model: modelId, provider: "fal.ai" };
         }
 
-        // ── Outpainting (bria-expand on fal.ai) ────────────────────
+        // ── Outpainting (bria-expand / flux-2-pro-outpaint on fal.ai) ───
         if (params.type === "outpainting") {
             const falEndpoint = FAL_MODEL_MAP[modelId];
             if (!falEndpoint) throw new Error(`Model ${modelId} is not available on fal.ai for outpainting`);
-            
+
             const outpaintInput: Record<string, unknown> = {
                 image_url: params.imageBase64, // fal.ai accepts base64 data URIs
             };
-            if (params.prompt) outpaintInput.prompt = params.prompt;
-            
-            // Convert expandPadding to canvas_size + original_image_location
-            // NOTE: fal.ai bria/expand requires all pixel values to be integers
-            if (params.expandPadding && params.originalSize) {
-                const [origW, origH] = params.originalSize;
-                const pad = params.expandPadding;
-                outpaintInput.canvas_size = [Math.round(origW + pad.left + pad.right), Math.round(origH + pad.top + pad.bottom)];
-                outpaintInput.original_image_location = [Math.round(pad.left), Math.round(pad.top)];
-                outpaintInput.original_image_size = [Math.round(origW), Math.round(origH)];
-            } else if (params.canvasSize) {
-                outpaintInput.canvas_size = (params.canvasSize as number[]).map(Math.round);
-                if (params.originalSize) outpaintInput.original_image_size = (params.originalSize as number[]).map(Math.round);
-                if (params.originalLocation) outpaintInput.original_image_location = (params.originalLocation as number[]).map(Math.round);
-            } else if (params.aspectRatio) {
-                outpaintInput.aspect_ratio = params.aspectRatio;
+
+            if (modelId === "flux-2-pro-outpaint") {
+                // Flux 2 Pro Outpaint takes per-side expansion in pixels directly
+                // and produces a coherent extension without prompt or canvas_size.
+                // Per-side cap is 2048; callers (outpaintPipeline) are expected
+                // to enforce that before reaching this branch.
+                const pad = params.expandPadding ?? { top: 0, right: 0, bottom: 0, left: 0 };
+                outpaintInput.expand_top = Math.round(pad.top);
+                outpaintInput.expand_bottom = Math.round(pad.bottom);
+                outpaintInput.expand_left = Math.round(pad.left);
+                outpaintInput.expand_right = Math.round(pad.right);
+                outpaintInput.output_format = "png";
+                outpaintInput.auto_crop = false;
+            } else {
+                if (params.prompt) outpaintInput.prompt = params.prompt;
+
+                // Convert expandPadding to canvas_size + original_image_location
+                // NOTE: fal.ai bria/expand requires all pixel values to be integers
+                if (params.expandPadding && params.originalSize) {
+                    const [origW, origH] = params.originalSize;
+                    const pad = params.expandPadding;
+                    outpaintInput.canvas_size = [Math.round(origW + pad.left + pad.right), Math.round(origH + pad.top + pad.bottom)];
+                    outpaintInput.original_image_location = [Math.round(pad.left), Math.round(pad.top)];
+                    outpaintInput.original_image_size = [Math.round(origW), Math.round(origH)];
+                } else if (params.canvasSize) {
+                    outpaintInput.canvas_size = (params.canvasSize as number[]).map(Math.round);
+                    if (params.originalSize) outpaintInput.original_image_size = (params.originalSize as number[]).map(Math.round);
+                    if (params.originalLocation) outpaintInput.original_image_location = (params.originalLocation as number[]).map(Math.round);
+                } else if (params.aspectRatio) {
+                    outpaintInput.aspect_ratio = params.aspectRatio;
+                }
             }
 
             console.log(`[fal.ai] Outpainting via ${falEndpoint}, padding=${JSON.stringify(params.expandPadding)}`);
@@ -870,9 +887,11 @@ class FalProvider implements AIProviderImplementation {
             const requestId = submitData.request_id;
 
             if (!requestId) {
-                // Synchronous result — no polling needed
+                // Synchronous result — no polling needed.
+                // Response shape varies by model: bria-expand → { image: { url } },
+                // flux-2-pro-outpaint → { images: [{ url }] }.
                 console.log(`[fal.ai] Outpaint returned synchronously`);
-                const imageUrl = submitData.image?.url;
+                const imageUrl = submitData.images?.[0]?.url ?? submitData.image?.url;
                 if (!imageUrl) throw new Error("fal.ai outpaint returned no image (sync)");
                 return { content: imageUrl, format: "url" as const, model: modelId, provider: "fal.ai" };
             }
@@ -917,11 +936,30 @@ class FalProvider implements AIProviderImplementation {
             const resultRes = await fetch(responseUrl, {
                 headers: { "Authorization": `Key ${apiKey}` },
             });
-            if (!resultRes.ok) throw new Error(`fal.ai outpaint result failed (${resultRes.status})`);
+            if (!resultRes.ok) {
+                // Capture the body so 422/400/etc. surface the actual fal.ai
+                // validation message instead of a bare status code. fal.ai
+                // returns JSON with `detail` (often an array of validation
+                // errors) for 422; we truncate to keep logs readable.
+                let errBody = "";
+                try {
+                    errBody = (await resultRes.text()).slice(0, 600);
+                } catch {
+                    // ignore body-read errors
+                }
+                console.error(
+                    `[fal.ai] Outpaint result HTTP ${resultRes.status} from ${responseUrl}: ${errBody}`,
+                );
+                throw new Error(
+                    `fal.ai outpaint result failed (${resultRes.status})${errBody ? `: ${errBody}` : ""}`,
+                );
+            }
             const result = await resultRes.json();
             console.log(`[fal.ai] Outpaint response keys: ${Object.keys(result).join(", ")}`);
-            
-            const imageUrl = result.image?.url;
+
+            // Response shape varies by model: bria-expand → { image: { url } },
+            // flux-2-pro-outpaint → { images: [{ url }] }.
+            const imageUrl = result.images?.[0]?.url ?? result.image?.url;
             if (!imageUrl) throw new Error(`fal.ai outpaint returned no image. Response: ${JSON.stringify(result).slice(0, 300)}`);
             
             return {
@@ -954,6 +992,25 @@ class FalProvider implements AIProviderImplementation {
                 // avoid JPEG re-encoding that would soften the seam.
                 upscaleInput.output_format = "png";
                 // Default noise_scale (0.1) is generally good, leave at provider default.
+            } else if (modelId === "topaz-hf-v2") {
+                // Topaz HF v2 on fal.ai (`fal-ai/topaz/upscale/image`).
+                //   - `model` selects the upscaler variant; we always pin to
+                //     "High Fidelity V2" because that's the structure-preserving
+                //     option and the whole point of routing through Topaz.
+                //   - `upscale_factor` is a float in [1..4]. fal.ai default is 2.
+                //   - `face_enhancement` defaults to TRUE — we force it OFF
+                //     because we're upscaling outpaint border strips (mostly
+                //     sky/grass/background); enabling face touch-up could
+                //     hallucinate artifacts in the seam region. The original
+                //     image (with any actual faces) is composited back on top.
+                //   - `output_format=png` for a lossless seam (same reason as
+                //     seedvr above).
+                upscaleInput.model = "High Fidelity V2";
+                if (params.upscaleScale) {
+                    upscaleInput.upscale_factor = Math.min(Math.max(params.upscaleScale, 1), 4);
+                }
+                upscaleInput.face_enhancement = false;
+                upscaleInput.output_format = "png";
             } else if (modelId === "sima-upscaler") {
                 // Sima: scale is integer, supports only 2 or 4
                 const raw = params.upscaleScale ?? 2;
@@ -1393,10 +1450,31 @@ const FAL_PRIMARY_MODELS = new Set([
     "seedream-5",
     "gpt-image-2",
     "bria-expand",
+    "flux-2-pro-outpaint",
     "bria-rmbg",
     "esrgan",
     "seedvr",
+    "topaz-hf-v2",
     "sima-upscaler",
+]);
+
+/**
+ * Models that exist ONLY on fal.ai — they have no Replicate equivalent.
+ * generateWithFallback uses this to skip the Replicate hop entirely so we
+ * don't waste 5–10s and a couple of failed retries on a guaranteed 404
+ * before falling through to a sibling model.
+ *
+ * The slug we register in `ai-models.ts` for these models is the fal.ai
+ * endpoint (e.g. `fal-ai/flux-2-pro/outpaint`), so naively passing them
+ * through Replicate's prediction API returns 404 with that slug.
+ *
+ * Note: bria-expand / seedvr / topaz-hf-v2 are *also* fal-only by API
+ * surface, but their slugs happen to overlap with valid Replicate
+ * models (e.g. `bria/expand-image`), so we leave them out of this set
+ * and let Replicate try as a real fallback.
+ */
+const FAL_ONLY_MODELS = new Set([
+    "flux-2-pro-outpaint",
     // LoRA endpoints — fal-only, no Replicate equivalent.
     "flux-lora",
     "flux-2-lora",
@@ -1418,11 +1496,18 @@ const MODEL_FALLBACK_CHAIN: Record<string, string[]> = {
     "seedream":        ["seedream-5"],
     "gpt-image-2":     ["gpt-image"],
     "gpt-image":       ["gpt-image-2"],
-    "bria-expand":     ["outpainter"],
+    "flux-2-pro-outpaint": ["bria-expand", "outpainter"],
+    "bria-expand":     ["flux-2-pro-outpaint", "outpainter"],
     "outpainter":      ["bria-expand"],
     "bria-rmbg":       ["rembg"],
     "rembg":           ["bria-rmbg"],
-    "seedvr":          ["esrgan", "sima-upscaler"],
+    // Topaz HF v2 is the primary outpaint upscaler (structure-preserving).
+    // SeedVR is the closest sibling on the upscale fan; esrgan is a hard
+    // fallback. We deliberately put topaz at the top of seedvr's chain so
+    // an outpaint job that explicitly requests seedvr (legacy callers) still
+    // benefits from the structure-preserving option when seedvr is down.
+    "topaz-hf-v2":     ["seedvr", "esrgan"],
+    "seedvr":          ["topaz-hf-v2", "esrgan", "sima-upscaler"],
     "sima-upscaler":   ["seedvr", "esrgan"],
     "esrgan":          ["seedvr"],
     // LoRA fallback — when the LoRA endpoint goes down or the supplied LoRA
@@ -1497,21 +1582,28 @@ export async function generateWithFallback(params: AIRequestParams): Promise<AIR
     const modelId = params.model || "nano-banana-2";
     const errors: string[] = [];
 
-    // Determine provider order
+    // Determine provider order. Fal-only models (those with no Replicate
+    // slug equivalent) skip the Replicate hop entirely — running them
+    // through Replicate just burns ~10s on guaranteed 404 retries before
+    // we get to the real sibling fallback (e.g. bria-expand for
+    // flux-2-pro-outpaint).
     const useFalPrimary = FAL_PRIMARY_MODELS.has(modelId) && hasFalSupport(modelId);
-    const providers: { impl: AIProviderImplementation; label: string }[] = useFalPrimary
-        ? [
-            { impl: falProvider, label: "fal.ai" },
-            { impl: replicate, label: "Replicate" },
-          ]
-        : hasFalSupport(modelId)
+    const isFalOnly = FAL_ONLY_MODELS.has(modelId);
+    const providers: { impl: AIProviderImplementation; label: string }[] = isFalOnly
+        ? [{ impl: falProvider, label: "fal.ai" }]
+        : useFalPrimary
             ? [
-                { impl: replicate, label: "Replicate" },
                 { impl: falProvider, label: "fal.ai" },
+                { impl: replicate, label: "Replicate" },
               ]
-            : [
-                { impl: getProvider(modelId), label: "Replicate" },
-              ];
+            : hasFalSupport(modelId)
+                ? [
+                    { impl: replicate, label: "Replicate" },
+                    { impl: falProvider, label: "fal.ai" },
+                  ]
+                : [
+                    { impl: getProvider(modelId), label: "Replicate" },
+                  ];
 
     // ── Step 1: Try each provider with retries for the original model ──
     for (const { impl, label } of providers) {
@@ -1530,11 +1622,15 @@ export async function generateWithFallback(params: AIRequestParams): Promise<AIR
             console.log(`[Provider] Trying sibling model ${siblingId} instead of ${modelId}...`);
             const siblingParams = { ...params, model: siblingId };
 
-            // Determine providers for sibling
+            // Determine providers for sibling — apply the same fal-only
+            // shortcut so a fal-only sibling doesn't drag us through a 404 detour.
             const sibFalPrimary = FAL_PRIMARY_MODELS.has(siblingId) && hasFalSupport(siblingId);
-            const sibProviders = sibFalPrimary
-                ? [{ impl: falProvider, label: "fal.ai" }, { impl: replicate, label: "Replicate" }]
-                : [{ impl: replicate, label: "Replicate" }, ...(hasFalSupport(siblingId) ? [{ impl: falProvider, label: "fal.ai" }] : [])];
+            const sibFalOnly = FAL_ONLY_MODELS.has(siblingId);
+            const sibProviders = sibFalOnly
+                ? [{ impl: falProvider, label: "fal.ai" }]
+                : sibFalPrimary
+                    ? [{ impl: falProvider, label: "fal.ai" }, { impl: replicate, label: "Replicate" }]
+                    : [{ impl: replicate, label: "Replicate" }, ...(hasFalSupport(siblingId) ? [{ impl: falProvider, label: "fal.ai" }] : [])];
 
             for (const { impl, label } of sibProviders) {
                 try {

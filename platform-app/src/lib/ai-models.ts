@@ -409,6 +409,14 @@ export const MODEL_REGISTRY: ModelEntry[] = [
         costPerRun: 0.04,
     },
     {
+        id: "flux-2-pro-outpaint",
+        label: "Flux 2 Pro Outpaint",
+        slug: "fal-ai/flux-2-pro/outpaint",
+        provider: "replicate",
+        caps: ["outpaint"],
+        costPerRun: 0.075,
+    },
+    {
         id: "outpainter",
         label: "Outpainter",
         slug: "zsxkib/outpainter",
@@ -435,6 +443,24 @@ export const MODEL_REGISTRY: ModelEntry[] = [
     },
 
     // ── Upscale / Super-Resolution ──────────────────────────────────────
+    {
+        // Topaz Gigapixel "High Fidelity V2" via fal.ai. Structure-preserving
+        // (no hallucinated detail) — the right default for the outpaint
+        // border-strip pipeline where the original image is composited back
+        // over the upscaled result. Fallback chain drops to seedvr/esrgan
+        // if Topaz is unavailable.
+        // Endpoint: https://fal.run/fal-ai/topaz/upscale/image
+        // Pricing: $0.08 (≤24MP), $0.16 (≤48MP), $0.32 (≤96MP), $1.36 (≤512MP)
+        // 2026-05 — verified via fal.ai docs. The `model` param toggles
+        // between "Standard V2" (default), "High Fidelity V2", "Recovery V2",
+        // "Redefine", etc; we pin it to "High Fidelity V2" in FalProvider.
+        id: "topaz-hf-v2",
+        label: "Topaz High Fidelity v2",
+        slug: "fal-ai/topaz/upscale/image",
+        provider: "replicate",
+        caps: ["upscale"],
+        costPerRun: 0.08,
+    },
     {
         id: "seedvr",
         label: "SeedVR2 Upscaler",
