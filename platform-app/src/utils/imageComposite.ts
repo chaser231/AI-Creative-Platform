@@ -88,6 +88,12 @@ export async function compositeExpandResult(
     const ctx = canvas.getContext("2d");
     if (!ctx) throw new Error("Failed to create 2d context for compositing");
 
+    // The expanded result frequently arrives at a slightly different
+    // resolution than the final canvas (ESRGAN ceil-rounding etc.), so the
+    // first drawImage scales it. Default smoothing produces noticeable
+    // bilinear softness — high-quality smoothing keeps edges crisp.
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
     ctx.drawImage(expandedImg, 0, 0, canvasW, canvasH);
 
     const destX = Math.round(pad.left);
