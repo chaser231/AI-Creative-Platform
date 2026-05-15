@@ -936,7 +936,24 @@ class FalProvider implements AIProviderImplementation {
             const resultRes = await fetch(responseUrl, {
                 headers: { "Authorization": `Key ${apiKey}` },
             });
-            if (!resultRes.ok) throw new Error(`fal.ai outpaint result failed (${resultRes.status})`);
+            if (!resultRes.ok) {
+                // Capture the body so 422/400/etc. surface the actual fal.ai
+                // validation message instead of a bare status code. fal.ai
+                // returns JSON with `detail` (often an array of validation
+                // errors) for 422; we truncate to keep logs readable.
+                let errBody = "";
+                try {
+                    errBody = (await resultRes.text()).slice(0, 600);
+                } catch {
+                    // ignore body-read errors
+                }
+                console.error(
+                    `[fal.ai] Outpaint result HTTP ${resultRes.status} from ${responseUrl}: ${errBody}`,
+                );
+                throw new Error(
+                    `fal.ai outpaint result failed (${resultRes.status})${errBody ? `: ${errBody}` : ""}`,
+                );
+            }
             const result = await resultRes.json();
             console.log(`[fal.ai] Outpaint response keys: ${Object.keys(result).join(", ")}`);
 
@@ -1439,6 +1456,25 @@ const FAL_PRIMARY_MODELS = new Set([
     "seedvr",
     "topaz-hf-v2",
     "sima-upscaler",
+]);
+
+/**
+ * Models that exist ONLY on fal.ai — they have no Replicate equivalent.
+ * generateWithFallback uses this to skip the Replicate hop entirely so we
+ * don't waste 5–10s and a couple of failed retries on a guaranteed 404
+ * before falling through to a sibling model.
+ *
+ * The slug we register in `ai-models.ts` for these models is the fal.ai
+ * endpoint (e.g. `fal-ai/flux-2-pro/outpaint`), so naively passing them
+ * through Replicate's prediction API returns 404 with that slug.
+ *
+ * Note: bria-expand / seedvr / topaz-hf-v2 are *also* fal-only by API
+ * surface, but their slugs happen to overlap with valid Replicate
+ * models (e.g. `bria/expand-image`), so we leave them out of this set
+ * and let Replicate try as a real fallback.
+ */
+const FAL_ONLY_MODELS = new Set([
+    "flux-2-pro-outpaint",
     // LoRA endpoints — fal-only, no Replicate equivalent.
     "flux-lora",
     "flux-2-lora",
@@ -1546,21 +1582,28 @@ export async function generateWithFallback(params: AIRequestParams): Promise<AIR
     const modelId = params.model || "nano-banana-2";
     const errors: string[] = [];
 
-    // Determine provider order
+    // Determine provider order. Fal-only models (those with no Replicate
+    // slug equivalent) skip the Replicate hop entirely — running them
+    // through Replicate just burns ~10s on guaranteed 404 retries before
+    // we get to the real sibling fallback (e.g. bria-expand for
+    // flux-2-pro-outpaint).
     const useFalPrimary = FAL_PRIMARY_MODELS.has(modelId) && hasFalSupport(modelId);
-    const providers: { impl: AIProviderImplementation; label: string }[] = useFalPrimary
-        ? [
-            { impl: falProvider, label: "fal.ai" },
-            { impl: replicate, label: "Replicate" },
-          ]
-        : hasFalSupport(modelId)
+    const isFalOnly = FAL_ONLY_MODELS.has(modelId);
+    const providers: { impl: AIProviderImplementation; label: string }[] = isFalOnly
+        ? [{ impl: falProvider, label: "fal.ai" }]
+        : useFalPrimary
             ? [
-                { impl: replicate, label: "Replicate" },
                 { impl: falProvider, label: "fal.ai" },
+                { impl: replicate, label: "Replicate" },
               ]
-            : [
-                { impl: getProvider(modelId), label: "Replicate" },
-              ];
+            : hasFalSupport(modelId)
+                ? [
+                    { impl: replicate, label: "Replicate" },
+                    { impl: falProvider, label: "fal.ai" },
+                  ]
+                : [
+                    { impl: getProvider(modelId), label: "Replicate" },
+                  ];
 
     // ── Step 1: Try each provider with retries for the original model ──
     for (const { impl, label } of providers) {
@@ -1579,11 +1622,15 @@ export async function generateWithFallback(params: AIRequestParams): Promise<AIR
             console.log(`[Provider] Trying sibling model ${siblingId} instead of ${modelId}...`);
             const siblingParams = { ...params, model: siblingId };
 
-            // Determine providers for sibling
+            // Determine providers for sibling — apply the same fal-only
+            // shortcut so a fal-only sibling doesn't drag us through a 404 detour.
             const sibFalPrimary = FAL_PRIMARY_MODELS.has(siblingId) && hasFalSupport(siblingId);
-            const sibProviders = sibFalPrimary
-                ? [{ impl: falProvider, label: "fal.ai" }, { impl: replicate, label: "Replicate" }]
-                : [{ impl: replicate, label: "Replicate" }, ...(hasFalSupport(siblingId) ? [{ impl: falProvider, label: "fal.ai" }] : [])];
+            const sibFalOnly = FAL_ONLY_MODELS.has(siblingId);
+            const sibProviders = sibFalOnly
+                ? [{ impl: falProvider, label: "fal.ai" }]
+                : sibFalPrimary
+                    ? [{ impl: falProvider, label: "fal.ai" }, { impl: replicate, label: "Replicate" }]
+                    : [{ impl: replicate, label: "Replicate" }, ...(hasFalSupport(siblingId) ? [{ impl: falProvider, label: "fal.ai" }] : [])];
 
             for (const { impl, label } of sibProviders) {
                 try {
