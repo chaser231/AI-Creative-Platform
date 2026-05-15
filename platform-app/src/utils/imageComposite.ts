@@ -218,15 +218,120 @@ function computeFeatherPx(origW: number, origH: number): number {
 }
 
 /**
+ * Sample mean RGB across `ringWidth`-pixel-wide strips along each padded side
+ * of `rect`. With `side="outside"` we sample just outside the rect (the bria
+ * border side); with `side="inside"` we sample just inside the rect (the
+ * original-image side). Used to characterise the colour step at the seam
+ * for the colour-match nudge in `compositeExpandResult`.
+ *
+ * Returns `null` if no padded side yields any sampled pixels.
+ */
+function sampleEdgeRingMean(
+    data: Uint8ClampedArray,
+    dataWidth: number,
+    dataHeight: number,
+    rect: { x: number; y: number; w: number; h: number },
+    pad: PadSides,
+    ringWidth: number,
+    side: "inside" | "outside",
+): { r: number; g: number; b: number } | null {
+    const strips: { x: number; y: number; w: number; h: number }[] = [];
+
+    if (pad.top > 0) {
+        strips.push(side === "outside"
+            ? { x: rect.x, y: rect.y - ringWidth, w: rect.w, h: ringWidth }
+            : { x: rect.x, y: rect.y, w: rect.w, h: ringWidth });
+    }
+    if (pad.bottom > 0) {
+        strips.push(side === "outside"
+            ? { x: rect.x, y: rect.y + rect.h, w: rect.w, h: ringWidth }
+            : { x: rect.x, y: rect.y + rect.h - ringWidth, w: rect.w, h: ringWidth });
+    }
+    if (pad.left > 0) {
+        strips.push(side === "outside"
+            ? { x: rect.x - ringWidth, y: rect.y, w: ringWidth, h: rect.h }
+            : { x: rect.x, y: rect.y, w: ringWidth, h: rect.h });
+    }
+    if (pad.right > 0) {
+        strips.push(side === "outside"
+            ? { x: rect.x + rect.w, y: rect.y, w: ringWidth, h: rect.h }
+            : { x: rect.x + rect.w - ringWidth, y: rect.y, w: ringWidth, h: rect.h });
+    }
+
+    let r = 0;
+    let g = 0;
+    let b = 0;
+    let count = 0;
+    for (const strip of strips) {
+        const x0 = Math.max(0, strip.x);
+        const y0 = Math.max(0, strip.y);
+        const x1 = Math.min(dataWidth, strip.x + strip.w);
+        const y1 = Math.min(dataHeight, strip.y + strip.h);
+        for (let y = y0; y < y1; y++) {
+            for (let x = x0; x < x1; x++) {
+                const i = (y * dataWidth + x) * 4;
+                r += data[i];
+                g += data[i + 1];
+                b += data[i + 2];
+                count++;
+            }
+        }
+    }
+    if (count === 0) return null;
+    return { r: r / count, g: g / count, b: b / count };
+}
+
+/**
+ * Shift every pixel of `ctx` by `delta` (clamped to [0, 255]). Used to nudge
+ * the bria-generated border toward the original's colour balance at the seam,
+ * eliminating the visible colour-temperature step bria sometimes produces
+ * (especially on sky / skin / monochrome backgrounds).
+ *
+ * We shift the full canvas rather than masking around the original rect:
+ * pixels inside the rect get overdrawn by the feathered original anyway,
+ * and the feather edge (where alpha < 1) needs the shifted bria as the
+ * under-pixel so the blend is colour-continuous.
+ */
+function shiftCanvasRgb(
+    ctx: CanvasRenderingContext2D,
+    width: number,
+    height: number,
+    delta: { r: number; g: number; b: number },
+): void {
+    const imgData = ctx.getImageData(0, 0, width, height);
+    const data = imgData.data;
+    const dr = delta.r;
+    const dg = delta.g;
+    const db = delta.b;
+    for (let i = 0; i < data.length; i += 4) {
+        const r = data[i] + dr;
+        const g = data[i + 1] + dg;
+        const b = data[i + 2] + db;
+        data[i] = r < 0 ? 0 : r > 255 ? 255 : r;
+        data[i + 1] = g < 0 ? 0 : g > 255 ? 255 : g;
+        data[i + 2] = b < 0 ? 0 : b > 255 ? 255 : b;
+    }
+    ctx.putImageData(imgData, 0, 0);
+}
+
+/** Max channel delta (out of 255) below which the colour shift is a no-op. */
+const COLOUR_SHIFT_THRESHOLD = 5;
+const COLOUR_SHIFT_RING_PX = 2;
+
+/**
  * Composite the original image over the upscaled expand result with a
- * feathered overlay.
+ * feathered overlay (and a light colour-match step on the bria border).
  *
  * Strategy:
  * 1. Create canvas at the target final size (original + padding in original pixel space)
  * 2. Draw the upscaled expanded image stretched to fill the final canvas
  *    (it has the right proportions, just potentially a slightly different absolute size
  *    due to ESRGAN ceil-rounding)
- * 3. Build a feather mask the size of the original, apply it to a copy of the original
+ * 3. Sample a 2-px ring at the boundary on both bria (outside the original rect)
+ *    and the original (inside its native bounds). If the mean RGB delta exceeds
+ *    `COLOUR_SHIFT_THRESHOLD` on any channel, apply that shift to the whole canvas
+ *    so the bria border colour-matches the original at the seam.
+ * 4. Build a feather mask the size of the original, apply it to a copy of the original
  *    via `destination-in`, and draw the resulting feathered overlay at (destX, destY).
  *    The feather lives on the INSIDE of the original — its outer edge fades to fully
  *    transparent so bria shows through, while the centre stays pixel-perfect.
@@ -283,6 +388,56 @@ export async function compositeExpandResult(
         // there is no bria border, so a hard paste is exactly right.
         ctx.drawImage(originalImg, destX, destY, origW, origH);
     } else {
+        // Step 3: colour-shift bria to match the original at the boundary ring.
+        // Cheap and only fires when the delta is visible to the eye (>5/255).
+        try {
+            const briaImageData = ctx.getImageData(0, 0, canvasW, canvasH);
+            const briaMean = sampleEdgeRingMean(
+                briaImageData.data,
+                canvasW,
+                canvasH,
+                { x: destX, y: destY, w: origW, h: origH },
+                pad,
+                COLOUR_SHIFT_RING_PX,
+                "outside",
+            );
+
+            const originalCanvas = document.createElement("canvas");
+            originalCanvas.width = origW;
+            originalCanvas.height = origH;
+            const octx = originalCanvas.getContext("2d");
+            if (!octx) throw new Error("Failed to create original sampling context");
+            octx.drawImage(originalImg, 0, 0);
+            const origImageData = octx.getImageData(0, 0, origW, origH);
+            const origMean = sampleEdgeRingMean(
+                origImageData.data,
+                origW,
+                origH,
+                { x: 0, y: 0, w: origW, h: origH },
+                pad,
+                COLOUR_SHIFT_RING_PX,
+                "inside",
+            );
+
+            if (briaMean && origMean) {
+                const delta = {
+                    r: origMean.r - briaMean.r,
+                    g: origMean.g - briaMean.g,
+                    b: origMean.b - briaMean.b,
+                };
+                const maxDelta = Math.max(Math.abs(delta.r), Math.abs(delta.g), Math.abs(delta.b));
+                if (maxDelta > COLOUR_SHIFT_THRESHOLD) {
+                    shiftCanvasRgb(ctx, canvasW, canvasH, delta);
+                }
+            }
+        } catch (err) {
+            // Colour-match is a polish step. If it fails (e.g. CORS-tainted canvas
+            // somehow slipped through, despite loadImageWithRetry setting
+            // crossOrigin), fall back to the un-shifted composite — the feather
+            // alone covers ~90% of the visual gain anyway.
+            console.error("[compositeExpandResult] colour-match step failed:", err);
+        }
+
         const featherPx = computeFeatherPx(origW, origH);
         const mask = buildFeatherMask(origW, origH, pad, featherPx);
 
