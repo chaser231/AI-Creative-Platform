@@ -37,25 +37,47 @@ import { uploadForAI, persistImageToS3 } from "./imageUpload";
 import { compositeExpandResult, computeFeatherPx } from "./imageComposite";
 
 /**
- * Upper bound for any side of the final outpaint canvas before we downscale
- * the base image. flux-2-pro-outpaint has no fixed output ceiling (only the
- * per-side 2048 cap below); bria-expand officially handles 5000×5000. We keep
- * 200 px headroom under bria's limit so a flux→bria fallback still fits, and
- * pick 4800 to drastically cut how often the downscale-and-upscale path runs
- * (vs the old 3500 ceiling which kicked in for almost every banner-sized job).
+ * Upper bound for any side of the final outpaint canvas (image_w + pad_l +
+ * pad_r ≤ MAX_FINAL_DIMENSION, same on the height axis). bria-expand
+ * officially handles 5000×5000 — we leave 200 px of headroom and pick 4800
+ * to drastically cut how often the downscale-and-upscale path runs vs the
+ * old 3500 ceiling.
+ *
+ * flux-2-pro-outpaint has a separate, much stricter ceiling — see
+ * FLUX2_FINAL_DIMENSION below. The actual cap used in the pipeline is
+ * whichever of these two applies to the chosen model (see `getFinalCap`).
  */
 const MAX_FINAL_DIMENSION = 4800;
+
 /**
- * Per-side expansion cap for flux-2-pro-outpaint (hard model limit, 2026-05).
- * When any side requests more than this in a single call, multipass
- * orchestration (Phase 5) splits the request across two sequential calls so
- * we keep flux-quality output instead of falling back to bria-expand. The
- * Phase 3 single-call bria fallback below is retained as a deep safety net
- * for the rare case where even a sub-pass still exceeds the cap (only
- * possible when the original is itself huge enough that a downscale forces
- * pad rescaling above the cap).
+ * Hard per-axis cap for flux-2-pro-outpaint's final canvas
+ * (image_w + pad_l + pad_r ≤ 2560 AND image_h + pad_t + pad_b ≤ 2560).
+ * The model rejects anything larger with HTTP 422 and a `value_error`
+ * pointing at `expanded canvas dimensions ... exceed the maximum allowed
+ * dimension (2560)`. Documented at
+ * https://fal.ai/models/fal-ai/flux-2-pro/outpaint and confirmed in
+ * production logs.
+ *
+ * NOTE: this is the *total canvas* cap, not a per-side one. The per-side
+ * `expand_top/...` parameters each accept up to 2048, but the final
+ * canvas constraint is what fires in practice.
+ */
+const FLUX2_FINAL_DIMENSION = 2560;
+
+/**
+ * Per-side expansion cap for flux-2-pro-outpaint (each `expand_*`
+ * parameter is bounded to 0..2048 by the API schema). In practice the
+ * total-canvas cap above (FLUX2_FINAL_DIMENSION = 2560) fires before
+ * this one for any non-tiny base image, but we keep the constant so
+ * multipass / fallback logic can guard against pathological cases.
  */
 const FLUX2_PER_SIDE_CAP = 2048;
+
+/** Returns the final-canvas dimension cap for the given model id. */
+function getFinalCap(model: string): number {
+    if (model === "flux-2-pro-outpaint") return FLUX2_FINAL_DIMENSION;
+    return MAX_FINAL_DIMENSION;
+}
 /**
  * Maximum number of sequential outpaint API calls per top-level
  * `outpaintImage` invocation. The orchestrator (depth 0) splits a too-big
@@ -601,23 +623,54 @@ export async function outpaintImage(params: OutpaintParams): Promise<OutpaintRes
     const finalW = realW + targetPadLeft + targetPadRight;
     const finalH = realH + targetPadTop + targetPadBottom;
 
+    // ============== PRE-FLIGHT MODEL SELECTION ==============
+    // flux-2-pro-outpaint hard-rejects any final canvas > 2560 px with
+    // HTTP 422. Multipass orchestration can't escape that ceiling
+    // either — pass 2's input is pass 1's full-size output, so pass 2's
+    // dim = 2560 + extra > 2560. The right call when the request would
+    // exceed the cap is to fall back to bria-expand (which handles up to
+    // ~5000) at *native resolution* — the composite step covers the
+    // centre with original pixels anyway, and the AI border quality is
+    // better at native res than after a downscale → upscale round-trip.
+    //
+    // We do this BEFORE the multipass predicate so we don't waste
+    // sub-pass calls trying to fit flux into a request that physically
+    // can't fit. The downscale block further down still handles the
+    // residual case where bria-expand itself would exceed
+    // MAX_FINAL_DIMENSION (e.g. a 5500 px source).
+    if (chosenModel === "flux-2-pro-outpaint") {
+        const flux2Cap = FLUX2_FINAL_DIMENSION;
+        if (finalW > flux2Cap || finalH > flux2Cap) {
+            console.warn("[outpaintPipeline] flux2-final-cap-fallback", {
+                finalW: Math.round(finalW),
+                finalH: Math.round(finalH),
+                cap: flux2Cap,
+                reason: "would-exceed-2560",
+            });
+            chosenModel = "bria-expand";
+        }
+    }
+    // ============== END PRE-FLIGHT ==============
+
     // ============== MULTIPASS ORCHESTRATION (Phase 5) ==============
-    // The predicate uses image-pixel pads (FLUX2_PER_SIDE_CAP is image-pixel)
-    // and image-pixel finalW/H (MAX_FINAL_DIMENSION is image-pixel). Only the
-    // top-level call (passDepth === 0) ever orchestrates multipass; sub-passes
-    // fall through to the single-pass body whose existing downscale + bria
-    // fallback handle any residual cap violation (only reachable when the
-    // original is itself > MAX_FINAL_DIMENSION, forcing pad rescaling above
-    // the cap during pass 1's own downscale step).
+    // After pre-flight: chosenModel may be flux-2-pro (small expand) or
+    // bria-expand (anything else). Multipass only triggers when the
+    // request still exceeds the chosen model's final cap — for flux that
+    // can no longer happen (pre-flight already swapped to bria), so the
+    // FLUX2_PER_SIDE_CAP branch is effectively defunct here. We keep
+    // the cap-split policy in splitPadForPass1 as a defensive last
+    // resort for the edge case where someone calls outpaintImage with
+    // an unconventional model that still needs the per-side guard.
     const maxImagePixelPad = Math.max(
         targetPadTop,
         targetPadRight,
         targetPadBottom,
         targetPadLeft,
     );
+    const finalCap = getFinalCap(chosenModel);
     const needsMultipass =
-        finalW > MAX_FINAL_DIMENSION ||
-        finalH > MAX_FINAL_DIMENSION ||
+        finalW > finalCap ||
+        finalH > finalCap ||
         (chosenModel === "flux-2-pro-outpaint" && maxImagePixelPad > FLUX2_PER_SIDE_CAP);
 
     if (needsMultipass && passDepth === 0) {
@@ -754,8 +807,15 @@ export async function outpaintImage(params: OutpaintParams): Promise<OutpaintRes
     };
     onProgress?.("preserve-pipeline-armed", { ratio: 1 });
 
-    if (finalW > MAX_FINAL_DIMENSION || finalH > MAX_FINAL_DIMENSION) {
-        downscaleRatio = Math.min(MAX_FINAL_DIMENSION / finalW, MAX_FINAL_DIMENSION / finalH);
+    // Downscale to fit the chosen model's final cap (4800 for bria,
+    // 2560 for flux-2-pro). Pre-flight already swapped flux→bria when
+    // possible, so for flux this branch is only reachable in degenerate
+    // cases (e.g. an unconventional model id forced by the caller); for
+    // bria it kicks in only on >4800 final canvases (4800 px banners
+    // and bigger).
+    const downscaleCap = getFinalCap(chosenModel);
+    if (finalW > downscaleCap || finalH > downscaleCap) {
+        downscaleRatio = Math.min(downscaleCap / finalW, downscaleCap / finalH);
 
         realW = Math.round(realW * downscaleRatio);
         realH = Math.round(realH * downscaleRatio);
@@ -771,7 +831,13 @@ export async function outpaintImage(params: OutpaintParams): Promise<OutpaintRes
         if (ctx) {
             ctx.drawImage(img, 0, 0, realW, realH);
             baseImageSrc = canvas.toDataURL("image/png");
-            onProgress?.("downscaled", { width: realW, height: realH, ratio: downscaleRatio });
+            onProgress?.("downscaled", {
+                width: realW,
+                height: realH,
+                ratio: downscaleRatio,
+                cap: downscaleCap,
+                model: chosenModel,
+            });
         }
     }
 
@@ -975,26 +1041,58 @@ export async function outpaintImage(params: OutpaintParams): Promise<OutpaintRes
             // that compositeExpandResult would have used.
             const origEstW = downscaleRatio > 0 ? realW / downscaleRatio : realW;
             const origEstH = downscaleRatio > 0 ? realH / downscaleRatio : realH;
-            const canvasW = preserveOriginalPixelPadding
-                ? Math.round(origEstW + preserveOriginalPixelPadding.left + preserveOriginalPixelPadding.right)
-                : 0;
-            const canvasH = preserveOriginalPixelPadding
-                ? Math.round(origEstH + preserveOriginalPixelPadding.top + preserveOriginalPixelPadding.bottom)
-                : 0;
-            console.error("[outpaintPipeline] preserve-fallback", {
-                reason,
-                message,
-                expandedHost: safeHost(expandedSrcForComposite),
-                originalHost: safeHost(preserveOriginalSrc),
-                canvasW,
-                canvasH,
-                downscaleRatio,
-            });
+            const canvasW = Math.round(origEstW + preserveOriginalPixelPadding.left + preserveOriginalPixelPadding.right);
+            const canvasH = Math.round(origEstH + preserveOriginalPixelPadding.top + preserveOriginalPixelPadding.bottom);
+            // Inline the structured fields into the message string so
+            // the Next.js dev-overlay (which sometimes drops the second
+            // console arg) doesn't render this as `preserve-fallback {}`.
+            // Demoted from console.error → console.warn because a failed
+            // composite is a degraded state, not a blocking error — we
+            // still return the raw bria/flux result on `finalContent`,
+            // and the user-visible image is still functional.
+            console.warn(
+                `[outpaintPipeline] preserve-fallback reason=${reason} ` +
+                `expandedHost=${safeHost(expandedSrcForComposite)} ` +
+                `originalHost=${safeHost(preserveOriginalSrc)} ` +
+                `canvas=${canvasW}x${canvasH} downscaleRatio=${downscaleRatio.toFixed(3)} ` +
+                `message=${message.slice(0, 200)}`,
+            );
+        }
+    }
+
+    // ============== ALWAYS-RETURN-A-URL ==============
+    // Composite returns a 10MB+ PNG data URI; downstream callers (wizard
+    // /studio) used to wrap us in their own persistImageToS3 with a
+    // permissive fallback to the data URI. That fallback fed straight
+    // into ai.addMessage tRPC payloads, which choke at ~10MB JSON with
+    // `Unterminated string at position 10452920`. We persist here so
+    // the return contract is "always a URL" — callers can store the
+    // src directly, no extra persist call, no risk of leaking a data
+    // URI into JSON-bound state.
+    //
+    // Persist failure is non-fatal: we fall back to the raw content
+    // (URL or data URI) and log a structured warning. This keeps the
+    // image visible to the user even when S3 / proxy is degraded.
+    let returnSrc = finalContent;
+    if (finalContent.startsWith("data:")) {
+        try {
+            returnSrc = await persistOrThrow(
+                finalContent,
+                projectId ?? "ai-tmp",
+                "outpaint-output",
+            );
+            onProgress?.("output-persisted", { toHost: safeHost(returnSrc) });
+        } catch (e) {
+            const reason = e instanceof Error ? e.message : String(e);
+            console.warn(
+                `[outpaintPipeline] output-persist-failed reason=${reason} ` +
+                `falling back to data URI (caller may hit 10MB tRPC limits)`,
+            );
         }
     }
 
     return {
-        src: finalContent,
+        src: returnSrc,
         model: (data.model as string) ?? chosenModel,
         pixelPadding: sentPadding,
         expanded: true,
