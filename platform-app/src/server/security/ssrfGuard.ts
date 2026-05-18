@@ -869,8 +869,23 @@ export function uploadImagePolicy(): SsrfPolicyOptions {
         allowedSchemes: ["https:"],
         allowedPorts: [443],
         allowedMimePrefixes: ["image/", "video/"],
-        maxContentLength: 25 * 1024 * 1024,
-        headTimeoutMs: 15_000,
+        // 256 MB. The previous 25 MB ceiling was sized for avatars and
+        // small reference images, but the outpaint pipeline routinely
+        // re-uploads post-Topaz HF v2 upscale strips that come back as
+        // 30–200 MB PNGs (4K+ border slices). Anything under the cap
+        // gets rejected with HTTP 400, which cascades into
+        // `border-only-upscale-fallback` and ultimately
+        // `preserve-fallback`, leaving the canvas with raw bria pixels
+        // and no original composite — the "muddy outpaint" symptom.
+        // 256 MB is generous enough for whole-image upscales of large
+        // banners (10000×9000 PNG ≈ 150-300 MB) while still bounding
+        // memory use per request.
+        maxContentLength: 256 * 1024 * 1024,
+        // fal.media occasionally takes 15-25s to respond to HEAD under
+        // heavy load (especially right after a Topaz upscale finishes).
+        // Bumping to 30s keeps us comfortably inside the body fetch
+        // timeout below (60s) without disabling the guard outright.
+        headTimeoutMs: 30_000,
     };
 }
 

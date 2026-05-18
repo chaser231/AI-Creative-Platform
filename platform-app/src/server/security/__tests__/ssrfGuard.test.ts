@@ -286,12 +286,16 @@ describe("parseHostAllowlistEnv", () => {
 });
 
 describe("presets", () => {
-  it("uploadImagePolicy: https only, image/video MIME, 25MB cap", () => {
+  it("uploadImagePolicy: https only, image/video MIME, 256MB cap", () => {
     const p = uploadImagePolicy();
     expect(p.allowedSchemes).toEqual(["https:"]);
     expect(p.allowedPorts).toEqual([443]);
     expect(p.allowedMimePrefixes).toEqual(["image/", "video/"]);
-    expect(p.maxContentLength).toBe(25 * 1024 * 1024);
+    // 256 MB — sized for the outpaint pipeline's post-upscale strip
+    // re-uploads (Topaz HF v2 routinely returns 30-200 MB PNGs for
+    // 4K+ slices). See the policy preset for the rationale.
+    expect(p.maxContentLength).toBe(256 * 1024 * 1024);
+    expect(p.headTimeoutMs).toBe(30_000);
   });
 
   it("agentAddImagePolicy: images only, allowlist from ENV", () => {

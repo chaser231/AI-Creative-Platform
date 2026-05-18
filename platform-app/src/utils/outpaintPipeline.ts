@@ -737,7 +737,18 @@ export async function outpaintImage(params: OutpaintParams): Promise<OutpaintRes
     //
     // The downscale block respects `getFinalCap(chosenModel)`, so it
     // automatically downscales to 2560 for flux and 4800 for bria.
-    if (chosenModel === "flux-2-pro-outpaint") {
+    //
+    // Pre-flight is ONLY evaluated at the top level (`passDepth === 0`).
+    // For sub-passes the orchestrator above already decided which
+    // model to use across the whole multipass run and propagated it
+    // explicitly via `params.model` — re-running the switch inside a
+    // sub-pass would let pass-2 silently fall back to bria-expand on
+    // top of a successful flux pass-1, which is exactly the
+    // "пайплайн начался заново через bria и получился размытый"
+    // regression we are fixing. Sub-passes that genuinely can't fit
+    // their own caps still hit the downscale + per-side fallback
+    // logic further down, which is safe model-wise.
+    if (chosenModel === "flux-2-pro-outpaint" && passDepth === 0) {
         const projectedRatio = computeDownscaleRatio("flux-2-pro-outpaint", finalW, finalH);
         if (projectedRatio < 1) {
             // Identify which cap binds first so the log is actionable.
@@ -811,6 +822,10 @@ export async function outpaintImage(params: OutpaintParams): Promise<OutpaintRes
                         ? "flux2-per-side-cap"
                         : "max-final-dimension",
                 chosenModel,
+                // `requestedModel` lets us see at a glance whether
+                // pre-flight swapped flux→bria for the whole run.
+                // After fix-F1 both sub-passes will run on `chosenModel`.
+                requestedModel: model ?? DEFAULT_OUTPAINT_MODEL,
                 finalW: Math.round(finalW),
                 finalH: Math.round(finalH),
                 maxImagePixelPad: Math.round(maxImagePixelPad),
@@ -824,6 +839,11 @@ export async function outpaintImage(params: OutpaintParams): Promise<OutpaintRes
                 ...params,
                 canvasPadding: pass1Pad,
                 _passDepth: 1,
+                // Propagate the top-level model decision (incl. any flux→bria
+                // pre-flight swap) so sub-passes don't make their own,
+                // potentially conflicting, model choice. See the
+                // pre-flight comment above for the regression this prevents.
+                model: chosenModel,
             });
             onProgress?.("pass-1-done", {
                 model: pass1Result.model,
@@ -842,6 +862,10 @@ export async function outpaintImage(params: OutpaintParams): Promise<OutpaintRes
                 canvasPadding: pass2Pad,
                 layerSize: intermediateLayerSize,
                 _passDepth: 2,
+                // See pass 1 above — keep the model decision consistent
+                // across the whole multipass run, not just within a single
+                // sub-pass.
+                model: chosenModel,
             });
             onProgress?.("pass-2-done", {
                 model: pass2Result.model,

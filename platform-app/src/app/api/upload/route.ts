@@ -90,9 +90,16 @@ export async function POST(req: Request) {
       // size via HEAD. Never pass a raw user-supplied URL to `fetch`.
       let response: Response;
       try {
+        // 60s body-fetch timeout. The previous 30s wasn't enough for
+        // outpaint pipeline strip uploads (30-150 MB PNGs from
+        // fal.media), which is one of the two failure modes that
+        // produced the `request aborted (timeout or upstream
+        // cancellation)` errors and the muddy outpaint result.
+        // See uploadImagePolicy() in ssrfGuard.ts for the matching
+        // maxContentLength/headTimeoutMs bump.
         response = await safeFetch(
           url,
-          { signal: AbortSignal.timeout(30_000) },
+          { signal: AbortSignal.timeout(60_000) },
           uploadImagePolicy(),
         );
       } catch (e) {
