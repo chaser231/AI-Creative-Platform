@@ -10,8 +10,7 @@ import { useCanvasStore } from "@/store/canvasStore";
 import { useShallow } from "zustand/react/shallow";
 import type { FrameLayer } from "@/types";
 import { cn } from "@/lib/cn";
-import JSZip from "jszip";
-import { saveAs } from "file-saver";
+import { downloadDataUrl, zipPngDataUrls } from "@/utils/exportImage";
 
 interface ExportModalProps {
     open: boolean;
@@ -174,11 +173,7 @@ export function ExportModal({ open, onClose, stageRef }: ExportModalProps) {
         stage.position({ x: oldX, y: oldY });
         stage.batchDraw();
 
-        // Download
-        const link = document.createElement("a");
-        link.download = fileName;
-        link.href = dataURL;
-        link.click();
+        downloadDataUrl(dataURL, fileName);
     }, [stageRef, getExportBounds, captureDataUrl]);
 
     const handleSingleExport = () => {
@@ -205,7 +200,7 @@ export function ExportModal({ open, onClose, stageRef }: ExportModalProps) {
         const oldX = stage.x();
         const oldY = stage.y();
 
-        const zip = new JSZip();
+        const pngEntries: Array<{ fileName: string; dataUrl: string }> = [];
 
         for (const resize of resizesToExport) {
             // Switch to resize
@@ -226,14 +221,13 @@ export function ExportModal({ open, onClose, stageRef }: ExportModalProps) {
                 height: resize.height,
             });
 
-            // Add the image to the zip file
-            const base64Data = dataURL.replace(/^data:image\/png;base64,/, "");
-            zip.file(`${resize.name}-${resize.width}x${resize.height}@${scale}x.png`, base64Data, { base64: true });
+            pngEntries.push({
+                fileName: `${resize.name}-${resize.width}x${resize.height}@${scale}x.png`,
+                dataUrl: dataURL,
+            });
         }
 
-        // Generate and download the zip file
-        const content = await zip.generateAsync({ type: "blob" });
-        saveAs(content, "export-batch.zip");
+        await zipPngDataUrls(pngEntries, "export-batch.zip");
 
         // Restore original state
         setActiveResize(originalResizeId);

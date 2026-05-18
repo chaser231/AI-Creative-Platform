@@ -11,7 +11,13 @@ import { DEFAULT_PACKS, type TemplatePackMeta } from "@/constants/defaultPacks";
 import { getRecommendedPacks, searchPacks } from "@/services/templateCatalogService";
 import { type TemplatePackV2, extractSingleFormatFromPack } from "@/services/templateService";
 import type { BusinessUnit, TemplateTag } from "@/types";
-import { WizardContentWorkspace } from "@/components/wizard/WizardContentWorkspace";
+import {
+    WizardContentWorkspace,
+    type WizardImageViewOverride,
+    type WizardLayerStyleOverride,
+    type WizardOutpaintHistoryEntry,
+} from "@/components/wizard/WizardContentWorkspace";
+import { WizardExportModal } from "@/components/wizard/WizardExportModal";
 import {
     projectExpansionToResize,
     type LayerExpansionOverride,
@@ -34,9 +40,18 @@ interface WizardFlowProps {
     onSwitchToStudio: () => void;
     initialTemplateId?: string | null;
     onHeaderStateChange?: (state: WizardHeaderState | null) => void;
+    exportOpen?: boolean;
+    onExportClose?: () => void;
 }
 
-export function WizardFlow({ projectId, onSwitchToStudio, initialTemplateId, onHeaderStateChange }: WizardFlowProps) {
+export function WizardFlow({
+    projectId,
+    onSwitchToStudio,
+    initialTemplateId,
+    onHeaderStateChange,
+    exportOpen = false,
+    onExportClose,
+}: WizardFlowProps) {
     const { savedPacks } = useTemplateStore();
     const { backendTemplates } = useTemplateListSync();
 
@@ -57,6 +72,9 @@ export function WizardFlow({ projectId, onSwitchToStudio, initialTemplateId, onH
     const [manualH, setManualH] = useState("1080");
     const [textValues, setTextValues] = useState<Record<string, string>>({});
     const [imageValues, setImageValues] = useState<Record<string, string>>({});
+    const [imageViewOverrides, setImageViewOverrides] = useState<Record<string, WizardImageViewOverride>>({});
+    const [layerStyleOverrides, setLayerStyleOverrides] = useState<Record<string, WizardLayerStyleOverride>>({});
+    const [outpaintHistory, setOutpaintHistoryState] = useState<Record<string, WizardOutpaintHistoryEntry>>({});
     /**
      * Per-layer expand overrides set by the "Расширить фон" flow when the
      * AI returns an image larger than the original layer. Keyed by the
@@ -72,6 +90,7 @@ export function WizardFlow({ projectId, onSwitchToStudio, initialTemplateId, onH
     >({});
     const [productDescription, setProductDescription] = useState("");
     const [packSearch, setPackSearch] = useState("");
+    const [activePreviewFormatId, setActivePreviewFormatId] = useState("");
 
     const setLayerGeometry = useCallback(
         (id: string, override: LayerExpansionOverride) => {
@@ -82,6 +101,41 @@ export function WizardFlow({ projectId, onSwitchToStudio, initialTemplateId, onH
 
     const clearLayerGeometry = useCallback((id: string) => {
         setLayerGeometryOverrides((prev) => {
+            if (!(id in prev)) return prev;
+            const next = { ...prev };
+            delete next[id];
+            return next;
+        });
+    }, []);
+
+    const setImageViewOverride = useCallback((id: string, override: WizardImageViewOverride | null) => {
+        setImageViewOverrides((prev) => {
+            if (!override) {
+                if (!(id in prev)) return prev;
+                const next = { ...prev };
+                delete next[id];
+                return next;
+            }
+            return { ...prev, [id]: override };
+        });
+    }, []);
+
+    const setLayerStyleOverride = useCallback((id: string, override: WizardLayerStyleOverride) => {
+        setLayerStyleOverrides((prev) => ({
+            ...prev,
+            [id]: {
+                ...(prev[id] ?? {}),
+                ...override,
+            },
+        }));
+    }, []);
+
+    const setOutpaintHistory = useCallback((id: string, entry: WizardOutpaintHistoryEntry) => {
+        setOutpaintHistoryState((prev) => ({ ...prev, [id]: entry }));
+    }, []);
+
+    const clearOutpaintHistory = useCallback((id: string) => {
+        setOutpaintHistoryState((prev) => {
             if (!(id in prev)) return prev;
             const next = { ...prev };
             delete next[id];
@@ -246,19 +300,47 @@ export function WizardFlow({ projectId, onSwitchToStudio, initialTemplateId, onH
             }
         }
 
+        const findDraft = <T,>(layer: any, drafts: Record<string, T>): T | undefined => {
+            const ids = [layer.id, layer.masterId].filter(Boolean) as string[];
+            if (layer.slotId && layer.slotId !== "none") {
+                const mc = packToApply.masterComponents.find((candidate) => {
+                    const candidateSlot = candidate.slotId || (candidate.props as any).slotId;
+                    return candidateSlot === layer.slotId;
+                });
+                if (mc) ids.push(mc.id);
+            }
+            return ids.map((id) => drafts[id]).find((value) => value !== undefined);
+        };
+
+        const applyVisualDraftsToLayer = (layer: any) => {
+            if (layer.type === "image" && !layer.isFixedAsset) {
+                const viewDraft = findDraft(layer, imageViewOverrides);
+                if (viewDraft) {
+                    if (viewDraft.objectFit !== undefined) layer.objectFit = viewDraft.objectFit;
+                    if (viewDraft.focusX !== undefined) layer.focusX = viewDraft.focusX;
+                    if (viewDraft.focusY !== undefined) layer.focusY = viewDraft.focusY;
+                }
+            }
+            const styleDraft = findDraft(layer, layerStyleOverrides);
+            if (!styleDraft) return;
+            if (layer.type === "text" && styleDraft.fill) layer.fill = styleDraft.fill;
+            if (layer.type === "badge" && styleDraft.textColor) layer.textColor = styleDraft.textColor;
+        };
+
         const applyDraftsFromLayers = (layers: any[]) => {
             for (const layer of layers) {
                 const sid = layer.slotId;
-                if (!sid || sid === "none") continue;
-
-                if ((layer.type === "text" || layer.type === "badge") && textValues[layer.id] !== undefined) {
-                    contentOverrides[sid] = textValues[layer.id];
-                    layer[layer.type === "text" ? "text" : "label"] = textValues[layer.id];
+                if (sid && sid !== "none") {
+                    if ((layer.type === "text" || layer.type === "badge") && textValues[layer.id] !== undefined) {
+                        contentOverrides[sid] = textValues[layer.id];
+                        layer[layer.type === "text" ? "text" : "label"] = textValues[layer.id];
+                    }
+                    if (layer.type === "image" && imageValues[layer.id] !== undefined && !layer.isFixedAsset) {
+                        contentOverrides[sid] = imageValues[layer.id];
+                        layer.src = imageValues[layer.id];
+                    }
                 }
-                if (layer.type === "image" && imageValues[layer.id] !== undefined && !layer.isFixedAsset) {
-                    contentOverrides[sid] = imageValues[layer.id];
-                    layer.src = imageValues[layer.id];
-                }
+                applyVisualDraftsToLayer(layer);
             }
         };
 
@@ -266,11 +348,13 @@ export function WizardFlow({ projectId, onSwitchToStudio, initialTemplateId, onH
             for (const layer of layers) {
                 if (layer.isFixedAsset) continue;
                 const sid = layer.slotId;
-                if (!sid || sid === "none" || !contentOverrides[sid]) continue;
-                const val = contentOverrides[sid];
-                if (layer.type === "text") layer.text = val;
-                else if (layer.type === "image") layer.src = val;
-                else if (layer.type === "badge") layer.label = val;
+                if (sid && sid !== "none" && contentOverrides[sid]) {
+                    const val = contentOverrides[sid];
+                    if (layer.type === "text") layer.text = val;
+                    else if (layer.type === "image") layer.src = val;
+                    else if (layer.type === "badge") layer.label = val;
+                }
+                applyVisualDraftsToLayer(layer);
             }
         };
 
@@ -300,7 +384,14 @@ export function WizardFlow({ projectId, onSwitchToStudio, initialTemplateId, onH
         // Also apply content by mc.id directly to masterComponents (for hydration path)
         packToApply.masterComponents = packToApply.masterComponents.map(mc => {
             const override = layerGeometryOverrides[mc.id];
-            const baseProps = override ? { ...mc.props, ...override.next } : mc.props;
+            const viewDraft = imageViewOverrides[mc.id];
+            const styleDraft = layerStyleOverrides[mc.id];
+            const baseProps = {
+                ...(override ? { ...mc.props, ...override.next } : mc.props),
+                ...(mc.type === "image" && viewDraft ? viewDraft : {}),
+                ...(mc.type === "text" && styleDraft?.fill ? { fill: styleDraft.fill } : {}),
+                ...(mc.type === "badge" && styleDraft?.textColor ? { textColor: styleDraft.textColor } : {}),
+            };
             if ((mc.type === "text" || mc.type === "badge") && textValues[mc.id] !== undefined) {
                 return {
                     ...mc,
@@ -313,7 +404,7 @@ export function WizardFlow({ projectId, onSwitchToStudio, initialTemplateId, onH
             if (mc.type === "image" && imageValues[mc.id] !== undefined && !(mc.props as any).isFixedAsset) {
                 return { ...mc, props: { ...baseProps, src: imageValues[mc.id] } };
             }
-            if (override) {
+            if (override || viewDraft || styleDraft) {
                 return { ...mc, props: baseProps };
             }
             return mc;
@@ -376,7 +467,9 @@ export function WizardFlow({ projectId, onSwitchToStudio, initialTemplateId, onH
         });
     }, [
         fullSelectedTemplate,
+        imageViewOverrides,
         imageValues,
+        layerStyleOverrides,
         layerGeometryOverrides,
         manualSizes,
         onSwitchToStudio,
@@ -690,20 +783,41 @@ export function WizardFlow({ projectId, onSwitchToStudio, initialTemplateId, onH
 
                     {/* Step 2: Content */}
                     {step === "content" && selectedTemplate && (
-                        <WizardContentWorkspace
-                            selectedTemplate={selectedTemplate}
-                            templateLoadError={templateLoadError}
-                            textValues={textValues}
-                            imageValues={imageValues}
-                            setTextValues={setTextValues}
-                            setImageValues={setImageValues}
-                            layerGeometryOverrides={layerGeometryOverrides}
-                            setLayerGeometry={setLayerGeometry}
-                            clearLayerGeometry={clearLayerGeometry}
-                            productDescription={productDescription}
-                            projectBU={projectBU}
-                            projectId={projectId}
-                        />
+                        <>
+                            <WizardContentWorkspace
+                                selectedTemplate={selectedTemplate}
+                                templateLoadError={templateLoadError}
+                                textValues={textValues}
+                                imageValues={imageValues}
+                                imageViewOverrides={imageViewOverrides}
+                                layerStyleOverrides={layerStyleOverrides}
+                                outpaintHistory={outpaintHistory}
+                                setTextValues={setTextValues}
+                                setImageValues={setImageValues}
+                                setImageViewOverride={setImageViewOverride}
+                                setLayerStyleOverride={setLayerStyleOverride}
+                                setOutpaintHistory={setOutpaintHistory}
+                                clearOutpaintHistory={clearOutpaintHistory}
+                                layerGeometryOverrides={layerGeometryOverrides}
+                                setLayerGeometry={setLayerGeometry}
+                                clearLayerGeometry={clearLayerGeometry}
+                                productDescription={productDescription}
+                                projectBU={projectBU}
+                                projectId={projectId}
+                                onActivePreviewFormatChange={setActivePreviewFormatId}
+                            />
+                            <WizardExportModal
+                                open={exportOpen}
+                                onClose={onExportClose ?? (() => undefined)}
+                                selectedTemplate={selectedTemplate}
+                                activeFormatId={activePreviewFormatId}
+                                textValues={textValues}
+                                imageValues={imageValues}
+                                imageViewOverrides={imageViewOverrides}
+                                layerStyleOverrides={layerStyleOverrides}
+                                layerGeometryOverrides={layerGeometryOverrides}
+                            />
+                        </>
                     )}
                 </div>
             </div>

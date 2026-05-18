@@ -856,6 +856,15 @@ export default function EditorPage({ params }: EditorPageProps) {
                                 <Button
                                     variant="ghost"
                                     size="sm"
+                                    icon={<Download size={14} />}
+                                    onClick={() => setExportOpen(true)}
+                                    disabled={wizardHeaderState?.step !== "content"}
+                                >
+                                    Экспорт
+                                </Button>
+                                <Button
+                                    variant="ghost"
+                                    size="sm"
                                     onClick={wizardHeaderState?.onBack}
                                     disabled={!wizardHeaderState?.canGoBack}
                                 >
@@ -957,6 +966,8 @@ export default function EditorPage({ params }: EditorPageProps) {
                     onSwitchToStudio={handleSwitchToStudio}
                     initialTemplateId={searchParams.get("templateId") || null}
                     onHeaderStateChange={setWizardHeaderState}
+                    exportOpen={exportOpen}
+                    onExportClose={() => setExportOpen(false)}
                 />
             ) : (
                 <div className="relative flex-1 min-h-0">
@@ -1052,7 +1063,7 @@ export default function EditorPage({ params }: EditorPageProps) {
 
             {/* Modals */}
             <ExportModal
-                open={exportOpen}
+                open={!isWizardMode && exportOpen}
                 onClose={() => setExportOpen(false)}
                 stageRef={stageRef}
             />

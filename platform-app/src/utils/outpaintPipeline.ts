@@ -195,6 +195,8 @@ export interface OutpaintCanvasPadding {
     left: number;
 }
 
+export type OutpaintUpscaleModel = "topaz-hf-v2" | "seedvr" | "sima-upscaler";
+
 export interface OutpaintParams {
     /** Image source to expand (S3 URL, https URL, or data URI). */
     imageSrc: string;
@@ -235,6 +237,24 @@ export interface OutpaintParams {
      * sees at ~600 px tall anyway.
      */
     maxFinalPixels?: number;
+    /**
+     * Minimum acceptable flux pre-flight downscale ratio before falling back
+     * to bria. Studio keeps the conservative default; wizard can lower this
+     * slightly to avoid slow bria fallbacks for preview-scale banners.
+     */
+    minFluxDownscaleRatio?: number;
+    /**
+     * Enables the legacy two-pass bria path for requests above the 4800px
+     * canvas cap. Wizard disables this and lets the single-pass downscale path
+     * handle oversized bria fallbacks to keep runtime short.
+     */
+    enableMultipass?: boolean;
+    /**
+     * Upscaler used when the preserve-original path has to recover a
+     * downscaled outpaint border. Defaults to Topaz HF v2 for studio-safe
+     * structure preservation; wizard can opt into generative alternatives.
+     */
+    upscaleModel?: OutpaintUpscaleModel;
     /**
      * Internal: multipass recursion depth. Outer callers leave this
      * undefined (treated as 0). When the orchestrator splits a request, it
@@ -457,11 +477,13 @@ async function upscaleBordersOnly(opts: {
     centreRect: { x: number; y: number; w: number; h: number };
     /** Upscale factor passed to the upscale endpoint (1..4). */
     upscaleScale: number;
+    /** Upscale model passed through to /api/ai/image-edit. */
+    model: OutpaintUpscaleModel;
     /** S3 namespace for any temporary strip uploads. */
     projectId: string;
     onProgress?: (stage: string, info?: Record<string, unknown>) => void;
 }): Promise<string> {
-    const { briaSrc, finalSize, centreRect, upscaleScale, projectId, onProgress } = opts;
+    const { briaSrc, finalSize, centreRect, upscaleScale, model, projectId, onProgress } = opts;
 
     // Persist bria result to S3 first to guarantee a CORS-safe load.
     // Strip cropping needs getImageData on the loaded image; a tainted canvas
@@ -559,6 +581,7 @@ async function upscaleBordersOnly(opts: {
         centreFraction: Math.round(centreFraction * 1000) / 1000,
         borderFraction: Math.round((1 - centreFraction) * 1000) / 1000,
         upscaleScale,
+        upscaleModel: model,
         strips: stripsTelemetry,
     });
     onProgress?.("border-strips-prepared", {
@@ -595,7 +618,7 @@ async function upscaleBordersOnly(opts: {
                 body: JSON.stringify({
                     action: "upscale",
                     imageBase64: cropUrl,
-                    model: "topaz-hf-v2",
+                    model,
                     upscaleScale,
                     projectId,
                 }),
@@ -729,6 +752,9 @@ export async function outpaintImage(params: OutpaintParams): Promise<OutpaintRes
         onProgress,
         model,
         maxFinalPixels = Infinity,
+        minFluxDownscaleRatio = FLUX2_MIN_DOWNSCALE_RATIO,
+        enableMultipass = true,
+        upscaleModel = "topaz-hf-v2",
     } = params;
     const passDepth = params._passDepth ?? 0;
     let chosenModel = model ?? DEFAULT_OUTPAINT_MODEL;
@@ -866,12 +892,12 @@ export async function outpaintImage(params: OutpaintParams): Promise<OutpaintRes
             const rawAreaRatio = Math.sqrt(safeArea / (finalW * finalH));
             const bindingCap = rawAreaRatio < rawDimRatio ? "area-4MP" : "per-axis-2560";
 
-            if (projectedRatio < FLUX2_MIN_DOWNSCALE_RATIO) {
+            if (projectedRatio < minFluxDownscaleRatio) {
                 console.warn("[outpaintPipeline] flux2-downscale-too-aggressive-fallback", {
                     finalW: Math.round(finalW),
                     finalH: Math.round(finalH),
                     projectedRatio: projectedRatio.toFixed(3),
-                    threshold: FLUX2_MIN_DOWNSCALE_RATIO,
+                    threshold: minFluxDownscaleRatio,
                     bindingCap,
                 });
                 chosenModel = "bria-expand";
@@ -903,6 +929,7 @@ export async function outpaintImage(params: OutpaintParams): Promise<OutpaintRes
     );
     const finalCap = getFinalCap(chosenModel);
     const needsMultipass =
+        enableMultipass &&
         chosenModel !== "flux-2-pro-outpaint" &&
         (finalW > finalCap || finalH > finalCap);
 
@@ -1255,7 +1282,7 @@ export async function outpaintImage(params: OutpaintParams): Promise<OutpaintRes
                     });
                     upscaledContent = data.content as string;
                 } else {
-                    onProgress?.("preserve-upscale-start");
+                    onProgress?.("preserve-upscale-start", { upscaleModel });
                     const upscaleScale = Math.min(Math.ceil(requiredUpscaleFactor), 4);
 
                     // Border-only upscale path: skip compute on the
@@ -1286,6 +1313,7 @@ export async function outpaintImage(params: OutpaintParams): Promise<OutpaintRes
                                 finalSize: { w: finalW, h: finalH },
                                 centreRect,
                                 upscaleScale,
+                                model: upscaleModel,
                                 projectId: projectId ?? "ai-tmp",
                                 onProgress,
                             });
@@ -1318,13 +1346,19 @@ export async function outpaintImage(params: OutpaintParams): Promise<OutpaintRes
                         // preserving); we just pay for upscaling pixels
                         // that will get overwritten.
                         const upscaleImageUrl = await uploadForAI(data.content as string, projectId);
+                        onProgress?.("preserve-upscale-model", {
+                            upscaleModel,
+                            upscaleScale,
+                            finalW,
+                            finalH,
+                        });
                         const upscaleRes = await fetch("/api/ai/image-edit", {
                             method: "POST",
                             headers: { "Content-Type": "application/json" },
                             body: JSON.stringify({
                                 action: "upscale",
                                 imageBase64: upscaleImageUrl,
-                                model: "topaz-hf-v2",
+                                model: upscaleModel,
                                 upscaleScale,
                                 projectId,
                             }),

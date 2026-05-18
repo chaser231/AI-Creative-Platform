@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { Stage, Layer, Rect, Text, Image as KonvaImage, Group } from "react-konva";
 import type { FrameLayer, ImageLayer, Layer as LayerType } from "@/types";
 import { computeImageFitProps } from "@/utils/imageFitUtils";
@@ -203,9 +203,13 @@ interface PreviewCanvasProps {
     zoom?: number;
     /** Matches editor canvas chrome — light mat vs dark elevated artboard plate */
     appearance?: "light" | "dark";
+    /** `artboard` renders a clean 1:1 stage for PNG export. */
+    renderMode?: "preview" | "artboard";
+    onImagesReadyChange?: (ready: boolean) => void;
+    onImageLoadStateChange?: (state: { pending: number; failed: number }) => void;
 }
 
-export function PreviewCanvas({
+export const PreviewCanvas = forwardRef<Konva.Stage, PreviewCanvasProps>(function PreviewCanvas({
     layers,
     artboardWidth,
     artboardHeight,
@@ -213,7 +217,10 @@ export function PreviewCanvas({
     containerHeight,
     zoom = 1,
     appearance = "light",
-}: PreviewCanvasProps) {
+    renderMode = "preview",
+    onImagesReadyChange,
+    onImageLoadStateChange,
+}, forwardedRef) {
     const stageRef = useRef<Konva.Stage>(null);
     const [loadedImages, setLoadedImages] = useState<Map<string, HTMLImageElement>>(new Map());
     const [failedImageSources, setFailedImageSources] = useState<Set<string>>(new Set());
@@ -323,6 +330,39 @@ export function PreviewCanvas({
     const failedImages = imageSources.filter((src) => activeImageStatuses[src] === "error").length;
     const showPreviewStatus = pendingImages > 0 || failedImages > 0;
 
+    useImperativeHandle(forwardedRef, () => stageRef.current as Konva.Stage);
+
+    useEffect(() => {
+        onImagesReadyChange?.(pendingImages === 0 && failedImages === 0);
+        onImageLoadStateChange?.({ pending: pendingImages, failed: failedImages });
+    }, [failedImages, onImageLoadStateChange, onImagesReadyChange, pendingImages]);
+
+    if (renderMode === "artboard") {
+        return (
+            <Stage
+                width={artboardWidth}
+                height={artboardHeight}
+                ref={stageRef}
+                scaleX={1}
+                scaleY={1}
+            >
+                <Layer>
+                    <Group clipX={0} clipY={0} clipWidth={artboardWidth} clipHeight={artboardHeight}>
+                        {topLevelLayers.map((layer) => (
+                            <PreviewLayer
+                                key={layer.id}
+                                layer={layer}
+                                allLayers={layers}
+                                loadedImages={activeLoadedImages}
+                                imageStatuses={activeImageStatuses}
+                            />
+                        ))}
+                    </Group>
+                </Layer>
+            </Stage>
+        );
+    }
+
     return (
         <Stage
             width={containerWidth}
@@ -386,4 +426,4 @@ export function PreviewCanvas({
             </Layer>
         </Stage>
     );
-}
+});
