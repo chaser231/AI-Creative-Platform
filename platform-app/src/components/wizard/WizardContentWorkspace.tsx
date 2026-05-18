@@ -170,6 +170,21 @@ const EXPAND_TOP_BIAS = 0.67;
  * crop entirely (cover-style centred crop would be a noop).
  */
 const EXPAND_ASPECT_TOLERANCE = 0.05;
+/**
+ * Hard cap on the final outpaint canvas area for wizard expand
+ * (width × height, in image pixels). The wizard renders the layer at
+ * ≤ a few hundred CSS pixels and even retina × 2 display tops out
+ * around ~1200 px tall, so the studio's default Infinity cap (which
+ * targets full-resolution Topaz upscale back to ~38 MP for our
+ * banner-pack scenarios) wastes 30-90 seconds of Topaz HF v2 time per
+ * generation with no visible benefit. 8 MP keeps the bria/flux output
+ * within ~1.4× of the final canvas — `outpaintImage` now collapses
+ * that into a single skip-upscale pass on most wizard packs.
+ *
+ * Studio outpaint deliberately omits this prop so it keeps its
+ * native-resolution recovery behaviour.
+ */
+const WIZARD_MAX_FINAL_PIXELS = 8_000_000;
 
 export function WizardContentWorkspace({
     selectedTemplate,
@@ -1065,6 +1080,7 @@ function WizardLayerPromptBar({
                     prompt: basePrompt || undefined,
                     projectId,
                     model: getOutpaintModel(),
+                    maxFinalPixels: WIZARD_MAX_FINAL_PIXELS,
                     onProgress: (stage, info) => {
                         console.log(`[Wizard/Expand/${stage}]`, info ?? "");
                         // Internal/diagnostic stages return null — keep
