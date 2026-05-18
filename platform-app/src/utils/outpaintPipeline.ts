@@ -1209,29 +1209,54 @@ export async function outpaintImage(params: OutpaintParams): Promise<OutpaintRes
     // Composite returns a 10MB+ PNG data URI; downstream callers (wizard
     // /studio) used to wrap us in their own persistImageToS3 with a
     // permissive fallback to the data URI. That fallback fed straight
-    // into ai.addMessage tRPC payloads, which choke at ~10MB JSON with
+    // into ai.addMessage tRPC payloads AND useCanvasAutoSave JSON
+    // serialisation, both of which choke at ~10MB JSON with
     // `Unterminated string at position 10452920`. We persist here so
     // the return contract is "always a URL" — callers can store the
     // src directly, no extra persist call, no risk of leaking a data
     // URI into JSON-bound state.
     //
-    // Persist failure is non-fatal: we fall back to the raw content
-    // (URL or data URI) and log a structured warning. This keeps the
-    // image visible to the user even when S3 / proxy is degraded.
+    // NB: we deliberately use `persistImageToS3` (the base64-aware
+    // helper) directly here instead of `persistOrThrow`. The latter
+    // short-circuits on `src.startsWith("data:")` and returns the
+    // data URI unchanged — that early return is correct for canvas
+    // drawing (data URIs are CORS-safe) but it's the WRONG behaviour
+    // at the pipeline exit, where the whole point is to convert the
+    // composite PNG into an S3 URL before it leaks into React state.
+    //
+    // Persist failure is non-fatal but loud: we fall back to the raw
+    // data URI and log a structured warning so production telemetry
+    // catches the regression. One retry on transient network errors —
+    // a single transient 502 from /api/upload shouldn't tank the
+    // whole outpaint result.
     let returnSrc = finalContent;
     if (finalContent.startsWith("data:")) {
-        try {
-            returnSrc = await persistOrThrow(
-                finalContent,
-                projectId ?? "ai-tmp",
-                "outpaint-output",
-            );
-            onProgress?.("output-persisted", { toHost: safeHost(returnSrc) });
-        } catch (e) {
-            const reason = e instanceof Error ? e.message : String(e);
+        const persistProjectId = projectId ?? "ai-tmp";
+        let persistAttempt = 0;
+        let persistErr: unknown = null;
+        while (persistAttempt < 2 && returnSrc.startsWith("data:")) {
+            persistAttempt += 1;
+            try {
+                const persisted = await persistImageToS3(finalContent, persistProjectId);
+                if (persisted && !persisted.startsWith("data:")) {
+                    returnSrc = persisted;
+                    onProgress?.("output-persisted", { toHost: safeHost(returnSrc) });
+                    break;
+                }
+                // persistImageToS3 swallows upload failures and returns
+                // the input unchanged. Treat that as a soft error so
+                // the retry actually retries.
+                persistErr = new Error("persistImageToS3 returned input unchanged");
+            } catch (e) {
+                persistErr = e;
+            }
+        }
+        if (returnSrc.startsWith("data:")) {
+            const reason = persistErr instanceof Error ? persistErr.message : String(persistErr);
             console.warn(
                 `[outpaintPipeline] output-persist-failed reason=${reason} ` +
-                `falling back to data URI (caller may hit 10MB tRPC limits)`,
+                `attempts=${persistAttempt} payloadBytes=~${Math.round(finalContent.length / 1024)}KiB ` +
+                `— falling back to data URI (caller may hit 10MB JSON limits in auto-save / tRPC)`,
             );
         }
     }
