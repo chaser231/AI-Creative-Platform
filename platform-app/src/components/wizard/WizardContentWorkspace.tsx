@@ -36,7 +36,7 @@ import { projectExpansionToResize, type LayerExpansionOverride } from "@/utils/w
 import { computeWizardExpandGeometry } from "@/utils/wizardExpandGeometry";
 import { cropToLayerAspect } from "@/utils/cropToLayerAspect";
 import { useThemeStore } from "@/store/themeStore";
-import type { BusinessUnit, Layer, LayerBinding, MasterComponent, TextGenPreset } from "@/types";
+import type { BusinessUnit, ImageFitMode, Layer, LayerBinding, MasterComponent, TextGenPreset } from "@/types";
 import type { TemplatePackV2 } from "@/services/templateService";
 
 /** Resolves `system` the same way as ThemeProvider / editor canvas */
@@ -64,7 +64,7 @@ function useResolvedCanvasAppearance(): "light" | "dark" {
 type EditableLayerType = "text" | "image" | "badge";
 type SidebarTab = "layers" | "assets";
 
-interface EditableLayerEntry {
+export interface EditableLayerEntry {
     id: string;
     type: EditableLayerType;
     name: string;
@@ -75,7 +75,7 @@ interface EditableLayerEntry {
     props: Record<string, unknown>;
 }
 
-interface PreviewFormatSource {
+export interface PreviewFormatSource {
     id: string;
     name: string;
     label: string;
@@ -84,6 +84,28 @@ interface PreviewFormatSource {
     width: number;
     height: number;
     layerBindings?: LayerBinding[];
+}
+
+export interface WizardImageViewOverride {
+    objectFit?: ImageFitMode;
+    focusX?: number;
+    focusY?: number;
+}
+
+export interface WizardLayerStyleOverride {
+    fill?: string;
+    textColor?: string;
+}
+
+export interface WizardOutpaintHistoryEntry {
+    src: string;
+    rect: {
+        x: number;
+        y: number;
+        width: number;
+        height: number;
+    };
+    imageView?: WizardImageViewOverride;
 }
 
 interface AssetRow {
@@ -99,14 +121,22 @@ interface WizardContentWorkspaceProps {
     templateLoadError: string | null;
     textValues: Record<string, string>;
     imageValues: Record<string, string>;
+    imageViewOverrides: Record<string, WizardImageViewOverride>;
+    layerStyleOverrides: Record<string, WizardLayerStyleOverride>;
+    outpaintHistory: Record<string, WizardOutpaintHistoryEntry>;
     setTextValues: React.Dispatch<React.SetStateAction<Record<string, string>>>;
     setImageValues: React.Dispatch<React.SetStateAction<Record<string, string>>>;
+    setImageViewOverride: (id: string, override: WizardImageViewOverride | null) => void;
+    setLayerStyleOverride: (id: string, override: WizardLayerStyleOverride) => void;
+    setOutpaintHistory: (id: string, entry: WizardOutpaintHistoryEntry) => void;
+    clearOutpaintHistory: (id: string) => void;
     layerGeometryOverrides: Record<string, LayerExpansionOverride>;
     setLayerGeometry: (id: string, override: LayerExpansionOverride) => void;
     clearLayerGeometry: (id: string) => void;
     productDescription: string;
     projectBU: BusinessUnit;
     projectId?: string;
+    onActivePreviewFormatChange?: (id: string) => void;
 }
 
 const TEXT_GEN_MODELS = [
@@ -153,7 +183,8 @@ type ImagePromptMode = "generate" | "edit" | "expand";
  * The buffer is applied per axis (not per side), so each side picks
  * up half of it via the asymmetric distribution in the geometry util.
  */
-const EXPAND_SAFETY_BUFFER_PX = 100;
+const EXPAND_SAFETY_BUFFER_PX = 200;
+const TEXT_COLOR_SWATCHES = ["#000000", "#FFFFFF", "#1F2937", "#F9FAFB"];
 /**
  * Asymmetric padding bias for wizard expand. Banner layouts in our
  * design system typically anchor the product bottom-right and place
@@ -191,21 +222,34 @@ export function WizardContentWorkspace({
     templateLoadError,
     textValues,
     imageValues,
+    imageViewOverrides,
+    layerStyleOverrides,
+    outpaintHistory,
     setTextValues,
     setImageValues,
+    setImageViewOverride,
+    setLayerStyleOverride,
+    setOutpaintHistory,
+    clearOutpaintHistory,
     layerGeometryOverrides,
     setLayerGeometry,
     clearLayerGeometry,
     productDescription,
     projectBU,
     projectId,
+    onActivePreviewFormatChange,
 }: WizardContentWorkspaceProps) {
     const canvasAppearance = useResolvedCanvasAppearance();
     const fileInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
     const previewFrameRef = useRef<HTMLDivElement | null>(null);
     const { registerFile } = useProjectLibrary();
     const previewFormats = useMemo(() => getPreviewFormatSources(selectedTemplate), [selectedTemplate]);
-    const [activePreviewFormatId, setActivePreviewFormatId] = useState(previewFormats[0]?.id ?? "");
+    const [activePreviewFormatIdState, setActivePreviewFormatIdState] = useState(previewFormats[0]?.id ?? "");
+    const setActivePreviewFormatId = (id: string) => {
+        setActivePreviewFormatIdState(id);
+        onActivePreviewFormatChange?.(id);
+    };
+    const activePreviewFormatId = activePreviewFormatIdState;
     const masterPreviewSource = previewFormats[0];
     const previewSource = previewFormats.find((format) => format.id === activePreviewFormatId) ?? masterPreviewSource;
     /**
@@ -248,8 +292,10 @@ export function WizardContentWorkspace({
     });
 
     useEffect(() => {
-        setActivePreviewFormatId(previewFormats[0]?.id ?? "");
-    }, [selectedTemplate.id, previewFormats]);
+        const nextId = previewFormats[0]?.id ?? "";
+        setActivePreviewFormatIdState(nextId);
+        onActivePreviewFormatChange?.(nextId);
+    }, [onActivePreviewFormatChange, selectedTemplate.id, previewFormats]);
 
     useEffect(() => {
         if (previewFormats.length === 0) {
@@ -311,7 +357,14 @@ export function WizardContentWorkspace({
             : layerGeometryOverrides;
 
         if (!overridesForActive) {
-            return buildDraftPreviewLayers(previewSource.layers, entries, textValues, imageValues);
+            return buildDraftPreviewLayers(
+                previewSource.layers,
+                entries,
+                textValues,
+                imageValues,
+                imageViewOverrides,
+                layerStyleOverrides,
+            );
         }
 
         if (previewSource.id === masterPreviewSource?.id) {
@@ -320,6 +373,8 @@ export function WizardContentWorkspace({
                 entries,
                 textValues,
                 imageValues,
+                imageViewOverrides,
+                layerStyleOverrides,
                 overridesForActive,
             );
         }
@@ -332,7 +387,14 @@ export function WizardContentWorkspace({
             overrides: overridesForActive,
         });
 
-        return buildDraftPreviewLayers(projected, entries, textValues, imageValues);
+        return buildDraftPreviewLayers(
+            projected,
+            entries,
+            textValues,
+            imageValues,
+            imageViewOverrides,
+            layerStyleOverrides,
+        );
     }, [
         previewSource.id,
         previewSource.layers,
@@ -344,6 +406,8 @@ export function WizardContentWorkspace({
         entries,
         textValues,
         imageValues,
+        imageViewOverrides,
+        layerStyleOverrides,
         layerGeometryOverrides,
     ]);
 
@@ -363,6 +427,7 @@ export function WizardContentWorkspace({
             // A fresh upload invalidates any prior expand geometry — the new
             // image is its own canvas, not an extension of the previous one.
             clearLayerGeometry(entry.id);
+            clearOutpaintHistory(entry.id);
             if (projectId) {
                 const persistedUrl = await registerFile({
                     projectId,
@@ -391,8 +456,18 @@ export function WizardContentWorkspace({
     const handleApplyAssetToLayer = (asset: AssetRow) => {
         if (!activeImageLayer) return;
         clearLayerGeometry(activeImageLayer.id);
+        clearOutpaintHistory(activeImageLayer.id);
         updateImageValue(activeImageLayer.id, asset.url);
         setSidebarTab("layers");
+    };
+
+    const resetOutpaintForLayer = (entry: EditableLayerEntry) => {
+        const history = outpaintHistory[entry.id];
+        if (!history) return;
+        updateImageValue(entry.id, history.src);
+        clearLayerGeometry(entry.id);
+        setImageViewOverride(entry.id, history.imageView ?? null);
+        clearOutpaintHistory(entry.id);
     };
 
     return (
@@ -435,12 +510,20 @@ export function WizardContentWorkspace({
                                 onToggle={() => setCollapsedSections((prev) => ({ ...prev, text: !prev.text }))}
                                 onSelect={setActiveLayerId}
                                 renderEditor={(entry) => (
-                                    <input
-                                        value={textValues[entry.id] ?? String(entry.props.text ?? "")}
-                                        onChange={(event) => updateTextValue(entry.id, event.target.value)}
-                                        placeholder="Введите текст"
-                                        className="h-9 w-full rounded-[var(--radius-md)] border border-border-primary bg-bg-secondary px-3 text-xs text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-1 focus:ring-border-focus"
-                                    />
+                                    <div className="space-y-2">
+                                        <input
+                                            value={textValues[entry.id] ?? String(entry.props.text ?? "")}
+                                            onChange={(event) => updateTextValue(entry.id, event.target.value)}
+                                            placeholder="Введите текст"
+                                            className="h-9 w-full rounded-[var(--radius-md)] border border-border-primary bg-bg-secondary px-3 text-xs text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-1 focus:ring-border-focus"
+                                        />
+                                        <ColorSwatches
+                                            label="Цвет текста"
+                                            value={layerStyleOverrides[entry.id]?.fill ?? String(entry.props.fill ?? "#000000")}
+                                            templateValue={String(entry.props.fill ?? "")}
+                                            onChange={(fill) => setLayerStyleOverride(entry.id, { fill })}
+                                        />
+                                    </div>
                                 )}
                             />
 
@@ -488,6 +571,24 @@ export function WizardContentWorkspace({
                                                 />
                                             </div>
                                         )}
+                                        <ImageAlignmentControls
+                                            value={imageViewOverrides[entry.id]?.focusX ?? Number(entry.props.focusX ?? 0.5)}
+                                            onChange={(focusX) => setImageViewOverride(entry.id, {
+                                                ...imageViewOverrides[entry.id],
+                                                objectFit: "cover",
+                                                focusX,
+                                            })}
+                                        />
+                                        {outpaintHistory[entry.id] && (
+                                            <button
+                                                type="button"
+                                                onClick={() => resetOutpaintForLayer(entry)}
+                                                className="flex h-8 w-full items-center justify-center gap-1.5 rounded-[var(--radius-md)] border border-border-primary bg-bg-secondary text-[11px] font-medium text-text-secondary transition-colors hover:bg-bg-tertiary hover:text-text-primary cursor-pointer"
+                                            >
+                                                <RotateCcw size={12} />
+                                                Сбросить расширение
+                                            </button>
+                                        )}
                                     </div>
                                 )}
                             />
@@ -501,12 +602,20 @@ export function WizardContentWorkspace({
                                 onToggle={() => setCollapsedSections((prev) => ({ ...prev, badge: !prev.badge }))}
                                 onSelect={setActiveLayerId}
                                 renderEditor={(entry) => (
-                                    <input
-                                        value={textValues[entry.id] ?? String(entry.props.label ?? "")}
-                                        onChange={(event) => updateTextValue(entry.id, event.target.value)}
-                                        placeholder="Введите бейдж"
-                                        className="h-9 w-full rounded-[var(--radius-md)] border border-border-primary bg-bg-secondary px-3 text-xs text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-1 focus:ring-border-focus"
-                                    />
+                                    <div className="space-y-2">
+                                        <input
+                                            value={textValues[entry.id] ?? String(entry.props.label ?? "")}
+                                            onChange={(event) => updateTextValue(entry.id, event.target.value)}
+                                            placeholder="Введите бейдж"
+                                            className="h-9 w-full rounded-[var(--radius-md)] border border-border-primary bg-bg-secondary px-3 text-xs text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-1 focus:ring-border-focus"
+                                        />
+                                        <ColorSwatches
+                                            label="Цвет текста"
+                                            value={layerStyleOverrides[entry.id]?.textColor ?? String(entry.props.textColor ?? "#FFFFFF")}
+                                            templateValue={String(entry.props.textColor ?? "")}
+                                            onChange={(textColor) => setLayerStyleOverride(entry.id, { textColor })}
+                                        />
+                                    </div>
                                 )}
                             />
                         </>
@@ -580,6 +689,7 @@ export function WizardContentWorkspace({
                         activeLayer={activeLayer}
                         textValues={textValues}
                         imageValues={imageValues}
+                        activeImageViewOverride={activeLayer ? imageViewOverrides[activeLayer.id] : undefined}
                         projectBU={projectBU}
                         projectId={projectId}
                         productDescription={productDescription}
@@ -587,6 +697,8 @@ export function WizardContentWorkspace({
                         packFormats={previewFormats.map((f) => ({ width: f.width, height: f.height }))}
                         onTextChange={updateTextValue}
                         onImageChange={updateImageValue}
+                        onOutpaintHistorySave={setOutpaintHistory}
+                        onOutpaintHistoryClear={clearOutpaintHistory}
                         onLayerGeometryChange={setLayerGeometry}
                         onLayerGeometryReset={clearLayerGeometry}
                     />
@@ -784,6 +896,91 @@ function ZoomButton({
     );
 }
 
+function ImageAlignmentControls({
+    value,
+    onChange,
+}: {
+    value: number;
+    onChange: (focusX: number) => void;
+}) {
+    const options = [
+        { label: "Лево", value: 0 },
+        { label: "Центр", value: 0.5 },
+        { label: "Право", value: 1 },
+    ];
+
+    return (
+        <div className="space-y-1.5">
+            <p className="text-[10px] font-medium text-text-tertiary">Выравнивание кадра</p>
+            <div className="grid grid-cols-3 gap-1 rounded-[var(--radius-md)] border border-border-primary bg-bg-secondary p-1">
+                {options.map((option) => {
+                    const active = Math.abs(value - option.value) < 0.01;
+                    return (
+                        <button
+                            key={option.label}
+                            type="button"
+                            onClick={() => onChange(option.value)}
+                            className={`h-7 rounded-[var(--radius-sm)] text-[10px] font-medium transition-colors cursor-pointer ${
+                                active
+                                    ? "bg-bg-surface text-text-primary shadow-[var(--shadow-sm)]"
+                                    : "text-text-tertiary hover:bg-bg-tertiary hover:text-text-primary"
+                            }`}
+                        >
+                            {option.label}
+                        </button>
+                    );
+                })}
+            </div>
+        </div>
+    );
+}
+
+function ColorSwatches({
+    label,
+    value,
+    templateValue,
+    onChange,
+}: {
+    label: string;
+    value: string;
+    templateValue?: string;
+    onChange: (value: string) => void;
+}) {
+    const swatches = Array.from(
+        new Set([templateValue, ...TEXT_COLOR_SWATCHES].filter((color): color is string => Boolean(color))),
+    );
+    const colorInputValue = /^#[0-9a-f]{6}$/i.test(value) ? value : "#000000";
+
+    return (
+        <div className="space-y-1.5">
+            <p className="text-[10px] font-medium text-text-tertiary">{label}</p>
+            <div className="flex flex-wrap items-center gap-1.5">
+                {swatches.map((color) => (
+                    <button
+                        key={color}
+                        type="button"
+                        onClick={() => onChange(color)}
+                        aria-label={`Выбрать цвет ${color}`}
+                        className={`h-6 w-6 rounded-full border transition-all cursor-pointer ${
+                            value.toLowerCase() === color.toLowerCase()
+                                ? "scale-110 border-text-primary shadow-[var(--shadow-sm)]"
+                                : "border-border-primary hover:scale-105"
+                        }`}
+                        style={{ backgroundColor: color }}
+                    />
+                ))}
+                <input
+                    type="color"
+                    value={colorInputValue}
+                    onChange={(event) => onChange(event.target.value)}
+                    className="h-6 w-6 cursor-pointer rounded-full border-0 bg-transparent p-0"
+                    aria-label="Выбрать произвольный цвет"
+                />
+            </div>
+        </div>
+    );
+}
+
 function FormatThumbnailRail({
     formats,
     activeFormatId,
@@ -919,6 +1116,7 @@ function WizardLayerPromptBar({
     activeLayer,
     textValues,
     imageValues,
+    activeImageViewOverride,
     projectBU,
     projectId,
     productDescription,
@@ -926,12 +1124,15 @@ function WizardLayerPromptBar({
     packFormats,
     onTextChange,
     onImageChange,
+    onOutpaintHistorySave,
+    onOutpaintHistoryClear,
     onLayerGeometryChange,
     onLayerGeometryReset,
 }: {
     activeLayer?: EditableLayerEntry;
     textValues: Record<string, string>;
     imageValues: Record<string, string>;
+    activeImageViewOverride?: WizardImageViewOverride;
     projectBU: BusinessUnit;
     projectId?: string;
     productDescription: string;
@@ -945,6 +1146,8 @@ function WizardLayerPromptBar({
     packFormats: Array<{ width: number; height: number }>;
     onTextChange: (id: string, value: string) => void;
     onImageChange: (id: string, value: string) => void;
+    onOutpaintHistorySave: (id: string, entry: WizardOutpaintHistoryEntry) => void;
+    onOutpaintHistoryClear: (id: string) => void;
     onLayerGeometryChange: (id: string, override: LayerExpansionOverride) => void;
     onLayerGeometryReset: (id: string) => void;
 }) {
@@ -1080,7 +1283,10 @@ function WizardLayerPromptBar({
                     prompt: basePrompt || undefined,
                     projectId,
                     model: getOutpaintModel(),
+                    upscaleModel: "seedvr",
                     maxFinalPixels: WIZARD_MAX_FINAL_PIXELS,
+                    minFluxDownscaleRatio: 0.25,
+                    enableMultipass: false,
                     onProgress: (stage, info) => {
                         console.log(`[Wizard/Expand/${stage}]`, info ?? "");
                         // Internal/diagnostic stages return null — keep
@@ -1104,6 +1310,11 @@ function WizardLayerPromptBar({
                         source: "wizard-edit-expand",
                     })
                     : null;
+                onOutpaintHistorySave(activeLayer.id, {
+                    src: currentImage,
+                    rect: { x: layerX, y: layerY, width: layerWidth, height: layerHeight },
+                    imageView: activeImageViewOverride,
+                });
                 onImageChange(activeLayer.id, registered ?? expandResult.src);
                 // Grow the master layer to match the new (extended) image so
                 // it actually shows up in the preview instead of being cropped
@@ -1171,6 +1382,7 @@ function WizardLayerPromptBar({
                     // text-edit returns a fresh image with potentially different
                     // aspect ratio — drop any stale expand geometry.
                     onLayerGeometryReset(activeLayer.id);
+                    onOutpaintHistoryClear(activeLayer.id);
                     onImageChange(activeLayer.id, persisted ?? data.content);
                 }
                 return;
@@ -1208,6 +1420,7 @@ function WizardLayerPromptBar({
                     : null;
                 // Brand new image — wipe any stale expand geometry.
                 onLayerGeometryReset(activeLayer.id);
+                onOutpaintHistoryClear(activeLayer.id);
                 onImageChange(activeLayer.id, persisted ?? data.content);
             }
         } catch (err) {
@@ -1470,7 +1683,7 @@ function OutlinedSelector({
     );
 }
 
-function getPreviewFormatSources(template: TemplatePackV2): PreviewFormatSource[] {
+export function getPreviewFormatSources(template: TemplatePackV2): PreviewFormatSource[] {
     const data = template as TemplatePackV2 & {
         layers?: Layer[];
         canvasWidth?: number;
@@ -1539,7 +1752,7 @@ function resizeToPreviewSource(
     };
 }
 
-function getEditableLayerEntries(template: TemplatePackV2, masterLayers: Layer[]): EditableLayerEntry[] {
+export function getEditableLayerEntries(template: TemplatePackV2, masterLayers: Layer[]): EditableLayerEntry[] {
     const rawEntries = new Map<string, EditableLayerEntry>();
 
     for (const layer of masterLayers) {
@@ -1603,11 +1816,13 @@ function masterComponentToLayer(mc: MasterComponent): Layer | null {
     } as Layer;
 }
 
-function buildDraftPreviewLayers(
+export function buildDraftPreviewLayers(
     layers: Layer[],
     entries: EditableLayerEntry[],
     textValues: Record<string, string>,
     imageValues: Record<string, string>,
+    imageViewOverrides: Record<string, WizardImageViewOverride> = {},
+    layerStyleOverrides: Record<string, WizardLayerStyleOverride> = {},
     layerGeometryOverrides?: Record<string, LayerExpansionOverride>,
 ): Layer[] {
     const entryBySlot = new Map(entries.filter((entry) => entry.slotId).map((entry) => [entry.slotId, entry]));
@@ -1622,19 +1837,32 @@ function buildDraftPreviewLayers(
         ].filter(Boolean) as string[];
         const textValue = candidateIds.map((id) => textValues[id]).find((value) => value !== undefined);
         const imageValue = candidateIds.map((id) => imageValues[id]).find((value) => value !== undefined);
+        const imageViewOverride = candidateIds.map((id) => imageViewOverrides[id]).find((value) => value !== undefined);
+        const styleOverride = candidateIds.map((id) => layerStyleOverrides[id]).find((value) => value !== undefined);
         const geometryOverride = layerGeometryOverrides
             ? candidateIds.map((id) => layerGeometryOverrides[id]).find((value) => value !== undefined)
             : undefined;
 
-        if (layer.type === "text" && textValue !== undefined) {
-            return { ...layer, text: textValue };
+        if (layer.type === "text") {
+            const next = { ...layer } as typeof layer;
+            if (textValue !== undefined) next.text = textValue;
+            if (styleOverride?.fill) next.fill = styleOverride.fill;
+            return next;
         }
-        if (layer.type === "badge" && textValue !== undefined) {
-            return { ...layer, label: textValue };
+        if (layer.type === "badge") {
+            const next = { ...layer } as typeof layer;
+            if (textValue !== undefined) next.label = textValue;
+            if (styleOverride?.textColor) next.textColor = styleOverride.textColor;
+            return next;
         }
         if (layer.type === "image" && !layer.isFixedAsset) {
             const next = { ...layer } as typeof layer;
             if (imageValue !== undefined) next.src = imageValue;
+            if (imageViewOverride) {
+                next.objectFit = imageViewOverride.objectFit ?? next.objectFit;
+                next.focusX = imageViewOverride.focusX ?? next.focusX;
+                next.focusY = imageViewOverride.focusY ?? next.focusY;
+            }
             if (geometryOverride) {
                 next.x = geometryOverride.next.x;
                 next.y = geometryOverride.next.y;
