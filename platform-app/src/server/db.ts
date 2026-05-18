@@ -5,10 +5,16 @@ const globalForPrisma = globalThis as unknown as {
 };
 
 function createPrismaClient() {
+  const disableQueryLog =
+    process.env.PRISMA_DISABLE_QUERY_LOG === "1" ||
+    process.env.PRISMA_DISABLE_QUERY_LOG?.toLowerCase() === "true";
+
   return new PrismaClient({
     log:
       process.env.NODE_ENV === "development"
-        ? ["query", "error", "warn"]
+        ? disableQueryLog
+          ? ["error", "warn"]
+          : ["query", "error", "warn"]
         : ["error"],
     datasourceUrl: process.env.DATABASE_URL,
   });

@@ -33,6 +33,8 @@ import { getOutpaintModel } from "@/utils/outpaintModel";
 import { mapOutpaintStage, type OutpaintProgressState } from "@/utils/outpaintProgress";
 import { OutpaintProgressIndicator } from "@/components/ui/OutpaintProgressIndicator";
 import { projectExpansionToResize, type LayerExpansionOverride } from "@/utils/wizardExpand";
+import { computeWizardExpandGeometry } from "@/utils/wizardExpandGeometry";
+import { cropToLayerAspect } from "@/utils/cropToLayerAspect";
 import { useThemeStore } from "@/store/themeStore";
 import type { BusinessUnit, Layer, LayerBinding, MasterComponent, TextGenPreset } from "@/types";
 import type { TemplatePackV2 } from "@/services/templateService";
@@ -130,18 +132,59 @@ const CONTENT_TYPES = ["text", "image", "badge"] as const;
 type ImagePromptMode = "generate" | "edit" | "expand";
 
 /**
- * Extra canvas-space pixels added to each axis on top of `packMaxSize`
- * before sending the layer to outpaint. The cascade applies the master's
- * geometry delta proportionally to each resize's local layer rect, so
- * when a resize's image slot is small or off-centre, a delta sized
- * exactly to packMaxSize can still leave bare canvas in some formats.
- * A buffer of 700 px (350 px per side) overshoots the bounding box
- * generously enough to guarantee every resize's slot crosses its
- * artboard edges after the cascade. Stays well under
- * MAX_FINAL_DIMENSION (4800) for any realistic pack, so we don't trigger
- * the downscale → upscale path.
+ * Per-axis canvas-pixel buffer added to the outpaint target on top of
+ * the per-side aware growth from {@link computeWizardExpandGeometry}.
+ *
+ * Previously this was 700 px and was applied symmetrically on each
+ * axis, which generated huge outpaint canvases (image-pixel finalH
+ * over 10000 px for asymmetric sources like 2840×2600 in a 1192×300
+ * layer slot) and consistently pushed the pipeline into the
+ * multipass + bria fallback path.
+ *
+ * The new policy:
+ *   - The geometry util only grows each axis as much as the *largest*
+ *     pack format on that axis actually needs (per-side aware).
+ *   - The wizard pre-crops the source to the layer aspect ratio first,
+ *     which symmetrises pixelScale and removes the main amplifier.
+ *   - This 100 px buffer just absorbs cascade rounding + small
+ *     instance-vs-artboard mismatches; we no longer need it to
+ *     compensate for the geometry policy itself.
+ *
+ * The buffer is applied per axis (not per side), so each side picks
+ * up half of it via the asymmetric distribution in the geometry util.
  */
-const EXPAND_SAFETY_BUFFER_PX = 700;
+const EXPAND_SAFETY_BUFFER_PX = 100;
+/**
+ * Asymmetric padding bias for wizard expand. Banner layouts in our
+ * design system typically anchor the product bottom-right and place
+ * text/logos in the top-left, so we deliberately give the AI-generated
+ * background more room on the left/top sides. 0.67 = roughly 2:1 split
+ * (matching the user's stated preference: "немного вправо/вниз, раза в
+ * 2 влево/вверх").
+ */
+const EXPAND_LEFT_BIAS = 0.67;
+const EXPAND_TOP_BIAS = 0.67;
+/**
+ * Aspect tolerance for the wizard's source pre-crop. If the source and
+ * layer aspect ratios already match within this delta, we skip the
+ * crop entirely (cover-style centred crop would be a noop).
+ */
+const EXPAND_ASPECT_TOLERANCE = 0.05;
+/**
+ * Hard cap on the final outpaint canvas area for wizard expand
+ * (width × height, in image pixels). The wizard renders the layer at
+ * ≤ a few hundred CSS pixels and even retina × 2 display tops out
+ * around ~1200 px tall, so the studio's default Infinity cap (which
+ * targets full-resolution Topaz upscale back to ~38 MP for our
+ * banner-pack scenarios) wastes 30-90 seconds of Topaz HF v2 time per
+ * generation with no visible benefit. 8 MP keeps the bria/flux output
+ * within ~1.4× of the final canvas — `outpaintImage` now collapses
+ * that into a single skip-upscale pass on most wizard packs.
+ *
+ * Studio outpaint deliberately omits this prop so it keeps its
+ * native-resolution recovery behaviour.
+ */
+const WIZARD_MAX_FINAL_PIXELS = 8_000_000;
 
 export function WizardContentWorkspace({
     selectedTemplate,
@@ -541,6 +584,7 @@ export function WizardContentWorkspace({
                         projectId={projectId}
                         productDescription={productDescription}
                         packMaxSize={packMaxSize}
+                        packFormats={previewFormats.map((f) => ({ width: f.width, height: f.height }))}
                         onTextChange={updateTextValue}
                         onImageChange={updateImageValue}
                         onLayerGeometryChange={setLayerGeometry}
@@ -879,6 +923,7 @@ function WizardLayerPromptBar({
     projectId,
     productDescription,
     packMaxSize,
+    packFormats,
     onTextChange,
     onImageChange,
     onLayerGeometryChange,
@@ -891,6 +936,13 @@ function WizardLayerPromptBar({
     projectId?: string;
     productDescription: string;
     packMaxSize: { width: number; height: number };
+    /**
+     * Full list of preview format dimensions (width × height). Drives
+     * the per-side aware target size in {@link computeWizardExpandGeometry}.
+     * `packMaxSize` is kept as a separate prop because the UI also shows
+     * it as a "Цель: WxH" badge, but the geometry math needs the full list.
+     */
+    packFormats: Array<{ width: number; height: number }>;
     onTextChange: (id: string, value: string) => void;
     onImageChange: (id: string, value: string) => void;
     onLayerGeometryChange: (id: string, override: LayerExpansionOverride) => void;
@@ -969,49 +1021,66 @@ function WizardLayerPromptBar({
                     return;
                 }
 
-                // Overshoot the pack's bounding box so every resize keeps
-                // bare canvas covered after the relative_size cascade —
-                // see EXPAND_SAFETY_BUFFER_PX for the rationale.
-                const targetW = Math.max(packMaxSize.width, layerWidth) + EXPAND_SAFETY_BUFFER_PX;
-                const targetH = Math.max(packMaxSize.height, layerHeight) + EXPAND_SAFETY_BUFFER_PX;
-                const hPad = Math.max(0, targetW - layerWidth);
-                const vPad = Math.max(0, targetH - layerHeight);
+                // Per-side aware target size + asymmetric 67/33
+                // distribution. See `computeWizardExpandGeometry` for
+                // policy details and the wizard-outpaint-geometry-fix
+                // plan for the regression this replaces (multipass +
+                // bria-expand fallback on asymmetric sources).
+                const geometry = computeWizardExpandGeometry(
+                    { width: layerWidth, height: layerHeight },
+                    packFormats,
+                    {
+                        buffer: EXPAND_SAFETY_BUFFER_PX,
+                        leftBias: EXPAND_LEFT_BIAS,
+                        topBias: EXPAND_TOP_BIAS,
+                    },
+                );
+                const { padTop, padRight, padBottom, padLeft } = geometry;
+                const hPad = padLeft + padRight;
+                const vPad = padTop + padBottom;
 
                 if (hPad === 0 && vPad === 0) {
                     setError("Изображение уже покрывает максимальный формат пакета — расширение не требуется");
                     return;
                 }
 
-                // Distribute padding symmetrically around the image layer
-                // instead of proportionally to the free space in the master
-                // canvas. The master can be any format in the pack (incl.
-                // the widest or tallest), so anchoring the split to
-                // master-canvas geometry biases the expand toward whichever
-                // edge happens to be empty in that particular master — the
-                // expand visibly "leaks" downward when master is the
-                // widest banner and the tallest format is taller than it.
-                //
-                // Symmetric padding keeps the original product centred in
-                // the new extended image, which is what every downstream
-                // resize wants when the cascade replays the same delta.
-                const padLeft = Math.floor(hPad / 2);
-                const padRight = hPad - padLeft;
-                const padTop = Math.floor(vPad / 2);
-                const padBottom = vPad - padTop;
-
-                const { outpaintImage } = await import("@/utils/outpaintPipeline");
                 // Seed an initial label so the user sees feedback the
                 // moment the request fires — the first event from the
                 // pipeline ("input-persisted") only lands ~200-500 ms
                 // later, which feels like a hang on slow connections.
                 setOutpaintProgress({ label: "Подготавливаем изображение", percent: 5 });
+
+                // Pre-crop the source to the layer aspect ratio
+                // (object-fit:cover style — exactly the slice the
+                // wizard preview already shows). This symmetrises
+                // pixelScale before outpaintImage computes pixel
+                // padding, which is what keeps the resulting canvas
+                // inside flux 2 pro's 2560 / 4 MP caps and avoids the
+                // multipass + bria fallback path for typical banner
+                // packs. On any failure (cross-origin load, tainted
+                // canvas, etc.) the helper returns the original src
+                // and the pipeline runs un-cropped — strictly no worse
+                // than before.
+                const layerAspect = layerWidth / layerHeight;
+                const cropResult = await cropToLayerAspect(currentImage, layerAspect, {
+                    tolerance: EXPAND_ASPECT_TOLERANCE,
+                });
+                console.log("[Wizard/Expand/pre-crop]", {
+                    cropped: cropResult.cropped,
+                    layerAspect: Math.round(layerAspect * 100) / 100,
+                    nativeW: cropResult.nativeW,
+                    nativeH: cropResult.nativeH,
+                });
+
+                const { outpaintImage } = await import("@/utils/outpaintPipeline");
                 const expandResult = await outpaintImage({
-                    imageSrc: currentImage,
+                    imageSrc: cropResult.src,
                     canvasPadding: { top: padTop, right: padRight, bottom: padBottom, left: padLeft },
                     layerSize: { width: layerWidth, height: layerHeight },
                     prompt: basePrompt || undefined,
                     projectId,
                     model: getOutpaintModel(),
+                    maxFinalPixels: WIZARD_MAX_FINAL_PIXELS,
                     onProgress: (stage, info) => {
                         console.log(`[Wizard/Expand/${stage}]`, info ?? "");
                         // Internal/diagnostic stages return null — keep
