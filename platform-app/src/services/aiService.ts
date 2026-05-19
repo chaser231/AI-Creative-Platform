@@ -23,6 +23,7 @@ export interface AIProvider {
 export interface AIResult {
     type: "text" | "image" | "outpainting";
     content: string;       // text result or base64 data URL
+    contents?: string[];   // all image URLs when a model returns multiple outputs
     prompt: string;        // original prompt
     model: string;         // provider name
     timestamp: Date;
@@ -75,6 +76,7 @@ async function callAIApi(prompt: string, type: string, model: string, params: Re
         return {
             type: data.type || type, // fallback
             content: data.content,
+            contents: data.contents,
             prompt: prompt,
             model: data.model,
             timestamp: new Date(),

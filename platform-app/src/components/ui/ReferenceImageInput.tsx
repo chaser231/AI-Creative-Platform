@@ -13,7 +13,7 @@
  * Only shown when the selected AI model has the "vision" capability.
  */
 
-import { useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { ImagePlus, X } from "lucide-react";
 
 export interface ReferenceImageInputProps {
@@ -28,6 +28,8 @@ export interface ReferenceImageInputProps {
     showLabels?: boolean;
     /** Called when user clicks an @refN badge — use to insert into prompt */
     onTagClick?: (tag: string) => void;
+    /** Hide inline previews when a prompt bar renders them in its own tray. */
+    previewMode?: "inline" | "none";
     /**
      * Optional side-channel: the raw File objects the user dropped, fired
      * once per drop/pick. Prompt bars use this to mirror the reference into
@@ -40,6 +42,15 @@ export interface ReferenceImageInputProps {
 /** Get the @ref tag for a given index (0-based → @ref1, @ref2, ...) */
 export function getRefTag(index: number): string {
     return `@ref${index + 1}`;
+}
+
+/** Horizontal padding to reserve in the prompt area so text does not sit under the tray. */
+export function getReferenceTrayReserveWidth(imageCount: number, maxVisible = 4): number {
+    if (imageCount <= 0) return 0;
+    const visible = Math.min(imageCount, maxVisible);
+    const hasOverflow = imageCount > maxVisible;
+    // ~36px per thumb + gaps + optional +N button + tray padding
+    return 12 + visible * 36 + (hasOverflow ? 40 : 0) + 16;
 }
 
 /** Compress an image File to JPEG base64, max 1024px on longest side */
@@ -75,6 +86,7 @@ export function ReferenceImageInput({
     label = "Референс",
     showLabels = true,
     onTagClick,
+    previewMode = "inline",
     onFilesAdded,
 }: ReferenceImageInputProps) {
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -125,36 +137,17 @@ export function ReferenceImageInput({
     if (disabled) return null;
 
     return (
-        <div className="flex items-center gap-1.5 flex-wrap">
+        <div className="flex items-center gap-1.5">
             {/* Previews */}
-            {images.map((src, idx) => (
-                <div
-                    key={idx}
-                    className="relative flex-shrink-0 group"
-                >
-                    <div className="w-8 h-8 rounded-lg overflow-hidden border border-border-primary">
-                        <img src={src} alt={`ref-${idx}`} className="w-full h-full object-cover" />
-                        <button
-                            onClick={() => removeImage(idx)}
-                            className="absolute inset-0 flex items-center justify-center bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity rounded-lg"
-                            title="Удалить"
-                        >
-                            <X size={12} className="text-white" />
-                        </button>
-                    </div>
-                    {/* @refN label — clickable to insert into prompt */}
-                    {showLabels && (
-                        <button
-                            type="button"
-                            onClick={() => onTagClick?.(getRefTag(idx))}
-                            title={`Вставить ${getRefTag(idx)} в промпт`}
-                            className="absolute -bottom-1 left-1/2 -translate-x-1/2 text-[8px] font-mono font-bold bg-accent-primary text-text-inverse px-1 rounded-sm whitespace-nowrap leading-tight cursor-pointer hover:bg-accent-primary/80 transition-colors"
-                        >
-                            {getRefTag(idx)}
-                        </button>
-                    )}
-                </div>
-            ))}
+            {previewMode === "inline" && (
+                <ReferenceImagePreviewTray
+                    images={images}
+                    onChange={onChange}
+                    showLabels={showLabels}
+                    onTagClick={onTagClick}
+                    maxVisible={4}
+                />
+            )}
 
             {/* Upload trigger */}
             {canAdd && (
@@ -167,7 +160,7 @@ export function ReferenceImageInput({
                     onDrop={handleDrop}
                     title={`Добавить референс (${images.length}/${max})`}
                     className={`
-                        flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium
+                        flex h-8 items-center gap-1.5 rounded-[10px] px-2.5 text-[12px] font-medium
                         border transition-all cursor-pointer select-none flex-shrink-0
                         ${isDragging
                             ? "border-accent-primary/60 bg-accent-primary/10 text-accent-primary"
@@ -195,6 +188,144 @@ export function ReferenceImageInput({
                 className="hidden"
                 onChange={handleFileChange}
             />
+        </div>
+    );
+}
+
+interface ReferenceImagePreviewTrayProps {
+    images: string[];
+    onChange: (images: string[]) => void;
+    showLabels?: boolean;
+    onTagClick?: (tag: string) => void;
+    maxVisible?: number;
+    className?: string;
+    /** Overflow grid opens above the tray by default (prompt bars sit at the bottom). */
+    popoverPlacement?: "above" | "below";
+}
+
+export function ReferenceImagePreviewTray({
+    images,
+    onChange,
+    showLabels = true,
+    onTagClick,
+    maxVisible = 4,
+    className = "",
+    popoverPlacement = "above",
+}: ReferenceImagePreviewTrayProps) {
+    const [open, setOpen] = useState(false);
+    const trayRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        if (!open) return;
+        const handlePointerDown = (event: PointerEvent) => {
+            if (!trayRef.current?.contains(event.target as Node)) setOpen(false);
+        };
+        const handleKeyDown = (event: KeyboardEvent) => {
+            if (event.key === "Escape") setOpen(false);
+        };
+        document.addEventListener("pointerdown", handlePointerDown);
+        document.addEventListener("keydown", handleKeyDown);
+        return () => {
+            document.removeEventListener("pointerdown", handlePointerDown);
+            document.removeEventListener("keydown", handleKeyDown);
+        };
+    }, [open]);
+
+    if (images.length === 0) return null;
+
+    const visibleImages = images.slice(0, maxVisible);
+    const hiddenCount = Math.max(0, images.length - visibleImages.length);
+    const removeImage = (idx: number) => {
+        onChange(images.filter((_, imageIndex) => imageIndex !== idx));
+    };
+
+    return (
+        <div
+            ref={trayRef}
+            className={`relative flex items-center gap-1.5 rounded-[14px] border border-border-primary/70 bg-bg-surface/95 p-1.5 shadow-[var(--shadow-md)] backdrop-blur-xl ${className}`}
+        >
+            {visibleImages.map((src, idx) => (
+                <ReferenceThumbnail
+                    key={`${idx}-${src.slice(0, 32)}`}
+                    src={src}
+                    index={idx}
+                    showLabel={showLabels}
+                    onRemove={() => removeImage(idx)}
+                    onTagClick={onTagClick}
+                />
+            ))}
+
+            {hiddenCount > 0 && (
+                <button
+                    type="button"
+                    onClick={() => setOpen((value) => !value)}
+                    aria-expanded={open}
+                    aria-label={`Показать все референсы, скрыто ${hiddenCount}`}
+                    className="flex h-8 w-8 items-center justify-center rounded-lg border border-border-primary/70 bg-bg-primary text-[11px] font-semibold text-text-secondary transition-colors hover:border-border-secondary hover:bg-bg-tertiary cursor-pointer"
+                    title={`Показать ещё ${hiddenCount} референсов`}
+                >
+                    +{hiddenCount}
+                </button>
+            )}
+
+            {open && hiddenCount > 0 && (
+                <div className={`absolute right-0 z-20 grid w-[188px] grid-cols-4 gap-1.5 rounded-[14px] border border-border-primary bg-bg-surface p-2 shadow-xl ${
+                        popoverPlacement === "below" ? "top-full mt-2" : "bottom-full mb-2"
+                    }`}>
+                    {images.map((src, idx) => (
+                        <ReferenceThumbnail
+                            key={`all-${idx}-${src.slice(0, 32)}`}
+                            src={src}
+                            index={idx}
+                            showLabel={showLabels}
+                            onRemove={() => removeImage(idx)}
+                            onTagClick={onTagClick}
+                        />
+                    ))}
+                </div>
+            )}
+        </div>
+    );
+}
+
+function ReferenceThumbnail({
+    src,
+    index,
+    showLabel,
+    onRemove,
+    onTagClick,
+}: {
+    src: string;
+    index: number;
+    showLabel: boolean;
+    onRemove: () => void;
+    onTagClick?: (tag: string) => void;
+}) {
+    const tag = getRefTag(index);
+
+    return (
+        <div className="group relative flex-shrink-0">
+            <div className="relative h-8 w-8 overflow-hidden rounded-lg border border-border-primary bg-bg-tertiary">
+                <img src={src} alt={`ref-${index + 1}`} className="h-full w-full object-cover" />
+                <button
+                    type="button"
+                    onClick={onRemove}
+                    className="absolute inset-0 flex items-center justify-center rounded-lg bg-black/50 opacity-0 transition-opacity group-hover:opacity-100 cursor-pointer"
+                    title="Удалить"
+                >
+                    <X size={12} className="text-white" />
+                </button>
+            </div>
+            {showLabel && (
+                <button
+                    type="button"
+                    onClick={() => onTagClick?.(tag)}
+                    title={`Вставить ${tag} в промпт`}
+                    className="absolute -bottom-1 left-1/2 -translate-x-1/2 rounded-sm bg-accent-primary px-1 font-mono text-[8px] font-bold leading-tight text-text-inverse transition-colors hover:bg-accent-primary/80 cursor-pointer"
+                >
+                    {tag}
+                </button>
+            )}
         </div>
     );
 }

@@ -63,6 +63,8 @@ export interface ModelEntry {
     costPerRun: number;
     /** Max reference images supported (0 or omit = no ref support) */
     maxRefs?: number;
+    /** Maximum images one API request can return (1/omit = single-image only). */
+    maxOutputs?: number;
     /** Supported aspect ratios (omit = uses DEFAULT_ASPECT_RATIOS) */
     aspectRatios?: string[];
     /** Available resolution options (omit = no resolution control) */
@@ -136,6 +138,7 @@ export const MODEL_REGISTRY: ModelEntry[] = [
         caps: ["generate", "edit", "remove-bg", "vision"],
         costPerRun: 0.039,
         maxRefs: 14,
+        maxOutputs: 4,
         aspectRatios: WIDE_ASPECT_RATIOS,
         resolutions: GOOGLE_RESOLUTIONS,
     },
@@ -147,6 +150,7 @@ export const MODEL_REGISTRY: ModelEntry[] = [
         caps: ["generate", "edit", "remove-bg", "vision"],
         costPerRun: 0.067,
         maxRefs: 14,
+        maxOutputs: 4,
         aspectRatios: WIDE_ASPECT_RATIOS,
         resolutions: GOOGLE_RESOLUTIONS,
     },
@@ -158,6 +162,7 @@ export const MODEL_REGISTRY: ModelEntry[] = [
         caps: ["generate", "edit", "remove-bg", "vision"],
         costPerRun: 0.15,
         maxRefs: 14,
+        maxOutputs: 4,
         aspectRatios: WIDE_ASPECT_RATIOS,
         resolutions: GOOGLE_RESOLUTIONS,
     },
@@ -198,6 +203,7 @@ export const MODEL_REGISTRY: ModelEntry[] = [
         caps: ["generate", "edit", "vision"],
         costPerRun: 0.15,
         maxRefs: 8,
+        maxOutputs: 4,
         aspectRatios: ["1:1", "4:3", "3:4", "16:9", "9:16"],
         resolutions: GPT_RESOLUTIONS,
     },
@@ -240,6 +246,7 @@ export const MODEL_REGISTRY: ModelEntry[] = [
         caps: ["generate", "edit", "vision"],
         costPerRun: 0.035,
         maxRefs: 14,
+        maxOutputs: 6,
         aspectRatios: ["1:1", "4:3", "3:4", "16:9", "9:16", "3:2", "2:3", "21:9"],
         resolutions: SEEDREAM_RESOLUTIONS,
     },
@@ -252,6 +259,7 @@ export const MODEL_REGISTRY: ModelEntry[] = [
         provider: "replicate",
         caps: ["generate"],
         costPerRun: 0.003,
+        maxOutputs: 4,
         aspectRatios: WIDE_ASPECT_RATIOS,
         resolutions: FLUX_RESOLUTIONS_BASIC,
     },
@@ -262,6 +270,7 @@ export const MODEL_REGISTRY: ModelEntry[] = [
         provider: "replicate",
         caps: ["generate"],
         costPerRun: 0.025,
+        maxOutputs: 4,
         aspectRatios: WIDE_ASPECT_RATIOS,
         resolutions: FLUX_RESOLUTIONS_BASIC,
     },
@@ -301,6 +310,7 @@ export const MODEL_REGISTRY: ModelEntry[] = [
         caps: ["generate", "edit", "vision"],
         costPerRun: 0.025,
         maxRefs: 1, // image-to-image variant accepts a single source image
+        maxOutputs: 4,
         aspectRatios: LORA_ASPECT_RATIOS,
         loraSpec: {
             maxCount: 2,
@@ -325,6 +335,7 @@ export const MODEL_REGISTRY: ModelEntry[] = [
         provider: "fal",
         caps: ["generate", "vision"],
         costPerRun: 0.05,
+        maxOutputs: 4,
         aspectRatios: LORA_ASPECT_RATIOS,
         loraSpec: {
             maxCount: 2,
@@ -350,6 +361,7 @@ export const MODEL_REGISTRY: ModelEntry[] = [
         provider: "fal",
         caps: ["generate"],
         costPerRun: 0.035,
+        maxOutputs: 4,
         aspectRatios: LORA_ASPECT_RATIOS,
         loraSpec: {
             maxCount: 2,
@@ -581,6 +593,11 @@ export function getMaxRefs(modelId: string): number {
     return getModelById(modelId)?.maxRefs ?? 0;
 }
 
+/** Get maximum images one generation request can return (1 = single output). */
+export function getMaxOutputs(modelId: string): number {
+    return Math.max(1, getModelById(modelId)?.maxOutputs ?? 1);
+}
+
 /** Get supported aspect ratios for a model. */
 export function getAspectRatios(modelId: string): string[] {
     return getModelById(modelId)?.aspectRatios ?? DEFAULT_ASPECT_RATIOS;
@@ -589,6 +606,14 @@ export function getAspectRatios(modelId: string): string[] {
 /** Get available resolution options for a model (empty = no resolution control). */
 export function getResolutions(modelId: string): ResolutionOption[] {
     return getModelById(modelId)?.resolutions ?? [];
+}
+
+/** Default resolution pill for a model (2K for Google-style tiers, else first option). */
+export function getDefaultResolution(modelId: string): string {
+    const resolutions = getResolutions(modelId);
+    if (resolutions.length === 0) return "";
+    if (resolutions.some((r) => r.id === "2K")) return "2K";
+    return resolutions[0]?.id ?? "";
 }
 
 /** Returns true if the model accepts a `loras` array (i.e. exposes LoraSpec). */

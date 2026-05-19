@@ -1,3 +1,5 @@
+import { getLoraSpec } from "@/lib/ai-models";
+
 /**
  * Unified Style Presets — Single Source of Truth
  *
@@ -445,6 +447,19 @@ export function getImagePresetPromptSuffix(
 ): string {
   const list = presets ?? SYSTEM_IMAGE_PRESETS;
   return list.find((p) => p.id === presetId)?.promptSuffix ?? "";
+}
+
+/**
+ * Image style suffix for a given model. LoRA models encode style in weights —
+ * prompt suffixes are skipped to avoid conflicting instructions.
+ */
+export function getImagePresetPromptSuffixForModel(
+  presetId: string,
+  modelId: string,
+  presets?: ImageStylePreset[],
+): string {
+  if (getLoraSpec(modelId)) return "";
+  return getImagePresetPromptSuffix(presetId, presets);
 }
 
 /**

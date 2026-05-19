@@ -21,6 +21,14 @@ export interface PhotoEditContext {
     sourceMessageId?: string;
 }
 
+export interface PendingPhotoGeneration {
+    id: string;
+    sessionId: string;
+    count: number;
+    aspectRatio?: string;
+    prompt: string;
+}
+
 export interface PhotoStore {
     // Sessions
     activeSessionId: string | null;
@@ -56,6 +64,10 @@ export interface PhotoStore {
     pendingReferences: string[];
     pushReference: (url: string) => void;
     clearPendingReferences: () => void;
+
+    pendingGenerations: PendingPhotoGeneration[];
+    addPendingGeneration: (generation: PendingPhotoGeneration) => void;
+    clearPendingGeneration: (id: string) => void;
 }
 
 export const usePhotoStore = create<PhotoStore>((set) => ({
@@ -88,4 +100,10 @@ export const usePhotoStore = create<PhotoStore>((set) => ({
                 : { pendingReferences: [...s.pendingReferences, url] }
         ),
     clearPendingReferences: () => set({ pendingReferences: [] }),
+
+    pendingGenerations: [],
+    addPendingGeneration: (generation) =>
+        set((s) => ({ pendingGenerations: [...s.pendingGenerations, generation] })),
+    clearPendingGeneration: (id) =>
+        set((s) => ({ pendingGenerations: s.pendingGenerations.filter((generation) => generation.id !== id) })),
 }));

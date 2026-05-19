@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { generateWithFallback } from "@/lib/ai-providers";
 import { auth } from "@/server/auth";
 import { prisma } from "@/server/db";
-import { getModelById, estimateMegapixels } from "@/lib/ai-models";
+import { getModelById, getMaxOutputs, estimateMegapixels } from "@/lib/ai-models";
 import { checkRateLimit } from "@/lib/rateLimit";
 import { randomUUID } from "crypto";
 
@@ -62,12 +62,15 @@ export async function POST(req: NextRequest) {
             hasReferenceImages: Array.isArray(referenceImages) && referenceImages.length > 0,
         });
 
+        const resolvedModel = model || "nano-banana-2";
+        const requestedCount = Number.isFinite(Number(count)) ? Number(count) : 1;
+        const safeCount = Math.max(1, Math.min(Math.floor(requestedCount), getMaxOutputs(resolvedModel)));
         const result = await generateWithFallback({
             prompt,
             type: type || "image",
-            model,
+            model: resolvedModel,
             aspectRatio,
-            count,
+            count: safeCount,
             seed,
             scale,
             referenceImages,
@@ -88,15 +91,15 @@ export async function POST(req: NextRequest) {
             if (!recordMessage) {
                 return NextResponse.json({ ...result, requestId });
             }
-            const resolvedModel = model || "nano-banana-2";
             const modelEntry = getModelById(resolvedModel);
+            const outputCount = Math.max(1, result.contents?.length ?? 1);
             // LoRA-aware models bill per megapixel — multiply by an estimate
             // of the actually-generated image size based on aspect/scale.
             // Plain models keep their flat costPerRun.
             const costPerRun = modelEntry?.loraSpec
                 ? modelEntry.loraSpec.pricePerMP
-                    * estimateMegapixels(resolvedModel, scale) * (count ?? 1)
-                : (modelEntry?.costPerRun ?? 0);
+                    * estimateMegapixels(resolvedModel, scale) * outputCount
+                : (modelEntry?.costPerRun ?? 0) * outputCount;
             const userId = session.user.id;
 
             // Find or create an AI session for this project/user

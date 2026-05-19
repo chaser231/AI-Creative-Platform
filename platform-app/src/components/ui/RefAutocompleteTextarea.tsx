@@ -8,7 +8,7 @@
  * Selecting one inserts the full @refN tag at the cursor position.
  */
 
-import { useState, useRef, useCallback, useEffect, forwardRef, useImperativeHandle } from "react";
+import { useState, useRef, useCallback, useEffect, forwardRef, useImperativeHandle, type CSSProperties } from "react";
 import { getRefTag } from "@/components/ui/ReferenceImageInput";
 
 export interface RefAutocompleteTextareaProps {
@@ -21,6 +21,8 @@ export interface RefAutocompleteTextareaProps {
     disabled?: boolean;
     onKeyDown?: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void;
     rows?: number;
+    /** Prefer opening the @ref list above the cursor (auto picks based on viewport space). */
+    dropdownPlacement?: "above" | "below" | "auto";
 }
 
 export interface RefAutocompleteTextareaHandle {
@@ -30,32 +32,47 @@ export interface RefAutocompleteTextareaHandle {
     focus: () => void;
 }
 
+const DROPDOWN_GAP = 6;
+const DROPDOWN_EST_HEIGHT = 200;
+
 export const RefAutocompleteTextarea = forwardRef<RefAutocompleteTextareaHandle, RefAutocompleteTextareaProps>(
     function RefAutocompleteTextarea(
-        { value, onChange, referenceImages, placeholder, className, disabled, onKeyDown, rows },
+        {
+            value,
+            onChange,
+            referenceImages,
+            placeholder,
+            className,
+            disabled,
+            onKeyDown,
+            rows,
+            dropdownPlacement = "auto",
+        },
         ref
     ) {
         const textareaRef = useRef<HTMLTextAreaElement>(null);
         const dropdownRef = useRef<HTMLDivElement>(null);
         const [showDropdown, setShowDropdown] = useState(false);
-        const [dropdownPos, setDropdownPos] = useState({ top: 0, left: 0 });
+        const [dropdownPos, setDropdownPos] = useState<{
+            top?: number;
+            bottom?: number;
+            left: number;
+            placement: "above" | "below";
+        }>({ left: 0, placement: "below" });
         const [activeIndex, setActiveIndex] = useState(0);
         const [matchStart, setMatchStart] = useState(-1);
         const [filterText, setFilterText] = useState("");
 
-        // Build list of available refs
         const refOptions = referenceImages.map((src, i) => ({
             tag: getRefTag(i),
             src,
             index: i,
         }));
 
-        // Filter by typed text after @
-        const filteredOptions = refOptions.filter(opt =>
-            opt.tag.toLowerCase().includes(`@${filterText}`.toLowerCase())
+        const filteredOptions = refOptions.filter((opt) =>
+            opt.tag.toLowerCase().includes(`@${filterText}`.toLowerCase()),
         );
 
-        // Expose insertAtCursor to parent
         useImperativeHandle(ref, () => ({
             insertAtCursor: (text: string) => {
                 const ta = textareaRef.current;
@@ -63,12 +80,10 @@ export const RefAutocompleteTextarea = forwardRef<RefAutocompleteTextareaHandle,
                 const start = ta.selectionStart ?? value.length;
                 const before = value.slice(0, start);
                 const after = value.slice(start);
-                // Add space before if needed
                 const needsSpace = before.length > 0 && !before.endsWith(" ") && !before.endsWith("\n");
                 const insert = (needsSpace ? " " : "") + text + " ";
                 const newValue = before + insert + after;
                 onChange(newValue);
-                // Set cursor after inserted text
                 requestAnimationFrame(() => {
                     if (ta) {
                         const newPos = start + insert.length;
@@ -81,12 +96,10 @@ export const RefAutocompleteTextarea = forwardRef<RefAutocompleteTextareaHandle,
             focus: () => textareaRef.current?.focus(),
         }));
 
-        // Compute dropdown position relative to textarea
         const computeDropdownPosition = useCallback(() => {
             const ta = textareaRef.current;
             if (!ta) return;
 
-            // Use a mirror div to measure cursor position
             const mirror = document.createElement("div");
             const style = window.getComputedStyle(ta);
             mirror.style.cssText = `
@@ -112,28 +125,45 @@ export const RefAutocompleteTextarea = forwardRef<RefAutocompleteTextareaHandle,
 
             document.body.removeChild(mirror);
 
-            // Position dropdown below the cursor line
-            setDropdownPos({
-                top: Math.min(relativeTop + 22, taRect.height),
-                left: Math.min(relativeLeft, taRect.width - 200),
-            });
-        }, [value]);
+            const spaceBelow = taRect.bottom - markerRect.bottom;
+            const spaceAbove = markerRect.top - taRect.top;
+            let placement: "above" | "below" = "below";
+            if (dropdownPlacement === "above") {
+                placement = "above";
+            } else if (dropdownPlacement === "below") {
+                placement = "below";
+            } else {
+                placement = spaceBelow < DROPDOWN_EST_HEIGHT && spaceAbove > spaceBelow ? "above" : "below";
+            }
 
-        // Handle input changes to detect @ trigger
+            const left = Math.min(Math.max(0, relativeLeft), ta.clientWidth - 200);
+            if (placement === "above") {
+                setDropdownPos({
+                    bottom: ta.clientHeight - relativeTop + DROPDOWN_GAP,
+                    left,
+                    placement: "above",
+                });
+            } else {
+                setDropdownPos({
+                    top: Math.min(relativeTop + 22, ta.clientHeight),
+                    left,
+                    placement: "below",
+                });
+            }
+        }, [value, dropdownPlacement]);
+
         const handleChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
             const newValue = e.target.value;
             onChange(newValue);
 
             const cursorPos = e.target.selectionStart;
             const textBeforeCursor = newValue.slice(0, cursorPos);
-
-            // Find the last @ before cursor that isn't preceded by a word char
             const atMatch = textBeforeCursor.match(/(^|[\s])@(\w*)$/);
 
             if (atMatch && referenceImages.length > 0) {
                 const filter = atMatch[2] || "";
                 setFilterText(filter);
-                setMatchStart(cursorPos - filter.length - 1); // position of @
+                setMatchStart(cursorPos - filter.length - 1);
                 setShowDropdown(true);
                 setActiveIndex(0);
                 requestAnimationFrame(computeDropdownPosition);
@@ -142,7 +172,6 @@ export const RefAutocompleteTextarea = forwardRef<RefAutocompleteTextareaHandle,
             }
         }, [onChange, referenceImages.length, computeDropdownPosition]);
 
-        // Insert selected ref tag
         const insertRef = useCallback((tag: string) => {
             if (matchStart < 0) return;
             const ta = textareaRef.current;
@@ -163,17 +192,16 @@ export const RefAutocompleteTextarea = forwardRef<RefAutocompleteTextareaHandle,
             });
         }, [matchStart, value, onChange]);
 
-        // Keyboard navigation in dropdown
         const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
             if (showDropdown && filteredOptions.length > 0) {
                 if (e.key === "ArrowDown") {
                     e.preventDefault();
-                    setActiveIndex(prev => (prev + 1) % filteredOptions.length);
+                    setActiveIndex((prev) => (prev + 1) % filteredOptions.length);
                     return;
                 }
                 if (e.key === "ArrowUp") {
                     e.preventDefault();
-                    setActiveIndex(prev => (prev - 1 + filteredOptions.length) % filteredOptions.length);
+                    setActiveIndex((prev) => (prev - 1 + filteredOptions.length) % filteredOptions.length);
                     return;
                 }
                 if (e.key === "Enter" || e.key === "Tab") {
@@ -189,7 +217,6 @@ export const RefAutocompleteTextarea = forwardRef<RefAutocompleteTextareaHandle,
             onKeyDown?.(e);
         }, [showDropdown, filteredOptions, activeIndex, insertRef, onKeyDown]);
 
-        // Close dropdown on click outside
         useEffect(() => {
             const handleClickOutside = (e: MouseEvent) => {
                 if (
@@ -205,6 +232,16 @@ export const RefAutocompleteTextarea = forwardRef<RefAutocompleteTextareaHandle,
             return () => document.removeEventListener("mousedown", handleClickOutside);
         }, []);
 
+        const dropdownStyle: CSSProperties = {
+            left: Math.max(0, dropdownPos.left),
+            minWidth: 180,
+            maxWidth: 260,
+            maxHeight: DROPDOWN_EST_HEIGHT,
+            ...(dropdownPos.placement === "above"
+                ? { bottom: dropdownPos.bottom }
+                : { top: dropdownPos.top }),
+        };
+
         return (
             <div className="relative w-full">
                 <textarea
@@ -218,27 +255,26 @@ export const RefAutocompleteTextarea = forwardRef<RefAutocompleteTextareaHandle,
                     rows={rows}
                 />
 
-                {/* Autocomplete dropdown */}
                 {showDropdown && filteredOptions.length > 0 && (
                     <div
                         ref={dropdownRef}
-                        className="absolute z-50 bg-bg-surface border border-border-primary rounded-xl shadow-xl overflow-hidden animate-in fade-in slide-in-from-bottom-2 duration-150"
-                        style={{
-                            top: dropdownPos.top,
-                            left: Math.max(0, dropdownPos.left),
-                            minWidth: 180,
-                            maxWidth: 260,
-                        }}
+                        className={`absolute z-50 overflow-y-auto rounded-xl border border-border-primary bg-bg-surface shadow-xl animate-in fade-in duration-150 ${
+                            dropdownPos.placement === "above"
+                                ? "slide-in-from-top-2"
+                                : "slide-in-from-bottom-2"
+                        }`}
+                        style={dropdownStyle}
                     >
                         {filteredOptions.map((opt, i) => (
                             <button
                                 key={opt.tag}
+                                type="button"
                                 onMouseDown={(e) => {
-                                    e.preventDefault(); // prevent textarea blur
+                                    e.preventDefault();
                                     insertRef(opt.tag);
                                 }}
                                 onMouseEnter={() => setActiveIndex(i)}
-                                className={`flex items-center gap-2.5 w-full px-3 py-2 text-left text-sm transition-colors cursor-pointer ${
+                                className={`flex w-full cursor-pointer items-center gap-2.5 px-3 py-2 text-left text-sm transition-colors ${
                                     i === activeIndex
                                         ? "bg-accent-primary/10 text-accent-primary"
                                         : "text-text-primary hover:bg-bg-tertiary"
@@ -247,7 +283,7 @@ export const RefAutocompleteTextarea = forwardRef<RefAutocompleteTextareaHandle,
                                 <img
                                     src={opt.src}
                                     alt={opt.tag}
-                                    className="w-7 h-7 rounded-md object-cover border border-border-primary flex-shrink-0"
+                                    className="h-7 w-7 flex-shrink-0 rounded-md border border-border-primary object-cover"
                                 />
                                 <span className="font-mono text-xs font-semibold">{opt.tag}</span>
                             </button>
@@ -256,5 +292,5 @@ export const RefAutocompleteTextarea = forwardRef<RefAutocompleteTextareaHandle,
                 )}
             </div>
         );
-    }
+    },
 );

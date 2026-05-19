@@ -14,6 +14,7 @@ export {
     MODEL_REGISTRY,
     getModelsForCaps,
     getModelById,
+    getMaxOutputs,
     supportsLora,
     getLoraSpec,
     estimateMegapixels,
@@ -79,6 +80,8 @@ export interface AIRequestParams {
 
 export interface AIResponse {
     content: string;
+    /** All image URLs returned by the provider. `content` is always the first item. */
+    contents?: string[];
     format: "text" | "url" | "base64";
     model: string;
     provider: string;
@@ -92,6 +95,20 @@ export interface AIProviderImplementation {
     id: string;
     name: string;
     generate(params: AIRequestParams): Promise<AIResponse>;
+}
+
+export function normalizeImageOutputs(raw: unknown): string[] {
+    const values = Array.isArray(raw) ? raw : [raw];
+    return values
+        .map((item) => {
+            if (typeof item === "string") return item;
+            if (item && typeof item === "object" && "url" in item) {
+                const url = (item as { url?: unknown }).url;
+                return typeof url === "string" ? url : undefined;
+            }
+            return undefined;
+        })
+        .filter((url): url is string => Boolean(url));
 }
 
 // ─── OpenAI Direct Provider (DALL-E 3 only) ─────────────────────────────────
@@ -336,6 +353,7 @@ class ReplicateProvider implements AIProviderImplementation {
 
         // Model-family-specific params
         const slug = entry.slug;
+        const supportsReplicateMultiOutput = entry.id === "flux-dev" || entry.id === "flux-schnell";
         const isFlux = slug.startsWith("black-forest-labs/");
         const isGoogle = slug.startsWith("google/");
         const isQwen = slug.startsWith("qwen/");
@@ -345,7 +363,9 @@ class ReplicateProvider implements AIProviderImplementation {
             // Flux models support webp, num_outputs, output_quality
             input.output_format = "webp";
             input.output_quality = 90;
-            if (params.count && params.count > 1) input.num_outputs = Math.min(params.count, 4);
+            if (supportsReplicateMultiOutput && params.count && params.count > 1) {
+                input.num_outputs = Math.min(params.count, 4);
+            }
             // Flux resolution: megapixels
             if (params.scale) input.megapixels = params.scale; // "0.25", "1", "4"
         } else if (isGoogle) {
@@ -388,8 +408,10 @@ class ReplicateProvider implements AIProviderImplementation {
         console.log(`[Pipeline ▶6 Provider] Final Replicate input keys: ${Object.keys(input).join(", ")}`);
 
         const result = await this.callReplicate(entry, input, token);
-        const output = Array.isArray(result) ? result[0] : result;
-        return { content: output as string, format: "url", model: entry.id, provider: "replicate" };
+        const outputs = normalizeImageOutputs(result);
+        const output = outputs[0];
+        if (!output) throw new Error(`No image URL returned from ${entry.slug}`);
+        return { content: output, contents: outputs, format: "url", model: entry.id, provider: "replicate" };
     }
 
     // ── Replicate API Call ───────────────────────────────────────────────
@@ -721,6 +743,13 @@ const FAL_MODEL_MAP_EDIT: Record<string, string> = {
 // Kept as an explicit set so the FalProvider build-input branch stays narrow
 // and the rest of the pipeline keeps using a unified `aspectRatio` field.
 const FAL_IMAGE_SIZE_MODELS = new Set(["gpt-image-2", "seedream-5"]);
+const FAL_NUM_IMAGES_MODELS = new Set([
+    "nano-banana",
+    "nano-banana-2",
+    "nano-banana-pro",
+    "gpt-image-2",
+    "seedream-5",
+]);
 
 /** Map our canonical AR string → fal.ai `image_size` preset enum value. */
 function falImageSizeFromAspectRatio(aspectRatio?: string): string {
@@ -1136,9 +1165,13 @@ class FalProvider implements AIProviderImplementation {
             // Resolution mapping: fal.ai uses same "1K"/"2K"/"4K" enum for Google models
             // fal.ai REQUIRES this field (unlike Replicate which defaults to 1K)
             const isGoogleModel = !!FAL_MODEL_MAP[modelId]?.includes("nano-banana");
-            input.resolution = params.scale || (isGoogleModel ? "1K" : undefined);
+            input.resolution = params.scale || (isGoogleModel ? "2K" : undefined);
             if (!input.resolution) delete input.resolution;
             input.output_format = "png";
+        }
+
+        if (params.count && params.count > 1 && FAL_NUM_IMAGES_MODELS.has(modelId)) {
+            input.num_images = Math.min(params.count, modelId === "seedream-5" ? 6 : 4);
         }
 
         // Reference images — /edit endpoint uses `image_urls` (NOT `image_input`)
@@ -1414,11 +1447,16 @@ class FalProvider implements AIProviderImplementation {
     private parseResult(data: Record<string, unknown>, entry: ModelEntry): AIResponse {
         const images = data.images as { url?: string; width?: number; height?: number }[] | undefined;
         const imageObj = images?.[0];
-        const imageUrl = imageObj?.url || (data.output as string);
+        const imageUrls = Array.from(new Set([
+            ...(images?.map((image) => image.url).filter((url): url is string => Boolean(url)) ?? []),
+            ...normalizeImageOutputs(data.output),
+        ]));
+        const imageUrl = imageObj?.url || imageUrls[0];
         if (!imageUrl) throw new Error("fal.ai: no image URL in response");
 
         return {
             content: imageUrl,
+            contents: imageUrls.length > 0 ? imageUrls : [imageUrl],
             format: "url",
             model: entry.id,
             provider: "fal",

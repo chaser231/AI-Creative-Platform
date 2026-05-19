@@ -21,7 +21,7 @@ import { LoraTriggerHint } from "@/components/ui/LoraTriggerHint";
 import { ModelSettingsModal, type AdvancedAIParams } from "@/components/ui/ModelSettingsModal";
 import { getModelById, getMaxRefs, getAspectRatios, getResolutions, resolveRefTags, getLoraSpec } from "@/lib/ai-models";
 import type { LoraWeight } from "@/lib/ai-providers";
-import { getImagePresetPromptSuffix } from "@/lib/stylePresets";
+import { getImagePresetPromptSuffixForModel } from "@/lib/stylePresets";
 import { useStylePresets } from "@/hooks/useStylePresets";
 import { uploadManyForAI } from "@/utils/imageUpload";
 import type { ImageComponentProps, BusinessUnit } from "@/types";
@@ -132,7 +132,7 @@ export function ImageContentBlock({ id, name, props, value, onChange, businessUn
         setIsGenerating(true);
         try {
             // User prompt is primary; style is appended as context, not prefix
-            const styleSuffix = getImagePresetPromptSuffix(stylePreset, imagePresets);
+            const styleSuffix = getImagePresetPromptSuffixForModel(stylePreset, selectedModel, imagePresets);
             const styleContext = styleSuffix ? `. Style: ${styleSuffix}` : "";
             const finalPrompt = `${basePrompt}${styleContext}`;
 
@@ -346,12 +346,14 @@ export function ImageContentBlock({ id, name, props, value, onChange, businessUn
                                     </select>
                                 </OutlinedSelector>
 
-                                <ImageStylePresetPicker
-                                    presets={imagePresets}
-                                    selectedId={stylePreset}
-                                    onChange={setStylePreset}
-                                    variant="compact"
-                                />
+                                {!loraSpec && (
+                                    <ImageStylePresetPicker
+                                        presets={imagePresets}
+                                        selectedId={stylePreset}
+                                        onChange={setStylePreset}
+                                        variant="compact"
+                                    />
+                                )}
 
                                 {/* LoRA picker — disabled for non-LoRA models. */}
                                 <LoraSelectorPicker
