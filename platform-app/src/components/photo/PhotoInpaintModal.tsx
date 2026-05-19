@@ -35,44 +35,58 @@ export function PhotoInpaintModal({ projectId }: PhotoInpaintModalProps) {
     const open = inpaintMode && !!editContext;
 
     const handleApply = async (rawUrl: string, meta: InpaintApplyMeta): Promise<string> => {
+        const postStartedAt = performance.now();
         let persisted = rawUrl;
         if (!persisted.includes("storage.yandexcloud.net")) {
             persisted = await persistImageToS3(persisted, projectId);
         }
-        try {
-            await saveGeneratedAssetMutation.mutateAsync({
-                projectId,
-                url: persisted,
-                prompt: meta.intent === "remove" ? "Удалить (inpaint)" : meta.prompt,
-                model: meta.model,
-                source: meta.intent === "remove" ? "photo-inpaint-remove" : "photo-inpaint",
-            });
-        } catch (e) {
-            console.warn("[PhotoInpaintModal] asset save failed", e);
-        }
-        if (activeSessionId && editContext) {
-            try {
-                await addMessageMutation.mutateAsync({
-                    sessionId: activeSessionId,
-                    role: "assistant",
-                    content: persisted,
-                    type: "image",
+
+        const sessionId = activeSessionId;
+        const sourceUrl = editContext?.url;
+
+        await Promise.all([
+            saveGeneratedAssetMutation
+                .mutateAsync({
+                    projectId,
+                    url: persisted,
+                    prompt: meta.intent === "remove" ? "Удалить (inpaint)" : meta.prompt,
                     model: meta.model,
-                    costUnits: getModelById(meta.model)?.costPerRun ?? 0,
-                    metadata: {
-                        kind: "edit",
-                        sourceUrl: editContext.url,
-                    },
-                });
-                await utils.ai.getMessages.invalidate({ sessionId: activeSessionId });
-            } catch (e) {
-                console.warn("[PhotoInpaintModal] message append failed", e);
-            }
-        }
+                    source: meta.intent === "remove" ? "photo-inpaint-remove" : "photo-inpaint",
+                })
+                .catch((e) => {
+                    console.warn("[PhotoInpaintModal] asset save failed", e);
+                }),
+            sessionId && sourceUrl
+                ? addMessageMutation
+                      .mutateAsync({
+                          sessionId,
+                          role: "assistant",
+                          content: persisted,
+                          type: "image",
+                          model: meta.model,
+                          costUnits: getModelById(meta.model)?.costPerRun ?? 0,
+                          metadata: {
+                              kind: "edit",
+                              sourceUrl,
+                          },
+                      })
+                      .then(() => utils.ai.getMessages.invalidate({ sessionId }))
+                      .catch((e) => {
+                          console.warn("[PhotoInpaintModal] message append failed", e);
+                      })
+                : Promise.resolve(),
+        ]);
+
         await Promise.all([
             utils.asset.listByProject.invalidate({ projectId }),
             utils.project.list.invalidate(),
         ]);
+
+        console.info("[PhotoInpaintModal] post-process done", {
+            model: meta.model,
+            postMs: Math.round(performance.now() - postStartedAt),
+        });
+
         clearEditContext();
         return persisted;
     };

@@ -77,6 +77,7 @@ export function InpaintImageModal({
     const [model, setModel] = useState<string>(defaultModel ?? DEFAULT_INPAINT_MODEL);
     const [prompt, setPrompt] = useState("");
     const [isProcessing, setIsProcessing] = useState(false);
+    const [processingStage, setProcessingStage] = useState<string | null>(null);
     const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
     // Recompute image bbox on resize / image load.
@@ -109,6 +110,7 @@ export function InpaintImageModal({
             mask.clear();
             setPrompt("");
             setErrorMsg(null);
+            setProcessingStage(null);
             setNatural(null);
             setBbox(null);
         }
@@ -130,7 +132,9 @@ export function InpaintImageModal({
         const naturalSize = natural ?? { w: bbox?.width ?? 1024, h: bbox?.height ?? 1024 };
         const modelEntry = getModelById(model);
         setIsProcessing(true);
+        setProcessingStage("Готовим маску…");
         setErrorMsg(null);
+        const clientStartedAt = performance.now();
         try {
             const blob = await mask.exportMaskBlob(
                 {
@@ -148,11 +152,27 @@ export function InpaintImageModal({
             }
 
             const maskDataUrl = await blobToDataUrl(blob);
+            setProcessingStage("Загружаем изображение и маску…");
+            const uploadStartedAt = performance.now();
             const [imageUrl, maskUrl] = await Promise.all([
                 uploadForAI(sourceUrl, projectId),
                 uploadForAI(maskDataUrl, projectId),
             ]);
+            console.info("[InpaintImageModal] uploads done", {
+                model,
+                uploadMs: Math.round(performance.now() - uploadStartedAt),
+                naturalSize,
+            });
 
+            const genHint =
+                model === "gpt-image-2"
+                    ? "GPT Image 2 — обычно 1–3 мин"
+                    : model === "flux-fill"
+                      ? "FLUX Fill — обычно 15–45 сек"
+                      : "Генерация может занять до 2 мин";
+            setProcessingStage(`Генерируем (${genHint})…`);
+
+            const apiStartedAt = performance.now();
             const response = await fetch("/api/ai/image-edit", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
@@ -172,7 +192,13 @@ export function InpaintImageModal({
             if (data.error || !data.content) {
                 throw new Error(data.error || "Пустой ответ от модели");
             }
+            console.info("[InpaintImageModal] API done", {
+                model: data.model ?? model,
+                apiMs: Math.round(performance.now() - apiStartedAt),
+                totalMs: Math.round(performance.now() - clientStartedAt),
+            });
 
+            setProcessingStage("Сохраняем результат…");
             await onApply(data.content as string, {
                 model: (data.model as string | undefined) ?? model,
                 intent,
@@ -186,6 +212,7 @@ export function InpaintImageModal({
             setErrorMsg(parseGenerationError(e));
         } finally {
             setIsProcessing(false);
+            setProcessingStage(null);
         }
     }, [projectId, sourceUrl, mask, prompt, natural, bbox, model, onApply, onClose]);
 
@@ -238,7 +265,9 @@ export function InpaintImageModal({
                             <div className="absolute inset-0 z-50 bg-black/30 flex items-center justify-center">
                                 <div className="bg-bg-primary/95 backdrop-blur-sm rounded-[var(--radius-xl)] p-5 flex flex-col items-center gap-2 shadow-[var(--shadow-lg)]">
                                     <Loader2 size={28} className="animate-spin text-text-secondary" />
-                                    <p className="text-xs font-medium text-text-primary">Применяю изменения...</p>
+                                    <p className="text-xs font-medium text-text-primary text-center max-w-[220px]">
+                                        {processingStage ?? "Применяю изменения…"}
+                                    </p>
                                 </div>
                             </div>
                         )}
@@ -255,6 +284,16 @@ export function InpaintImageModal({
                                     options={inpaintModels}
                                     className="w-full"
                                 />
+                                {model === "flux-fill" && (
+                                    <p className="text-[10px] text-text-tertiary mt-1">
+                                        Рекомендуем по умолчанию: быстрее всего и с нативной поддержкой маски.
+                                    </p>
+                                )}
+                                {model === "gpt-image-2" && (
+                                    <p className="text-[10px] text-amber-600 mt-1">
+                                        Премиум-качество, но генерация заметно дольше (часто 1–3 мин). Для быстрого результата выберите FLUX Fill.
+                                    </p>
+                                )}
                                 {(model === "nano-banana" || model === "nano-banana-2" || model === "nano-banana-pro") && (
                                     <p className="text-[10px] text-amber-500 mt-1">
                                         Маска для Nano Banana — экспериментальная (модель использует её как подсказку).

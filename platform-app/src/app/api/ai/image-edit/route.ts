@@ -110,6 +110,7 @@ export async function POST(req: NextRequest) {
                 // Caller can still override by passing scale explicitly.
                 const resolvedScale = scale || "high";
 
+                const inpaintStartedAt = Date.now();
                 result = await generateWithFallback({
                     prompt: built.prompt,
                     type: "inpainting",
@@ -123,6 +124,12 @@ export async function POST(req: NextRequest) {
                     numInferenceSteps,
                     negativePrompt,
                     acceleration,
+                });
+                console.log("[/api/ai/image-edit] inpaint completed", {
+                    requestId,
+                    model: result.model ?? inpaintModel,
+                    provider: result.provider,
+                    durationMs: Date.now() - inpaintStartedAt,
                 });
                 if (result.model) usedModel = result.model;
                 break;

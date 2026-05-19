@@ -1793,7 +1793,11 @@ export async function generateWithFallback(params: AIRequestParams): Promise<AIR
     }
 
     // ── Step 2: Try sibling models from the same family ──
-    const siblings = MODEL_FALLBACK_CHAIN[modelId];
+    // Inpaint is latency-sensitive: falling through gpt-image-2 → gpt-image
+    // (or nano variants) can add several minutes on top of an already-slow
+    // queue job. Prefer surfacing the primary model error to the user.
+    const siblings =
+        params.type === "inpainting" ? undefined : MODEL_FALLBACK_CHAIN[modelId];
     if (siblings && siblings.length > 0) {
         for (const siblingId of siblings) {
             console.log(`[Provider] Trying sibling model ${siblingId} instead of ${modelId}...`);
