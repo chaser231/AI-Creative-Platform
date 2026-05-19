@@ -1,10 +1,17 @@
 "use client";
 
-import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactNode } from "react";
 import { Stage, Layer, Rect, Text, Image as KonvaImage, Group } from "react-konva";
-import type { FrameLayer, ImageLayer, Layer as LayerType } from "@/types";
+import type {
+    ArtboardBackgroundImage,
+    FrameLayer,
+    ImageFitMode,
+    ImageLayer,
+    Layer as LayerType,
+    Paint,
+} from "@/types";
 import { computeImageFitProps } from "@/utils/imageFitUtils";
-import { paintToKonvaProps } from "@/utils/paint";
+import { normalizePaint, paintToKonvaProps } from "@/utils/paint";
 import Konva from "konva";
 
 type ImageLoadStatus = "loading" | "loaded" | "error";
@@ -194,6 +201,104 @@ function PreviewLayer({ layer, allLayers, loadedImages, imageStatuses, renderX, 
     }
 }
 
+function artboardClipFunc(width: number, height: number, cornerRadius: number) {
+    if (cornerRadius <= 0) return undefined;
+    const r = Math.min(cornerRadius, Math.min(width, height) / 2);
+    return (ctx: Konva.Context) => {
+        ctx.beginPath();
+        ctx.moveTo(r, 0);
+        ctx.arcTo(width, 0, width, height, r);
+        ctx.arcTo(width, height, 0, height, r);
+        ctx.arcTo(0, height, 0, 0, r);
+        ctx.arcTo(0, 0, width, 0, r);
+        ctx.closePath();
+    };
+}
+
+function PreviewArtboardBackground({
+    width,
+    height,
+    fill,
+    backgroundImage,
+    cornerRadius = 0,
+    loadedImages,
+}: {
+    width: number;
+    height: number;
+    fill?: Paint;
+    backgroundImage?: ArtboardBackgroundImage;
+    cornerRadius?: number;
+    loadedImages: Map<string, HTMLImageElement>;
+}) {
+    const fillProps = paintToKonvaProps(fill ?? normalizePaint(undefined), width, height);
+    const clipFunc = artboardClipFunc(width, height, cornerRadius);
+    const bgSrc = backgroundImage?.src;
+    const bgImg = bgSrc ? loadedImages.get(bgSrc) : undefined;
+
+    const fillRect = (
+        <Rect
+            name="export-artboard-fill"
+            x={0}
+            y={0}
+            width={width}
+            height={height}
+            cornerRadius={cornerRadius}
+            listening={false}
+            {...fillProps}
+        />
+    );
+
+    let bgNode: ReactNode = null;
+    if (bgImg && backgroundImage) {
+        const fit = (backgroundImage.fit ?? "cover") as ImageFitMode;
+        const nw = bgImg.naturalWidth || bgImg.width;
+        const nh = bgImg.naturalHeight || bgImg.height;
+        const fitProps = computeImageFitProps(fit, nw, nh, width, height, {
+            focusX: backgroundImage.focusX,
+            focusY: backgroundImage.focusY,
+        });
+        const image = (
+            <KonvaImage
+                name="export-artboard-background"
+                image={bgImg}
+                x={fitProps.drawX}
+                y={fitProps.drawY}
+                width={fitProps.drawWidth}
+                height={fitProps.drawHeight}
+                crop={{
+                    x: fitProps.cropX,
+                    y: fitProps.cropY,
+                    width: fitProps.cropWidth,
+                    height: fitProps.cropHeight,
+                }}
+                opacity={backgroundImage.opacity ?? 1}
+                listening={false}
+            />
+        );
+        bgNode = clipFunc ? (
+            <Group name="export-artboard-background" listening={false} clipFunc={clipFunc}>
+                {image}
+            </Group>
+        ) : image;
+    }
+
+    if (clipFunc) {
+        return (
+            <Group listening={false} clipFunc={clipFunc}>
+                {fillRect}
+                {bgNode}
+            </Group>
+        );
+    }
+
+    return (
+        <>
+            {fillRect}
+            {bgNode}
+        </>
+    );
+}
+
 interface PreviewCanvasProps {
     layers: LayerType[];
     artboardWidth: number;
@@ -205,6 +310,9 @@ interface PreviewCanvasProps {
     appearance?: "light" | "dark";
     /** `artboard` renders a clean 1:1 stage for PNG export. */
     renderMode?: "preview" | "artboard";
+    artboardFill?: Paint;
+    artboardBackgroundImage?: ArtboardBackgroundImage;
+    artboardCornerRadius?: number;
     onImagesReadyChange?: (ready: boolean) => void;
     onImageLoadStateChange?: (state: { pending: number; failed: number }) => void;
 }
@@ -218,16 +326,22 @@ export const PreviewCanvas = forwardRef<Konva.Stage, PreviewCanvasProps>(functio
     zoom = 1,
     appearance = "light",
     renderMode = "preview",
+    artboardFill,
+    artboardBackgroundImage,
+    artboardCornerRadius = 0,
     onImagesReadyChange,
     onImageLoadStateChange,
 }, forwardedRef) {
     const stageRef = useRef<Konva.Stage>(null);
     const [loadedImages, setLoadedImages] = useState<Map<string, HTMLImageElement>>(new Map());
     const [failedImageSources, setFailedImageSources] = useState<Set<string>>(new Set());
-    const imageSources = useMemo(
-        () => Array.from(new Set(layers.filter((layer): layer is ImageLayer => layer.type === "image" && layer.visible !== false && !!layer.src).map((layer) => layer.src))),
-        [layers]
-    );
+    const imageSources = useMemo(() => {
+        const sources = layers
+            .filter((layer): layer is ImageLayer => layer.type === "image" && layer.visible !== false && !!layer.src)
+            .map((layer) => layer.src);
+        if (artboardBackgroundImage?.src) sources.push(artboardBackgroundImage.src);
+        return Array.from(new Set(sources));
+    }, [artboardBackgroundImage?.src, layers]);
 
     useEffect(() => {
         let disposed = false;
@@ -348,6 +462,14 @@ export const PreviewCanvas = forwardRef<Konva.Stage, PreviewCanvasProps>(functio
             >
                 <Layer>
                     <Group clipX={0} clipY={0} clipWidth={artboardWidth} clipHeight={artboardHeight}>
+                        <PreviewArtboardBackground
+                            width={artboardWidth}
+                            height={artboardHeight}
+                            fill={artboardFill}
+                            backgroundImage={artboardBackgroundImage}
+                            cornerRadius={artboardCornerRadius}
+                            loadedImages={activeLoadedImages}
+                        />
                         {topLevelLayers.map((layer) => (
                             <PreviewLayer
                                 key={layer.id}
@@ -389,6 +511,14 @@ export const PreviewCanvas = forwardRef<Konva.Stage, PreviewCanvasProps>(functio
                 <Group x={stageX} y={stageY} scaleX={scale} scaleY={scale}>
                     {/* Artboard clip bounds */}
                     <Group clipX={0} clipY={0} clipWidth={artboardWidth} clipHeight={artboardHeight}>
+                        <PreviewArtboardBackground
+                            width={artboardWidth}
+                            height={artboardHeight}
+                            fill={artboardFill}
+                            backgroundImage={artboardBackgroundImage}
+                            cornerRadius={artboardCornerRadius}
+                            loadedImages={activeLoadedImages}
+                        />
                         {topLevelLayers.map((layer) => (
                             <PreviewLayer
                                 key={layer.id}

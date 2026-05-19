@@ -4,6 +4,8 @@ export interface GeneratedImageVariant {
     id: string;
     url?: string;
     status?: "loading" | "ready" | "error";
+    /** Short prompt hint shown on loading/error thumbnails */
+    promptLabel?: string;
 }
 
 interface GeneratedImageStripProps {
@@ -25,7 +27,7 @@ export function GeneratedImageStrip({
 
     return (
         <div
-            className={`flex items-center justify-center gap-3 rounded-[18px] border border-border-primary/70 bg-bg-primary/85 px-3 py-2 shadow-lg backdrop-blur-md ${className}`}
+            className={`flex max-w-[min(520px,92vw)] items-center justify-center gap-3 overflow-x-auto rounded-[18px] border border-border-primary/70 bg-bg-primary/85 px-3 py-2 shadow-lg backdrop-blur-md [scrollbar-width:thin] ${className}`}
             onPointerDown={(event) => event.stopPropagation()}
             onClick={(event) => event.stopPropagation()}
         >
@@ -34,16 +36,18 @@ export function GeneratedImageStrip({
                 const status = variant.status ?? (variant.url ? "ready" : "loading");
                 const selected = selectedId === variant.id;
                 const disabled = status !== "ready" || !variant.url;
+                const title = variant.promptLabel?.trim() || label;
 
                 return (
                     <button
                         key={variant.id}
                         type="button"
                         disabled={disabled}
+                        title={title}
                         aria-label={`${label}: вариант ${index + 1}`}
                         aria-pressed={selected}
                         onClick={() => onSelect?.(variant, index)}
-                        className={`relative h-14 w-14 overflow-hidden rounded-[12px] border-2 bg-bg-secondary transition-all disabled:cursor-wait ${
+                        className={`relative h-14 w-14 shrink-0 overflow-hidden rounded-[12px] border-2 bg-bg-secondary transition-all disabled:cursor-wait ${
                             selected
                                 ? "border-accent-lime-hover ring-2 ring-accent-lime/50"
                                 : "border-border-primary hover:border-border-secondary"
@@ -58,12 +62,22 @@ export function GeneratedImageStrip({
                                 draggable={false}
                             />
                         ) : status === "error" ? (
-                            <div className="flex h-full w-full items-center justify-center bg-red-500/10 text-red-400">
-                                <ImageIcon size={18} />
+                            <div className="flex h-full w-full flex-col items-center justify-center gap-0.5 bg-red-500/10 px-0.5 text-red-400">
+                                <ImageIcon size={16} />
+                                {variant.promptLabel && (
+                                    <span className="max-w-full truncate text-[8px] leading-tight">
+                                        {variant.promptLabel}
+                                    </span>
+                                )}
                             </div>
                         ) : (
-                            <div className="flex h-full w-full items-center justify-center bg-bg-tertiary text-text-tertiary">
-                                <Loader2 size={18} className="animate-spin" />
+                            <div className="flex h-full w-full flex-col items-center justify-center gap-0.5 bg-bg-tertiary px-0.5 text-text-tertiary">
+                                <Loader2 size={16} className="animate-spin" />
+                                {variant.promptLabel && (
+                                    <span className="max-w-full truncate text-[8px] leading-tight text-text-tertiary">
+                                        {variant.promptLabel}
+                                    </span>
+                                )}
                             </div>
                         )}
                     </button>

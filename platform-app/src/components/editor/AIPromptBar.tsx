@@ -24,6 +24,13 @@ import { OutpaintProgressIndicator } from "@/components/ui/OutpaintProgressIndic
 import { useProjectLibrary } from "@/hooks/useProjectLibrary";
 import { trpc } from "@/lib/trpc";
 import type { ImageLayer } from "@/types";
+import { parseGenerationError } from "@/lib/parseGenerationError";
+import {
+    formatProjectQueueBadge,
+    truncatePromptLabel,
+    useGenerationQueueStore,
+    useProjectQueueCounts,
+} from "@/store/generationQueueStore";
 
 // Helper models lists
 const TEXT_MODELS = [
@@ -156,9 +163,11 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
     const [imageCount, setImageCount] = useState(1);
     const [applyToSelection, setApplyToSelection] = useState(false);
     const [isGenerating, setIsGenerating] = useState(false);
-    const [generatedVariants, setGeneratedVariants] = useState<GeneratedImageVariant[]>([]);
+    const [variantsByLayer, setVariantsByLayer] = useState<Record<string, GeneratedImageVariant[]>>({});
     const [selectedGeneratedVariantId, setSelectedGeneratedVariantId] = useState<string | undefined>(undefined);
     const [generatedTargetLayerId, setGeneratedTargetLayerId] = useState<string | null>(null);
+    const enqueueJob = useGenerationQueueStore((s) => s.enqueue);
+    const queueCounts = useProjectQueueCounts(projectId);
     // Outpaint pipeline progress (only set during action === "outpaint";
     // null otherwise so the indicator collapses out of the layout).
     const [outpaintProgress, setOutpaintProgress] = useState<OutpaintProgressState | null>(null);
@@ -241,11 +250,68 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
     const modelResolutions = getResolutions(selectedModel);
     const maxImageOutputs = activeTab === "image" ? getMaxOutputs(selectedModel) : 1;
 
-    const clearGeneratedVariants = useCallback(() => {
-        setGeneratedVariants([]);
+    const clearGeneratedVariants = useCallback((layerId?: string) => {
+        if (layerId) {
+            setVariantsByLayer((prev) => {
+                const next = { ...prev };
+                delete next[layerId];
+                return next;
+            });
+        } else {
+            setVariantsByLayer({});
+        }
         setSelectedGeneratedVariantId(undefined);
-        setGeneratedTargetLayerId(null);
+        if (!layerId) setGeneratedTargetLayerId(null);
     }, []);
+
+    const appendLoadingVariants = useCallback(
+        (layerKey: string, count: number, promptLabel: string, batchId: string) => {
+            setVariantsByLayer((prev) => {
+                const existing = prev[layerKey] ?? [];
+                const slots = Array.from({ length: count }, (_, index) => ({
+                    id: `${batchId}-${index}`,
+                    status: "loading" as const,
+                    promptLabel,
+                }));
+                return { ...prev, [layerKey]: [...existing, ...slots] };
+            });
+        },
+        [],
+    );
+
+    const resolveBatchVariants = useCallback(
+        (
+            layerKey: string,
+            batchId: string,
+            urls: string[],
+            promptLabel: string,
+            status: "ready" | "error",
+        ) => {
+            setVariantsByLayer((prev) => {
+                const kept = (prev[layerKey] ?? []).filter((v) => !v.id.startsWith(`${batchId}-`));
+                const resolved =
+                    status === "ready"
+                        ? urls.map((url, index) => ({
+                            id: `${batchId}-${index}-${url}`,
+                            url,
+                            status: "ready" as const,
+                            promptLabel,
+                        }))
+                        : [{ id: `${batchId}-error`, status: "error" as const, promptLabel }];
+                return { ...prev, [layerKey]: [...kept, ...resolved] };
+            });
+        },
+        [],
+    );
+
+    const activeLayerKey = selectedLayerIds[0] ?? generatedTargetLayerId ?? null;
+    const activeVariants = activeLayerKey ? (variantsByLayer[activeLayerKey] ?? []) : [];
+    const showVariantStrip =
+        (activeTab === "image" || activeTab === "edit")
+        && activeVariants.length > 0
+        && (activeVariants.length > 1 || activeVariants.some((v) => v.status === "loading"));
+
+    const queueBadge = formatProjectQueueBadge(queueCounts);
 
     useEffect(() => {
         if (imageCount > maxImageOutputs) {
@@ -261,15 +327,10 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
     }, [open, activeTab, selectedModel, scale, modelResolutions]);
 
     useEffect(() => {
-        if (generatedVariants.length === 0) return;
         if (activeTab !== "image" || !open) {
             clearGeneratedVariants();
-            return;
         }
-        if (generatedTargetLayerId && !selectedLayerIds.includes(generatedTargetLayerId)) {
-            clearGeneratedVariants();
-        }
-    }, [activeTab, clearGeneratedVariants, generatedTargetLayerId, generatedVariants.length, open, selectedLayerIds]);
+    }, [activeTab, clearGeneratedVariants, open]);
 
     // LoRA capabilities — drive picker visibility / disabled state and the
     // gear chip that opens advanced model settings.
@@ -356,8 +417,22 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
 
     // ── Image edit API call (shared by all edit actions) ──
     const callImageEdit = useCallback(async (action: string, editPrompt?: string) => {
-        if (!selectedImageLayer) return;
-        setIsGenerating(true);
+        if (!selectedImageLayer || !projectId) return;
+        const layerId = selectedImageLayer.id;
+        const batchId = `edit-${Date.now()}`;
+        const promptLabel = truncatePromptLabel(editPrompt || action);
+        appendLoadingVariants(layerId, 1, promptLabel, batchId);
+
+        enqueueJob(
+            {
+                id: batchId,
+                projectId,
+                surface: "studio",
+                layerId,
+                prompt: promptLabel,
+                imageCount: 1,
+            },
+            async () => {
         setEditError(null);
 
         try {
@@ -428,6 +503,16 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                     prompt: rawPrompt || action,
                     model: outpaintResult.model,
                 });
+                const outpaintLayer = useCanvasStore
+                    .getState()
+                    .layers.find((l) => l.id === layerId) as ImageLayer | undefined;
+                resolveBatchVariants(
+                    layerId,
+                    batchId,
+                    [outpaintLayer?.src ?? outpaintResult.src],
+                    promptLabel,
+                    "ready",
+                );
                 return;
             }
 
@@ -568,22 +653,25 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                     prompt: rawPrompt || action,
                     model: data.model,
                 });
-                // Prompt and references are intentionally preserved after a
-                // successful edit so the user can iterate on the same input
-                // (tweak wording, swap a reference, rerun) without retyping.
+
+                const storeLayer = useCanvasStore
+                    .getState()
+                    .layers.find((l) => l.id === layerId) as ImageLayer | undefined;
+                const resultUrl = storeLayer?.src ?? finalContent;
+                resolveBatchVariants(layerId, batchId, [resultUrl], promptLabel, "ready");
             }
         } catch (e: unknown) {
             const error = e as Error;
             console.error(`Image edit (${action}) failed:`, error);
-            setEditError(parseAiError(error));
+            setEditError(parseGenerationError(error));
+            resolveBatchVariants(layerId, batchId, [], promptLabel, "error");
+            throw error;
         } finally {
-            setIsGenerating(false);
-            // Outpaint progress is per-action; clear it regardless of
-            // whether this run was an outpaint (cheap, prevents stale
-            // labels leaking into a subsequent edit-tab interaction).
             setOutpaintProgress(null);
         }
-    }, [selectedImageLayer, selectedModel, scale, imageStyleId, imagePresets, referenceImages, expandPadding, projectId, applyEditedImageToLayer, onResult, resetExpandMode, saveGeneratedAssetMutation, trpcUtils, loraRequestFields]);
+            },
+        );
+    }, [selectedImageLayer, selectedModel, scale, imageStyleId, imagePresets, referenceImages, expandPadding, projectId, applyEditedImageToLayer, onResult, resetExpandMode, saveGeneratedAssetMutation, trpcUtils, loraRequestFields, appendLoadingVariants, enqueueJob, resolveBatchVariants]);
 
     // ── Edit tab handlers ──
     const handleRemoveBg = () => callImageEdit("remove-bg");
@@ -618,111 +706,41 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
     });
 
     const handleGeneratedVariantSelect = (variant: GeneratedImageVariant) => {
-        if (!variant.url || !generatedTargetLayerId) return;
-        updateLayer(generatedTargetLayerId, { src: variant.url } as any);
+        const layerId = activeLayerKey ?? generatedTargetLayerId;
+        if (!variant.url || !layerId) return;
+        updateLayer(layerId, { src: variant.url } as Partial<ImageLayer>);
         setSelectedGeneratedVariantId(variant.id);
+        setGeneratedTargetLayerId(layerId);
     };
 
     // ── Standard text/image generation (non-edit tabs) ──
     const handleGenerate = async () => {
-        // In edit mode, route to the appropriate edit handler
         if (activeTab === "edit") {
             if (editAction === "remove-bg") return handleRemoveBg();
             if (editAction === "inpaint") return handleInpaint();
             if (editAction === "expand") return handleExpand();
-            // Default: text-edit with prompt
             return handleTextEdit();
         }
 
         if (!prompt) return;
-        const requestedImageCount = activeTab === "image" ? Math.min(imageCount, maxImageOutputs) : 1;
-        setIsGenerating(true);
-        if (activeTab === "image") {
-            setGeneratedVariants(Array.from({ length: requestedImageCount }, (_, index) => ({
-                id: `loading-${Date.now()}-${index}`,
-                status: "loading" as const,
-            })));
-            setSelectedGeneratedVariantId(undefined);
-            setGeneratedTargetLayerId(null);
-        }
 
-        try {
-            let res;
-            if (activeTab === "text") {
-                // Inject text style instruction if selected
-                const textInstruction = textStyleId ? getTextPresetInstruction(textStyleId, textPresets) : "";
+        if (activeTab === "text") {
+            setIsGenerating(true);
+            try {
+                const textInstruction = textStyleId
+                    ? getTextPresetInstruction(textStyleId, textPresets)
+                    : "";
                 const textPromptWithStyle = textInstruction
                     ? `${textInstruction}\n\n${prompt}`
                     : prompt;
-                res = await RemoteTextProvider.generate(textPromptWithStyle, { model: selectedModel, projectId });
-            } else {
-                // Inject image style suffix if selected
-                const styleSuffix = getImagePresetPromptSuffixForModel(imageStyleId, selectedModel, imagePresets);
-                const styledPrompt = styleSuffix ? `${prompt}. Style: ${styleSuffix}` : prompt;
-                const resolvedPrompt = resolveRefTags(styledPrompt, selectedModel);
-                res = await RemoteImageProvider.generate(resolvedPrompt, {
+                const res = await RemoteTextProvider.generate(textPromptWithStyle, {
                     model: selectedModel,
-                    aspectRatio,
-                    scale: scale || undefined,
-                    count: requestedImageCount,
-                    referenceImages: referenceImages.length > 0 ? referenceImages : undefined,
                     projectId,
-                    ...loraRequestFields,
                 });
-            }
-
-            const rawContents = activeTab !== "text"
-                ? Array.from(new Set((res.contents?.length ? res.contents : [res.content]).filter(Boolean)))
-                : [res.content];
-            let persistedContents = rawContents;
-            if (activeTab !== "text" && projectId) {
-                const persistedList: string[] = [];
-                for (let i = 0; i < rawContents.length; i++) {
-                    if (i > 0) {
-                        await new Promise((resolve) => setTimeout(resolve, 150));
-                    }
-                    try {
-                        const persisted = await persistGeneratedUrl(rawContents[i], projectId, i);
-                        await saveGeneratedAssetMutation.mutateAsync({
-                            projectId,
-                            url: persisted,
-                            prompt,
-                            model: res.model ?? selectedModel,
-                            source: "banner-generation",
-                        });
-                        persistedList.push(persisted);
-                    } catch (persistErr) {
-                        console.error(`[AIPromptBar] batch persist index=${i}`, persistErr);
-                    }
-                }
-                if (persistedList.length === 0) {
-                    throw new Error("Не удалось сохранить сгенерированное изображение. Повторите попытку.");
-                }
-                persistedContents = persistedList;
-
-                await Promise.all([
-                    trpcUtils.asset.listByProject.invalidate({ projectId }),
-                    trpcUtils.asset.listByWorkspace.invalidate().catch(() => undefined),
-                ]);
-            }
-            const persistedContent = persistedContents[0] ?? res.content;
-
-            // AUTO-ADD to Canvas Logic
-            let targetLayerId: string | null = null;
-            if (applyToSelection && selectedLayerIds.length > 0) {
-                // Update existing layer if checkbox is checked
-                const layerId = selectedLayerIds[0]; // Naive: take first
-                if (activeTab === "text") {
-                    updateLayer(layerId, { text: persistedContent });
+                const persistedContent = res.content;
+                if (applyToSelection && selectedLayerIds.length > 0) {
+                    updateLayer(selectedLayerIds[0], { text: persistedContent });
                 } else {
-                    // For image, we can only update source if it's an image layer or update fill of rect
-                    // This logic depends on layer type, simplified here:
-                    updateLayer(layerId, { src: persistedContent } as any);
-                    targetLayerId = selectedImageLayer?.id === layerId ? layerId : null;
-                }
-            } else {
-                // Creates NEW layer
-                if (activeTab === "text") {
                     addTextLayer({
                         text: persistedContent,
                         fontSize: 40,
@@ -730,60 +748,145 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                         y: 100,
                         width: 600,
                     });
-                } else {
-                    targetLayerId = await addImageLayerFromUrl(persistedContent);
                 }
+                onResult({
+                    type: "text",
+                    content: persistedContent,
+                    prompt,
+                    model: res.model,
+                });
+            } catch (err: unknown) {
+                alert(`Ошибка генерации: ${parseGenerationError(err)}`);
+            } finally {
+                setIsGenerating(false);
             }
-
-            if (activeTab === "image" && targetLayerId) {
-                const variants = persistedContents.map((url, index) => ({
-                    id: `${targetLayerId}-${index}-${url}`,
-                    url,
-                    status: "ready" as const,
-                }));
-                setGeneratedVariants(variants);
-                setSelectedGeneratedVariantId(variants[0]?.id);
-                setGeneratedTargetLayerId(targetLayerId);
-            } else {
-                clearGeneratedVariants();
-            }
-
-            // Pass result up to chat history
-            onResult({
-                type: activeTab,
-                content: persistedContent,
-                contents: activeTab === "image" ? persistedContents : undefined,
-                prompt: prompt,
-                model: res.model,
-            });
-            // Keep the prompt and reference images in the bar after a
-            // successful generation so users can iterate on the same request
-            // without retyping (tweak wording, swap a ref, regenerate).
-        } catch (err: unknown) {
-            const message = err instanceof Error ? err.message : "Unknown error";
-            console.error("AI Generation Error:", message);
-            
-            let displayMsg = message;
-            if (message.includes("fetch failed") || message.includes("E003") || message.includes("polling failed")) {
-                displayMsg = "Сетевая ошибка при обращении к сервису генерации. Проверьте интернет-соединение и попробуйте снова.";
-            } else if (message.includes("timed out")) {
-                displayMsg = "Генерация заняла слишком много времени. Попробуйте снова или выберите более быструю модель.";
-            } else if (message.includes("Replicate error (429)")) {
-                displayMsg = "Слишком много запросов. Попробуйте через 10 секунд.";
-            }
-            if (activeTab === "image") {
-                setGeneratedVariants((variants) =>
-                    variants.length > 0
-                        ? variants.map((variant) => ({ ...variant, status: "error" as const }))
-                        : [{ id: `error-${Date.now()}`, status: "error" as const }],
-                );
-                setSelectedGeneratedVariantId(undefined);
-                setGeneratedTargetLayerId(null);
-            }
-            alert("Ошибка генерации: " + displayMsg);
-        } finally {
-            setIsGenerating(false);
+            return;
         }
+
+        if (activeTab !== "image" || !projectId) return;
+
+        const submittedPrompt = prompt;
+        const promptLabel = truncatePromptLabel(submittedPrompt);
+        const requestedImageCount = Math.min(imageCount, maxImageOutputs);
+        const batchId = `img-${Date.now()}`;
+        const layerKey = selectedLayerIds[0] ?? `draft-${batchId}`;
+
+        const snapshot = {
+            model: selectedModel,
+            aspectRatio,
+            scale,
+            imageStyleId,
+            referenceImages: referenceImages.length > 0 ? [...referenceImages] : undefined,
+            applyToSelection,
+            selectedLayerId: selectedLayerIds[0],
+            loraRequestFields: { ...loraRequestFields },
+        };
+
+        appendLoadingVariants(layerKey, requestedImageCount, promptLabel, batchId);
+        setSelectedGeneratedVariantId(undefined);
+
+        enqueueJob(
+            {
+                id: batchId,
+                projectId,
+                surface: "studio",
+                layerId: selectedLayerIds[0],
+                prompt: submittedPrompt,
+                imageCount: requestedImageCount,
+            },
+            async () => {
+                try {
+                    const styleSuffix = getImagePresetPromptSuffixForModel(
+                        snapshot.imageStyleId,
+                        snapshot.model,
+                        imagePresets,
+                    );
+                    const styledPrompt = styleSuffix
+                        ? `${submittedPrompt}. Style: ${styleSuffix}`
+                        : submittedPrompt;
+                    const resolvedPrompt = resolveRefTags(styledPrompt, snapshot.model);
+
+                    const res = await RemoteImageProvider.generate(resolvedPrompt, {
+                        model: snapshot.model,
+                        aspectRatio: snapshot.aspectRatio,
+                        scale: snapshot.scale || undefined,
+                        count: requestedImageCount,
+                        referenceImages: snapshot.referenceImages,
+                        projectId,
+                        ...snapshot.loraRequestFields,
+                    });
+
+                    const rawContents = Array.from(
+                        new Set(
+                            (res.contents?.length ? res.contents : [res.content]).filter(Boolean),
+                        ),
+                    );
+                    const persistedList: string[] = [];
+                    for (let i = 0; i < rawContents.length; i++) {
+                        if (i > 0) {
+                            await new Promise((resolve) => setTimeout(resolve, 150));
+                        }
+                        try {
+                            const persisted = await persistGeneratedUrl(rawContents[i], projectId, i);
+                            await saveGeneratedAssetMutation.mutateAsync({
+                                projectId,
+                                url: persisted,
+                                prompt: submittedPrompt,
+                                model: res.model ?? snapshot.model,
+                                source: "banner-generation",
+                            });
+                            persistedList.push(persisted);
+                        } catch (persistErr) {
+                            console.error(`[AIPromptBar] batch persist index=${i}`, persistErr);
+                        }
+                    }
+                    if (persistedList.length === 0) {
+                        throw new Error(
+                            "Не удалось сохранить сгенерированное изображение. Повторите попытку.",
+                        );
+                    }
+
+                    await Promise.all([
+                        trpcUtils.asset.listByProject.invalidate({ projectId }),
+                        trpcUtils.asset.listByWorkspace.invalidate().catch(() => undefined),
+                    ]);
+
+                    const persistedContent = persistedList[0];
+                    let targetLayerId: string | null = snapshot.selectedLayerId ?? null;
+
+                    if (snapshot.applyToSelection && snapshot.selectedLayerId) {
+                        updateLayer(snapshot.selectedLayerId, { src: persistedContent } as Partial<ImageLayer>);
+                    } else {
+                        targetLayerId = await addImageLayerFromUrl(persistedContent);
+                    }
+
+                    const finalLayerKey = targetLayerId ?? layerKey;
+                    if (finalLayerKey !== layerKey) {
+                        setVariantsByLayer((prev) => {
+                            const draft = prev[layerKey] ?? [];
+                            const { [layerKey]: _, ...rest } = prev;
+                            return { ...rest, [finalLayerKey]: draft };
+                        });
+                    }
+
+                    resolveBatchVariants(finalLayerKey, batchId, persistedList, promptLabel, "ready");
+                    setSelectedGeneratedVariantId(`${batchId}-0-${persistedList[0]}`);
+                    setGeneratedTargetLayerId(finalLayerKey);
+
+                    onResult({
+                        type: "image",
+                        content: persistedContent,
+                        contents: persistedList,
+                        prompt: submittedPrompt,
+                        model: res.model,
+                    });
+                } catch (err: unknown) {
+                    resolveBatchVariants(layerKey, batchId, [], promptLabel, "error");
+                    alert(`Ошибка генерации: ${parseGenerationError(err)}`);
+                    throw err;
+                }
+            },
+        );
     };
 
     if (!open) return null;
@@ -808,15 +911,18 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
 
     // In edit mode, the generate button should be enabled for remove-bg (no prompt needed)
     // and expand (prompt is optional). For inpaint and default text-edit, prompt is required.
-    const isEditGenerateDisabled = activeTab === "edit"
-        ? isGenerating || (editAction !== "remove-bg" && editAction !== "expand" && !prompt.trim())
-        : isGenerating || !prompt;
+    const isEditGenerateDisabled =
+        activeTab === "edit"
+            ? editAction !== "remove-bg" && editAction !== "expand" && !prompt.trim()
+            : activeTab === "text"
+                ? isGenerating || !prompt
+                : !prompt;
 
     return (
         <div className="flex flex-col items-center gap-2">
-            {activeTab === "image" && generatedVariants.length > 1 && (
+            {showVariantStrip && (
                 <GeneratedImageStrip
-                    variants={generatedVariants}
+                    variants={activeVariants}
                     selectedId={selectedGeneratedVariantId}
                     onSelect={handleGeneratedVariantSelect}
                     className="self-center"
@@ -992,8 +1098,8 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                                     icon={<Eraser size={14} />}
                                     label="Удалить фон"
                                     active={editAction === "remove-bg"}
-                                    loading={isGenerating && editAction === "remove-bg"}
-                                    disabled={isGenerating}
+                                    loading={false}
+                                    disabled={!selectedImageLayer}
                                     onClick={() => {
                                         if (editAction === "remove-bg") {
                                             setEditAction(null);
@@ -1007,14 +1113,14 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                                     icon={<Paintbrush size={14} />}
                                     label="Inpaint"
                                     active={editAction === "inpaint"}
-                                    disabled={isGenerating}
+                                    disabled={!selectedImageLayer}
                                     onClick={() => setEditAction(editAction === "inpaint" ? null : "inpaint")}
                                 />
                                 <EditActionIconButton
                                     icon={<Expand size={14} />}
                                     label="Расширить фон"
                                     active={editAction === "expand"}
-                                    disabled={isGenerating}
+                                    disabled={!selectedImageLayer}
                                     onClick={() => {
                                         if (editAction === "expand") {
                                             setEditAction(null);
@@ -1166,11 +1272,16 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                             />
                         )}
 
-                        {/* Generate Button — compact icon-only circle */}
+                        {queueBadge && (
+                            <span className="shrink-0 rounded-full border border-border-primary bg-bg-tertiary/60 px-2 py-0.5 text-[10px] font-medium text-text-secondary">
+                                {queueBadge}
+                            </span>
+                        )}
+
                         <button
                             onClick={handleGenerate}
                             disabled={isEditGenerateDisabled}
-                            title={isGenerating ? "Генерирую..." : activeTab === "edit" ? "Применить редактирование" : "Сгенерировать"}
+                            title={activeTab === "edit" ? "Применить редактирование" : "Сгенерировать"}
                             className={`
                                 flex items-center justify-center w-10 h-10 rounded-full
                                 transition-all duration-200 cursor-pointer
@@ -1180,11 +1291,7 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                                 shadow-sm hover:shadow-md
                             `}
                         >
-                            {isGenerating ? (
-                                <Loader2 size={18} className="animate-spin" />
-                            ) : (
-                                activeTab === "edit" ? <Wand2 size={18} /> : <Sparkles size={18} />
-                            )}
+                            {activeTab === "edit" ? <Wand2 size={18} /> : <Sparkles size={18} />}
                         </button>
                     </div>
                 </div>

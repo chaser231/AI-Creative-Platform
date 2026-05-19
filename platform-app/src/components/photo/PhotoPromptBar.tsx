@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Sparkles, Wand2, X, Ratio, Settings2, Loader2, Maximize2, Sliders } from "lucide-react";
+import { Sparkles, Wand2, X, Ratio, Settings2, Maximize2, Sliders } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { usePhotoStore } from "@/store/photoStore";
 import { RefAutocompleteTextarea } from "@/components/ui/RefAutocompleteTextarea";
@@ -17,6 +17,13 @@ import { getImagePresetPromptSuffixForModel } from "@/lib/stylePresets";
 import { ReferenceImageInput, ReferenceImagePreviewTray, getReferenceTrayReserveWidth } from "@/components/ui/ReferenceImageInput";
 import { useProjectLibrary } from "@/hooks/useProjectLibrary";
 import { SelectPill } from "@/components/ui/SelectPill";
+import { parseGenerationError } from "@/lib/parseGenerationError";
+import {
+    formatProjectQueueBadge,
+    useGenerationQueueStore,
+    useProjectQueueCounts,
+} from "@/store/generationQueueStore";
+import type { PhotoEditContext } from "@/store/photoStore";
 
 interface PhotoPromptBarProps {
     projectId: string;
@@ -70,12 +77,13 @@ export function PhotoPromptBar({ projectId }: PhotoPromptBarProps) {
     const setImageStyleId = usePhotoStore((s) => s.setImageStyleId);
     const addPendingGeneration = usePhotoStore((s) => s.addPendingGeneration);
     const clearPendingGeneration = usePhotoStore((s) => s.clearPendingGeneration);
+    const enqueueJob = useGenerationQueueStore((s) => s.enqueue);
+    const queueCounts = useProjectQueueCounts(projectId);
 
     const { imagePresets } = useStylePresets();
 
     const [prompt, setPrompt] = useState("");
     const [referenceImages, setReferenceImages] = useState<string[]>([]);
-    const [isGenerating, setIsGenerating] = useState(false);
     const [errorMsg, setErrorMsg] = useState<string | null>(null);
     const [imageCount, setImageCount] = useState(1);
     // LoRA selection + advanced overrides — local because they're scoped to
@@ -184,239 +192,260 @@ export function PhotoPromptBar({ projectId }: PhotoPromptBarProps) {
         }
     };
 
-    const parseAiError = (e: Error) => {
-        const msg = String(e.message || "");
-        if (msg.includes("E003") || msg.includes("high demand") || msg.includes("fetch failed")) {
-            return "Слишком много запросов. Подождите 10–15 секунд и попробуйте снова.";
-        }
-        if (msg.includes("timed out")) {
-            return "Генерация заняла слишком много времени.";
-        }
-        if (msg.includes("429")) {
-            return "Rate limit. Попробуйте через 10 секунд.";
-        }
-        return msg || "Ошибка генерации";
-    };
+    const queueBadge = useMemo(
+        () => formatProjectQueueBadge(queueCounts),
+        [queueCounts],
+    );
 
     const handleSubmit = async () => {
-        if (isGenerating) return;
         if (!prompt.trim() && !isEditMode) return;
 
         setErrorMsg(null);
-        setIsGenerating(true);
 
         const sessionId = await ensureSession();
         if (!sessionId) {
             setErrorMsg("Не удалось создать сессию");
-            setIsGenerating(false);
             return;
         }
 
-        let pendingId: string | null = null;
-        try {
-            const resolvedPromptBase = resolveRefTags(prompt, activeModelId);
-            // Apply selected style preset as a suffix (same contract as AIPromptBar)
-            const styleSuffix = getImagePresetPromptSuffixForModel(imageStyleId, activeModelId, imagePresets);
-            const resolvedPrompt = styleSuffix
-                ? `${resolvedPromptBase}. Style: ${styleSuffix}`
-                : resolvedPromptBase;
-            const refsForCall = referenceImages.length > 0 ? referenceImages : undefined;
+        const submittedPrompt = prompt;
+        const snapshotIsEdit = isEditMode;
+        const snapshotEditContext: PhotoEditContext | null = editContext
+            ? { ...editContext }
+            : null;
+        const snapshotModelId = activeModelId;
+        const snapshotAspectRatio = aspectRatio;
+        const snapshotScale = scale;
+        const snapshotImageCount = imageCount;
+        const snapshotRefs = referenceImages.length > 0 ? [...referenceImages] : undefined;
+        const snapshotStyleId = imageStyleId;
+        const snapshotLoraFields = { ...loraRequestFields };
 
-            // Log user message first (optimistic; assistant will follow after API call)
+        const resolvedPromptBase = resolveRefTags(submittedPrompt, snapshotModelId);
+        const styleSuffix = getImagePresetPromptSuffixForModel(
+            snapshotStyleId,
+            snapshotModelId,
+            imagePresets,
+        );
+        const resolvedPrompt = styleSuffix
+            ? `${resolvedPromptBase}. Style: ${styleSuffix}`
+            : resolvedPromptBase;
+
+        try {
             await addMessageMutation.mutateAsync({
                 sessionId,
                 role: "user",
-                content: prompt,
+                content: submittedPrompt,
                 type: "text",
                 metadata: {
-                    kind: isEditMode ? "edit" : "generate",
-                    model: activeModelId,
-                    aspectRatio: isEditMode ? undefined : aspectRatio,
-                    referenceImages: refsForCall,
-                    sourceUrl: isEditMode ? editContext?.url : undefined,
+                    kind: snapshotIsEdit ? "edit" : "generate",
+                    model: snapshotModelId,
+                    aspectRatio: snapshotIsEdit ? undefined : snapshotAspectRatio,
+                    referenceImages: snapshotRefs,
+                    sourceUrl: snapshotIsEdit ? snapshotEditContext?.url : undefined,
                 },
             });
-
-            const requestedCount = isEditMode ? 1 : Math.min(imageCount, maxImageOutputs);
-            pendingId = `pending-${Date.now()}`;
-            if (!isEditMode) {
-                addPendingGeneration({
-                    id: pendingId,
-                    sessionId,
-                    count: requestedCount,
-                    aspectRatio,
-                    prompt,
-                });
-            }
-
-            let rawResultUrls: string[];
-            let responseModel: string | undefined;
-
-            if (isEditMode && editContext) {
-                // Pre-upload images to S3 to avoid sending multi-MB base64 through the server
-                const [imageUrl, refUrls] = await Promise.all([
-                    uploadForAI(editContext.url, projectId),
-                    refsForCall ? uploadManyForAI(refsForCall, projectId) : Promise.resolve(undefined),
-                ]);
-
-                const response = await fetch("/api/ai/image-edit", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                        action: "text-edit",
-                        prompt: resolvedPrompt,
-                        imageBase64: imageUrl,
-                        model: activeModelId,
-                        referenceImages: refUrls,
-                        projectId,
-                        // Photo workspace writes the final AIMessage itself (with the
-                        // persisted S3 URL). Skip server-side tracking to avoid duplicates.
-                        recordMessage: false,
-                        ...loraRequestFields,
-                    }),
-                });
-                const data = await response.json();
-                if (data.error || !data.content) {
-                    throw new Error(data.error || "Пустой ответ от модели");
-                }
-                rawResultUrls = [data.content];
-                responseModel = data.model;
-            } else {
-                const response = await fetch("/api/ai/generate", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                        prompt: resolvedPrompt,
-                        type: "image",
-                        model: activeModelId,
-                        aspectRatio,
-                        scale: scale || undefined,
-                        count: requestedCount,
-                        referenceImages: refsForCall,
-                        projectId,
-                        // Photo workspace writes the final AIMessage itself (with the
-                        // persisted S3 URL). Skip server-side tracking to avoid duplicates.
-                        recordMessage: false,
-                        ...loraRequestFields,
-                    }),
-                });
-                const data = await response.json();
-                if (data.error || !data.content) {
-                    throw new Error(data.error || "Пустой ответ от модели");
-                }
-                rawResultUrls = Array.from(new Set(((Array.isArray(data.contents) && data.contents.length > 0) ? data.contents : [data.content])
-                    .filter((url: unknown): url is string => typeof url === "string" && url.length > 0)));
-                responseModel = data.model;
-            }
-
-            // Persist generated image to our S3 bucket so the URL doesn't expire.
-            // If persistence fails we must NOT write the volatile URL into the
-            // library/chat — it will 404 within minutes and leave "ghost" assets
-            // like `photo-generation-…png` with no preview.
-            const persistedUrls: string[] = [];
-            for (let i = 0; i < rawResultUrls.length; i++) {
-                if (i > 0) {
-                    await new Promise((resolve) => setTimeout(resolve, 150));
-                }
-                let persisted: string | null = null;
-                try {
-                    let result = await persistImageToS3(rawResultUrls[i], projectId);
-                    if (!result.includes("storage.yandexcloud.net")) {
-                        await new Promise((resolve) => setTimeout(resolve, 200));
-                        result = await persistImageToS3(rawResultUrls[i], projectId);
-                    }
-                    if (result && result.includes("storage.yandexcloud.net")) {
-                        persisted = result;
-                    }
-                } catch (persistErr) {
-                    console.error(`Photo S3 persist failed index=${i}:`, persistErr);
-                }
-
-                if (!persisted) {
-                    continue;
-                }
-
-                persistedUrls.push(persisted);
-
-                // Save as a workspace asset tagged with source=photo-generation
-                try {
-                    await saveGeneratedAssetMutation.mutateAsync({
-                        projectId,
-                        url: persisted,
-                        prompt,
-                        model: responseModel ?? activeModelId,
-                        source: "photo-generation",
-                    });
-                } catch (saveErr) {
-                    console.error("Asset save failed:", saveErr);
-                }
-            }
-
-            if (persistedUrls.length === 0) {
-                throw new Error(
-                    "Не удалось сохранить сгенерированное изображение. Повторите попытку.",
-                );
-            }
-
-            // Record the assistant message (server-side tracking is disabled via
-            // recordMessage:false, so we log cost units here)
-            const costUnits = getModelById(responseModel ?? activeModelId)?.costPerRun ?? 0;
-            for (const persisted of persistedUrls) {
-                await addMessageMutation.mutateAsync({
-                    sessionId,
-                    role: "assistant",
-                    content: persisted,
-                    type: "image",
-                    model: responseModel ?? activeModelId,
-                    costUnits,
-                    metadata: {
-                        kind: isEditMode ? "edit" : "generate",
-                        sourceUrl: isEditMode ? editContext?.url : undefined,
-                    },
-                });
-            }
-
-            // Refresh related queries so chat/library/dashboard reflect the new image
-            await Promise.all([
-                utils.ai.getMessages.invalidate({ sessionId }),
-                utils.ai.listSessions.invalidate({ projectId }),
-                utils.asset.listByProject.invalidate({ projectId }),
-                // Dashboard thumbnails for photo projects are derived from the
-                // latest asset server-side — invalidate so the grid picks it up.
-                utils.project.list.invalidate(),
-            ]);
-
-            // Keep the prompt and reference images in the bar after a
-            // successful generation so users can iterate on the same request
-            // (tweak the wording, swap a ref, regenerate) without retyping.
-            // Only the edit-context badge is dismissed, since the freshly
-            // produced image is now the natural "source" for the next edit.
-            if (isEditMode) clearEditContext();
-            if (pendingId) clearPendingGeneration(pendingId);
-        } catch (e) {
-            if (pendingId) clearPendingGeneration(pendingId);
-            const err = e as Error;
-            console.error("Photo generation failed:", err);
-            setErrorMsg(parseAiError(err));
-
-            // Log an error message into the session so the user sees the failure in chat
-            if (sessionId) {
-                try {
-                    await addMessageMutation.mutateAsync({
-                        sessionId,
-                        role: "assistant",
-                        content: parseAiError(err),
-                        type: "error",
-                        model: activeModelId,
-                    });
-                    await utils.ai.getMessages.invalidate({ sessionId });
-                } catch {
-                    // non-blocking
-                }
-            }
-        } finally {
-            setIsGenerating(false);
+        } catch {
+            setErrorMsg("Не удалось сохранить сообщение");
+            return;
         }
+
+        const requestedCount = snapshotIsEdit
+            ? 1
+            : Math.min(snapshotImageCount, getMaxOutputs(snapshotModelId));
+        const pendingId = `pending-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        const jobId = `job-${pendingId}`;
+
+        addPendingGeneration({
+            id: pendingId,
+            sessionId,
+            count: requestedCount,
+            aspectRatio: snapshotIsEdit ? undefined : snapshotAspectRatio,
+            prompt: submittedPrompt,
+        });
+
+        enqueueJob(
+            {
+                id: jobId,
+                projectId,
+                surface: "photo",
+                sessionId,
+                prompt: submittedPrompt,
+                imageCount: requestedCount,
+            },
+            async () => {
+                try {
+                    if (snapshotIsEdit && !snapshotEditContext) {
+                        throw new Error("Контекст редактирования потерян");
+                    }
+
+                    let rawResultUrls: string[];
+                    let responseModel: string | undefined;
+
+                    if (snapshotIsEdit && snapshotEditContext) {
+                        const [imageUrl, refUrls] = await Promise.all([
+                            uploadForAI(snapshotEditContext.url, projectId),
+                            snapshotRefs
+                                ? uploadManyForAI(snapshotRefs, projectId)
+                                : Promise.resolve(undefined),
+                        ]);
+
+                        const response = await fetch("/api/ai/image-edit", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({
+                                action: "text-edit",
+                                prompt: resolvedPrompt,
+                                imageBase64: imageUrl,
+                                model: snapshotModelId,
+                                referenceImages: refUrls,
+                                projectId,
+                                recordMessage: false,
+                                ...snapshotLoraFields,
+                            }),
+                        });
+                        const data = await response.json();
+                        if (data.error || !data.content) {
+                            throw new Error(data.error || "Пустой ответ от модели");
+                        }
+                        rawResultUrls = [data.content];
+                        responseModel = data.model;
+                    } else {
+                        const response = await fetch("/api/ai/generate", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({
+                                prompt: resolvedPrompt,
+                                type: "image",
+                                model: snapshotModelId,
+                                aspectRatio: snapshotAspectRatio,
+                                scale: snapshotScale || undefined,
+                                count: requestedCount,
+                                referenceImages: snapshotRefs,
+                                projectId,
+                                recordMessage: false,
+                                ...snapshotLoraFields,
+                            }),
+                        });
+                        const data = await response.json();
+                        if (data.error || !data.content) {
+                            throw new Error(data.error || "Пустой ответ от модели");
+                        }
+                        rawResultUrls = Array.from(
+                            new Set(
+                                (
+                                    (Array.isArray(data.contents) && data.contents.length > 0
+                                        ? data.contents
+                                        : [data.content]) as unknown[]
+                                ).filter(
+                                    (url): url is string =>
+                                        typeof url === "string" && url.length > 0,
+                                ),
+                            ),
+                        );
+                        responseModel = data.model;
+                    }
+
+                    const persistedUrls: string[] = [];
+                    for (let i = 0; i < rawResultUrls.length; i++) {
+                        if (i > 0) {
+                            await new Promise((resolve) => setTimeout(resolve, 150));
+                        }
+                        let persisted: string | null = null;
+                        try {
+                            let result = await persistImageToS3(rawResultUrls[i], projectId);
+                            if (!result.includes("storage.yandexcloud.net")) {
+                                await new Promise((resolve) => setTimeout(resolve, 200));
+                                result = await persistImageToS3(rawResultUrls[i], projectId);
+                            }
+                            if (result?.includes("storage.yandexcloud.net")) {
+                                persisted = result;
+                            }
+                        } catch (persistErr) {
+                            console.error(`Photo S3 persist failed index=${i}:`, persistErr);
+                        }
+
+                        if (!persisted) continue;
+
+                        persistedUrls.push(persisted);
+
+                        try {
+                            await saveGeneratedAssetMutation.mutateAsync({
+                                projectId,
+                                url: persisted,
+                                prompt: submittedPrompt,
+                                model: responseModel ?? snapshotModelId,
+                                source: "photo-generation",
+                            });
+                        } catch (saveErr) {
+                            console.error("Asset save failed:", saveErr);
+                        }
+                    }
+
+                    if (persistedUrls.length === 0) {
+                        throw new Error(
+                            "Не удалось сохранить сгенерированное изображение. Повторите попытку.",
+                        );
+                    }
+
+                    const costUnits =
+                        getModelById(responseModel ?? snapshotModelId)?.costPerRun ?? 0;
+                    for (const persisted of persistedUrls) {
+                        await addMessageMutation.mutateAsync({
+                            sessionId,
+                            role: "assistant",
+                            content: persisted,
+                            type: "image",
+                            model: responseModel ?? snapshotModelId,
+                            costUnits,
+                            metadata: {
+                                kind: snapshotIsEdit ? "edit" : "generate",
+                                sourceUrl: snapshotIsEdit
+                                    ? snapshotEditContext?.url
+                                    : undefined,
+                            },
+                        });
+                    }
+
+                    await Promise.all([
+                        utils.ai.getMessages.invalidate({ sessionId }),
+                        utils.ai.listSessions.invalidate({ projectId }),
+                        utils.asset.listByProject.invalidate({ projectId }),
+                        utils.project.list.invalidate(),
+                    ]);
+
+                    if (snapshotIsEdit) {
+                        const currentCtx = usePhotoStore.getState().editContext;
+                        if (
+                            currentCtx?.url === snapshotEditContext?.url
+                            || currentCtx?.assetId === snapshotEditContext?.assetId
+                        ) {
+                            clearEditContext();
+                        }
+                    }
+                } catch (e) {
+                    const displayMsg = parseGenerationError(e);
+                    console.error("Photo generation failed:", e);
+                    setErrorMsg(displayMsg);
+
+                    try {
+                        await addMessageMutation.mutateAsync({
+                            sessionId,
+                            role: "assistant",
+                            content: displayMsg,
+                            type: "error",
+                            model: snapshotModelId,
+                        });
+                        await utils.ai.getMessages.invalidate({ sessionId });
+                    } catch {
+                        // non-blocking
+                    }
+                    throw e;
+                } finally {
+                    clearPendingGeneration(pendingId);
+                }
+            },
+        );
     };
 
     return (
@@ -570,6 +599,12 @@ export function PhotoPromptBar({ projectId }: PhotoPromptBarProps) {
 
                     <div className="flex-1" />
 
+                    {queueBadge && (
+                        <span className="shrink-0 rounded-full border border-border-primary bg-bg-tertiary/60 px-2 py-0.5 text-[10px] font-medium text-text-secondary">
+                            {queueBadge}
+                        </span>
+                    )}
+
                     {errorMsg && (
                         <div className="text-[11px] text-red-400 truncate max-w-[280px]" title={errorMsg}>
                             {errorMsg}
@@ -596,17 +631,11 @@ export function PhotoPromptBar({ projectId }: PhotoPromptBarProps) {
 
                     <button
                         onClick={handleSubmit}
-                        disabled={isGenerating || (!prompt.trim() && !isEditMode)}
+                        disabled={!prompt.trim() && !isEditMode}
                         title={isEditMode ? "Применить редактирование" : "Сгенерировать"}
                         className="flex items-center justify-center w-10 h-10 rounded-full transition-all cursor-pointer bg-accent-lime-hover hover:bg-accent-lime text-accent-lime-text hover:scale-105 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100 shadow-sm"
                     >
-                        {isGenerating ? (
-                            <Loader2 size={18} className="animate-spin" />
-                        ) : isEditMode ? (
-                            <Wand2 size={18} />
-                        ) : (
-                            <Sparkles size={18} />
-                        )}
+                        {isEditMode ? <Wand2 size={18} /> : <Sparkles size={18} />}
                     </button>
                 </div>
             </div>
