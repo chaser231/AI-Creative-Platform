@@ -107,9 +107,21 @@ function PendingGenerationRow({
     return (
         <div className="flex justify-start">
             <div className="max-w-[80%] rounded-[var(--radius-xl)] border border-border-primary bg-bg-tertiary/40 p-3">
-                <div className="mb-2 flex items-center gap-2 text-[11px] font-medium text-text-tertiary">
-                    <Loader2 size={12} className="animate-spin" />
-                    <span>Генерируем {generation.count} вариант{generation.count > 1 ? "а" : ""}</span>
+                <div className="mb-2 flex flex-col gap-0.5">
+                    <div className="flex items-center gap-2 text-[11px] font-medium text-text-tertiary">
+                        <Loader2 size={12} className="animate-spin shrink-0" />
+                        <span>
+                            Генерируем {generation.count} вариант{generation.count > 1 ? "а" : ""}
+                        </span>
+                    </div>
+                    {generation.prompt.trim() && (
+                        <p
+                            className="text-[10px] text-text-tertiary/90 line-clamp-2 pl-5"
+                            title={generation.prompt}
+                        >
+                            {generation.prompt}
+                        </p>
+                    )}
                 </div>
                 <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
                     {Array.from({ length: generation.count }, (_, index) => (
