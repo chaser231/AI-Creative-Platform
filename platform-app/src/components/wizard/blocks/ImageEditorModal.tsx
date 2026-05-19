@@ -22,7 +22,7 @@ import { LoraTriggerHint } from "@/components/ui/LoraTriggerHint";
 import { ModelSettingsModal, type AdvancedAIParams } from "@/components/ui/ModelSettingsModal";
 import { getMaxRefs, resolveRefTags, getLoraSpec } from "@/lib/ai-models";
 import type { LoraWeight } from "@/lib/ai-providers";
-import { getImagePresetPromptSuffix } from "@/lib/stylePresets";
+import { getImagePresetPromptSuffixForModel } from "@/lib/stylePresets";
 import { useStylePresets } from "@/hooks/useStylePresets";
 import { uploadForAI, uploadManyForAI } from "@/utils/imageUpload";
 import type { BusinessUnit } from "@/types";
@@ -184,7 +184,7 @@ export function ImageEditorModal({ imageSrc, onApply, onClose }: ImageEditorModa
     const handleRemoveBg = () => callImageEdit("remove-bg");
     const handleTextEdit = () => {
         if (!editPrompt.trim()) return;
-        const styleSuffix = getImagePresetPromptSuffix(editStyleId, imagePresets);
+        const styleSuffix = getImagePresetPromptSuffixForModel(editStyleId, selectedModel, imagePresets);
         const styledPrompt = styleSuffix ? `${editPrompt}. Style: ${styleSuffix}` : editPrompt;
         callImageEdit("text-edit", styledPrompt);
     };
@@ -192,7 +192,7 @@ export function ImageEditorModal({ imageSrc, onApply, onClose }: ImageEditorModa
         if (!editPrompt.trim()) return;
         const canvas = canvasRef.current;
         const maskB64 = canvas ? canvas.toDataURL("image/png") : undefined;
-        const styleSuffix = getImagePresetPromptSuffix(editStyleId, imagePresets);
+        const styleSuffix = getImagePresetPromptSuffixForModel(editStyleId, selectedModel, imagePresets);
         const styledPrompt = styleSuffix ? `${editPrompt}. Style: ${styleSuffix}` : editPrompt;
         callImageEdit("inpaint", styledPrompt, maskB64);
     };
@@ -485,16 +485,17 @@ export function ImageEditorModal({ imageSrc, onApply, onClose }: ImageEditorModa
                                         onChange={(e) => setEditPrompt(e.target.value)}
                                         className="h-20"
                                     />
-                                    {/* Style Preset for inpaint */}
-                                    <div>
-                                        <p className="text-[10px] font-medium text-text-secondary mb-1.5">Стиль</p>
-                                        <ImageStylePresetPicker
-                                            presets={imagePresets}
-                                            selectedId={editStyleId}
-                                            onChange={setEditStyleId}
-                                            variant="inline"
-                                        />
-                                    </div>
+                                    {!loraSpec && (
+                                        <div>
+                                            <p className="text-[10px] font-medium text-text-secondary mb-1.5">Стиль</p>
+                                            <ImageStylePresetPicker
+                                                presets={imagePresets}
+                                                selectedId={editStyleId}
+                                                onChange={setEditStyleId}
+                                                variant="inline"
+                                            />
+                                        </div>
+                                    )}
                                     <button
                                         onClick={handleInpaint}
                                         disabled={isProcessing || !editPrompt.trim()}
@@ -529,16 +530,17 @@ export function ImageEditorModal({ imageSrc, onApply, onClose }: ImageEditorModa
                                             label="Добавить референс"
                                         />
                                     </div>
-                                    {/* Style Preset for text-edit */}
-                                    <div>
-                                        <p className="text-[10px] font-medium text-text-secondary mb-1.5">Стиль</p>
-                                        <ImageStylePresetPicker
-                                            presets={imagePresets}
-                                            selectedId={editStyleId}
-                                            onChange={setEditStyleId}
-                                            variant="inline"
-                                        />
-                                    </div>
+                                    {!loraSpec && (
+                                        <div>
+                                            <p className="text-[10px] font-medium text-text-secondary mb-1.5">Стиль</p>
+                                            <ImageStylePresetPicker
+                                                presets={imagePresets}
+                                                selectedId={editStyleId}
+                                                onChange={setEditStyleId}
+                                                variant="inline"
+                                            />
+                                        </div>
+                                    )}
                                     {/* LoRA picker — hidden for non-LoRA models. */}
                                     {loraSpec && (
                                         <div className="space-y-1.5">

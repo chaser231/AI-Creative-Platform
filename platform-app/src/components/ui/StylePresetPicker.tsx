@@ -268,11 +268,10 @@ function CompactImagePicker({
   return (
     <>
       {/* Trigger — outlined pill matching other selectors */}
-      <button
-        ref={triggerRef}
+      <div
         onClick={() => setOpen(!open)}
         className={`
-          flex items-center gap-1.5 px-2.5 py-1 rounded-[10px]
+          flex h-8 items-center gap-1.5 rounded-[10px] px-2.5
           border text-[12px] font-medium transition-all cursor-pointer
           ${hasStyle
             ? "text-violet-500 border-violet-400/40 bg-violet-500/5 hover:bg-violet-500/10"
@@ -280,27 +279,34 @@ function CompactImagePicker({
           }
         `}
       >
-        <Palette size={13} className={hasStyle ? "text-violet-400" : "text-text-tertiary"} />
-        <span className="max-w-[80px] truncate">
-          {hasStyle && selected ? selected.label : "Стиль"}
-        </span>
+        <button
+          ref={triggerRef}
+          type="button"
+          className="flex min-w-0 flex-1 items-center gap-1.5 cursor-pointer"
+        >
+          <Palette size={13} className={hasStyle ? "text-violet-400" : "text-text-tertiary"} />
+          <span className="max-w-[80px] truncate">
+            {hasStyle && selected ? selected.label : "Стиль"}
+          </span>
+        </button>
         {/* Reset button — shown when a style is active */}
         {hasStyle ? (
-          <span
-            role="button"
+          <button
+            type="button"
             className="text-violet-400 hover:text-violet-300 ml-0.5"
             onClick={(e) => { e.stopPropagation(); onChange("none"); }}
             title="Сбросить стиль"
+            aria-label="Сбросить стиль"
           >
             <XIcon size={10} />
-          </span>
+          </button>
         ) : (
           <ChevronDown
             size={10}
             className={`text-text-tertiary transition-transform ${open ? "rotate-180" : ""}`}
           />
         )}
-      </button>
+      </div>
 
       {/* Portal dropdown — renders at body level to avoid clipping */}
       {open && createPortal(
@@ -507,11 +513,10 @@ function CompactTextPicker({
   return (
     <>
       {/* Trigger — outlined pill */}
-      <button
-        ref={triggerRef}
+      <div
         onClick={() => setOpen(!open)}
         className={`
-          flex items-center gap-1.5 px-2.5 py-1 rounded-[10px]
+          flex h-8 items-center gap-1.5 rounded-[10px] px-2.5
           border text-[12px] font-medium transition-all cursor-pointer
           ${hasStyle
             ? "text-blue-500 border-blue-400/40 bg-blue-500/5 hover:bg-blue-500/10"
@@ -519,27 +524,34 @@ function CompactTextPicker({
           }
         `}
       >
-        <Type size={13} className={hasStyle ? "text-blue-400" : "text-text-tertiary"} />
-        <span className="max-w-[80px] truncate">
-          {selected ? selected.label : "Тон"}
-        </span>
+        <button
+          ref={triggerRef}
+          type="button"
+          className="flex min-w-0 flex-1 items-center gap-1.5 cursor-pointer"
+        >
+          <Type size={13} className={hasStyle ? "text-blue-400" : "text-text-tertiary"} />
+          <span className="max-w-[80px] truncate">
+            {selected ? selected.label : "Тон"}
+          </span>
+        </button>
         {/* Reset button — shown when a style is active */}
         {hasStyle ? (
-          <span
-            role="button"
+          <button
+            type="button"
             className="text-blue-400 hover:text-blue-300 ml-0.5"
             onClick={(e) => { e.stopPropagation(); onChange(undefined); }}
             title="Сбросить тон"
+            aria-label="Сбросить тон"
           >
             <XIcon size={10} />
-          </span>
+          </button>
         ) : (
           <ChevronDown
             size={10}
             className={`text-text-tertiary transition-transform ${open ? "rotate-180" : ""}`}
           />
         )}
-      </button>
+      </div>
 
       {/* Portal dropdown */}
       {open && createPortal(

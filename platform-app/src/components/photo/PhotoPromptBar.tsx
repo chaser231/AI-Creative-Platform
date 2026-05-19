@@ -5,7 +5,7 @@ import { Sparkles, Wand2, X, Ratio, Settings2, Loader2, Maximize2, Sliders } fro
 import { trpc } from "@/lib/trpc";
 import { usePhotoStore } from "@/store/photoStore";
 import { RefAutocompleteTextarea } from "@/components/ui/RefAutocompleteTextarea";
-import { getModelById, getMaxRefs, getAspectRatios, getResolutions, resolveRefTags, getLoraSpec } from "@/lib/ai-models";
+import { getModelById, getMaxRefs, getMaxOutputs, getAspectRatios, getResolutions, getDefaultResolution, resolveRefTags, getLoraSpec } from "@/lib/ai-models";
 import type { LoraWeight } from "@/lib/ai-providers";
 import { persistImageToS3, uploadForAI, uploadManyForAI } from "@/utils/imageUpload";
 import { ImageStylePresetPicker } from "@/components/ui/StylePresetPicker";
@@ -13,9 +13,10 @@ import { LoraSelectorPicker } from "@/components/ui/LoraSelectorPicker";
 import { LoraTriggerHint } from "@/components/ui/LoraTriggerHint";
 import { ModelSettingsModal, type AdvancedAIParams } from "@/components/ui/ModelSettingsModal";
 import { useStylePresets } from "@/hooks/useStylePresets";
-import { getImagePresetPromptSuffix } from "@/lib/stylePresets";
-import { ReferenceImageInput } from "@/components/ui/ReferenceImageInput";
+import { getImagePresetPromptSuffixForModel } from "@/lib/stylePresets";
+import { ReferenceImageInput, ReferenceImagePreviewTray, getReferenceTrayReserveWidth } from "@/components/ui/ReferenceImageInput";
 import { useProjectLibrary } from "@/hooks/useProjectLibrary";
+import { SelectPill } from "@/components/ui/SelectPill";
 
 interface PhotoPromptBarProps {
     projectId: string;
@@ -67,6 +68,8 @@ export function PhotoPromptBar({ projectId }: PhotoPromptBarProps) {
     const setAspectRatio = usePhotoStore((s) => s.setAspectRatio);
     const imageStyleId = usePhotoStore((s) => s.imageStyleId);
     const setImageStyleId = usePhotoStore((s) => s.setImageStyleId);
+    const addPendingGeneration = usePhotoStore((s) => s.addPendingGeneration);
+    const clearPendingGeneration = usePhotoStore((s) => s.clearPendingGeneration);
 
     const { imagePresets } = useStylePresets();
 
@@ -74,6 +77,7 @@ export function PhotoPromptBar({ projectId }: PhotoPromptBarProps) {
     const [referenceImages, setReferenceImages] = useState<string[]>([]);
     const [isGenerating, setIsGenerating] = useState(false);
     const [errorMsg, setErrorMsg] = useState<string | null>(null);
+    const [imageCount, setImageCount] = useState(1);
     // LoRA selection + advanced overrides — local because they're scoped to
     // the active model and shouldn't leak into other photo sessions.
     const [loras, setLoras] = useState<LoraWeight[]>([]);
@@ -81,9 +85,7 @@ export function PhotoPromptBar({ projectId }: PhotoPromptBarProps) {
     const [settingsOpen, setSettingsOpen] = useState(false);
     // Initialize with the first resolution of the default model so the
     // selector never renders as an empty pill.
-    const [scale, setScale] = useState(
-        () => getResolutions(selectedModelId)[0]?.id ?? "",
-    );
+    const [scale, setScale] = useState(() => getDefaultResolution(selectedModelId));
     const textareaRef = useRef<HTMLTextAreaElement>(null);
 
     // Consume pending references pushed from result cards / library "Use as reference".
@@ -121,6 +123,7 @@ export function PhotoPromptBar({ projectId }: PhotoPromptBarProps) {
     );
     const modelAspectRatios = useMemo(() => getAspectRatios(activeModelId), [activeModelId]);
     const modelResolutions = useMemo(() => getResolutions(activeModelId), [activeModelId]);
+    const maxImageOutputs = isEditMode ? 1 : getMaxOutputs(activeModelId);
 
     // Keep `scale` in sync with the model's available resolutions. If the
     // current value isn't valid for the active model (e.g. after switching to
@@ -132,7 +135,7 @@ export function PhotoPromptBar({ projectId }: PhotoPromptBarProps) {
             return;
         }
         const isValid = modelResolutions.some((r) => r.id === scale);
-        if (!isValid) setScale(modelResolutions[0].id);
+        if (!isValid) setScale(getDefaultResolution(activeModelId));
     }, [modelResolutions, scale]);
 
     const handleModelChange = (id: string) => {
@@ -141,7 +144,8 @@ export function PhotoPromptBar({ projectId }: PhotoPromptBarProps) {
         const ratios = getAspectRatios(id);
         if (!ratios.includes(aspectRatio)) setAspectRatio(ratios[0] || "1:1");
         const res = getResolutions(id);
-        setScale(res.length > 0 ? res[0].id : "");
+        setScale(getDefaultResolution(id));
+        setImageCount(1);
         if (!(getModelById(id)?.caps.includes("vision") ?? false)) {
             setReferenceImages([]);
         }
@@ -151,6 +155,10 @@ export function PhotoPromptBar({ projectId }: PhotoPromptBarProps) {
         setLoras([]);
         setAdvancedParams({});
     };
+
+    useEffect(() => {
+        if (imageCount > maxImageOutputs) setImageCount(maxImageOutputs);
+    }, [imageCount, maxImageOutputs]);
 
     // LoRA capabilities — drives picker / settings visibility.
     const loraSpec = getLoraSpec(activeModelId);
@@ -204,10 +212,11 @@ export function PhotoPromptBar({ projectId }: PhotoPromptBarProps) {
             return;
         }
 
+        let pendingId: string | null = null;
         try {
             const resolvedPromptBase = resolveRefTags(prompt, activeModelId);
             // Apply selected style preset as a suffix (same contract as AIPromptBar)
-            const styleSuffix = getImagePresetPromptSuffix(imageStyleId, imagePresets);
+            const styleSuffix = getImagePresetPromptSuffixForModel(imageStyleId, activeModelId, imagePresets);
             const resolvedPrompt = styleSuffix
                 ? `${resolvedPromptBase}. Style: ${styleSuffix}`
                 : resolvedPromptBase;
@@ -228,7 +237,19 @@ export function PhotoPromptBar({ projectId }: PhotoPromptBarProps) {
                 },
             });
 
-            let rawResultUrl: string;
+            const requestedCount = isEditMode ? 1 : Math.min(imageCount, maxImageOutputs);
+            pendingId = `pending-${Date.now()}`;
+            if (!isEditMode) {
+                addPendingGeneration({
+                    id: pendingId,
+                    sessionId,
+                    count: requestedCount,
+                    aspectRatio,
+                    prompt,
+                });
+            }
+
+            let rawResultUrls: string[];
             let responseModel: string | undefined;
 
             if (isEditMode && editContext) {
@@ -258,7 +279,7 @@ export function PhotoPromptBar({ projectId }: PhotoPromptBarProps) {
                 if (data.error || !data.content) {
                     throw new Error(data.error || "Пустой ответ от модели");
                 }
-                rawResultUrl = data.content;
+                rawResultUrls = [data.content];
                 responseModel = data.model;
             } else {
                 const response = await fetch("/api/ai/generate", {
@@ -270,6 +291,7 @@ export function PhotoPromptBar({ projectId }: PhotoPromptBarProps) {
                         model: activeModelId,
                         aspectRatio,
                         scale: scale || undefined,
+                        count: requestedCount,
                         referenceImages: refsForCall,
                         projectId,
                         // Photo workspace writes the final AIMessage itself (with the
@@ -282,7 +304,8 @@ export function PhotoPromptBar({ projectId }: PhotoPromptBarProps) {
                 if (data.error || !data.content) {
                     throw new Error(data.error || "Пустой ответ от модели");
                 }
-                rawResultUrl = data.content;
+                rawResultUrls = Array.from(new Set(((Array.isArray(data.contents) && data.contents.length > 0) ? data.contents : [data.content])
+                    .filter((url: unknown): url is string => typeof url === "string" && url.length > 0)));
                 responseModel = data.model;
             }
 
@@ -290,50 +313,68 @@ export function PhotoPromptBar({ projectId }: PhotoPromptBarProps) {
             // If persistence fails we must NOT write the volatile URL into the
             // library/chat — it will 404 within minutes and leave "ghost" assets
             // like `photo-generation-…png` with no preview.
-            let persisted: string | null = null;
-            try {
-                const result = await persistImageToS3(rawResultUrl, projectId);
-                if (result && result.includes("storage.yandexcloud.net")) {
-                    persisted = result;
+            const persistedUrls: string[] = [];
+            for (let i = 0; i < rawResultUrls.length; i++) {
+                if (i > 0) {
+                    await new Promise((resolve) => setTimeout(resolve, 150));
                 }
-            } catch (persistErr) {
-                console.error("Photo S3 persist failed:", persistErr);
+                let persisted: string | null = null;
+                try {
+                    let result = await persistImageToS3(rawResultUrls[i], projectId);
+                    if (!result.includes("storage.yandexcloud.net")) {
+                        await new Promise((resolve) => setTimeout(resolve, 200));
+                        result = await persistImageToS3(rawResultUrls[i], projectId);
+                    }
+                    if (result && result.includes("storage.yandexcloud.net")) {
+                        persisted = result;
+                    }
+                } catch (persistErr) {
+                    console.error(`Photo S3 persist failed index=${i}:`, persistErr);
+                }
+
+                if (!persisted) {
+                    continue;
+                }
+
+                persistedUrls.push(persisted);
+
+                // Save as a workspace asset tagged with source=photo-generation
+                try {
+                    await saveGeneratedAssetMutation.mutateAsync({
+                        projectId,
+                        url: persisted,
+                        prompt,
+                        model: responseModel ?? activeModelId,
+                        source: "photo-generation",
+                    });
+                } catch (saveErr) {
+                    console.error("Asset save failed:", saveErr);
+                }
             }
 
-            if (!persisted) {
+            if (persistedUrls.length === 0) {
                 throw new Error(
-                    "Не удалось сохранить сгенерированное изображение. Повторите попытку."
+                    "Не удалось сохранить сгенерированное изображение. Повторите попытку.",
                 );
-            }
-
-            // Save as a workspace asset tagged with source=photo-generation
-            try {
-                await saveGeneratedAssetMutation.mutateAsync({
-                    projectId,
-                    url: persisted,
-                    prompt,
-                    model: responseModel ?? activeModelId,
-                    source: "photo-generation",
-                });
-            } catch (saveErr) {
-                console.error("Asset save failed:", saveErr);
             }
 
             // Record the assistant message (server-side tracking is disabled via
             // recordMessage:false, so we log cost units here)
             const costUnits = getModelById(responseModel ?? activeModelId)?.costPerRun ?? 0;
-            await addMessageMutation.mutateAsync({
-                sessionId,
-                role: "assistant",
-                content: persisted,
-                type: "image",
-                model: responseModel ?? activeModelId,
-                costUnits,
-                metadata: {
-                    kind: isEditMode ? "edit" : "generate",
-                    sourceUrl: isEditMode ? editContext?.url : undefined,
-                },
-            });
+            for (const persisted of persistedUrls) {
+                await addMessageMutation.mutateAsync({
+                    sessionId,
+                    role: "assistant",
+                    content: persisted,
+                    type: "image",
+                    model: responseModel ?? activeModelId,
+                    costUnits,
+                    metadata: {
+                        kind: isEditMode ? "edit" : "generate",
+                        sourceUrl: isEditMode ? editContext?.url : undefined,
+                    },
+                });
+            }
 
             // Refresh related queries so chat/library/dashboard reflect the new image
             await Promise.all([
@@ -351,7 +392,9 @@ export function PhotoPromptBar({ projectId }: PhotoPromptBarProps) {
             // Only the edit-context badge is dismissed, since the freshly
             // produced image is now the natural "source" for the next edit.
             if (isEditMode) clearEditContext();
+            if (pendingId) clearPendingGeneration(pendingId);
         } catch (e) {
+            if (pendingId) clearPendingGeneration(pendingId);
             const err = e as Error;
             console.error("Photo generation failed:", err);
             setErrorMsg(parseAiError(err));
@@ -377,7 +420,7 @@ export function PhotoPromptBar({ projectId }: PhotoPromptBarProps) {
     };
 
     return (
-        <div className="flex flex-col items-center gap-2 w-[min(760px,95vw)]">
+        <div className="flex flex-col items-center gap-2 w-[min(900px,95vw)]">
             {/* Edit badge — only shown when an image is being edited */}
             {isEditMode && editContext && (
                 <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-accent-lime/20 border border-accent-lime-hover/50 text-accent-primary text-[11px] font-medium shadow-sm">
@@ -399,14 +442,30 @@ export function PhotoPromptBar({ projectId }: PhotoPromptBarProps) {
                 </div>
             )}
 
-            <div className="relative flex flex-col w-full bg-bg-surface/95 backdrop-blur-xl border border-border-primary rounded-[20px] shadow-2xl">
+            <div className="relative flex flex-col w-full bg-bg-surface/95 backdrop-blur-xl border border-border-primary rounded-[20px] shadow-[var(--shadow-lg)]">
+                {supportsVision && referenceImages.length > 0 && (
+                    <div className="absolute right-4 top-3 z-10">
+                        <ReferenceImagePreviewTray
+                            images={referenceImages}
+                            onChange={setReferenceImages}
+                        />
+                    </div>
+                )}
                 {/* Prompt area */}
-                <div className="flex-1 px-4 pt-3 pb-2 min-h-[72px]">
+                <div
+                    className="flex-1 px-4 pt-3 pb-2 min-h-[72px]"
+                    style={
+                        supportsVision && referenceImages.length > 0
+                            ? { paddingRight: getReferenceTrayReserveWidth(referenceImages.length) }
+                            : undefined
+                    }
+                >
                     <RefAutocompleteTextarea
                         ref={textareaRef as any}
                         value={prompt}
                         onChange={setPrompt}
                         referenceImages={referenceImages}
+                        dropdownPlacement="auto"
                         onKeyDown={(e) => {
                             if (e.key === "Enter" && !e.shiftKey) {
                                 e.preventDefault();
@@ -431,29 +490,23 @@ export function PhotoPromptBar({ projectId }: PhotoPromptBarProps) {
                 </div>
 
                 {/* Bottom bar */}
-                <div className="px-3 pb-3 pt-1 flex items-center gap-2 flex-wrap">
+                <div className="flex min-w-0 items-center gap-2 overflow-x-auto px-3 pb-3 pt-1 flex-nowrap [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                     {/* Model */}
-                    <Selector icon={<Settings2 size={12} />}>
-                        <select
-                            value={activeModelId}
-                            onChange={(e) => handleModelChange(e.target.value)}
-                            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                        >
-                            {currentModels.map((m) => (
-                                <option key={m.id} value={m.id}>{m.name}</option>
-                            ))}
-                        </select>
-                        <span className="text-text-secondary font-medium pointer-events-none">
-                            {currentModels.find(m => m.id === activeModelId)?.name}
-                        </span>
-                    </Selector>
+                    <SelectPill
+                        icon={<Settings2 size={12} />}
+                        label="Модель"
+                        value={activeModelId}
+                        onChange={handleModelChange}
+                        options={currentModels.map((model) => ({ value: model.id, label: model.name }))}
+                        className="min-w-[150px] max-w-[190px]"
+                    />
 
                     {/* Advanced model settings — only for LoRA-aware models. */}
                     {loraSpec && (
                         <button
                             onClick={() => setSettingsOpen(true)}
                             title="Параметры модели"
-                            className="flex items-center justify-center w-7 h-7 rounded-[10px] border border-border-primary/60 text-text-tertiary hover:text-text-primary hover:bg-bg-tertiary/30 transition-all cursor-pointer"
+                            className="flex h-8 w-8 items-center justify-center rounded-[10px] border border-border-primary/60 text-text-tertiary transition-all cursor-pointer hover:text-text-primary hover:bg-bg-tertiary/30"
                         >
                             <Sliders size={12} />
                         </button>
@@ -461,57 +514,59 @@ export function PhotoPromptBar({ projectId }: PhotoPromptBarProps) {
 
                     {/* Aspect ratio (generate mode only) */}
                     {!isEditMode && (
-                        <Selector icon={<Ratio size={12} />}>
-                            <select
-                                value={aspectRatio}
-                                onChange={(e) => setAspectRatio(e.target.value)}
-                                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                            >
-                                {modelAspectRatios.map((r) => (
-                                    <option key={r} value={r}>{r}</option>
-                                ))}
-                            </select>
-                            <span className="text-text-secondary font-medium pointer-events-none">
-                                {aspectRatio}
-                            </span>
-                        </Selector>
+                        <SelectPill
+                            icon={<Ratio size={12} />}
+                            label="Соотношение сторон"
+                            value={aspectRatio}
+                            onChange={setAspectRatio}
+                            options={modelAspectRatios.map((ratio) => ({ value: ratio, label: ratio }))}
+                            className="w-[86px]"
+                        />
                     )}
 
                     {/* Resolution */}
                     {!isEditMode && modelResolutions.length > 0 && (
-                        <Selector icon={<Maximize2 size={12} />}>
-                            <select
-                                value={scale}
-                                onChange={(e) => setScale(e.target.value)}
-                                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                            >
-                                {modelResolutions.map((r) => (
-                                    <option key={r.id} value={r.id}>{r.label}</option>
-                                ))}
-                            </select>
-                            <span className="text-text-secondary font-medium pointer-events-none">
-                                {modelResolutions.find(r => r.id === scale)?.label
-                                    ?? modelResolutions[0].label}
-                            </span>
-                        </Selector>
+                        <SelectPill
+                            icon={<Maximize2 size={12} />}
+                            label="Разрешение"
+                            value={scale}
+                            onChange={setScale}
+                            options={modelResolutions.map((resolution) => ({ value: resolution.id, label: resolution.label }))}
+                            className="w-[82px]"
+                        />
                     )}
 
-                    {/* Style preset — applied as suffix to the prompt. Available in both
-                        generate and edit modes so the user can nudge edits toward a style. */}
-                    <ImageStylePresetPicker
-                        presets={imagePresets}
-                        selectedId={imageStyleId}
-                        onChange={setImageStyleId}
-                        variant="compact"
-                    />
+                    {!isEditMode && maxImageOutputs > 1 && (
+                        <SelectPill
+                            icon={<Sparkles size={12} />}
+                            label="Количество изображений"
+                            value={imageCount}
+                            onChange={(value) => setImageCount(Number(value))}
+                            options={Array.from({ length: maxImageOutputs }, (_, index) => {
+                                const count = index + 1;
+                                return { value: String(count), label: String(count) };
+                            })}
+                            className="w-[64px]"
+                        />
+                    )}
 
-                    {/* LoRA picker — disabled visually when active model has no loraSpec. */}
-                    <LoraSelectorPicker
-                        family={loraSpec?.family ?? null}
-                        maxCount={loraSpec?.maxCount ?? 1}
-                        value={loras}
-                        onChange={setLoras}
-                    />
+                    {!loraSpec && (
+                        <ImageStylePresetPicker
+                            presets={imagePresets}
+                            selectedId={imageStyleId}
+                            onChange={setImageStyleId}
+                            variant="compact"
+                        />
+                    )}
+
+                    {loraSpec && (
+                        <LoraSelectorPicker
+                            family={loraSpec.family}
+                            maxCount={loraSpec.maxCount ?? 1}
+                            value={loras}
+                            onChange={setLoras}
+                        />
+                    )}
 
                     <div className="flex-1" />
 
@@ -526,6 +581,7 @@ export function PhotoPromptBar({ projectId }: PhotoPromptBarProps) {
                             images={referenceImages}
                             onChange={setReferenceImages}
                             max={getMaxRefs(activeModelId) || 3}
+                            previewMode="none"
                             onFilesAdded={(files) => {
                                 for (const file of files) {
                                     void registerFile({
@@ -569,11 +625,3 @@ export function PhotoPromptBar({ projectId }: PhotoPromptBarProps) {
     );
 }
 
-function Selector({ icon, children }: { icon?: React.ReactNode; children: React.ReactNode }) {
-    return (
-        <div className="relative flex items-center gap-1.5 px-2.5 py-1 rounded-[10px] border border-border-primary/60 text-[12px] text-text-secondary hover:border-border-secondary hover:bg-bg-tertiary/30 transition-all focus-within:border-border-secondary focus-within:bg-bg-tertiary/30">
-            {icon && <span className="text-text-tertiary flex-shrink-0 pointer-events-none">{icon}</span>}
-            {children}
-        </div>
-    );
-}

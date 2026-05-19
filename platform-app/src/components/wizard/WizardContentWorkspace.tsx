@@ -12,23 +12,31 @@ import {
     Ratio,
     RotateCcw,
     Settings2,
+    Sliders,
     Sparkles,
     Type,
     Upload,
     ZoomIn,
     ZoomOut,
+    Maximize2,
 } from "lucide-react";
 import { RefAutocompleteTextarea, type RefAutocompleteTextareaHandle } from "@/components/ui/RefAutocompleteTextarea";
-import { ReferenceImageInput } from "@/components/ui/ReferenceImageInput";
+import { ReferenceImageInput, ReferenceImagePreviewTray, getReferenceTrayReserveWidth } from "@/components/ui/ReferenceImageInput";
 import { ImageStylePresetPicker, TextStylePresetPicker } from "@/components/ui/StylePresetPicker";
+import { GeneratedImageStrip, type GeneratedImageVariant } from "@/components/ui/GeneratedImageStrip";
+import { SelectPill } from "@/components/ui/SelectPill";
+import { LoraSelectorPicker } from "@/components/ui/LoraSelectorPicker";
+import { LoraTriggerHint } from "@/components/ui/LoraTriggerHint";
+import { ModelSettingsModal, type AdvancedAIParams } from "@/components/ui/ModelSettingsModal";
 import { PreviewCanvas } from "@/components/editor/PreviewCanvas";
 import { trpc } from "@/lib/trpc";
 import { useProjectLibrary } from "@/hooks/useProjectLibrary";
 import { useStylePresets } from "@/hooks/useStylePresets";
-import { getMaxRefs, getModelById, getAspectRatios, getResolutions, resolveRefTags } from "@/lib/ai-models";
-import { getImagePresetPromptSuffix } from "@/lib/stylePresets";
+import { getMaxRefs, getMaxOutputs, getModelById, getAspectRatios, getResolutions, getDefaultResolution, getLoraSpec, resolveRefTags } from "@/lib/ai-models";
+import type { LoraWeight } from "@/lib/ai-providers";
+import { getImagePresetPromptSuffixForModel } from "@/lib/stylePresets";
 import { applyAllAutoLayouts } from "@/utils/layoutEngine";
-import { compressImageFile, uploadForAI, uploadManyForAI } from "@/utils/imageUpload";
+import { compressImageFile, persistImageToS3, uploadForAI, uploadManyForAI } from "@/utils/imageUpload";
 import { getOutpaintModel } from "@/utils/outpaintModel";
 import { mapOutpaintStage, type OutpaintProgressState } from "@/utils/outpaintProgress";
 import { OutpaintProgressIndicator } from "@/components/ui/OutpaintProgressIndicator";
@@ -149,14 +157,34 @@ const IMAGE_GEN_MODELS = [
     { id: "nano-banana-pro", label: "Nano Banana Pro" },
     { id: "nano-banana", label: "Nano Banana" },
     { id: "flux-2-pro", label: "Flux 2 Pro" },
+    { id: "seedream-5", label: "Seedream 5" },
     { id: "seedream", label: "Seedream 4.5" },
+    { id: "gpt-image-2", label: "GPT Image 2" },
     { id: "gpt-image", label: "GPT Image 1.5" },
     { id: "qwen-image", label: "Qwen Image" },
     { id: "flux-schnell", label: "Flux Schnell" },
     { id: "flux-dev", label: "Flux Dev" },
     { id: "flux-1.1-pro", label: "Flux 1.1 Pro" },
     { id: "dall-e-3", label: "DALL-E 3" },
+    { id: "flux-lora", label: "FLUX.1 LoRA" },
+    { id: "flux-2-lora", label: "FLUX.2 LoRA" },
+    { id: "qwen-image-lora", label: "Qwen Image LoRA" },
 ];
+
+const S3_PERSIST_HOST = "storage.yandexcloud.net";
+
+async function persistWizardImageUrl(url: string, projectId: string, index: number): Promise<string> {
+    let persisted = await persistImageToS3(url, projectId);
+    if (!persisted.includes(S3_PERSIST_HOST)) {
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        persisted = await persistImageToS3(url, projectId);
+    }
+    if (!persisted.includes(S3_PERSIST_HOST)) {
+        console.error(`[Wizard] persist failed index=${index}`);
+        throw new Error("Не удалось сохранить сгенерированное изображение. Повторите попытку.");
+    }
+    return persisted;
+}
 
 const CONTENT_TYPES = ["text", "image", "badge"] as const;
 type ImagePromptMode = "generate" | "edit" | "expand";
@@ -1160,26 +1188,73 @@ function WizardLayerPromptBar({
     // null otherwise so the indicator collapses out of the layout).
     const [outpaintProgress, setOutpaintProgress] = useState<OutpaintProgressState | null>(null);
     const [error, setError] = useState<string | null>(null);
-    const [selectedModel, setSelectedModel] = useState("flux-dev");
+    const [selectedModel, setSelectedModel] = useState("nano-banana-2");
     const [textModel, setTextModel] = useState("deepseek");
     const [aspectRatio, setAspectRatio] = useState("1:1");
     const [imageStyleId, setImageStyleId] = useState("none");
     const [textStyleId, setTextStyleId] = useState<TextGenPreset | "none">("none");
     const [referenceImages, setReferenceImages] = useState<string[]>([]);
-    const [scale, setScale] = useState("");
-    const [showAdvanced, setShowAdvanced] = useState(false);
+    const [scale, setScale] = useState(() => getDefaultResolution("nano-banana-2"));
+    const [imageCount, setImageCount] = useState(1);
+    const [generatedVariants, setGeneratedVariants] = useState<GeneratedImageVariant[]>([]);
+    const [selectedGeneratedVariantId, setSelectedGeneratedVariantId] = useState<string | undefined>(undefined);
     const [imageMode, setImageMode] = useState<ImagePromptMode>("generate");
+    const [loras, setLoras] = useState<LoraWeight[]>([]);
+    const [advancedParams, setAdvancedParams] = useState<AdvancedAIParams>({});
+    const [settingsOpen, setSettingsOpen] = useState(false);
     const modelAspectRatios = getAspectRatios(selectedModel);
     const modelResolutions = getResolutions(selectedModel);
+    const maxImageOutputs = imageMode === "generate" ? getMaxOutputs(selectedModel) : 1;
     const supportsVision = getModelById(selectedModel)?.caps.includes("vision") ?? false;
+    const loraSpec = getLoraSpec(selectedModel);
+    const loraRequestFields = loraSpec
+        ? {
+            loras: loras.length > 0 ? loras : undefined,
+            guidanceScale: advancedParams.guidanceScale,
+            numInferenceSteps: advancedParams.numInferenceSteps,
+            negativePrompt: advancedParams.negativePrompt,
+            acceleration: advancedParams.acceleration,
+        }
+        : {};
+
+    const clearGeneratedVariants = () => {
+        setGeneratedVariants([]);
+        setSelectedGeneratedVariantId(undefined);
+    };
 
     useEffect(() => {
         setPrompt("");
         setError(null);
         setReferenceImages([]);
-        setShowAdvanced(false);
         setImageMode("generate");
+        setLoras([]);
+        setAdvancedParams({});
+        setImageCount(1);
+        clearGeneratedVariants();
     }, [activeLayer?.id]);
+
+    useEffect(() => {
+        if (imageCount > maxImageOutputs) setImageCount(maxImageOutputs);
+    }, [imageCount, maxImageOutputs]);
+
+    useEffect(() => {
+        if (imageMode !== "generate" || activeLayer?.type !== "image") {
+            clearGeneratedVariants();
+        }
+    }, [activeLayer?.type, imageMode]);
+
+    useEffect(() => {
+        if (imageMode === "expand") return;
+        if (!scale || !modelResolutions.some((r) => r.id === scale)) {
+            setScale(getDefaultResolution(selectedModel));
+        }
+    }, [imageMode, selectedModel, scale, modelResolutions]);
+
+    const handleGeneratedVariantSelect = (variant: GeneratedImageVariant) => {
+        if (!activeLayer || activeLayer.type !== "image" || !variant.url) return;
+        onImageChange(activeLayer.id, variant.url);
+        setSelectedGeneratedVariantId(variant.id);
+    };
 
     const handleGenerate = async () => {
         if (!activeLayer) return;
@@ -1193,6 +1268,7 @@ function WizardLayerPromptBar({
 
         setError(null);
         setIsGenerating(true);
+        let showingLoadingVariants = false;
         try {
             if (activeLayer.type === "text" || activeLayer.type === "badge") {
                 const { generateTextVariants } = await import("@/services/aiService");
@@ -1316,6 +1392,7 @@ function WizardLayerPromptBar({
                     imageView: activeImageViewOverride,
                 });
                 onImageChange(activeLayer.id, registered ?? expandResult.src);
+                clearGeneratedVariants();
                 // Grow the master layer to match the new (extended) image so
                 // it actually shows up in the preview instead of being cropped
                 // back into the original tiny rect by object-fit cover.
@@ -1367,30 +1444,42 @@ function WizardLayerPromptBar({
                         model: editModel,
                         referenceImages: refUrls,
                         projectId,
+                        scale: scale || undefined,
+                        ...loraRequestFields,
                     }),
                 });
                 const data = await response.json();
                 if (data.error) throw new Error(data.requestId ? `${data.error} [request: ${data.requestId}]` : data.error);
                 if (data.content) {
-                    const persisted = projectId
-                        ? await registerUrl({
+                    let persisted: string = data.content;
+                    if (projectId) {
+                        persisted = await persistWizardImageUrl(data.content, projectId, 0);
+                        void registerUrl({
                             projectId,
-                            url: data.content,
+                            url: persisted,
                             source: "wizard-edit",
-                        })
-                        : null;
+                        }).catch((e) => console.warn("[Wizard] registerUrl failed:", e));
+                    }
                     // text-edit returns a fresh image with potentially different
                     // aspect ratio — drop any stale expand geometry.
                     onLayerGeometryReset(activeLayer.id);
                     onOutpaintHistoryClear(activeLayer.id);
-                    onImageChange(activeLayer.id, persisted ?? data.content);
+                    onImageChange(activeLayer.id, persisted);
+                    clearGeneratedVariants();
                 }
                 return;
             }
 
-            const styleSuffix = getImagePresetPromptSuffix(imageStyleId, imagePresets);
+            const styleSuffix = getImagePresetPromptSuffixForModel(imageStyleId, selectedModel, imagePresets);
             const styleContext = styleSuffix ? `. Style: ${styleSuffix}` : "";
             const finalPrompt = `${basePrompt}${styleContext}`;
+            const requestedImageCount = Math.min(imageCount, maxImageOutputs);
+            showingLoadingVariants = true;
+            setGeneratedVariants(Array.from({ length: requestedImageCount }, (_, index) => ({
+                id: `loading-${Date.now()}-${index}`,
+                status: "loading" as const,
+            })));
+            setSelectedGeneratedVariantId(undefined);
             const refUrls = referenceImages.length > 0
                 ? await uploadManyForAI(referenceImages, projectId || "ai-tmp")
                 : undefined;
@@ -1403,28 +1492,63 @@ function WizardLayerPromptBar({
                     model: selectedModel,
                     aspectRatio,
                     scale: scale || undefined,
-                    count: 1,
+                    count: requestedImageCount,
                     referenceImages: refUrls,
                     projectId,
+                    ...loraRequestFields,
                 }),
             });
             const data = await response.json();
             if (data.error) throw new Error(data.requestId ? `${data.error} [request: ${data.requestId}]` : data.error);
             if (data.content) {
-                const persisted = projectId
-                    ? await registerUrl({
-                        projectId,
-                        url: data.content,
-                        source: "wizard-generation",
-                    })
-                    : null;
+                const rawUrls: string[] = Array.from(new Set(((Array.isArray(data.contents) && data.contents.length > 0) ? data.contents : [data.content])
+                    .filter((url: unknown): url is string => typeof url === "string" && url.length > 0)));
+                const persistedUrls: string[] = [];
+                for (let i = 0; i < rawUrls.length; i++) {
+                    if (i > 0) {
+                        await new Promise((resolve) => setTimeout(resolve, 150));
+                    }
+                    try {
+                        if (!projectId) {
+                            persistedUrls.push(rawUrls[i]);
+                            continue;
+                        }
+                        const persisted = await persistWizardImageUrl(rawUrls[i], projectId, i);
+                        persistedUrls.push(persisted);
+                        void registerUrl({
+                            projectId,
+                            url: persisted,
+                            source: "wizard-generation",
+                        }).catch((e) => console.warn("[Wizard] registerUrl failed:", e));
+                    } catch (persistErr) {
+                        console.error(`[Wizard] batch persist index=${i}`, persistErr);
+                    }
+                }
+                if (projectId && persistedUrls.length === 0) {
+                    throw new Error("Не удалось сохранить сгенерированное изображение. Повторите попытку.");
+                }
                 // Brand new image — wipe any stale expand geometry.
                 onLayerGeometryReset(activeLayer.id);
                 onOutpaintHistoryClear(activeLayer.id);
-                onImageChange(activeLayer.id, persisted ?? data.content);
+                onImageChange(activeLayer.id, persistedUrls[0] ?? data.content);
+                const variants = persistedUrls.map((url, index) => ({
+                    id: `${activeLayer.id}-${index}-${url}`,
+                    url,
+                    status: "ready" as const,
+                }));
+                setGeneratedVariants(variants);
+                setSelectedGeneratedVariantId(variants[0]?.id);
             }
         } catch (err) {
             setError(err instanceof Error ? err.message : "Не удалось выполнить генерацию");
+            if (showingLoadingVariants) {
+                setGeneratedVariants((variants) =>
+                    variants.length > 0
+                        ? variants.map((variant) => ({ ...variant, status: "error" as const }))
+                        : [{ id: `error-${Date.now()}`, status: "error" as const }],
+                );
+                setSelectedGeneratedVariantId(undefined);
+            }
         } finally {
             setIsGenerating(false);
             // Outpaint progress is per-mode; clear it regardless of
@@ -1443,7 +1567,25 @@ function WizardLayerPromptBar({
     const selectedLabel = activeLayer.type === "text" ? "текстом" : activeLayer.type === "badge" ? "бейджем" : "фото";
 
     return (
-        <div className="absolute bottom-6 left-1/2 z-20 w-[760px] max-w-[calc(100%-32px)] -translate-x-1/2 rounded-[20px] border border-border-primary bg-bg-surface/95 shadow-[var(--shadow-lg)] backdrop-blur-xl">
+        <div className="absolute bottom-6 left-1/2 z-20 flex w-[760px] max-w-[calc(100%-32px)] -translate-x-1/2 flex-col items-center gap-2">
+            {generatedVariants.length > 1 && (
+                <GeneratedImageStrip
+                    variants={generatedVariants}
+                    selectedId={selectedGeneratedVariantId}
+                    onSelect={handleGeneratedVariantSelect}
+                />
+            )}
+
+            <div className="relative w-full rounded-[20px] border border-border-primary bg-bg-surface/95 shadow-[var(--shadow-lg)] backdrop-blur-xl">
+            {isImage && imageMode !== "expand" && referenceImages.length > 0 && (
+                <div className="absolute right-4 top-12 z-10">
+                    <ReferenceImagePreviewTray
+                        images={referenceImages}
+                        onChange={setReferenceImages}
+                        onTagClick={(tag) => promptRef.current?.insertAtCursor(tag)}
+                    />
+                </div>
+            )}
             <div className="flex items-center gap-2 border-b border-border-primary px-4 py-2">
                 <span className="rounded-full bg-accent-lime/20 px-2 py-1 text-[11px] font-medium text-text-primary">
                     Работаем с {selectedLabel}: {activeLayer.name}
@@ -1464,12 +1606,20 @@ function WizardLayerPromptBar({
                 )}
             </div>
 
-            <div className="px-4 pt-3">
+            <div
+                className="px-4 pt-3"
+                style={
+                    isImage && imageMode !== "expand" && referenceImages.length > 0
+                        ? { paddingRight: getReferenceTrayReserveWidth(referenceImages.length) }
+                        : undefined
+                }
+            >
                 <RefAutocompleteTextarea
                     ref={promptRef}
                     value={prompt}
                     onChange={(value) => { setPrompt(value); setError(null); }}
                     referenceImages={referenceImages}
+                    dropdownPlacement="auto"
                     placeholder={isImage
                         ? imageMode === "edit"
                             ? "Опишите правку: заменить фон, добавить тень, изменить освещение..."
@@ -1499,10 +1649,11 @@ function WizardLayerPromptBar({
                 </div>
             )}
 
-            <div className="flex items-center gap-2 px-4 pb-3 pt-1">
-                {isImage && (
-                    <>
-                        <div className="flex h-8 rounded-[10px] border border-border-primary/60 bg-bg-primary p-0.5">
+            <div className="flex min-w-0 items-center gap-2 px-4 pb-3 pt-1">
+                <div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto pr-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                    {isImage && (
+                        <>
+                        <div className="flex h-8 items-center rounded-[10px] border border-border-primary/60 bg-bg-primary p-0.5">
                             <ImageModeButton
                                 active={imageMode === "generate"}
                                 label="Генерация"
@@ -1523,36 +1674,86 @@ function WizardLayerPromptBar({
                             />
                         </div>
                         {imageMode !== "expand" && (
-                            <OutlinedSelector icon={<Settings2 size={13} />}>
-                                <select
-                                    value={selectedModel}
-                                    onChange={(event) => setSelectedModel(event.target.value)}
-                                    className="max-w-[150px] appearance-none bg-transparent text-[12px] font-medium text-text-secondary focus:outline-none cursor-pointer"
-                                >
-                                    {IMAGE_GEN_MODELS.map((model) => (
-                                        <option key={model.id} value={model.id}>{model.label}</option>
-                                    ))}
-                                </select>
-                            </OutlinedSelector>
+                            <SelectPill
+                                icon={<Settings2 size={13} />}
+                                label="Модель"
+                                value={selectedModel}
+                                onChange={(value) => {
+                                    setSelectedModel(value);
+                                    setImageCount(1);
+                                    setScale(getDefaultResolution(value));
+                                    setLoras([]);
+                                    setAdvancedParams({});
+                                    if (!getModelById(value)?.caps.includes("vision")) {
+                                        setReferenceImages([]);
+                                    }
+                                    clearGeneratedVariants();
+                                }}
+                                options={IMAGE_GEN_MODELS.map((model) => ({ value: model.id, label: model.label }))}
+                                className="min-w-[150px] max-w-[190px]"
+                            />
                         )}
                         {imageMode === "generate" && (
                             <>
-                                <OutlinedSelector icon={<Ratio size={13} />}>
-                                    <select
-                                        value={aspectRatio}
-                                        onChange={(event) => setAspectRatio(event.target.value)}
-                                        className="appearance-none bg-transparent text-[12px] font-medium text-text-secondary focus:outline-none cursor-pointer"
-                                    >
-                                        {modelAspectRatios.map((ratio) => (
-                                            <option key={ratio} value={ratio}>{ratio}</option>
-                                        ))}
-                                    </select>
-                                </OutlinedSelector>
-                                <ImageStylePresetPicker
-                                    presets={imagePresets}
-                                    selectedId={imageStyleId}
-                                    onChange={setImageStyleId}
-                                    variant="compact"
+                                <SelectPill
+                                    icon={<Ratio size={13} />}
+                                    label="Соотношение сторон"
+                                    value={aspectRatio}
+                                    onChange={setAspectRatio}
+                                    options={modelAspectRatios.map((ratio) => ({ value: ratio, label: ratio }))}
+                                    className="w-[86px]"
+                                />
+                                {!loraSpec && (
+                                    <ImageStylePresetPicker
+                                        presets={imagePresets}
+                                        selectedId={imageStyleId}
+                                        onChange={setImageStyleId}
+                                        variant="compact"
+                                    />
+                                )}
+                                {maxImageOutputs > 1 && (
+                                    <SelectPill
+                                        icon={<Sparkles size={13} />}
+                                        label="Количество изображений"
+                                        value={imageCount}
+                                        onChange={(value) => setImageCount(Number(value))}
+                                        options={Array.from({ length: maxImageOutputs }, (_, index) => {
+                                            const count = index + 1;
+                                            return { value: String(count), label: String(count) };
+                                        })}
+                                        className="w-[64px]"
+                                    />
+                                )}
+                            </>
+                        )}
+                        {(imageMode === "generate" || imageMode === "edit") && modelResolutions.length > 0 && (
+                            <SelectPill
+                                icon={<Maximize2 size={13} />}
+                                label="Разрешение"
+                                value={scale}
+                                onChange={setScale}
+                                options={modelResolutions.map((resolution) => ({
+                                    value: resolution.id,
+                                    label: resolution.label,
+                                }))}
+                                className="w-[74px]"
+                            />
+                        )}
+                        {loraSpec && imageMode !== "expand" && (
+                            <>
+                                <button
+                                    type="button"
+                                    onClick={() => setSettingsOpen(true)}
+                                    title="Параметры модели"
+                                    className="flex h-8 w-8 items-center justify-center rounded-[10px] border border-border-primary/60 text-text-tertiary transition-all cursor-pointer hover:text-text-primary hover:bg-bg-tertiary/30"
+                                >
+                                    <Sliders size={12} />
+                                </button>
+                                <LoraSelectorPicker
+                                    family={loraSpec.family}
+                                    maxCount={loraSpec.maxCount ?? 1}
+                                    value={loras}
+                                    onChange={setLoras}
                                 />
                             </>
                         )}
@@ -1562,49 +1763,32 @@ function WizardLayerPromptBar({
                                 onChange={setReferenceImages}
                                 max={getMaxRefs(selectedModel)}
                                 label="Референс"
+                                previewMode="none"
                                 onTagClick={(tag) => promptRef.current?.insertAtCursor(tag)}
                             />
                         )}
-                        {imageMode === "generate" && modelResolutions.length > 0 && (
-                            <button
-                                type="button"
-                                onClick={() => setShowAdvanced((value) => !value)}
-                                aria-label="Дополнительные настройки генерации"
-                                className={`flex h-8 items-center gap-1.5 rounded-[10px] border px-2.5 text-[12px] font-medium transition-colors cursor-pointer ${
-                                    showAdvanced
-                                        ? "border-accent-primary/40 bg-accent-primary/10 text-accent-primary"
-                                        : "border-border-primary/60 text-text-secondary hover:border-border-secondary"
-                                }`}
-                            >
-                                <Settings2 size={13} />
-                            </button>
-                        )}
-                    </>
-                )}
+                        </>
+                    )}
 
-                {!isImage && (
-                    <>
-                        <OutlinedSelector icon={<Settings2 size={13} />}>
-                            <select
-                                value={textModel}
-                                onChange={(event) => setTextModel(event.target.value)}
-                                className="max-w-[150px] appearance-none bg-transparent text-[12px] font-medium text-text-secondary focus:outline-none cursor-pointer"
-                            >
-                                {TEXT_GEN_MODELS.map((model) => (
-                                    <option key={model.id} value={model.id}>{model.label}</option>
-                                ))}
-                            </select>
-                        </OutlinedSelector>
+                    {!isImage && (
+                        <>
+                        <SelectPill
+                            icon={<Settings2 size={13} />}
+                            label="Модель текста"
+                            value={textModel}
+                            onChange={setTextModel}
+                            options={TEXT_GEN_MODELS.map((model) => ({ value: model.id, label: model.label }))}
+                            className="min-w-[150px] max-w-[190px]"
+                        />
                         <TextStylePresetPicker
                             presets={textPresets}
                             selectedId={textStyleId}
                             onChange={(val) => setTextStyleId((val as TextGenPreset) || "none")}
                             variant="compact"
                         />
-                    </>
-                )}
-
-                <div className="flex-1" />
+                        </>
+                    )}
+                </div>
 
                 <button
                     onClick={handleGenerate}
@@ -1616,25 +1800,21 @@ function WizardLayerPromptBar({
                 </button>
             </div>
 
-            {isImage && showAdvanced && modelResolutions.length > 0 && (
-                <div className="border-t border-border-primary bg-bg-secondary/50 px-4 py-3">
-                    <label className="flex items-center gap-2 text-[11px] text-text-secondary">
-                        Разрешение
-                        <select
-                            value={scale}
-                            onChange={(event) => setScale(event.target.value)}
-                            className="h-8 rounded-[var(--radius-sm)] border border-border-primary bg-bg-primary px-2 text-[11px] text-text-primary focus:outline-none focus:ring-1 focus:ring-border-focus"
-                        >
-                            <option value="">Авто</option>
-                            {modelResolutions.map((resolution) => (
-                                <option key={resolution.id} value={resolution.id}>
-                                    {resolution.label}
-                                </option>
-                            ))}
-                        </select>
-                    </label>
+            {isImage && loraSpec && imageMode !== "expand" && (
+                <div className="px-4 pb-1">
+                    <LoraTriggerHint family={loraSpec.family} loras={loras} />
                 </div>
             )}
+            {loraSpec && (
+                <ModelSettingsModal
+                    open={settingsOpen}
+                    onClose={() => setSettingsOpen(false)}
+                    spec={loraSpec}
+                    value={advancedParams}
+                    onChange={setAdvancedParams}
+                />
+            )}
+            </div>
         </div>
     );
 }
@@ -1663,23 +1843,7 @@ function ImageModeButton({
             }`}
         >
             {icon}
-            <span className="sr-only">{label}</span>
         </button>
-    );
-}
-
-function OutlinedSelector({
-    icon,
-    children,
-}: {
-    icon?: React.ReactNode;
-    children: React.ReactNode;
-}) {
-    return (
-        <div className="flex h-8 items-center gap-1.5 rounded-[10px] border border-border-primary/60 px-2.5 text-text-secondary transition-colors hover:border-border-secondary hover:bg-bg-tertiary/30">
-            {icon && <span className="text-text-tertiary">{icon}</span>}
-            {children}
-        </div>
     );
 }
 

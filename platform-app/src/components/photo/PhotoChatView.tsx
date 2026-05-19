@@ -22,6 +22,7 @@ interface AIMessageRecord {
 
 export function PhotoChatView({ projectId }: PhotoChatViewProps) {
     const activeSessionId = usePhotoStore((s) => s.activeSessionId);
+    const allPendingGenerations = usePhotoStore((s) => s.pendingGenerations);
     const scrollRef = useRef<HTMLDivElement>(null);
 
     const messagesQuery = trpc.ai.getMessages.useQuery(
@@ -43,13 +44,17 @@ export function PhotoChatView({ projectId }: PhotoChatViewProps) {
     }, [assetsQuery.data]);
 
     const messages = (messagesQuery.data?.messages ?? []) as AIMessageRecord[];
+    const pendingGenerations = useMemo(
+        () => allPendingGenerations.filter((generation) => generation.sessionId === activeSessionId),
+        [activeSessionId, allPendingGenerations],
+    );
 
     // Auto-scroll to bottom on new messages
     useEffect(() => {
         const el = scrollRef.current;
         if (!el) return;
         el.scrollTop = el.scrollHeight;
-    }, [messages.length]);
+    }, [messages.length, pendingGenerations.length]);
 
     if (!activeSessionId) {
         return (
@@ -69,7 +74,7 @@ export function PhotoChatView({ projectId }: PhotoChatViewProps) {
 
     return (
         <div ref={scrollRef} className="flex-1 overflow-y-auto min-h-0 pb-[180px]">
-            {messages.length === 0 ? (
+            {messages.length === 0 && pendingGenerations.length === 0 ? (
                 <EmptyState />
             ) : (
                 <div className="max-w-[720px] mx-auto px-6 py-6 flex flex-col gap-4">
@@ -85,8 +90,38 @@ export function PhotoChatView({ projectId }: PhotoChatViewProps) {
                             }
                         />
                     ))}
+                    {pendingGenerations.map((generation) => (
+                        <PendingGenerationRow key={generation.id} generation={generation} />
+                    ))}
                 </div>
             )}
+        </div>
+    );
+}
+
+function PendingGenerationRow({
+    generation,
+}: {
+    generation: { count: number; aspectRatio?: string; prompt: string };
+}) {
+    return (
+        <div className="flex justify-start">
+            <div className="max-w-[80%] rounded-[var(--radius-xl)] border border-border-primary bg-bg-tertiary/40 p-3">
+                <div className="mb-2 flex items-center gap-2 text-[11px] font-medium text-text-tertiary">
+                    <Loader2 size={12} className="animate-spin" />
+                    <span>Генерируем {generation.count} вариант{generation.count > 1 ? "а" : ""}</span>
+                </div>
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                    {Array.from({ length: generation.count }, (_, index) => (
+                        <div
+                            key={index}
+                            className="h-32 min-w-32 animate-pulse rounded-[var(--radius-md)] border border-border-primary bg-bg-secondary"
+                            style={{ aspectRatio: generation.aspectRatio?.replace(":", " / ") ?? "1 / 1" }}
+                            aria-label={`Ожидание изображения ${index + 1}`}
+                        />
+                    ))}
+                </div>
+            </div>
         </div>
     );
 }

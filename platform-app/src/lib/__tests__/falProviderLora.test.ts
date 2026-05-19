@@ -73,6 +73,34 @@ describe("FalProvider — LoRA-aware generate path", () => {
         ]);
     });
 
+    it("returns all fal image URLs and forwards requested image count", async () => {
+        mockFetch.mockResolvedValueOnce(
+            okJson({
+                images: [
+                    { url: "https://fal.media/one.png", width: 1024, height: 1024 },
+                    { url: "https://fal.media/two.png", width: 1024, height: 1024 },
+                ],
+            }),
+        );
+
+        const res = await generateWithFallback({
+            prompt: "product photo",
+            type: "image",
+            model: "flux-lora",
+            count: 2,
+        });
+
+        expect(res.content).toBe("https://fal.media/one.png");
+        expect(res.contents).toEqual([
+            "https://fal.media/one.png",
+            "https://fal.media/two.png",
+        ]);
+
+        const [, init] = mockFetch.mock.calls[0] as [string, RequestInit];
+        const body = JSON.parse(init.body as string);
+        expect(body.num_images).toBe(2);
+    });
+
     it("clamps guidance/steps that exceed the spec range", async () => {
         mockFetch.mockResolvedValueOnce(
             okJson({ images: [{ url: "https://fal.media/x.png" }] }),
@@ -163,5 +191,30 @@ describe("FalProvider — LoRA-aware generate path", () => {
         const [, init] = mockFetch.mock.calls[0] as [string, RequestInit];
         const body = JSON.parse(init.body as string);
         expect(body.acceleration).toBeUndefined();
+    });
+});
+
+describe("FalProvider — native fal multi-output payloads", () => {
+    it.each([
+        ["nano-banana-2", "fal-ai/nano-banana-2", 3],
+        ["gpt-image-2", "openai/gpt-image-2", 4],
+        ["seedream-5", "fal-ai/bytedance/seedream/v5/lite/text-to-image", 6],
+    ])("sends num_images for %s", async (model, expectedEndpoint, count) => {
+        mockFetch.mockResolvedValueOnce(
+            okJson({ images: [{ url: `https://fal.media/${model}.png`, width: 1024, height: 1024 }] }),
+        );
+
+        await generateWithFallback({
+            prompt: "product photo",
+            type: "image",
+            model,
+            count,
+        });
+
+        const [url, init] = mockFetch.mock.calls[0] as [string, RequestInit];
+        expect(url).toContain(expectedEndpoint);
+
+        const body = JSON.parse(init.body as string);
+        expect(body.num_images).toBe(count);
     });
 });

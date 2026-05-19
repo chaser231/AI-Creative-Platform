@@ -29,7 +29,7 @@ export async function POST(req: NextRequest) {
         const {
             action, prompt, imageBase64, maskBase64, model, aspectRatio,
             canvasSize, originalSize, originalLocation, referenceImages, projectId,
-            expandPadding, upscaleScale, recordMessage = true,
+            expandPadding, upscaleScale, recordMessage = true, scale,
             // LoRA-aware models accept these on edit endpoints too
             // (qwen-image-edit-lora, flux-lora/image-to-image).
             loras, guidanceScale, numInferenceSteps, negativePrompt, acceleration,
@@ -85,6 +85,7 @@ export async function POST(req: NextRequest) {
                     model: inpaintModel,
                     imageBase64,
                     maskBase64,
+                    scale,
                     // LoRA controls — only honored when the model has a loraSpec.
                     loras,
                     guidanceScale,
@@ -112,6 +113,7 @@ export async function POST(req: NextRequest) {
                         model: editModel,
                         imageBase64,
                         aspectRatio,
+                        scale,
                         referenceImages: referenceImages && referenceImages.length > 0 ? referenceImages : undefined,
                         loras,
                         guidanceScale,

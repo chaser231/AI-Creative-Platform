@@ -982,8 +982,8 @@ export default function EditorPage({ params }: EditorPageProps) {
                     {/* Floating Properties Panel — top center (Always visible now) */}
                     <PropertiesPanel />
 
-                    {/* Floating Toolbar — moves up when AI is open */}
-                    <div className={`absolute left-1/2 -translate-x-1/2 transition-all duration-300 z-10 ${aiPanelOpen ? "bottom-52" : "bottom-3"}`}>
+                    {/* Floating Toolbar — anchored like Figma; AI prompt opens above it */}
+                    <div className="absolute bottom-3 left-1/2 z-10 -translate-x-1/2 transition-all duration-300">
                         <Toolbar
                             onOpenTemplates={() => setTemplatesOpen(true)}
                             onOpenAIScenarios={
@@ -997,29 +997,36 @@ export default function EditorPage({ params }: EditorPageProps) {
 
                     {/* AI Prompt Bar — Bottom Center */}
                     {aiPanelOpen && (
-                        <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-20">
+                        <div className="absolute bottom-[68px] left-1/2 z-20 -translate-x-1/2">
                             <AIPromptBar
                                 open={true}
                                 onClose={() => setAiPanelOpen(false)}
                                 onToggleChat={() => setAiChatOpen(!aiChatOpen)}
                                 isChatOpen={aiChatOpen}
                                 projectId={id}
-                                onResult={(res) => addAiMessages([{
-                                    id: Date.now().toString(),
-                                    role: "user",
-                                    content: res.prompt,
-                                    type: "text",
-                                    timestamp: Date.now()
-                                }, {
-                                    id: (Date.now() + 1).toString(),
-                                    role: "assistant",
-                                    content: res.content,
-                                    // Map "edit" → "image" for TRPC schema compatibility (edit results are images)
-                                    type: (res.type === "edit" || res.type === "outpaint") ? "image" : res.type as "text" | "image",
-                                    timestamp: Date.now(),
-                                    model: res.model,
-                                    costUnits: res.model ? (getModelById(res.model)?.costPerRun ?? 0) : undefined,
-                                }])}
+                                onResult={(res) => {
+                                    const now = Date.now();
+                                    const resultType = (res.type === "edit" || res.type === "outpaint") ? "image" : res.type as "text" | "image";
+                                    const contents = resultType === "image" && res.contents?.length ? res.contents : [res.content];
+                                    addAiMessages([
+                                        {
+                                            id: now.toString(),
+                                            role: "user",
+                                            content: res.prompt,
+                                            type: "text",
+                                            timestamp: now,
+                                        },
+                                        ...contents.map((content, index) => ({
+                                            id: `${now}-${index + 1}`,
+                                            role: "assistant" as const,
+                                            content,
+                                            type: resultType,
+                                            timestamp: now + index + 1,
+                                            model: res.model,
+                                            costUnits: res.model ? (getModelById(res.model)?.costPerRun ?? 0) : undefined,
+                                        })),
+                                    ]);
+                                }}
                             />
                         </div>
                     )}
