@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Sparkles, Wand2, X, Ratio, Settings2, Maximize2, Sliders } from "lucide-react";
+import { Sparkles, Wand2, X, Ratio, Settings2, Maximize2, Sliders, Brush } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { usePhotoStore } from "@/store/photoStore";
 import { RefAutocompleteTextarea } from "@/components/ui/RefAutocompleteTextarea";
@@ -461,6 +461,14 @@ export function PhotoPromptBar({ projectId }: PhotoPromptBarProps) {
                         alt="source"
                         className="w-6 h-6 rounded-[var(--radius-sm)] object-cover border border-accent-primary/30"
                     />
+                    <button
+                        onClick={() => usePhotoStore.getState().setInpaintMode(true)}
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-bg-primary/70 hover:bg-bg-primary text-text-primary text-[10px] font-semibold cursor-pointer transition-colors"
+                        title="Inpaint — рисовать маску по области"
+                    >
+                        <Brush size={11} />
+                        Inpaint
+                    </button>
                     <button
                         onClick={clearEditContext}
                         className="p-0.5 rounded-full hover:bg-accent-primary/10"

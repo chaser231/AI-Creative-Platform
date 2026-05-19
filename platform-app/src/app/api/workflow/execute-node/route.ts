@@ -17,6 +17,7 @@ const ALLOWED_ACTIONS: ReadonlySet<string> = new Set<ServerActionId>([
     "add_reflection",
     "apply_mask",
     "apply_blur",
+    "ai_inpaint",
 ]);
 
 type WorkflowInputValue = ExecuteNodeRequest["inputs"][string] | undefined;
@@ -158,9 +159,15 @@ export async function POST(req: NextRequest) {
         }
 
         const imageInput = inputs["image-in"];
+        const maskInput = inputs["mask-in"];
         const actionParams = {
             ...(params ?? {}),
             imageUrl: imageInput?.imageUrl,
+            // Only ai_inpaint reads maskUrl today; keeping it conditional
+            // avoids accidentally leaking the field into unrelated actions.
+            ...(actionId === "ai_inpaint" && maskInput?.imageUrl
+                ? { maskUrl: maskInput.imageUrl }
+                : {}),
         };
 
         if (actionId === "generate_image") {

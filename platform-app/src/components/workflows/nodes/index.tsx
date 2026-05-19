@@ -46,6 +46,14 @@ export function AssetOutputNode({ id, selected }: NodeProps) {
     return <BaseNode id={id} type="assetOutput" selected={selected} />;
 }
 
+export function PaintMaskNode({ id, selected }: NodeProps) {
+    return <BaseNode id={id} type="paintMask" selected={selected} />;
+}
+
+export function AiInpaintNode({ id, selected }: NodeProps) {
+    return <BaseNode id={id} type="aiInpaint" selected={selected} />;
+}
+
 export const nodeTypes = {
     imageInput: ImageInputNode,
     imageGeneration: ImageGenerationNode,
@@ -56,4 +64,6 @@ export const nodeTypes = {
     blur: BlurNode,
     preview: PreviewNode,
     assetOutput: AssetOutputNode,
+    paintMask: PaintMaskNode,
+    aiInpaint: AiInpaintNode,
 } as const;

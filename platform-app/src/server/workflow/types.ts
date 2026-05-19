@@ -18,7 +18,9 @@ export type WorkflowNodeType =
     | "mask"
     | "blur"
     | "preview"
-    | "assetOutput";
+    | "assetOutput"
+    | "aiInpaint"
+    | "paintMask";
 
 export type PortType = "image" | "mask" | "text" | "number" | "any";
 
@@ -59,7 +61,10 @@ export interface WorkflowGraph {
 }
 
 export type NodeExecutor =
-    | { kind: "client"; handler: "imageInput" | "assetOutput" | "preview" }
+    | {
+          kind: "client";
+          handler: "imageInput" | "assetOutput" | "preview" | "paintMask";
+      }
     | {
           kind: "server";
           actionId:
@@ -68,7 +73,8 @@ export type NodeExecutor =
               | "remove_background"
               | "add_reflection"
               | "apply_mask"
-              | "apply_blur";
+              | "apply_blur"
+              | "ai_inpaint";
       };
 
 export interface NodeDefinition {
@@ -215,6 +221,42 @@ export const NODE_REGISTRY: Record<WorkflowNodeType, NodeDefinition> = {
         defaultParams: { name: "Workflow output" },
         execute: { kind: "client", handler: "assetOutput" },
     },
+    paintMask: {
+        type: "paintMask",
+        displayName: "Маска кистью",
+        description: "Откройте инспектор и нарисуйте маску по входному изображению. Выход — mask URL для inpaint.",
+        category: "input",
+        inputs: [
+            {
+                id: "image-in",
+                type: "image",
+                label: "Изображение-источник",
+                required: true,
+            },
+        ],
+        outputs: [{ id: "mask-out", type: "mask", label: "Маска" }],
+        defaultParams: { maskUrl: "" },
+        execute: { kind: "client", handler: "paintMask" },
+    },
+    aiInpaint: {
+        type: "aiInpaint",
+        displayName: "AI Inpaint",
+        description:
+            "Перерисовывает или удаляет содержимое в области маски (flux-fill / gpt-image-2 / nano-banana).",
+        category: "ai",
+        inputs: [
+            { id: "image-in", type: "image", label: "Изображение", required: true },
+            { id: "mask-in", type: "mask", label: "Маска", required: true },
+        ],
+        outputs: [{ id: "image-out", type: "image", label: "Изображение" }],
+        defaultParams: {
+            model: "flux-fill",
+            intent: "edit",
+            prompt: "",
+            quality: "high",
+        },
+        execute: { kind: "server", actionId: "ai_inpaint" },
+    },
 };
 
 /** Action ids that the /api/workflow/execute-node endpoint accepts. */
@@ -224,7 +266,8 @@ export type ServerActionId =
     | "remove_background"
     | "add_reflection"
     | "apply_mask"
-    | "apply_blur";
+    | "apply_blur"
+    | "ai_inpaint";
 
 /** Request body for POST /api/workflow/execute-node (D-04: client-resolved inputs). */
 export interface ExecuteNodeRequest {

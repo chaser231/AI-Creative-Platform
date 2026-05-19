@@ -193,6 +193,15 @@ export interface CanvasStore {
     expandPadding: ExpandPadding;
     expandTargetLayerId: string | null;
 
+    // Inpaint (mask-based AI edit)
+    //
+    // Only the UI-mode flag + target layer id live here — actual brush
+    // strokes are owned by the `useInpaintMask` hook via React context, since
+    // Zustand is a poor fit for mutable per-stroke point buffers updated at
+    // 60+ Hz during mousemove.
+    inpaintMode: boolean;
+    inpaintTargetLayerId: string | null;
+
     // Palette (swatches)
     palette: TemplatePalette;
 
@@ -305,6 +314,10 @@ export interface CanvasStore {
     setExpandMode: (active: boolean) => void;
     setExpandPadding: (padding: Partial<ExpandPadding>) => void;
     resetExpandMode: () => void;
+
+    // Inpaint actions
+    setInpaintMode: (active: boolean) => void;
+    resetInpaintMode: () => void;
 
     // Stage ref (for Copy as PNG)
     stageRef: React.RefObject<Konva.Stage | null> | null;

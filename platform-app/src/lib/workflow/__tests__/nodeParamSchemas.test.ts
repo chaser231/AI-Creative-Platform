@@ -313,11 +313,13 @@ describe("NODE_PARAM_SCHEMAS", () => {
         expect(Object.keys(NODE_PARAM_SCHEMAS).sort()).toEqual(
             [
                 "addReflection",
+                "aiInpaint",
                 "assetOutput",
                 "blur",
                 "imageGeneration",
                 "imageInput",
                 "mask",
+                "paintMask",
                 "preview",
                 "removeBackground",
                 "textGeneration",

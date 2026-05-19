@@ -16,6 +16,8 @@ import Konva from "konva";
 import { useImage } from "./useImage";
 import { SelectionTransformer, FrameChildTransformer } from "./transformers";
 import { ExpandOverlay } from "./ExpandOverlay";
+import { InpaintMaskOverlay } from "@/components/inpaint/InpaintMaskOverlay";
+import { useOptionalSharedInpaintMask } from "@/components/inpaint/InpaintContext";
 import { InlineTextEditor } from "./InlineTextEditor";
 import { SnapGuides } from "./SnapGuides";
 import { usePanZoom } from "./usePanZoom";
@@ -854,6 +856,14 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
     // Expand mode state
     const expandMode = useCanvasStore((s) => s.expandMode);
     const expandTargetLayerId = useCanvasStore((s) => s.expandTargetLayerId);
+
+    // Inpaint mode state — the slice carries only the UI flag + target id,
+    // brush strokes live in the InpaintProvider hook (see InpaintContext).
+    // useOptionalSharedInpaintMask returns null when the editor was mounted
+    // outside the provider (template mode), so the overlay simply won't render.
+    const inpaintMode = useCanvasStore((s) => s.inpaintMode);
+    const inpaintTargetLayerId = useCanvasStore((s) => s.inpaintTargetLayerId);
+    const sharedInpaintMask = useOptionalSharedInpaintMask();
 
     const isDrawingTool = activeTool === "text" || activeTool === "rectangle" || activeTool === "frame";
 
@@ -2476,7 +2486,7 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
                     })()}
 
                     {/* Selection Transformer — hidden when dedicated edit overlays own the handles. */}
-                    {!expandMode && !gradientHandleTarget && (
+                    {!expandMode && !inpaintMode && !gradientHandleTarget && (
                         <SelectionTransformer selectedLayerIds={selectedLayerIds} stageRef={stageRef} excludeIds={frameChildIds} />
                     )}
 
@@ -2489,6 +2499,35 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
             </Stage>
 
             {/* Overlays */}
+            {/* Inpaint Mask Overlay — DOM canvas painted on top of the
+                selected image layer. Skipped for rotated layers (MVP — proper
+                rotation support requires unrotating the stroke buffer at
+                export time which we leave for a follow-up). */}
+            {inpaintMode && inpaintTargetLayerId && sharedInpaintMask && (() => {
+                const target = layers.find((l) => l.id === inpaintTargetLayerId);
+                if (!target || target.type !== "image") return null;
+                const rotation = target.rotation || 0;
+                if (Math.abs(rotation) > 0.01) {
+                    // Render a small banner instead of the overlay so the user
+                    // knows why the brush isn't appearing.
+                    return (
+                        <div className="absolute left-1/2 top-3 z-30 -translate-x-1/2 rounded-full bg-amber-500/15 border border-amber-500/30 px-3 py-1 text-[11px] text-amber-600 backdrop-blur-md">
+                            Сбросьте поворот слоя, чтобы рисовать inpaint-маску
+                        </div>
+                    );
+                }
+                const bboxLeft = target.x * zoom + stageX;
+                const bboxTop = target.y * zoom + stageY;
+                const bboxWidth = target.width * zoom;
+                const bboxHeight = target.height * zoom;
+                return (
+                    <InpaintMaskOverlay
+                        bbox={{ left: bboxLeft, top: bboxTop, width: bboxWidth, height: bboxHeight }}
+                        mask={sharedInpaintMask}
+                    />
+                );
+            })()}
+
             {editingLayer && (
                 <InlineTextEditor
                     layer={editingLayer}

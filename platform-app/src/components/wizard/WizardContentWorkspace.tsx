@@ -9,6 +9,7 @@ import {
     Loader2,
     Expand,
     Paintbrush,
+    Brush,
     Ratio,
     RotateCcw,
     Settings2,
@@ -54,6 +55,7 @@ import { compressImageFile, persistImageToS3, uploadForAI, uploadManyForAI } fro
 import { getOutpaintModel } from "@/utils/outpaintModel";
 import { mapOutpaintStage, type OutpaintProgressState } from "@/utils/outpaintProgress";
 import { OutpaintProgressIndicator } from "@/components/ui/OutpaintProgressIndicator";
+import { InpaintImageModal } from "@/components/inpaint/InpaintImageModal";
 import { projectExpansionToResize, type LayerExpansionOverride } from "@/utils/wizardExpand";
 import { computeWizardExpandGeometry } from "@/utils/wizardExpandGeometry";
 import { cropToLayerAspect } from "@/utils/cropToLayerAspect";
@@ -203,7 +205,7 @@ async function persistWizardImageUrl(url: string, projectId: string, index: numb
 }
 
 const CONTENT_TYPES = ["text", "image", "badge"] as const;
-type ImagePromptMode = "generate" | "edit" | "expand";
+type ImagePromptMode = "generate" | "edit" | "expand" | "inpaint";
 
 /**
  * Per-axis canvas-pixel buffer added to the outpaint target on top of
@@ -1975,6 +1977,12 @@ function WizardLayerPromptBar({
                                 onClick={() => setImageMode("edit")}
                             />
                             <ImageModeButton
+                                active={imageMode === "inpaint"}
+                                label="Inpaint"
+                                icon={<Brush size={14} />}
+                                onClick={() => setImageMode("inpaint")}
+                            />
+                            <ImageModeButton
                                 active={imageMode === "expand"}
                                 label="Расширить фон"
                                 icon={<Expand size={14} />}
@@ -2130,6 +2138,36 @@ function WizardLayerPromptBar({
                     spec={loraSpec}
                     value={advancedParams}
                     onChange={setAdvancedParams}
+                />
+            )}
+            {isImage && projectId && activeLayer && (
+                <InpaintImageModal
+                    open={imageMode === "inpaint" && !!currentImage}
+                    sourceUrl={currentImage}
+                    projectId={projectId}
+                    onClose={() => setImageMode("edit")}
+                    onApply={async (rawUrl) => {
+                        let persisted = rawUrl;
+                        try {
+                            if (!persisted.includes("storage.yandexcloud.net")) {
+                                persisted = await persistImageToS3(persisted, projectId);
+                            }
+                        } catch (e) {
+                            console.warn("[WizardInpaint] persist failed, using raw url", e);
+                        }
+                        try {
+                            const registered = await registerUrl({
+                                projectId,
+                                url: persisted,
+                                source: "wizard-inpaint",
+                            });
+                            if (registered) persisted = registered;
+                        } catch (e) {
+                            console.warn("[WizardInpaint] register failed", e);
+                        }
+                        onImageChange(activeLayer.id, persisted);
+                        return persisted;
+                    }}
                 />
             )}
             </div>

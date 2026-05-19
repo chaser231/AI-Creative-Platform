@@ -25,6 +25,8 @@ const workflowNodeTypeSchema = z.enum([
     "blur",
     "preview",
     "assetOutput",
+    "aiInpaint",
+    "paintMask",
 ]) satisfies z.ZodType<WorkflowNodeType>;
 
 export const workflowNodeSchema = z.object({

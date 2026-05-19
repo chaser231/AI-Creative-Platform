@@ -10,6 +10,7 @@ import { PhotoSidebar } from "./PhotoSidebar";
 import { PhotoChatView } from "./PhotoChatView";
 import { PhotoPromptBar } from "./PhotoPromptBar";
 import { PhotoLibraryPanel } from "./PhotoLibraryPanel";
+import { PhotoInpaintModal } from "./PhotoInpaintModal";
 
 interface PhotoWorkspaceProps {
     projectId: string;
@@ -104,23 +105,26 @@ export function PhotoWorkspace({ projectId }: PhotoWorkspaceProps) {
     }
 
     return (
-        <div className="flex-1 flex min-h-0">
-            <PhotoSidebar projectId={projectId} projectName={project.name} />
+        <>
+            <div className="flex-1 flex min-h-0">
+                <PhotoSidebar projectId={projectId} projectName={project.name} />
 
-            <div className="flex-1 flex min-w-0">
-                <div className="flex-1 flex flex-col min-w-0 relative">
-                    <PhotoChatView projectId={projectId} />
-                    <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-20">
-                        <PhotoPromptBar projectId={projectId} />
+                <div className="flex-1 flex min-w-0">
+                    <div className="flex-1 flex flex-col min-w-0 relative">
+                        <PhotoChatView projectId={projectId} />
+                        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-20">
+                            <PhotoPromptBar projectId={projectId} />
+                        </div>
                     </div>
-                </div>
 
-                {libraryOpen && (
-                    <aside className="w-[360px] shrink-0 border-l border-border-primary bg-bg-surface flex flex-col min-h-0">
-                        <PhotoLibraryPanel projectId={projectId} />
-                    </aside>
-                )}
+                    {libraryOpen && (
+                        <aside className="w-[360px] shrink-0 border-l border-border-primary bg-bg-surface flex flex-col min-h-0">
+                            <PhotoLibraryPanel projectId={projectId} />
+                        </aside>
+                    )}
+                </div>
             </div>
-        </div>
+            <PhotoInpaintModal projectId={projectId} />
+        </>
     );
 }

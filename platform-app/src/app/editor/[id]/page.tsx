@@ -18,6 +18,7 @@ import { ResizePanel } from "@/components/editor/ResizePanel";
 import { SwatchesPanel } from "@/components/editor/swatches/SwatchesPanel";
 import { TemplatePanel } from "@/components/editor/TemplatePanel";
 import { AIPromptBar } from "@/components/editor/AIPromptBar";
+import { InpaintProvider } from "@/components/inpaint/InpaintContext";
 import { AIChatPanel } from "@/components/editor/ai-chat";
 import { VersionHistoryPanel } from "@/components/editor/VersionHistoryPanel";
 import { TabLeaderBadge } from "@/components/editor/TabLeaderBadge";
@@ -970,6 +971,7 @@ export default function EditorPage({ params }: EditorPageProps) {
                     onExportClose={() => setExportOpen(false)}
                 />
             ) : (
+                <InpaintProvider>
                 <div className="relative flex-1 min-h-0">
                     {/* Canvas fills the entire area */}
                     <Canvas stageRef={stageRef} projectId={isTemplateMode ? undefined : id} />
@@ -1066,6 +1068,7 @@ export default function EditorPage({ params }: EditorPageProps) {
                         </button>
                     </div>
                 </div>
+                </InpaintProvider>
             )}
 
             {/* Modals */}

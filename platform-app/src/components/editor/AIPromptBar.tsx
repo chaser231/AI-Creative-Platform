@@ -12,7 +12,10 @@ import { SelectPill } from "@/components/ui/SelectPill";
 import { useCanvasStore } from "@/store/canvasStore";
 import { useShallow } from "zustand/react/shallow";
 import { RemoteTextProvider, RemoteImageProvider } from "@/services/aiService";
-import { getModelById, getMaxRefs, getMaxOutputs, getAspectRatios, getResolutions, getDefaultResolution, resolveRefTags, getLoraSpec } from "@/lib/ai-models";
+import { getModelById, getMaxRefs, getMaxOutputs, getAspectRatios, getResolutions, getDefaultResolution, resolveRefTags, getLoraSpec, getModelsForCaps } from "@/lib/ai-models";
+import { InpaintActionBar, type InpaintAction } from "@/components/inpaint/InpaintActionBar";
+import { useOptionalSharedInpaintMask } from "@/components/inpaint/InpaintContext";
+import { DEFAULT_INPAINT_MODEL, PREFERRED_INPAINT_MODELS } from "@/lib/inpaintPrompts";
 import type { LoraWeight } from "@/lib/ai-providers";
 import { getImagePresetPromptSuffixForModel, getTextPresetInstruction } from "@/lib/stylePresets";
 import { useStylePresets } from "@/hooks/useStylePresets";
@@ -97,6 +100,21 @@ interface AIPromptBarProps {
 
 const S3_PERSIST_HOST = "storage.yandexcloud.net";
 
+/**
+ * Read a Blob as a base64 data URL. Used by the inpaint pipeline to feed
+ * the mask Blob through `uploadForAI` (which expects base64), since we
+ * always upload masks to S3 before sending the inpaint request — fal.ai's
+ * flux-pro/v1/fill rejects data: URIs for the `mask_url` field.
+ */
+function blobToDataUrl(blob: Blob): Promise<string> {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = () => reject(reader.error ?? new Error("FileReader error"));
+        reader.readAsDataURL(blob);
+    });
+}
+
 async function persistGeneratedUrl(url: string, projectId: string, index: number): Promise<string> {
     let persisted = await persistImageToS3(url, projectId);
     if (!persisted.includes(S3_PERSIST_HOST)) {
@@ -155,6 +173,15 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
     const expandPadding = useCanvasStore((s) => s.expandPadding);
     const setExpandMode = useCanvasStore((s) => s.setExpandMode);
     const resetExpandMode = useCanvasStore((s) => s.resetExpandMode);
+
+    // Inpaint mode — UI flag in store, brush strokes in InpaintProvider.
+    // useOptionalSharedInpaintMask returns null when the page didn't wrap us
+    // in <InpaintProvider> (template/standalone mode), so we keep the bar
+    // functional even without the inpaint hook.
+    const inpaintMode = useCanvasStore((s) => s.inpaintMode);
+    const setInpaintMode = useCanvasStore((s) => s.setInpaintMode);
+    const resetInpaintMode = useCanvasStore((s) => s.resetInpaintMode);
+    const inpaintMask = useOptionalSharedInpaintMask();
     const [activeTab, setActiveTab] = useState<"text" | "image" | "edit">("text");
     const [prompt, setPrompt] = useState("");
     const [selectedModel, setSelectedModel] = useState(TEXT_MODELS[0].id);
@@ -225,6 +252,11 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
         }
         // Always reset expand mode when switching tabs
         if (tab !== "edit") resetExpandMode();
+        // Same for inpaint — exclusive canvas mode shouldn't leak across tabs.
+        if (tab !== "edit") {
+            resetInpaintMode();
+            inpaintMask?.clear();
+        }
     };
 
     // When model changes, clear refs if new model has no vision + reset aspect/resolution
@@ -675,9 +707,186 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
 
     // ── Edit tab handlers ──
     const handleRemoveBg = () => callImageEdit("remove-bg");
+
+    // ── Inpaint apply (mask-aware) ──
+    // Replaces the placeholder handleInpaint: exports the live brush mask,
+    // uploads it to S3 (fal.ai's flux-pro/v1/fill requires URL masks), and
+    // calls /api/ai/image-edit with action="inpaint" + intent.
+    //
+    // intent="edit"   → uses the user prompt + per-model style suffix
+    // intent="remove" → uses the fixed object-removal instruction (server)
+    const handleInpaintApply = useCallback(async (intent: InpaintAction) => {
+        if (!selectedImageLayer || !projectId) {
+            setEditError("Выберите слой-картинку на канвасе.");
+            return;
+        }
+        if (!inpaintMask || !inpaintMask.hasMask) {
+            setEditError("Сначала нарисуйте маску по области редактирования.");
+            return;
+        }
+
+        // Load the source image to learn its natural pixel dimensions —
+        // needed for the UV projection in exportMaskBlob.
+        let naturalWidth = selectedImageLayer.width;
+        let naturalHeight = selectedImageLayer.height;
+        try {
+            const img = new window.Image();
+            img.crossOrigin = "anonymous";
+            await new Promise<void>((resolve, reject) => {
+                img.onload = () => resolve();
+                img.onerror = reject;
+                img.src = selectedImageLayer.src;
+            });
+            naturalWidth = img.naturalWidth;
+            naturalHeight = img.naturalHeight;
+        } catch (e) {
+            console.warn("[Inpaint] could not measure source image, falling back to layer dims", e);
+        }
+
+        const zoom = useCanvasStore.getState().zoom;
+        const modelEntry = getModelById(selectedModel);
+        const blob = await inpaintMask.exportMaskBlob(
+            {
+                naturalWidth,
+                naturalHeight,
+                layerWidth: selectedImageLayer.width,
+                layerHeight: selectedImageLayer.height,
+                objectFit: selectedImageLayer.objectFit,
+                viewIntent: { focusX: selectedImageLayer.focusX, focusY: selectedImageLayer.focusY },
+                zoom,
+            },
+            modelEntry?.slug,
+        );
+        if (!blob) {
+            setEditError("Маска пуста — нарисуйте кистью область для inpaint.");
+            return;
+        }
+
+        const batchId = `inpaint-${Date.now()}`;
+        const layerId = selectedImageLayer.id;
+        const editPrompt = intent === "edit" ? prompt : "";
+        const promptLabel = truncatePromptLabel(
+            intent === "edit"
+                ? (editPrompt || "Inpaint")
+                : "Удалить объект",
+        );
+        appendLoadingVariants(layerId, 1, promptLabel, batchId);
+
+        enqueueJob(
+            {
+                id: batchId,
+                projectId,
+                surface: "studio",
+                layerId,
+                prompt: promptLabel,
+                imageCount: 1,
+            },
+            async () => {
+                setEditError(null);
+                try {
+                    // Upload source + mask to S3 in parallel. fal.ai's
+                    // flux-pro/v1/fill rejects data: URIs and demands real
+                    // URLs for both fields, so we always go through uploadForAI.
+                    const maskFile = new File([blob], "inpaint-mask.png", { type: "image/png" });
+                    const maskBase64 = await blobToDataUrl(maskFile);
+                    const [imageUrl, maskUrl] = await Promise.all([
+                        uploadForAI(selectedImageLayer.src, projectId),
+                        uploadForAI(maskBase64, projectId),
+                    ]);
+
+                    const styleSuffix = getImagePresetPromptSuffixForModel(imageStyleId, selectedModel, imagePresets);
+                    const styledPrompt = styleSuffix && editPrompt ? `${editPrompt}. Style: ${styleSuffix}` : editPrompt;
+                    const resolvedPrompt = resolveRefTags(styledPrompt, selectedModel);
+
+                    const response = await fetch("/api/ai/image-edit", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            action: "inpaint",
+                            intent,
+                            prompt: resolvedPrompt,
+                            imageBase64: imageUrl,
+                            maskBase64: maskUrl,
+                            model: selectedModel,
+                            projectId,
+                            scale: scale || "high",
+                            ...loraRequestFields,
+                        }),
+                    });
+                    const data = await response.json();
+                    if (data.error) {
+                        throw new Error(
+                            data.requestId
+                                ? `${data.error} [request: ${data.requestId}]`
+                                : data.error,
+                        );
+                    }
+                    if (!data.content) {
+                        throw new Error("Сервер вернул пустой результат inpaint");
+                    }
+
+                    await applyEditedImageToLayer(data.content);
+
+                    // Persist to library so the inpainted result shows up in the
+                    // workspace asset library (same as text-edit/inpaint paths).
+                    try {
+                        const storeLayer = useCanvasStore
+                            .getState()
+                            .layers.find((l) => l.id === layerId) as ImageLayer | undefined;
+                        let persistedUrl = storeLayer?.src ?? data.content;
+                        if (!persistedUrl.startsWith("https://storage.yandexcloud.net")) {
+                            persistedUrl = await persistImageToS3(persistedUrl, projectId);
+                        }
+                        await saveGeneratedAssetMutation.mutateAsync({
+                            projectId,
+                            url: persistedUrl,
+                            prompt: editPrompt || (intent === "remove" ? "remove" : "inpaint"),
+                            model: data.model ?? selectedModel,
+                            source: intent === "remove" ? "banner-edit-inpaint-remove" : "banner-edit-inpaint",
+                        });
+                        await Promise.all([
+                            trpcUtils.asset.listByProject.invalidate({ projectId }),
+                            trpcUtils.asset.listByWorkspace.invalidate().catch(() => undefined),
+                        ]);
+                    } catch (saveErr) {
+                        console.warn("[AIPromptBar] Asset save (inpaint) failed:", saveErr);
+                    }
+
+                    onResult({
+                        type: "edit",
+                        content: data.content,
+                        prompt: editPrompt || (intent === "remove" ? "Удалить объект" : "Inpaint"),
+                        model: data.model,
+                    });
+
+                    const storeLayer = useCanvasStore
+                        .getState()
+                        .layers.find((l) => l.id === layerId) as ImageLayer | undefined;
+                    const resultUrl = storeLayer?.src ?? data.content;
+                    resolveBatchVariants(layerId, batchId, [resultUrl], promptLabel, "ready");
+
+                    // Clear the mask so the next inpaint starts fresh and
+                    // the action bar collapses Edit/Remove buttons.
+                    inpaintMask.clear();
+                } catch (e: unknown) {
+                    const error = e as Error;
+                    console.error(`[Inpaint] apply failed:`, error);
+                    setEditError(parseGenerationError(error));
+                    resolveBatchVariants(layerId, batchId, [], promptLabel, "error");
+                    throw error;
+                }
+            },
+        );
+    }, [
+        selectedImageLayer, projectId, inpaintMask, selectedModel, prompt,
+        imageStyleId, imagePresets, scale, loraRequestFields,
+        applyEditedImageToLayer, onResult, saveGeneratedAssetMutation, trpcUtils,
+        appendLoadingVariants, enqueueJob, resolveBatchVariants,
+    ]);
+
     const handleInpaint = () => {
         if (!prompt.trim()) return;
-        callImageEdit("inpaint", prompt);
+        void handleInpaintApply("edit");
     };
     const handleTextEdit = () => {
         if (!prompt.trim()) return;
@@ -891,8 +1100,25 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
 
     if (!open) return null;
 
-    const currentModels = activeTab === "text" ? TEXT_MODELS :
-        activeTab === "image" ? IMAGE_MODELS : EDIT_MODELS;
+    // While inpaint is active, restrict the model picker to models with the
+    // "inpaint" capability so users don't accidentally route the request
+    // through an edit-only model that would silently drop the mask.
+    const inpaintModels = inpaintMode
+        ? PREFERRED_INPAINT_MODELS
+            .map((id) => {
+                const entry = getModelById(id);
+                return entry ? { id, name: entry.label } : null;
+            })
+            .filter((m): m is { id: string; name: string } => !!m)
+        : [];
+    const baseModels = activeTab === "text"
+        ? TEXT_MODELS
+        : activeTab === "image"
+            ? IMAGE_MODELS
+            : EDIT_MODELS;
+    const currentModels = inpaintMode && inpaintModels.length > 0
+        ? inpaintModels
+        : baseModels;
 
     const hasSelection = selectedLayerIds.length > 0;
 
@@ -1065,6 +1291,24 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                     />
                 </div>
 
+                {/* ── Inpaint Mask Action Bar — brush controls + Edit/Remove ── */}
+                {inpaintMode && inpaintMask && (
+                    <div className="px-4 pb-2">
+                        <InpaintActionBar
+                            mask={inpaintMask}
+                            disabled={false}
+                            editDisabled={!prompt.trim()}
+                            editDisabledHint="Введите промпт сверху, чтобы Правка стала активной"
+                            onAction={(action) => void handleInpaintApply(action)}
+                            onCancel={() => {
+                                setEditAction(null);
+                                resetInpaintMode();
+                                inpaintMask.clear();
+                            }}
+                        />
+                    </div>
+                )}
+
                 {/* ── LoRA Trigger Hint — mirrors server-side auto-injection ── */}
                 {(activeTab === "image" || activeTab === "edit") && (
                     <div className="px-4 pb-1">
@@ -1111,10 +1355,35 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                                 />
                                 <EditActionIconButton
                                     icon={<Paintbrush size={14} />}
-                                    label="Inpaint"
+                                    label="Inpaint — кисть + промпт"
                                     active={editAction === "inpaint"}
                                     disabled={!selectedImageLayer}
-                                    onClick={() => setEditAction(editAction === "inpaint" ? null : "inpaint")}
+                                    onClick={() => {
+                                        if (editAction === "inpaint") {
+                                            // Toggle OFF: drop the overlay,
+                                            // clear strokes, switch back to
+                                            // the previous selected model
+                                            // (model picker selection is
+                                            // preserved across toggle).
+                                            setEditAction(null);
+                                            resetInpaintMode();
+                                            inpaintMask?.clear();
+                                        } else {
+                                            // Turning ON requires a selected
+                                            // image layer (slice guards this
+                                            // too, but the UI hint is nicer).
+                                            if (!selectedImageLayer) return;
+                                            setEditAction("inpaint");
+                                            setInpaintMode(true);
+                                            // Force the picker to a model that
+                                            // can actually inpaint — flux-fill
+                                            // is the most reliable default.
+                                            const entry = getModelById(selectedModel);
+                                            if (!entry?.caps.includes("inpaint")) {
+                                                setSelectedModel(DEFAULT_INPAINT_MODEL);
+                                            }
+                                        }
+                                    }}
                                 />
                                 <EditActionIconButton
                                     icon={<Expand size={14} />}
