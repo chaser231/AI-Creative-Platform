@@ -274,22 +274,43 @@ class ReplicateProvider implements AIProviderImplementation {
         // ── Inpaint ─────────────────────────────────────────────────
         if (params.type === "inpainting") {
             if (!params.imageBase64) throw new Error("Image is required for inpainting");
-            
+
             const slug = entry.slug;
             input.prompt = params.prompt;
-            
+
             if (slug.startsWith("google/")) {
-                input.image_input = params.maskBase64 ? [params.imageBase64, params.maskBase64] : [params.imageBase64];
+                // Nano Banana family — heuristic mask via image_input[1].
+                input.image_input = params.maskBase64
+                    ? [params.imageBase64, params.maskBase64]
+                    : [params.imageBase64];
                 input.output_format = "png";
             } else if (slug.startsWith("black-forest-labs/")) {
+                // FLUX Fill / Kontext — native mask.
                 input.image = params.imageBase64;
                 if (params.maskBase64) input.mask = params.maskBase64;
                 input.output_format = "webp";
+            } else if (slug.startsWith("openai/")) {
+                // GPT Image 1.5 / 2 on Replicate — native OpenAI mask edit.
+                //   - input_images: source image as a single-item array
+                //   - input_mask:   alpha-channel PNG, same size as source
+                //                   (white = regenerate, black = preserve)
+                //   - quality:      we pin to "high" by default for the
+                //                   inpaint surface; caller can override
+                //                   via `scale` (low | medium | high | auto)
+                //   - input_fidelity="high" preserves fine detail / faces
+                //                   in the unmasked regions, important for
+                //                   product/portrait inpainting.
+                input.input_images = [params.imageBase64];
+                if (params.maskBase64) input.input_mask = params.maskBase64;
+                input.output_format = "png";
+                input.quality = params.scale || "high";
+                input.input_fidelity = "high";
             } else {
+                // Default: pass mask field through and hope the model groks it.
                 input.image = params.imageBase64;
                 if (params.maskBase64) input.mask = params.maskBase64;
             }
-            
+
             const result = await this.callReplicate(entry, input, token);
             const output = Array.isArray(result) ? result[0] : result;
             return { content: output as string, format: "url", model: entry.id, provider: "replicate" };
@@ -736,6 +757,28 @@ const FAL_MODEL_MAP_EDIT: Record<string, string> = {
     "qwen-image-edit-lora": "fal-ai/qwen-image-edit-lora",
 };
 
+/**
+ * Model ID → fal.ai inpaint endpoint mapping.
+ *
+ * Native mask-aware inpaint:
+ *   • flux-fill → fal-ai/flux-pro/v1/fill — accepts `image_url` + `mask_url`,
+ *     black=preserve / white=regenerate, requires REAL URLs (not base64 inline).
+ *   • gpt-image-2 → openai/gpt-image-2/edit — `mask` field on the OpenAI edits
+ *     endpoint; mask must match source and carry an alpha channel.
+ *
+ * Heuristic mask (model treats mask as a strong reference, not a hard region):
+ *   • nano-banana-* → fal-ai/nano-banana(-2/-pro)/edit — we forward
+ *     [image, mask] via image_urls. Quality is best-effort; flux-fill stays
+ *     the recommended default for predictable inpainting.
+ */
+const FAL_MODEL_MAP_INPAINT: Record<string, string> = {
+    "flux-fill":       "fal-ai/flux-pro/v1/fill",
+    "gpt-image-2":     "openai/gpt-image-2/edit",
+    "nano-banana":     "fal-ai/nano-banana/edit",
+    "nano-banana-2":   "fal-ai/nano-banana-2/edit",
+    "nano-banana-pro": "fal-ai/nano-banana-pro/edit",
+};
+
 // Models whose fal.ai endpoints don't accept `aspect_ratio` and instead use
 // the `image_size` preset enum (square_hd / square / portrait_* / landscape_*).
 // Seedream 5 Lite additionally exposes `auto_2K` / `auto_3K` / `auto_4K`.
@@ -853,6 +896,11 @@ class FalProvider implements AIProviderImplementation {
             if (!imageUrl) throw new Error(`fal.ai remove-bg returned no image. Response: ${JSON.stringify(result).slice(0, 300)}`);
 
             return { content: imageUrl, format: "url", model: modelId, provider: "fal.ai" };
+        }
+
+        // ── Inpaint (flux-pro/v1/fill native; nano-banana/gpt-image edits) ─
+        if (params.type === "inpainting") {
+            return await this.generateInpaint(params, entry, apiKey);
         }
 
         // ── Outpainting (bria-expand / flux-2-pro-outpaint on fal.ai) ───
@@ -1443,6 +1491,93 @@ class FalProvider implements AIProviderImplementation {
         return this.parseResult(result, entry);
     }
 
+    /**
+     * Inpaint pipeline on fal.ai.
+     *
+     * Endpoint selection (FAL_MODEL_MAP_INPAINT):
+     *   • flux-fill            → fal-ai/flux-pro/v1/fill (native mask)
+     *   • gpt-image-2          → openai/gpt-image-2/edit (native mask)
+     *   • nano-banana / -2 / -pro → fal-ai/nano-banana(-2/-pro)/edit
+     *                          (heuristic mask — model treats it as a hint)
+     *
+     * IMPORTANT — fal.ai /fill requires PUBLIC URLs for `image_url` and
+     * `mask_url` (data: URIs are rejected). Callers are expected to push
+     * the mask to S3 first via `uploadForAI()` and pass the resulting URL
+     * in `maskBase64`. We keep the field name `maskBase64` for backwards
+     * compatibility, but the value should already be a URL by the time it
+     * lands here.
+     */
+    private async generateInpaint(
+        params: AIRequestParams,
+        entry: ModelEntry,
+        apiKey: string,
+    ): Promise<AIResponse> {
+        if (!params.imageBase64) {
+            throw new Error("Image is required for inpainting");
+        }
+        if (!params.maskBase64) {
+            throw new Error("Mask is required for inpainting");
+        }
+
+        const modelId = entry.id;
+        const falEndpoint = FAL_MODEL_MAP_INPAINT[modelId];
+        if (!falEndpoint) {
+            throw new Error(`Model ${modelId} has no fal.ai inpaint endpoint`);
+        }
+
+        const input: Record<string, unknown> = {};
+        const prompt = params.prompt || "";
+
+        if (falEndpoint === "fal-ai/flux-pro/v1/fill") {
+            // FLUX.1 [pro] Fill — native mask inpaint.
+            // Defaults tuned for high-quality, photorealistic fills:
+            //   - safety_tolerance=6 to avoid spurious blocks on benign edits
+            //   - num_inference_steps left to provider default (28)
+            //   - output_format png to preserve sharpness without re-encoding
+            input.prompt = prompt || "seamless natural fill";
+            input.image_url = params.imageBase64;
+            input.mask_url = params.maskBase64;
+            input.output_format = "png";
+            input.safety_tolerance = 6;
+            if (typeof params.seed === "number") input.seed = params.seed;
+            if (params.count && params.count > 1) {
+                input.num_images = Math.min(params.count, 4);
+            }
+        } else if (modelId === "gpt-image-2") {
+            // OpenAI gpt-image-2 edit with mask — mask in `mask_url`,
+            // image in `image_urls[0]`. quality knob = scale (low|medium|high).
+            input.prompt = prompt;
+            input.image_urls = [params.imageBase64];
+            input.mask_url = params.maskBase64;
+            input.output_format = "png";
+            // High quality by default; caller can override via scale.
+            input.quality = params.scale || "high";
+            if (params.count && params.count > 1) {
+                input.num_images = Math.min(params.count, 4);
+            }
+        } else {
+            // Nano Banana family — heuristic mask via image_urls[].
+            // Model treats the mask as a strong visual hint, not as a hard
+            // region constraint. UI surfaces this as "experimental"; for
+            // predictable inpainting we recommend flux-fill.
+            input.prompt = prompt;
+            input.image_urls = [params.imageBase64, params.maskBase64];
+            input.output_format = "png";
+            if (params.scale) input.resolution = params.scale;
+            if (params.count && params.count > 1) {
+                input.num_images = Math.min(params.count, 4);
+            }
+        }
+
+        console.log(
+            `[fal.ai inpaint] ${falEndpoint} model=${modelId}`
+            + ` prompt="${prompt.slice(0, 60)}" image=${params.imageBase64.slice(0, 50)}...`,
+        );
+
+        const result = await falSubmitAndPoll(falEndpoint, input, apiKey);
+        return this.parseResult(result, entry);
+    }
+
     /** Parse fal.ai response, extracting image URL and dimensions */
     private parseResult(data: Record<string, unknown>, entry: ModelEntry): AIResponse {
         const images = data.images as { url?: string; width?: number; height?: number }[] | undefined;
@@ -1474,7 +1609,8 @@ const falProvider = new FalProvider();
 
 /** Check if a model has fal.ai support available */
 function hasFalSupport(modelId: string): boolean {
-    return !!FAL_MODEL_MAP[modelId] && !!process.env.FAL_KEY;
+    return !!process.env.FAL_KEY
+        && (!!FAL_MODEL_MAP[modelId] || !!FAL_MODEL_MAP_INPAINT[modelId]);
 }
 
 /**
@@ -1494,6 +1630,9 @@ const FAL_PRIMARY_MODELS = new Set([
     "seedvr",
     "topaz-hf-v2",
     "sima-upscaler",
+    // flux-fill exists on fal as fal-ai/flux-pro/v1/fill (native inpaint).
+    // Replicate (black-forest-labs/flux-fill-dev) stays as the auto-fallback.
+    "flux-fill",
 ]);
 
 /**
@@ -1654,7 +1793,11 @@ export async function generateWithFallback(params: AIRequestParams): Promise<AIR
     }
 
     // ── Step 2: Try sibling models from the same family ──
-    const siblings = MODEL_FALLBACK_CHAIN[modelId];
+    // Inpaint is latency-sensitive: falling through gpt-image-2 → gpt-image
+    // (or nano variants) can add several minutes on top of an already-slow
+    // queue job. Prefer surfacing the primary model error to the user.
+    const siblings =
+        params.type === "inpainting" ? undefined : MODEL_FALLBACK_CHAIN[modelId];
     if (siblings && siblings.length > 0) {
         for (const siblingId of siblings) {
             console.log(`[Provider] Trying sibling model ${siblingId} instead of ${modelId}...`);

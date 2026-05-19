@@ -56,6 +56,14 @@ export interface PhotoStore {
     setEditContext: (ctx: PhotoEditContext | null) => void;
     clearEditContext: () => void;
 
+    // Inpaint sub-mode of edit: when true, the workspace renders the
+    // PhotoInpaintModal which mounts the shared mask overlay over the
+    // edit-context source image. Toggled from the prompt bar's Inpaint button.
+    // The actual brush strokes live in the InpaintProvider hook; this flag
+    // only controls modal visibility.
+    inpaintMode: boolean;
+    setInpaintMode: (active: boolean) => void;
+
     /**
      * Reference URLs pushed from result cards / library. Consumed by the prompt bar
      * on mount/update and then cleared. Used for the "Use as reference" action so
@@ -90,7 +98,12 @@ export const usePhotoStore = create<PhotoStore>((set) => ({
     setEditModel: (id) => set({ editModelId: id }),
     editContext: null,
     setEditContext: (ctx) => set({ editContext: ctx }),
-    clearEditContext: () => set({ editContext: null }),
+    // Clearing the edit context also drops inpaint mode — the modal has
+    // nothing to anchor to without a source image.
+    clearEditContext: () => set({ editContext: null, inpaintMode: false }),
+
+    inpaintMode: false,
+    setInpaintMode: (active) => set({ inpaintMode: active }),
 
     pendingReferences: [],
     pushReference: (url) =>

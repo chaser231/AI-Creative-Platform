@@ -5,6 +5,7 @@ import { auth } from "@/server/auth";
 import { prisma } from "@/server/db";
 import { checkRateLimit } from "@/lib/rateLimit";
 import { randomUUID } from "crypto";
+import { buildInpaintPrompt, DEFAULT_INPAINT_MODEL, type InpaintIntent } from "@/lib/inpaintPrompts";
 
 export const maxDuration = 300;
 
@@ -33,6 +34,10 @@ export async function POST(req: NextRequest) {
             // LoRA-aware models accept these on edit endpoints too
             // (qwen-image-edit-lora, flux-lora/image-to-image).
             loras, guidanceScale, numInferenceSteps, negativePrompt, acceleration,
+            // Inpaint surface — "edit" (default) appends the user prompt with
+            // a per-model style hint; "remove" overrides the prompt with the
+            // object-removal instruction. Anything else falls back to "edit".
+            intent,
         } = body;
 
         if (!action) {
@@ -75,23 +80,56 @@ export async function POST(req: NextRequest) {
             }
 
             case "inpaint": {
-                // Use flux-fill or nano-banana models for inpainting
-                // generateWithFallback tries fal.ai → Replicate with retries
-                const inpaintModel = model || "flux-fill";
+                // Default model: flux-fill (the only one with strict mask
+                // support on both fal.ai and Replicate). generateWithFallback
+                // routes fal → Replicate with retries and sibling-model
+                // fallback (see MODEL_FALLBACK_CHAIN).
+                const inpaintModel = model || DEFAULT_INPAINT_MODEL;
                 usedModel = inpaintModel;
+
+                // Build the actual provider prompt from user prompt + intent.
+                // "remove" overrides whatever the user typed with the
+                // standard object-removal instruction.
+                const resolvedIntent: InpaintIntent =
+                    intent === "remove" ? "remove" : "edit";
+                const built = buildInpaintPrompt({
+                    model: inpaintModel,
+                    intent: resolvedIntent,
+                    userPrompt: prompt,
+                });
+
+                console.log("[/api/ai/image-edit] inpaint", {
+                    requestId,
+                    model: inpaintModel,
+                    intent: built.effectiveIntent,
+                    promptPreview: built.prompt.slice(0, 80),
+                });
+
+                // Default scale to "high" for inpaint so gpt-image-* and
+                // other quality-aware models stop generating low-res patches.
+                // Caller can still override by passing scale explicitly.
+                const resolvedScale = scale || "high";
+
+                const inpaintStartedAt = Date.now();
                 result = await generateWithFallback({
-                    prompt: prompt || "Fill in the masked area naturally",
+                    prompt: built.prompt,
                     type: "inpainting",
                     model: inpaintModel,
                     imageBase64,
                     maskBase64,
-                    scale,
+                    scale: resolvedScale,
                     // LoRA controls — only honored when the model has a loraSpec.
                     loras,
                     guidanceScale,
                     numInferenceSteps,
                     negativePrompt,
                     acceleration,
+                });
+                console.log("[/api/ai/image-edit] inpaint completed", {
+                    requestId,
+                    model: result.model ?? inpaintModel,
+                    provider: result.provider,
+                    durationMs: Date.now() - inpaintStartedAt,
                 });
                 if (result.model) usedModel = result.model;
                 break;

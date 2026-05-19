@@ -8,7 +8,16 @@ import {
   agentAddImagePolicy,
   SsrfBlockedError,
 } from "@/server/security/ssrfGuard";
-import { invokeReplicateModel, invokeFalModel } from "@/lib/ai-providers";
+import {
+  invokeReplicateModel,
+  invokeFalModel,
+  generateWithFallback,
+} from "@/lib/ai-providers";
+import {
+  buildInpaintPrompt,
+  DEFAULT_INPAINT_MODEL,
+  type InpaintIntent,
+} from "@/lib/inpaintPrompts";
 import {
   tryWithFallback,
   uploadFromExternalUrl,
@@ -1330,6 +1339,78 @@ ${templateStyleSuffix ? `- Additional style: ${templateStyleSuffix}` : ""}
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         return { success: false, type: "error", content: `apply_blur упал: ${msg}` };
+      }
+    }
+
+    case "ai_inpaint": {
+      const imageUrl = params.imageUrl as string;
+      const maskUrl = params.maskUrl as string | undefined;
+      const requestedModel =
+        (params.model as string | undefined) ?? DEFAULT_INPAINT_MODEL;
+      const intent: InpaintIntent =
+        params.intent === "remove" ? "remove" : "edit";
+      const userPrompt =
+        typeof params.prompt === "string" ? params.prompt : "";
+      const quality =
+        params.quality === "auto" ? "auto" : "high";
+
+      if (!imageUrl || typeof imageUrl !== "string") {
+        return { success: false, type: "error", content: "imageUrl обязателен" };
+      }
+      if (!maskUrl || typeof maskUrl !== "string") {
+        return { success: false, type: "error", content: "Нет mask URL — подключите ноду paintMask" };
+      }
+
+      // Both image and mask must pass through the same SSRF policy that
+      // protects every other workflow node — even though paintMask uploads
+      // to our own S3, the URL travels through the client and could be
+      // swapped in flight.
+      try {
+        await assertUrlIsSafe(imageUrl, agentAddImagePolicy());
+        await assertUrlIsSafe(maskUrl, agentAddImagePolicy());
+      } catch (err) {
+        if (err instanceof SsrfBlockedError) {
+          return { success: false, type: "error", content: `URL заблокирован: ${err.reason}` };
+        }
+        throw err;
+      }
+
+      const built = buildInpaintPrompt({
+        model: requestedModel,
+        intent,
+        userPrompt,
+      });
+
+      try {
+        const response = await generateWithFallback({
+          prompt: built.prompt,
+          type: "inpainting",
+          model: requestedModel,
+          imageBase64: imageUrl,
+          maskBase64: maskUrl,
+          scale: quality === "high" ? "high" : undefined,
+        });
+        if (!response.content) {
+          return { success: false, type: "error", content: "Пустой ответ от провайдера inpaint" };
+        }
+
+        const { s3Url } = await uploadFromExternalUrl(response.content, {
+          workspaceId: context.workspaceId,
+        });
+
+        return {
+          success: true,
+          type: "image",
+          content: s3Url,
+          metadata: {
+            imageUrl: s3Url,
+            provider: response.model ?? requestedModel,
+            costUsd: 0,
+          },
+        };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { success: false, type: "error", content: `ai_inpaint упал: ${msg}` };
       }
     }
 

@@ -143,11 +143,16 @@ export const MODEL_REGISTRY: ModelEntry[] = [
         resolutions: GOOGLE_RESOLUTIONS,
     },
     {
+        // Nano Banana 2 / Gemini 3.1 Flash Image.
+        // Inpaint here is semantic-mask (experimental): we forward the user
+        // mask as a second image hint via image_urls/image_input, the model
+        // does not strictly respect mask edges. Reflected in the
+        // FALLBACK_INPAINT_MODEL chain — flux-fill stays default.
         id: "nano-banana-2",
         label: "Nano Banana 2",
         slug: "google/nano-banana-2",
         provider: "replicate",
-        caps: ["generate", "edit", "remove-bg", "vision"],
+        caps: ["generate", "edit", "remove-bg", "inpaint", "vision"],
         costPerRun: 0.067,
         maxRefs: 14,
         maxOutputs: 4,
@@ -159,7 +164,7 @@ export const MODEL_REGISTRY: ModelEntry[] = [
         label: "Nano Banana Pro",
         slug: "google/nano-banana-pro",
         provider: "replicate",
-        caps: ["generate", "edit", "remove-bg", "vision"],
+        caps: ["generate", "edit", "remove-bg", "inpaint", "vision"],
         costPerRun: 0.15,
         maxRefs: 14,
         maxOutputs: 4,
@@ -200,7 +205,10 @@ export const MODEL_REGISTRY: ModelEntry[] = [
         label: "GPT Image 2",
         slug: "openai/gpt-image-2",
         provider: "replicate",
-        caps: ["generate", "edit", "vision"],
+        // Native mask support (white = regenerate, black = preserve) via the
+        // OpenAI /images/edits mask parameter; both fal and Replicate respect
+        // it. Mask must match source size and carry a real alpha channel.
+        caps: ["generate", "edit", "inpaint", "vision"],
         costPerRun: 0.15,
         maxRefs: 8,
         maxOutputs: 4,

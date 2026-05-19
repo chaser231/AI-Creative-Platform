@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
     Badge as BadgeIcon,
     ChevronDown,
@@ -9,6 +9,7 @@ import {
     Loader2,
     Expand,
     Paintbrush,
+    Brush,
     Ratio,
     RotateCcw,
     Settings2,
@@ -54,11 +55,15 @@ import { compressImageFile, persistImageToS3, uploadForAI, uploadManyForAI } fro
 import { getOutpaintModel } from "@/utils/outpaintModel";
 import { mapOutpaintStage, type OutpaintProgressState } from "@/utils/outpaintProgress";
 import { OutpaintProgressIndicator } from "@/components/ui/OutpaintProgressIndicator";
+import { InpaintProvider, useSharedInpaintMask } from "@/components/inpaint/InpaintContext";
+import { InpaintActionBar, type InpaintAction } from "@/components/inpaint/InpaintActionBar";
+import { DEFAULT_INPAINT_MODEL, PREFERRED_INPAINT_MODELS } from "@/lib/inpaintPrompts";
+import { WizardPreviewInpaintOverlay } from "@/components/wizard/WizardPreviewInpaintOverlay";
 import { projectExpansionToResize, type LayerExpansionOverride } from "@/utils/wizardExpand";
 import { computeWizardExpandGeometry } from "@/utils/wizardExpandGeometry";
 import { cropToLayerAspect } from "@/utils/cropToLayerAspect";
 import { useThemeStore } from "@/store/themeStore";
-import type { BusinessUnit, ImageFitMode, Layer, LayerBinding, MasterComponent, TextGenPreset } from "@/types";
+import type { BusinessUnit, ImageFitMode, ImageLayer, Layer, LayerBinding, MasterComponent, TextGenPreset } from "@/types";
 import type { TemplatePackV2 } from "@/services/templateService";
 
 /** Resolves `system` the same way as ThemeProvider / editor canvas */
@@ -203,7 +208,7 @@ async function persistWizardImageUrl(url: string, projectId: string, index: numb
 }
 
 const CONTENT_TYPES = ["text", "image", "badge"] as const;
-type ImagePromptMode = "generate" | "edit" | "expand";
+type ImagePromptMode = "generate" | "edit" | "expand" | "inpaint";
 
 /**
  * Per-axis canvas-pixel buffer added to the outpaint target on top of
@@ -328,6 +333,8 @@ export function WizardContentWorkspace({
     const [activeLayerId, setActiveLayerId] = useState(entries[0]?.id ?? "");
     const [sidebarTab, setSidebarTab] = useState<SidebarTab>("layers");
     const [previewZoom, setPreviewZoom] = useState(1);
+    const [wizardImageMode, setWizardImageMode] = useState<ImagePromptMode>("generate");
+    const [wizardInpaintBusy, setWizardInpaintBusy] = useState(false);
     const [uploadingLayerId, setUploadingLayerId] = useState<string | null>(null);
     const [uploadError, setUploadError] = useState<{ layerId: string; message: string } | null>(null);
     const [previewSize, setPreviewSize] = useState({ width: 820, height: 520 });
@@ -509,6 +516,18 @@ export function WizardContentWorkspace({
         setSidebarTab("layers");
     };
 
+    const previewContainerWidth = previewFormats.length > 1
+        ? Math.max(320, previewSize.width - 80)
+        : previewSize.width;
+
+    const activePreviewImageLayer = useMemo((): ImageLayer | undefined => {
+        if (wizardImageMode !== "inpaint" || !activeLayer || activeLayer.type !== "image") {
+            return undefined;
+        }
+        const layer = draftPreviewLayers.find((entry) => entry.id === activeLayer.id);
+        return layer?.type === "image" ? layer : undefined;
+    }, [wizardImageMode, activeLayer, draftPreviewLayers]);
+
     const resetOutpaintForLayer = (entry: EditableLayerEntry) => {
         const history = outpaintHistory[entry.id];
         if (!history) return;
@@ -519,6 +538,7 @@ export function WizardContentWorkspace({
     };
 
     return (
+        <InpaintProvider>
         <div className="flex h-full min-h-0 flex-col overflow-hidden">
             {templateLoadError && (
                 <div className="mx-6 mt-4 rounded-lg border border-yellow-500/30 bg-yellow-500/10 p-3 text-sm text-yellow-200">
@@ -732,18 +752,35 @@ export function WizardContentWorkspace({
                         }}
                     >
                         {draftPreviewLayers.length > 0 ? (
-                            <PreviewCanvas
-                                layers={draftPreviewLayers}
-                                artboardWidth={previewSource.width}
-                                artboardHeight={previewSource.height}
-                                containerWidth={previewFormats.length > 1 ? Math.max(320, previewSize.width - 80) : previewSize.width}
-                                containerHeight={previewSize.height}
-                                zoom={previewZoom}
-                                appearance={canvasAppearance}
-                                artboardFill={artboardProps.fill}
-                                artboardBackgroundImage={artboardProps.backgroundImage}
-                                artboardCornerRadius={artboardProps.cornerRadius}
-                            />
+                            <div
+                                className="relative shrink-0"
+                                style={{ width: previewContainerWidth, height: previewSize.height }}
+                            >
+                                <PreviewCanvas
+                                    layers={draftPreviewLayers}
+                                    artboardWidth={previewSource.width}
+                                    artboardHeight={previewSource.height}
+                                    containerWidth={previewContainerWidth}
+                                    containerHeight={previewSize.height}
+                                    zoom={previewZoom}
+                                    appearance={canvasAppearance}
+                                    artboardFill={artboardProps.fill}
+                                    artboardBackgroundImage={artboardProps.backgroundImage}
+                                    artboardCornerRadius={artboardProps.cornerRadius}
+                                />
+                                {wizardImageMode === "inpaint" && activePreviewImageLayer && (
+                                    <WizardPreviewInpaintOverlay
+                                        layer={activePreviewImageLayer}
+                                        artboardWidth={previewSource.width}
+                                        artboardHeight={previewSource.height}
+                                        containerWidth={previewContainerWidth}
+                                        containerHeight={previewSize.height}
+                                        zoom={previewZoom}
+                                        appearance={canvasAppearance}
+                                        disabled={wizardInpaintBusy}
+                                    />
+                                )}
+                            </div>
                         ) : (
                             <div className="text-sm text-text-tertiary">Нет слоёв для предпросмотра</div>
                         )}
@@ -762,6 +799,11 @@ export function WizardContentWorkspace({
                         textValues={textValues}
                         imageValues={imageValues}
                         activeImageViewOverride={activeLayer ? imageViewOverrides[activeLayer.id] : undefined}
+                        activePreviewLayer={activePreviewImageLayer}
+                        previewZoom={previewZoom}
+                        imageMode={wizardImageMode}
+                        onImageModeChange={setWizardImageMode}
+                        onInpaintBusyChange={setWizardInpaintBusy}
                         projectBU={projectBU}
                         projectId={projectId}
                         productDescription={productDescription}
@@ -777,6 +819,7 @@ export function WizardContentWorkspace({
                 </main>
             </div>
         </div>
+        </InpaintProvider>
     );
 }
 
@@ -1325,11 +1368,25 @@ function FormatThumbnailRail({
     );
 }
 
+function blobToDataUrl(blob: Blob): Promise<string> {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+    });
+}
+
 function WizardLayerPromptBar({
     activeLayer,
     textValues,
     imageValues,
     activeImageViewOverride,
+    activePreviewLayer,
+    previewZoom,
+    imageMode,
+    onImageModeChange,
+    onInpaintBusyChange,
     projectBU,
     projectId,
     productDescription,
@@ -1346,6 +1403,11 @@ function WizardLayerPromptBar({
     textValues: Record<string, string>;
     imageValues: Record<string, string>;
     activeImageViewOverride?: WizardImageViewOverride;
+    activePreviewLayer?: ImageLayer;
+    previewZoom: number;
+    imageMode: ImagePromptMode;
+    onImageModeChange: (mode: ImagePromptMode) => void;
+    onInpaintBusyChange?: (busy: boolean) => void;
     projectBU: BusinessUnit;
     projectId?: string;
     productDescription: string;
@@ -1365,6 +1427,9 @@ function WizardLayerPromptBar({
     onLayerGeometryReset: (id: string) => void;
 }) {
     const promptRef = useRef<RefAutocompleteTextareaHandle>(null);
+    const inpaintMask = useSharedInpaintMask();
+    const inpaintMaskRef = useRef(inpaintMask);
+    inpaintMaskRef.current = inpaintMask;
     const { registerUrl } = useProjectLibrary();
     const { imagePresets, textPresets } = useStylePresets();
     const [prompt, setPrompt] = useState("");
@@ -1385,13 +1450,23 @@ function WizardLayerPromptBar({
     const [selectedGeneratedVariantId, setSelectedGeneratedVariantId] = useState<string | undefined>(undefined);
     const enqueueJob = useGenerationQueueStore((s) => s.enqueue);
     const queueCounts = useProjectQueueCounts(projectId);
-    const [imageMode, setImageMode] = useState<ImagePromptMode>("generate");
     const [loras, setLoras] = useState<LoraWeight[]>([]);
     const [advancedParams, setAdvancedParams] = useState<AdvancedAIParams>({});
     const [settingsOpen, setSettingsOpen] = useState(false);
     const modelAspectRatios = getAspectRatios(selectedModel);
     const modelResolutions = getResolutions(selectedModel);
     const maxImageOutputs = imageMode === "generate" ? getMaxOutputs(selectedModel) : 1;
+    const inpaintModelOptions = useMemo(
+        () =>
+            PREFERRED_INPAINT_MODELS.map((id) => {
+                const entry = getModelById(id);
+                return entry ? { value: id, label: entry.label } : null;
+            }).filter((m): m is { value: string; label: string } => !!m),
+        [],
+    );
+    const imageModelOptions = imageMode === "inpaint" && inpaintModelOptions.length > 0
+        ? inpaintModelOptions
+        : IMAGE_GEN_MODELS.map((model) => ({ value: model.id, label: model.label }));
     const supportsVision = getModelById(selectedModel)?.caps.includes("vision") ?? false;
     const loraSpec = getLoraSpec(selectedModel);
     const loraRequestFields = loraSpec
@@ -1465,12 +1540,15 @@ function WizardLayerPromptBar({
         setPrompt("");
         setError(null);
         setReferenceImages([]);
-        setImageMode("generate");
+        onImageModeChange("generate");
+        inpaintMaskRef.current.clear();
         setLoras([]);
         setAdvancedParams({});
         setImageCount(1);
         clearGeneratedVariants();
-    }, [activeLayer?.id]);
+        // Only reset when the selected layer changes — not when inpaintMask
+        // re-renders (its API object is a new reference every paint).
+    }, [activeLayer?.id, onImageModeChange]);
 
     useEffect(() => {
         if (imageCount > maxImageOutputs) setImageCount(maxImageOutputs);
@@ -1494,6 +1572,167 @@ function WizardLayerPromptBar({
         onImageChange(activeLayer.id, variant.url);
         setSelectedGeneratedVariantId(variant.id);
     };
+
+    const handleInpaintApply = useCallback(async (intent: InpaintAction) => {
+        if (!projectId || !activeLayer || activeLayer.type !== "image" || !activePreviewLayer) {
+            setError("Выберите слой-картинку с изображением для inpaint.");
+            return;
+        }
+        if (!inpaintMask || !inpaintMask.hasMask) {
+            setError("Сначала нарисуйте маску по области редактирования на превью.");
+            return;
+        }
+
+        const currentImage = imageValues[activeLayer.id] ?? String(activeLayer.props.src ?? "");
+        if (!currentImage) {
+            setError("Для inpaint сначала загрузите или сгенерируйте изображение слоя");
+            return;
+        }
+
+        let naturalWidth = activePreviewLayer.width;
+        let naturalHeight = activePreviewLayer.height;
+        try {
+            const img = new window.Image();
+            img.crossOrigin = "anonymous";
+            await new Promise<void>((resolve, reject) => {
+                img.onload = () => resolve();
+                img.onerror = reject;
+                img.src = currentImage;
+            });
+            naturalWidth = img.naturalWidth;
+            naturalHeight = img.naturalHeight;
+        } catch (e) {
+            console.warn("[WizardInpaint] could not measure source image, using layer dims", e);
+        }
+
+        const modelEntry = getModelById(selectedModel);
+        const blob = await inpaintMask.exportMaskBlob(
+            {
+                naturalWidth,
+                naturalHeight,
+                layerWidth: activePreviewLayer.width,
+                layerHeight: activePreviewLayer.height,
+                objectFit: activePreviewLayer.objectFit,
+                viewIntent: { focusX: activePreviewLayer.focusX, focusY: activePreviewLayer.focusY },
+                zoom: previewZoom,
+            },
+            modelEntry?.slug,
+        );
+        if (!blob) {
+            setError("Маска пуста — нарисуйте кистью область для inpaint.");
+            return;
+        }
+
+        const editPrompt = intent === "edit" ? prompt.trim() : "";
+        const promptLabel = truncatePromptLabel(
+            intent === "edit" ? (editPrompt || "Inpaint") : "Удалить объект",
+        );
+        const layerId = activeLayer.id;
+        const batchId = `wiz-inpaint-${Date.now()}`;
+
+        appendLoadingVariants(layerId, 1, promptLabel, batchId);
+        setError(null);
+        onInpaintBusyChange?.(true);
+        setIsGenerating(true);
+
+        enqueueJob(
+            {
+                id: batchId,
+                projectId,
+                surface: "wizard",
+                layerId,
+                prompt: promptLabel,
+                imageCount: 1,
+            },
+            async () => {
+                try {
+                    const maskFile = new File([blob], "inpaint-mask.png", { type: "image/png" });
+                    const maskBase64 = await blobToDataUrl(maskFile);
+                    const [imageUrl, maskUrl] = await Promise.all([
+                        uploadForAI(currentImage, projectId),
+                        uploadForAI(maskBase64, projectId),
+                    ]);
+
+                    const styleSuffix = getImagePresetPromptSuffixForModel(imageStyleId, selectedModel, imagePresets);
+                    const styledPrompt = styleSuffix && editPrompt ? `${editPrompt}. Style: ${styleSuffix}` : editPrompt;
+                    const resolvedPrompt = resolveRefTags(styledPrompt, selectedModel);
+
+                    const response = await fetch("/api/ai/image-edit", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            action: "inpaint",
+                            intent,
+                            prompt: resolvedPrompt,
+                            imageBase64: imageUrl,
+                            maskBase64: maskUrl,
+                            model: selectedModel,
+                            projectId,
+                            scale: scale || "high",
+                            ...loraRequestFields,
+                        }),
+                    });
+                    const data = await response.json();
+                    if (data.error) {
+                        throw new Error(
+                            data.requestId
+                                ? `${data.error} [request: ${data.requestId}]`
+                                : data.error,
+                        );
+                    }
+                    if (!data.content) {
+                        throw new Error("Сервер вернул пустой результат inpaint");
+                    }
+
+                    let persisted = data.content as string;
+                    if (!persisted.includes(S3_PERSIST_HOST)) {
+                        persisted = await persistWizardImageUrl(persisted, projectId, 0);
+                    }
+                    try {
+                        const registered = await registerUrl({
+                            projectId,
+                            url: persisted,
+                            source: intent === "remove" ? "wizard-inpaint-remove" : "wizard-inpaint",
+                        });
+                        if (registered) persisted = registered;
+                    } catch (e) {
+                        console.warn("[WizardInpaint] register failed", e);
+                    }
+
+                    onImageChange(layerId, persisted);
+                    resolveBatchVariants(layerId, batchId, [persisted], promptLabel, "ready");
+                    setSelectedGeneratedVariantId(`${batchId}-0-${persisted}`);
+                    inpaintMask.clear();
+                    onImageModeChange("edit");
+                } catch (err) {
+                    setError(parseGenerationError(err));
+                    resolveBatchVariants(layerId, batchId, [], promptLabel, "error");
+                    throw err;
+                } finally {
+                    setIsGenerating(false);
+                    onInpaintBusyChange?.(false);
+                }
+            },
+        );
+    }, [
+        projectId,
+        activeLayer,
+        activePreviewLayer,
+        inpaintMask,
+        imageValues,
+        prompt,
+        selectedModel,
+        previewZoom,
+        imageStyleId,
+        imagePresets,
+        scale,
+        loraRequestFields,
+        onImageChange,
+        onImageModeChange,
+        onInpaintBusyChange,
+        registerUrl,
+        enqueueJob,
+    ]);
 
     const handleGenerate = async () => {
         if (!activeLayer) return;
@@ -1904,7 +2143,9 @@ function WizardLayerPromptBar({
                             ? "Текущее изображение будет заменено результатом генерации"
                             : imageMode === "expand"
                                 ? "Фон будет расширен AI и заменит изображение слоя"
-                                : "AI отредактирует текущее изображение слоя"}
+                                : imageMode === "inpaint"
+                                    ? "Нарисуйте маску на превью и укажите промпт внизу"
+                                    : "AI отредактирует текущее изображение слоя"}
                     </span>
                 )}
                 {isImage && imageMode === "expand" && packMaxSize.width > 0 && packMaxSize.height > 0 && (
@@ -1931,9 +2172,11 @@ function WizardLayerPromptBar({
                     placeholder={isImage
                         ? imageMode === "edit"
                             ? "Опишите правку: заменить фон, добавить тень, изменить освещение..."
-                            : imageMode === "expand"
-                                ? "Описание расширенной области (опционально)..."
-                                : "Опишите изображение для выбранного слоя..."
+                            : imageMode === "inpaint"
+                                ? "Что нарисовать в выделенной области? Например: голубое небо, текстура дерева..."
+                                : imageMode === "expand"
+                                    ? "Описание расширенной области (опционально)..."
+                                    : "Опишите изображение для выбранного слоя..."
                         : "Опишите, какой текст сгенерировать..."}
                     className="h-12 w-full resize-none bg-transparent text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none"
                 />
@@ -1957,6 +2200,22 @@ function WizardLayerPromptBar({
                 </div>
             )}
 
+            {isImage && imageMode === "inpaint" && inpaintMask && (
+                <div className="px-4 pb-2">
+                    <InpaintActionBar
+                        mask={inpaintMask}
+                        disabled={isGenerating}
+                        editDisabled={!prompt.trim()}
+                        editDisabledHint="Введите промпт сверху, чтобы Правка стала активной"
+                        onAction={(action) => void handleInpaintApply(action)}
+                        onCancel={() => {
+                            inpaintMask.clear();
+                            onImageModeChange("edit");
+                        }}
+                    />
+                </div>
+            )}
+
             <div className="flex min-w-0 items-center gap-2 px-4 pb-3 pt-1">
                 <div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto pr-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                     {isImage && (
@@ -1966,19 +2225,30 @@ function WizardLayerPromptBar({
                                 active={imageMode === "generate"}
                                 label="Генерация"
                                 icon={<Sparkles size={14} />}
-                                onClick={() => setImageMode("generate")}
+                                onClick={() => onImageModeChange("generate")}
                             />
                             <ImageModeButton
                                 active={imageMode === "edit"}
                                 label="Правка"
                                 icon={<Paintbrush size={14} />}
-                                onClick={() => setImageMode("edit")}
+                                onClick={() => onImageModeChange("edit")}
+                            />
+                            <ImageModeButton
+                                active={imageMode === "inpaint"}
+                                label="Inpaint"
+                                icon={<Brush size={14} />}
+                                onClick={() => {
+                                    onImageModeChange("inpaint");
+                                    if (!getModelById(selectedModel)?.caps.includes("inpaint")) {
+                                        setSelectedModel(DEFAULT_INPAINT_MODEL);
+                                    }
+                                }}
                             />
                             <ImageModeButton
                                 active={imageMode === "expand"}
                                 label="Расширить фон"
                                 icon={<Expand size={14} />}
-                                onClick={() => setImageMode("expand")}
+                                onClick={() => onImageModeChange("expand")}
                             />
                         </div>
                         {imageMode !== "expand" && (
@@ -1997,7 +2267,7 @@ function WizardLayerPromptBar({
                                     }
                                     clearGeneratedVariants();
                                 }}
-                                options={IMAGE_GEN_MODELS.map((model) => ({ value: model.id, label: model.label }))}
+                                options={imageModelOptions}
                                 className="min-w-[150px] max-w-[190px]"
                             />
                         )}
@@ -2034,7 +2304,7 @@ function WizardLayerPromptBar({
                                 )}
                             </>
                         )}
-                        {(imageMode === "generate" || imageMode === "edit") && modelResolutions.length > 0 && (
+                        {(imageMode === "generate" || imageMode === "edit" || imageMode === "inpaint") && modelResolutions.length > 0 && (
                             <SelectPill
                                 icon={<Maximize2 size={13} />}
                                 label="Разрешение"
@@ -2104,9 +2374,10 @@ function WizardLayerPromptBar({
                     </span>
                 )}
 
+                {!(isImage && imageMode === "inpaint") && (
                 <button
                     onClick={handleGenerate}
-                    disabled={activeLayer.type !== "image" && isGenerating}
+                    disabled={(activeLayer.type !== "image" && isGenerating) || isGenerating}
                     className="flex h-10 w-10 items-center justify-center rounded-full bg-accent-lime-hover text-accent-lime-text shadow-sm transition-all duration-200 cursor-pointer hover:bg-accent-lime hover:scale-105 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed"
                     title="Сгенерировать для выбранного слоя"
                 >
@@ -2116,6 +2387,7 @@ function WizardLayerPromptBar({
                         <Sparkles size={18} />
                     )}
                 </button>
+                )}
             </div>
 
             {isImage && loraSpec && imageMode !== "expand" && (

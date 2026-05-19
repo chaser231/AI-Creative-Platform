@@ -31,6 +31,7 @@ import { ModelSettingsModal, type AdvancedAIParams } from "@/components/ui/Model
 import { useWorkflowRunControls } from "./WorkflowRunControlsContext";
 import { RenderField } from "./inspector/renderField";
 import { ImageSourceInput } from "./inspector/ImageSourceInput";
+import { PaintMaskInspector } from "./inspector/PaintMaskInspector";
 
 // Fields that the imageGeneration node renders through a custom LoRA panel
 // (not the auto-form RenderField loop). Listed here so the loop knows to skip
@@ -70,6 +71,13 @@ const PARAM_LABELS: Record<string, string> = {
     numInferenceSteps: "Шаги инференса",
     negativePrompt: "Negative prompt",
     acceleration: "Скорость",
+    // aiInpaint
+    intent: "Действие",
+    quality: "Качество",
+    // paintMask
+    maskUrl: "URL маски",
+    targetWidth: "Ширина (px)",
+    targetHeight: "Высота (px)",
 };
 
 /**
@@ -84,10 +92,12 @@ const ENUM_OPTION_LABELS: Record<string, Record<string, string>> = {
         "fal-bria": "Bria (fal.ai)",
         "replicate-bria-cutout": "Bria Cutout (Replicate)",
         "replicate-rembg": "RemBG (Replicate)",
-        // addReflection
+        // addReflection / aiInpaint
         "nano-banana-2": "Nano Banana 2",
+        "nano-banana-pro": "Nano Banana Pro",
         "bria-product-shot": "Bria Product Shot",
         "flux-kontext-pro": "FLUX Kontext Pro",
+        "flux-fill": "FLUX Fill (inpaint)",
         "flux-schnell": "Flux Schnell",
         "flux-dev": "Flux Dev",
         "flux-1.1-pro": "Flux 1.1 Pro",
@@ -103,6 +113,14 @@ const ENUM_OPTION_LABELS: Record<string, Record<string, string>> = {
         "flux-lora": "FLUX.1 LoRA",
         "flux-2-lora": "FLUX.2 LoRA",
         "qwen-image-lora": "Qwen Image LoRA",
+    },
+    intent: {
+        edit: "Правка (использует промпт)",
+        remove: "Удалить (объект убирается без промпта)",
+    },
+    quality: {
+        auto: "Авто",
+        high: "Высокое",
     },
     style: {
         photo: "Фото",
@@ -400,7 +418,13 @@ export function NodeInspector({
 
             <div className="min-h-0 flex-1 overflow-y-auto">
                 <InspectorSection
-                    title={node.type === "imageInput" ? "Источник" : "Настройки"}
+                    title={
+                        node.type === "imageInput"
+                            ? "Источник"
+                            : node.type === "paintMask"
+                                ? "Маска"
+                                : "Настройки"
+                    }
                 >
                     {/* Special-case: imageInput renders the composite picker for the whole schema */}
                     {node.type === "imageInput" ? (
@@ -409,6 +433,8 @@ export function NodeInspector({
                             onChange={(patch) => handlePatch(patch as Record<string, unknown>)}
                             error={errorByPath.get("source") ?? errorByPath.get("")}
                         />
+                    ) : node.type === "paintMask" ? (
+                        <PaintMaskInspector node={node} onPatch={handlePatch} />
                     ) : (
                         <div className="space-y-5">
                             {Object.entries(shape)

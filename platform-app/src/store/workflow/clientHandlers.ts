@@ -20,8 +20,10 @@
 import {
     assetOutputParamsSchema,
     imageInputParamsSchema,
+    paintMaskParamsSchema,
     type AssetOutputParams,
     type ImageInputParams,
+    type PaintMaskParams,
 } from "@/lib/workflow/nodeParamSchemas";
 
 /** Resolved output of an imageInput node — the executor pipes `.url` downstream. */
@@ -126,4 +128,36 @@ export async function preview(
     upstreamUrl: string,
 ): Promise<PreviewResult> {
     return { url: upstreamUrl };
+}
+
+/** Resolved output of a paintMask node — the executor pipes `.url` to mask-in ports downstream. */
+export interface PaintMaskResult {
+    url: string;
+}
+
+/**
+ * paintMask node handler.
+ *
+ * The actual mask painting happens in the inspector's modal (InpaintImageModal),
+ * which uploads the rasterized mask PNG to S3 and writes the URL into
+ * `node.data.params.maskUrl`. This handler simply re-emits that URL so the
+ * executor wires it into downstream `mask-in` ports.
+ *
+ * If `maskUrl` is missing or empty, we throw a friendly error — the user
+ * must open the inspector and paint a mask before running the graph.
+ */
+export async function paintMask(rawParams: unknown): Promise<PaintMaskResult> {
+    const parsed = paintMaskParamsSchema.safeParse(rawParams);
+    if (!parsed.success) {
+        throw new Error(
+            `paintMask: invalid params — ${parsed.error.issues
+                .map((i) => i.message)
+                .join("; ")}`,
+        );
+    }
+    const params: PaintMaskParams = parsed.data;
+    if (!params.maskUrl) {
+        throw new Error("paintMask: маска не нарисована — откройте инспектор и нарисуйте область");
+    }
+    return { url: params.maskUrl };
 }

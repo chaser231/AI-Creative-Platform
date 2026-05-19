@@ -208,6 +208,40 @@ export const assetOutputParamsSchema = z.object({
 });
 
 /**
+ * paintMask — client-side node that captures a hand-painted mask via the
+ * inspector modal. `maskUrl` is filled by the inspector once the user uploads
+ * the painted PNG to S3; downstream nodes consume it as their `mask-in` URL.
+ *
+ * `targetWidth` / `targetHeight` are captured so the inspector knows the
+ * natural pixel size of the upstream image when scaling brush strokes.
+ */
+export const paintMaskParamsSchema = z.object({
+    maskUrl: z.string().url().optional().or(z.literal("")),
+    targetWidth: z.number().int().min(1).optional(),
+    targetHeight: z.number().int().min(1).optional(),
+});
+
+/**
+ * aiInpaint — fal-primary inpainting with per-model prompt suffixes (see
+ * lib/inpaintPrompts.ts). `intent="remove"` ignores the user prompt and uses
+ * a deterministic remove-base prompt. `quality="high"` is the default since
+ * inpaint UX expects sharp results regardless of provider speed.
+ */
+export const aiInpaintParamsSchema = z.object({
+    model: z
+        .enum([
+            "flux-fill",
+            "gpt-image-2",
+            "nano-banana-2",
+            "nano-banana-pro",
+        ])
+        .default("flux-fill"),
+    intent: z.enum(["edit", "remove"]).default("edit"),
+    prompt: z.string().trim().max(1200).default(""),
+    quality: z.enum(["auto", "high"]).default("high"),
+});
+
+/**
  * Dispatch table — Inspector resolves the schema by node type.
  * `z.ZodTypeAny` (not a parameterised mapped type) keeps the table flat;
  * each schema is statically typed at its declaration site above.
@@ -224,6 +258,8 @@ export const NODE_PARAM_SCHEMAS: Record<WorkflowNodeType, z.ZodTypeAny> = {
     blur: blurParamsSchema,
     preview: previewParamsSchema,
     assetOutput: assetOutputParamsSchema,
+    paintMask: paintMaskParamsSchema,
+    aiInpaint: aiInpaintParamsSchema,
 };
 
 export type ImageInputParams = z.infer<typeof imageInputParamsSchema>;
@@ -236,3 +272,5 @@ export type MaskParams = z.infer<typeof maskParamsSchema>;
 export type BlurParams = z.infer<typeof blurParamsSchema>;
 export type PreviewParams = z.infer<typeof previewParamsSchema>;
 export type AssetOutputParams = z.infer<typeof assetOutputParamsSchema>;
+export type PaintMaskParams = z.infer<typeof paintMaskParamsSchema>;
+export type AiInpaintParams = z.infer<typeof aiInpaintParamsSchema>;
