@@ -18,7 +18,11 @@ import { ReferenceImageInput, ReferenceImagePreviewTray, getReferenceTrayReserve
 import { useProjectLibrary } from "@/hooks/useProjectLibrary";
 import { SelectPill } from "@/components/ui/SelectPill";
 import { parseGenerationError } from "@/lib/parseGenerationError";
-import { useGenerationQueueStore } from "@/store/generationQueueStore";
+import {
+    formatProjectQueueBadge,
+    useGenerationQueueStore,
+    useProjectQueueCounts,
+} from "@/store/generationQueueStore";
 import type { PhotoEditContext } from "@/store/photoStore";
 
 interface PhotoPromptBarProps {
@@ -74,9 +78,7 @@ export function PhotoPromptBar({ projectId }: PhotoPromptBarProps) {
     const addPendingGeneration = usePhotoStore((s) => s.addPendingGeneration);
     const clearPendingGeneration = usePhotoStore((s) => s.clearPendingGeneration);
     const enqueueJob = useGenerationQueueStore((s) => s.enqueue);
-    const projectQueueJobs = useGenerationQueueStore((s) =>
-        s.jobs.filter((j) => j.projectId === projectId),
-    );
+    const queueCounts = useProjectQueueCounts(projectId);
 
     const { imagePresets } = useStylePresets();
 
@@ -190,20 +192,10 @@ export function PhotoPromptBar({ projectId }: PhotoPromptBarProps) {
         }
     };
 
-    const queueBadge = useMemo(() => {
-        const running = projectQueueJobs.filter((j) => j.status === "running").length;
-        const queued = projectQueueJobs.filter((j) => j.status === "queued").length;
-        if (running > 0 && queued > 0) {
-            return `${running} генерируются · ${queued} в очереди`;
-        }
-        if (running > 0) {
-            return `${running} генерируются`;
-        }
-        if (queued > 0) {
-            return `${queued} в очереди`;
-        }
-        return null;
-    }, [projectQueueJobs]);
+    const queueBadge = useMemo(
+        () => formatProjectQueueBadge(queueCounts),
+        [queueCounts],
+    );
 
     const handleSubmit = async () => {
         if (!prompt.trim() && !isEditMode) return;

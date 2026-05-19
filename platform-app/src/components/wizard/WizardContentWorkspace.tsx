@@ -24,11 +24,25 @@ import { RefAutocompleteTextarea, type RefAutocompleteTextareaHandle } from "@/c
 import { ReferenceImageInput, ReferenceImagePreviewTray, getReferenceTrayReserveWidth } from "@/components/ui/ReferenceImageInput";
 import { ImageStylePresetPicker, TextStylePresetPicker } from "@/components/ui/StylePresetPicker";
 import { GeneratedImageStrip, type GeneratedImageVariant } from "@/components/ui/GeneratedImageStrip";
+import { parseGenerationError } from "@/lib/parseGenerationError";
+import {
+    formatProjectQueueBadge,
+    truncatePromptLabel,
+    useGenerationQueueStore,
+    useProjectQueueCounts,
+} from "@/store/generationQueueStore";
 import { SelectPill } from "@/components/ui/SelectPill";
 import { LoraSelectorPicker } from "@/components/ui/LoraSelectorPicker";
 import { LoraTriggerHint } from "@/components/ui/LoraTriggerHint";
 import { ModelSettingsModal, type AdvancedAIParams } from "@/components/ui/ModelSettingsModal";
 import { PreviewCanvas } from "@/components/editor/PreviewCanvas";
+import { PaintInput } from "@/components/editor/properties/PaintInput";
+import { ArtboardBackgroundControls } from "@/components/editor/properties/ArtboardBackgroundControls";
+import { applyBackgroundSwatchToArtboardProps } from "@/lib/resolveWizardArtboardProps";
+import { paintToCssBackground } from "@/utils/paint";
+import type { ArtboardProps } from "@/store/canvas/types";
+import { DEFAULT_PALETTE } from "@/types";
+import type { BackgroundSwatchValue, Paint, Swatch } from "@/types";
 import { trpc } from "@/lib/trpc";
 import { useProjectLibrary } from "@/hooks/useProjectLibrary";
 import { useStylePresets } from "@/hooks/useStylePresets";
@@ -127,6 +141,8 @@ interface AssetRow {
 interface WizardContentWorkspaceProps {
     selectedTemplate: TemplatePackV2;
     templateLoadError: string | null;
+    artboardProps: ArtboardProps;
+    onArtboardPropsChange: React.Dispatch<React.SetStateAction<ArtboardProps>>;
     textValues: Record<string, string>;
     imageValues: Record<string, string>;
     imageViewOverrides: Record<string, WizardImageViewOverride>;
@@ -248,6 +264,8 @@ const WIZARD_MAX_FINAL_PIXELS = 8_000_000;
 export function WizardContentWorkspace({
     selectedTemplate,
     templateLoadError,
+    artboardProps,
+    onArtboardPropsChange,
     textValues,
     imageValues,
     imageViewOverrides,
@@ -318,6 +336,8 @@ export function WizardContentWorkspace({
         image: false,
         badge: false,
     });
+    const [artboardSectionCollapsed, setArtboardSectionCollapsed] = useState(false);
+    const templatePalette = selectedTemplate.palette ?? DEFAULT_PALETTE;
 
     useEffect(() => {
         const nextId = previewFormats[0]?.id ?? "";
@@ -529,6 +549,27 @@ export function WizardContentWorkspace({
 
                     {sidebarTab === "layers" ? (
                         <>
+                            <WizardArtboardSection
+                                collapsed={artboardSectionCollapsed}
+                                onToggle={() => setArtboardSectionCollapsed((value) => !value)}
+                                artboardProps={artboardProps}
+                                palette={templatePalette}
+                                projectId={projectId}
+                                onUpdate={(updates) => onArtboardPropsChange((prev) => ({ ...prev, ...updates }))}
+                                onApplyFill={(fill) => onArtboardPropsChange((prev) => ({
+                                    ...prev,
+                                    fill,
+                                    fillSwatchRef: undefined,
+                                }))}
+                                onApplyBackgroundSwatch={(swatchId) => {
+                                    onArtboardPropsChange((prev) => applyBackgroundSwatchToArtboardProps(
+                                        prev,
+                                        templatePalette,
+                                        swatchId,
+                                    ));
+                                }}
+                            />
+
                             <LayerSection
                                 type="text"
                                 title="Тексты"
@@ -699,6 +740,9 @@ export function WizardContentWorkspace({
                                 containerHeight={previewSize.height}
                                 zoom={previewZoom}
                                 appearance={canvasAppearance}
+                                artboardFill={artboardProps.fill}
+                                artboardBackgroundImage={artboardProps.backgroundImage}
+                                artboardCornerRadius={artboardProps.cornerRadius}
                             />
                         ) : (
                             <div className="text-sm text-text-tertiary">Нет слоёв для предпросмотра</div>
@@ -963,6 +1007,147 @@ function ImageAlignmentControls({
     );
 }
 
+function WizardArtboardSection({
+    collapsed,
+    onToggle,
+    artboardProps,
+    palette,
+    projectId,
+    onUpdate,
+    onApplyFill,
+    onApplyBackgroundSwatch,
+}: {
+    collapsed: boolean;
+    onToggle: () => void;
+    artboardProps: ArtboardProps;
+    palette: typeof DEFAULT_PALETTE;
+    projectId?: string;
+    onUpdate: (updates: Partial<ArtboardProps>) => void;
+    onApplyFill: (fill: Paint) => void;
+    onApplyBackgroundSwatch: (swatchId: string) => void;
+}) {
+    const handleBgUpload = async (file: File) => {
+        const reader = new FileReader();
+        const base64: string = await new Promise((resolve, reject) => {
+            reader.onload = () => resolve(reader.result as string);
+            reader.onerror = () => reject(reader.error);
+            reader.readAsDataURL(file);
+        });
+        const url = await uploadForAI(base64, projectId ?? "wizard-artboard-bg");
+        onUpdate({
+            backgroundImage: {
+                src: url,
+                fit: artboardProps.backgroundImage?.fit ?? "cover",
+                opacity: artboardProps.backgroundImage?.opacity ?? 1,
+                focusX: 0.5,
+                focusY: 0.5,
+            },
+        });
+    };
+
+    const fillBackgroundSwatches = palette.backgrounds.filter((swatch) => {
+        const value = swatch.value as string | BackgroundSwatchValue;
+        return typeof value === "object" && value.kind !== "image";
+    });
+
+    return (
+        <section className="mb-3 rounded-[var(--radius-lg)] border border-border-primary bg-bg-surface">
+            <button
+                type="button"
+                onClick={onToggle}
+                className="flex w-full items-center justify-between px-3 py-2.5 text-left cursor-pointer"
+            >
+                <span className="text-xs font-semibold text-text-primary">Фон артборда</span>
+                {collapsed ? <ChevronDown size={14} className="text-text-tertiary" /> : <ChevronUp size={14} className="text-text-tertiary" />}
+            </button>
+            {!collapsed && (
+                <div className="space-y-3 border-t border-border-primary px-3 py-3">
+                    <div className="space-y-1.5">
+                        <p className="text-[10px] font-medium text-text-tertiary">Цвет / градиент</p>
+                        <PaintInput
+                            value={artboardProps.fill}
+                            onChange={(fill) => onApplyFill(fill)}
+                        />
+                    </div>
+                    {palette.colors.length > 0 && (
+                        <PalettePaintGrid
+                            label="Палитра"
+                            swatches={palette.colors}
+                            onSelect={(paint) => onApplyFill(paint)}
+                        />
+                    )}
+                    {fillBackgroundSwatches.length > 0 && (
+                        <PalettePaintGrid
+                            label="Фоны палитры"
+                            swatches={fillBackgroundSwatches}
+                            onSelect={(_, swatchId) => onApplyBackgroundSwatch(swatchId)}
+                        />
+                    )}
+                    <ArtboardBackgroundControls
+                        variant="sidebar"
+                        artboardProps={artboardProps}
+                        onUpdate={onUpdate}
+                        paletteBackgrounds={palette.backgrounds}
+                        onApplyBackgroundSwatch={onApplyBackgroundSwatch}
+                        onUploadFile={handleBgUpload}
+                    />
+                </div>
+            )}
+        </section>
+    );
+}
+
+function swatchPreviewStyle(value: Swatch["value"]): string {
+    if (typeof value === "string") return value;
+    if (typeof value === "object" && value && "kind" in value) {
+        const bg = value as BackgroundSwatchValue;
+        if (bg.kind === "solid") return bg.color;
+        if (bg.kind === "gradient") return paintToCssBackground(bg.paint);
+        if (bg.kind === "image") return `url(${bg.src}) center / cover no-repeat`;
+    }
+    return paintToCssBackground(value as Paint);
+}
+
+function PalettePaintGrid({
+    label,
+    swatches,
+    onSelect,
+}: {
+    label: string;
+    swatches: Swatch[];
+    onSelect: (paint: Paint, swatchId: string) => void;
+}) {
+    return (
+        <div className="space-y-1.5">
+            <p className="text-[10px] font-medium text-text-tertiary">{label}</p>
+            <div className="flex flex-wrap gap-1.5">
+                {swatches.map((swatch) => (
+                    <button
+                        key={swatch.id}
+                        type="button"
+                        title={swatch.name}
+                        onClick={() => {
+                            const value = swatch.value;
+                            if (typeof value === "string" || (typeof value === "object" && value !== null)) {
+                                if (typeof value === "object" && "kind" in value) {
+                                    const bg = value as BackgroundSwatchValue;
+                                    if (bg.kind === "solid") onSelect(bg.color, swatch.id);
+                                    else if (bg.kind === "gradient") onSelect(bg.paint, swatch.id);
+                                    else onSelect(value as Paint, swatch.id);
+                                } else {
+                                    onSelect(value as Paint, swatch.id);
+                                }
+                            }
+                        }}
+                        className="h-6 w-6 overflow-hidden rounded-full border border-border-primary transition-all hover:scale-105 cursor-pointer"
+                        style={{ background: swatchPreviewStyle(swatch.value) }}
+                    />
+                ))}
+            </div>
+        </div>
+    );
+}
+
 function ColorSwatches({
     label,
     value,
@@ -1196,8 +1381,10 @@ function WizardLayerPromptBar({
     const [referenceImages, setReferenceImages] = useState<string[]>([]);
     const [scale, setScale] = useState(() => getDefaultResolution("nano-banana-2"));
     const [imageCount, setImageCount] = useState(1);
-    const [generatedVariants, setGeneratedVariants] = useState<GeneratedImageVariant[]>([]);
+    const [variantsByLayer, setVariantsByLayer] = useState<Record<string, GeneratedImageVariant[]>>({});
     const [selectedGeneratedVariantId, setSelectedGeneratedVariantId] = useState<string | undefined>(undefined);
+    const enqueueJob = useGenerationQueueStore((s) => s.enqueue);
+    const queueCounts = useProjectQueueCounts(projectId);
     const [imageMode, setImageMode] = useState<ImagePromptMode>("generate");
     const [loras, setLoras] = useState<LoraWeight[]>([]);
     const [advancedParams, setAdvancedParams] = useState<AdvancedAIParams>({});
@@ -1217,10 +1404,62 @@ function WizardLayerPromptBar({
         }
         : {};
 
-    const clearGeneratedVariants = () => {
-        setGeneratedVariants([]);
+    const clearGeneratedVariants = (layerId?: string) => {
+        if (layerId) {
+            setVariantsByLayer((prev) => {
+                const next = { ...prev };
+                delete next[layerId];
+                return next;
+            });
+        } else {
+            setVariantsByLayer({});
+        }
         setSelectedGeneratedVariantId(undefined);
     };
+
+    const appendLoadingVariants = (
+        layerKey: string,
+        count: number,
+        promptLabel: string,
+        batchId: string,
+    ) => {
+        setVariantsByLayer((prev) => {
+            const existing = prev[layerKey] ?? [];
+            const slots = Array.from({ length: count }, (_, index) => ({
+                id: `${batchId}-${index}`,
+                status: "loading" as const,
+                promptLabel,
+            }));
+            return { ...prev, [layerKey]: [...existing, ...slots] };
+        });
+    };
+
+    const resolveBatchVariants = (
+        layerKey: string,
+        batchId: string,
+        urls: string[],
+        promptLabel: string,
+        status: "ready" | "error",
+    ) => {
+        setVariantsByLayer((prev) => {
+            const kept = (prev[layerKey] ?? []).filter((v) => !v.id.startsWith(`${batchId}-`));
+            const resolved =
+                status === "ready"
+                    ? urls.map((url, index) => ({
+                        id: `${batchId}-${index}-${url}`,
+                        url,
+                        status: "ready" as const,
+                        promptLabel,
+                    }))
+                    : [{ id: `${batchId}-error`, status: "error" as const, promptLabel }];
+            return { ...prev, [layerKey]: [...kept, ...resolved] };
+        });
+    };
+
+    const activeLayerKey = activeLayer?.id ?? null;
+    const activeVariants = activeLayerKey ? (variantsByLayer[activeLayerKey] ?? []) : [];
+
+    const queueBadge = formatProjectQueueBadge(queueCounts);
 
     useEffect(() => {
         setPrompt("");
@@ -1267,10 +1506,10 @@ function WizardLayerPromptBar({
         }
 
         setError(null);
-        setIsGenerating(true);
-        let showingLoadingVariants = false;
-        try {
-            if (activeLayer.type === "text" || activeLayer.type === "badge") {
+
+        if (activeLayer.type === "text" || activeLayer.type === "badge") {
+            setIsGenerating(true);
+            try {
                 const { generateTextVariants } = await import("@/services/aiService");
                 const [result] = await generateTextVariants(
                     basePrompt,
@@ -1278,50 +1517,128 @@ function WizardLayerPromptBar({
                     1,
                     projectBU,
                     textStyleId === "none" ? undefined : (textStyleId as TextGenPreset),
-                    textModel
+                    textModel,
                 );
                 if (result) onTextChange(activeLayer.id, result);
+            } catch (err) {
+                setError(parseGenerationError(err));
+            } finally {
+                setIsGenerating(false);
+            }
+            return;
+        }
+
+        if (!projectId) {
+            setError("Не указан проект для генерации");
+            return;
+        }
+
+        const layerId = activeLayer.id;
+        const batchId = `wiz-${Date.now()}`;
+        const promptLabel = truncatePromptLabel(basePrompt);
+        const requestedImageCount =
+            imageMode === "generate" ? Math.min(imageCount, maxImageOutputs) : 1;
+
+        if (imageMode === "edit" && !currentImage) {
+            setError("Для редактирования сначала загрузите или сгенерируйте изображение слоя");
+            return;
+        }
+
+        let expandSnapshot: {
+            layerWidth: number;
+            layerHeight: number;
+            layerX: number;
+            layerY: number;
+            padTop: number;
+            padRight: number;
+            padBottom: number;
+            padLeft: number;
+        } | null = null;
+
+        if (imageMode === "expand") {
+            if (!currentImage) {
+                setError("Для расширения фона сначала загрузите или сгенерируйте изображение слоя");
                 return;
             }
 
-            if (imageMode === "expand") {
-                if (!currentImage) {
-                    setError("Для расширения фона сначала загрузите или сгенерируйте изображение слоя");
-                    return;
-                }
+            const layerWidth = Number(activeLayer.props.width ?? 0);
+            const layerHeight = Number(activeLayer.props.height ?? 0);
+            const layerX = Number(activeLayer.props.x ?? 0);
+            const layerY = Number(activeLayer.props.y ?? 0);
 
-                const layerWidth = Number(activeLayer.props.width ?? 0);
-                const layerHeight = Number(activeLayer.props.height ?? 0);
-                const layerX = Number(activeLayer.props.x ?? 0);
-                const layerY = Number(activeLayer.props.y ?? 0);
+            if (layerWidth <= 0 || layerHeight <= 0) {
+                setError("Не удалось определить размеры слоя для расширения");
+                return;
+            }
 
-                if (layerWidth <= 0 || layerHeight <= 0) {
-                    setError("Не удалось определить размеры слоя для расширения");
-                    return;
-                }
+            const geometry = computeWizardExpandGeometry(
+                { width: layerWidth, height: layerHeight },
+                packFormats,
+                {
+                    buffer: EXPAND_SAFETY_BUFFER_PX,
+                    leftBias: EXPAND_LEFT_BIAS,
+                    topBias: EXPAND_TOP_BIAS,
+                },
+            );
+            const { padTop, padRight, padBottom, padLeft } = geometry;
+            const hPad = padLeft + padRight;
+            const vPad = padTop + padBottom;
 
-                // Per-side aware target size + asymmetric 67/33
-                // distribution. See `computeWizardExpandGeometry` for
-                // policy details and the wizard-outpaint-geometry-fix
-                // plan for the regression this replaces (multipass +
-                // bria-expand fallback on asymmetric sources).
-                const geometry = computeWizardExpandGeometry(
-                    { width: layerWidth, height: layerHeight },
-                    packFormats,
-                    {
-                        buffer: EXPAND_SAFETY_BUFFER_PX,
-                        leftBias: EXPAND_LEFT_BIAS,
-                        topBias: EXPAND_TOP_BIAS,
-                    },
-                );
-                const { padTop, padRight, padBottom, padLeft } = geometry;
-                const hPad = padLeft + padRight;
-                const vPad = padTop + padBottom;
+            if (hPad === 0 && vPad === 0) {
+                setError("Изображение уже покрывает максимальный формат пакета — расширение не требуется");
+                return;
+            }
 
-                if (hPad === 0 && vPad === 0) {
-                    setError("Изображение уже покрывает максимальный формат пакета — расширение не требуется");
-                    return;
-                }
+            expandSnapshot = {
+                layerWidth,
+                layerHeight,
+                layerX,
+                layerY,
+                padTop,
+                padRight,
+                padBottom,
+                padLeft,
+            };
+        }
+
+        appendLoadingVariants(layerId, requestedImageCount, promptLabel, batchId);
+
+        const jobSnapshot = {
+            imageMode,
+            basePrompt,
+            currentImage,
+            expandSnapshot,
+            selectedModel,
+            aspectRatio,
+            scale,
+            imageStyleId,
+            referenceImages: referenceImages.length > 0 ? [...referenceImages] : [],
+            loraRequestFields: { ...loraRequestFields },
+            activeImageViewOverride,
+        };
+
+        enqueueJob(
+            {
+                id: batchId,
+                projectId,
+                surface: "wizard",
+                layerId,
+                prompt: basePrompt,
+                imageCount: requestedImageCount,
+            },
+            async () => {
+                try {
+                    if (jobSnapshot.imageMode === "expand" && jobSnapshot.expandSnapshot) {
+                        const {
+                            layerWidth,
+                            layerHeight,
+                            layerX,
+                            layerY,
+                            padTop,
+                            padRight,
+                            padBottom,
+                            padLeft,
+                        } = jobSnapshot.expandSnapshot;
 
                 // Seed an initial label so the user sees feedback the
                 // moment the request fires — the first event from the
@@ -1341,7 +1658,7 @@ function WizardLayerPromptBar({
                 // and the pipeline runs un-cropped — strictly no worse
                 // than before.
                 const layerAspect = layerWidth / layerHeight;
-                const cropResult = await cropToLayerAspect(currentImage, layerAspect, {
+                const cropResult = await cropToLayerAspect(jobSnapshot.currentImage, layerAspect, {
                     tolerance: EXPAND_ASPECT_TOLERANCE,
                 });
                 console.log("[Wizard/Expand/pre-crop]", {
@@ -1356,7 +1673,7 @@ function WizardLayerPromptBar({
                     imageSrc: cropResult.src,
                     canvasPadding: { top: padTop, right: padRight, bottom: padBottom, left: padLeft },
                     layerSize: { width: layerWidth, height: layerHeight },
-                    prompt: basePrompt || undefined,
+                    prompt: jobSnapshot.basePrompt || undefined,
                     projectId,
                     model: getOutpaintModel(),
                     upscaleModel: "seedvr",
@@ -1386,13 +1703,13 @@ function WizardLayerPromptBar({
                         source: "wizard-edit-expand",
                     })
                     : null;
-                onOutpaintHistorySave(activeLayer.id, {
-                    src: currentImage,
+                onOutpaintHistorySave(layerId, {
+                    src: jobSnapshot.currentImage,
                     rect: { x: layerX, y: layerY, width: layerWidth, height: layerHeight },
-                    imageView: activeImageViewOverride,
+                    imageView: jobSnapshot.activeImageViewOverride,
                 });
-                onImageChange(activeLayer.id, registered ?? expandResult.src);
-                clearGeneratedVariants();
+                const expandUrl = registered ?? expandResult.src;
+                onImageChange(layerId, expandUrl);
                 // Grow the master layer to match the new (extended) image so
                 // it actually shows up in the preview instead of being cropped
                 // back into the original tiny rect by object-fit cover.
@@ -1405,7 +1722,7 @@ function WizardLayerPromptBar({
                     typeof activeLayer.props.masterId === "string"
                         ? (activeLayer.props.masterId as string)
                         : activeLayer.masterComponentId;
-                onLayerGeometryChange(activeLayer.id, {
+                onLayerGeometryChange(layerId, {
                     prev: { x: layerX, y: layerY, width: layerWidth, height: layerHeight },
                     next: {
                         x: layerX - padLeft,
@@ -1416,146 +1733,133 @@ function WizardLayerPromptBar({
                     slotId: activeLayer.slotId,
                     masterId,
                 });
-                return;
-            }
-
-            if (imageMode === "edit") {
-                if (!currentImage) {
-                    setError("Для редактирования сначала загрузите или сгенерируйте изображение слоя");
-                    return;
-                }
-
-                const [imageUrl, refUrls] = await Promise.all([
-                    uploadForAI(currentImage, projectId || "ai-tmp"),
-                    referenceImages.length > 0
-                        ? uploadManyForAI(referenceImages, projectId || "ai-tmp")
-                        : Promise.resolve(undefined),
-                ]);
-                const editModel = getModelById(selectedModel)?.caps.includes("edit")
-                    ? selectedModel
-                    : "nano-banana-2";
-                const response = await fetch("/api/ai/image-edit", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                        action: "text-edit",
-                        prompt: basePrompt,
-                        imageBase64: imageUrl,
-                        model: editModel,
-                        referenceImages: refUrls,
-                        projectId,
-                        scale: scale || undefined,
-                        ...loraRequestFields,
-                    }),
-                });
-                const data = await response.json();
-                if (data.error) throw new Error(data.requestId ? `${data.error} [request: ${data.requestId}]` : data.error);
-                if (data.content) {
-                    let persisted: string = data.content;
-                    if (projectId) {
+                        resolveBatchVariants(layerId, batchId, [expandUrl], promptLabel, "ready");
+                    } else if (jobSnapshot.imageMode === "edit") {
+                        const [imageUrl, refUrls] = await Promise.all([
+                            uploadForAI(jobSnapshot.currentImage, projectId),
+                            jobSnapshot.referenceImages.length > 0
+                                ? uploadManyForAI(jobSnapshot.referenceImages, projectId)
+                                : Promise.resolve(undefined),
+                        ]);
+                        const editModel = getModelById(jobSnapshot.selectedModel)?.caps.includes("edit")
+                            ? jobSnapshot.selectedModel
+                            : "nano-banana-2";
+                        const response = await fetch("/api/ai/image-edit", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({
+                                action: "text-edit",
+                                prompt: jobSnapshot.basePrompt,
+                                imageBase64: imageUrl,
+                                model: editModel,
+                                referenceImages: refUrls,
+                                projectId,
+                                scale: jobSnapshot.scale || undefined,
+                                ...jobSnapshot.loraRequestFields,
+                            }),
+                        });
+                        const data = await response.json();
+                        if (data.error) {
+                            throw new Error(
+                                data.requestId
+                                    ? `${data.error} [request: ${data.requestId}]`
+                                    : data.error,
+                            );
+                        }
+                        if (!data.content) throw new Error("Пустой ответ от модели");
+                        let persisted: string = data.content;
                         persisted = await persistWizardImageUrl(data.content, projectId, 0);
                         void registerUrl({
                             projectId,
                             url: persisted,
                             source: "wizard-edit",
                         }).catch((e) => console.warn("[Wizard] registerUrl failed:", e));
-                    }
-                    // text-edit returns a fresh image with potentially different
-                    // aspect ratio — drop any stale expand geometry.
-                    onLayerGeometryReset(activeLayer.id);
-                    onOutpaintHistoryClear(activeLayer.id);
-                    onImageChange(activeLayer.id, persisted);
-                    clearGeneratedVariants();
-                }
-                return;
-            }
-
-            const styleSuffix = getImagePresetPromptSuffixForModel(imageStyleId, selectedModel, imagePresets);
-            const styleContext = styleSuffix ? `. Style: ${styleSuffix}` : "";
-            const finalPrompt = `${basePrompt}${styleContext}`;
-            const requestedImageCount = Math.min(imageCount, maxImageOutputs);
-            showingLoadingVariants = true;
-            setGeneratedVariants(Array.from({ length: requestedImageCount }, (_, index) => ({
-                id: `loading-${Date.now()}-${index}`,
-                status: "loading" as const,
-            })));
-            setSelectedGeneratedVariantId(undefined);
-            const refUrls = referenceImages.length > 0
-                ? await uploadManyForAI(referenceImages, projectId || "ai-tmp")
-                : undefined;
-            const response = await fetch("/api/ai/generate", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    prompt: resolveRefTags(finalPrompt, selectedModel),
-                    type: "image",
-                    model: selectedModel,
-                    aspectRatio,
-                    scale: scale || undefined,
-                    count: requestedImageCount,
-                    referenceImages: refUrls,
-                    projectId,
-                    ...loraRequestFields,
-                }),
-            });
-            const data = await response.json();
-            if (data.error) throw new Error(data.requestId ? `${data.error} [request: ${data.requestId}]` : data.error);
-            if (data.content) {
-                const rawUrls: string[] = Array.from(new Set(((Array.isArray(data.contents) && data.contents.length > 0) ? data.contents : [data.content])
-                    .filter((url: unknown): url is string => typeof url === "string" && url.length > 0)));
-                const persistedUrls: string[] = [];
-                for (let i = 0; i < rawUrls.length; i++) {
-                    if (i > 0) {
-                        await new Promise((resolve) => setTimeout(resolve, 150));
-                    }
-                    try {
-                        if (!projectId) {
-                            persistedUrls.push(rawUrls[i]);
-                            continue;
+                        onLayerGeometryReset(layerId);
+                        onOutpaintHistoryClear(layerId);
+                        onImageChange(layerId, persisted);
+                        resolveBatchVariants(layerId, batchId, [persisted], promptLabel, "ready");
+                        setSelectedGeneratedVariantId(`${batchId}-0-${persisted}`);
+                    } else {
+                        const styleSuffix = getImagePresetPromptSuffixForModel(
+                            jobSnapshot.imageStyleId,
+                            jobSnapshot.selectedModel,
+                            imagePresets,
+                        );
+                        const styleContext = styleSuffix ? `. Style: ${styleSuffix}` : "";
+                        const finalPrompt = `${jobSnapshot.basePrompt}${styleContext}`;
+                        const refUrls =
+                            jobSnapshot.referenceImages.length > 0
+                                ? await uploadManyForAI(jobSnapshot.referenceImages, projectId)
+                                : undefined;
+                        const response = await fetch("/api/ai/generate", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({
+                                prompt: resolveRefTags(finalPrompt, jobSnapshot.selectedModel),
+                                type: "image",
+                                model: jobSnapshot.selectedModel,
+                                aspectRatio: jobSnapshot.aspectRatio,
+                                scale: jobSnapshot.scale || undefined,
+                                count: requestedImageCount,
+                                referenceImages: refUrls,
+                                projectId,
+                                ...jobSnapshot.loraRequestFields,
+                            }),
+                        });
+                        const data = await response.json();
+                        if (data.error) {
+                            throw new Error(
+                                data.requestId
+                                    ? `${data.error} [request: ${data.requestId}]`
+                                    : data.error,
+                            );
                         }
-                        const persisted = await persistWizardImageUrl(rawUrls[i], projectId, i);
-                        persistedUrls.push(persisted);
-                        void registerUrl({
-                            projectId,
-                            url: persisted,
-                            source: "wizard-generation",
-                        }).catch((e) => console.warn("[Wizard] registerUrl failed:", e));
-                    } catch (persistErr) {
-                        console.error(`[Wizard] batch persist index=${i}`, persistErr);
+                        if (!data.content) throw new Error("Пустой ответ от модели");
+                        const rawUrls: string[] = Array.from(
+                            new Set(
+                                (
+                                    (Array.isArray(data.contents) && data.contents.length > 0
+                                        ? data.contents
+                                        : [data.content]) as unknown[]
+                                ).filter(
+                                    (url): url is string =>
+                                        typeof url === "string" && url.length > 0,
+                                ),
+                            ),
+                        );
+                        const persistedUrls: string[] = [];
+                        for (let i = 0; i < rawUrls.length; i++) {
+                            if (i > 0) {
+                                await new Promise((resolve) => setTimeout(resolve, 150));
+                            }
+                            const persisted = await persistWizardImageUrl(rawUrls[i], projectId, i);
+                            persistedUrls.push(persisted);
+                            void registerUrl({
+                                projectId,
+                                url: persisted,
+                                source: "wizard-generation",
+                            }).catch((e) => console.warn("[Wizard] registerUrl failed:", e));
+                        }
+                        if (persistedUrls.length === 0) {
+                            throw new Error(
+                                "Не удалось сохранить сгенерированное изображение. Повторите попытку.",
+                            );
+                        }
+                        onLayerGeometryReset(layerId);
+                        onOutpaintHistoryClear(layerId);
+                        onImageChange(layerId, persistedUrls[0]);
+                        resolveBatchVariants(layerId, batchId, persistedUrls, promptLabel, "ready");
+                        setSelectedGeneratedVariantId(`${batchId}-0-${persistedUrls[0]}`);
                     }
+                } catch (err) {
+                    setError(parseGenerationError(err));
+                    resolveBatchVariants(layerId, batchId, [], promptLabel, "error");
+                    throw err;
+                } finally {
+                    setOutpaintProgress(null);
                 }
-                if (projectId && persistedUrls.length === 0) {
-                    throw new Error("Не удалось сохранить сгенерированное изображение. Повторите попытку.");
-                }
-                // Brand new image — wipe any stale expand geometry.
-                onLayerGeometryReset(activeLayer.id);
-                onOutpaintHistoryClear(activeLayer.id);
-                onImageChange(activeLayer.id, persistedUrls[0] ?? data.content);
-                const variants = persistedUrls.map((url, index) => ({
-                    id: `${activeLayer.id}-${index}-${url}`,
-                    url,
-                    status: "ready" as const,
-                }));
-                setGeneratedVariants(variants);
-                setSelectedGeneratedVariantId(variants[0]?.id);
-            }
-        } catch (err) {
-            setError(err instanceof Error ? err.message : "Не удалось выполнить генерацию");
-            if (showingLoadingVariants) {
-                setGeneratedVariants((variants) =>
-                    variants.length > 0
-                        ? variants.map((variant) => ({ ...variant, status: "error" as const }))
-                        : [{ id: `error-${Date.now()}`, status: "error" as const }],
-                );
-                setSelectedGeneratedVariantId(undefined);
-            }
-        } finally {
-            setIsGenerating(false);
-            // Outpaint progress is per-mode; clear it regardless of
-            // whether this run was an expand (cheap, prevents stale
-            // labels leaking into a subsequent generate/edit run).
-            setOutpaintProgress(null);
-        }
+            },
+        );
     };
 
     if (!activeLayer) {
@@ -1565,12 +1869,16 @@ function WizardLayerPromptBar({
     const isImage = activeLayer.type === "image";
     const currentImage = isImage ? imageValues[activeLayer.id] ?? String(activeLayer.props.src ?? "") : "";
     const selectedLabel = activeLayer.type === "text" ? "текстом" : activeLayer.type === "badge" ? "бейджем" : "фото";
+    const showVariantStrip =
+        isImage
+        && activeVariants.length > 0
+        && (activeVariants.length > 1 || activeVariants.some((v) => v.status === "loading"));
 
     return (
         <div className="absolute bottom-6 left-1/2 z-20 flex w-[760px] max-w-[calc(100%-32px)] -translate-x-1/2 flex-col items-center gap-2">
-            {generatedVariants.length > 1 && (
+            {showVariantStrip && (
                 <GeneratedImageStrip
-                    variants={generatedVariants}
+                    variants={activeVariants}
                     selectedId={selectedGeneratedVariantId}
                     onSelect={handleGeneratedVariantSelect}
                 />
@@ -1790,13 +2098,23 @@ function WizardLayerPromptBar({
                     )}
                 </div>
 
+                {queueBadge && (
+                    <span className="shrink-0 rounded-full border border-border-primary bg-bg-tertiary/60 px-2 py-0.5 text-[10px] font-medium text-text-secondary">
+                        {queueBadge}
+                    </span>
+                )}
+
                 <button
                     onClick={handleGenerate}
-                    disabled={isGenerating}
+                    disabled={activeLayer.type !== "image" && isGenerating}
                     className="flex h-10 w-10 items-center justify-center rounded-full bg-accent-lime-hover text-accent-lime-text shadow-sm transition-all duration-200 cursor-pointer hover:bg-accent-lime hover:scale-105 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed"
                     title="Сгенерировать для выбранного слоя"
                 >
-                    {isGenerating ? <Loader2 size={18} className="animate-spin" /> : <Sparkles size={18} />}
+                    {activeLayer.type !== "image" && isGenerating ? (
+                        <Loader2 size={18} className="animate-spin" />
+                    ) : (
+                        <Sparkles size={18} />
+                    )}
                 </button>
             </div>
 

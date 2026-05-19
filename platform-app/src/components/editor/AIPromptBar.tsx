@@ -25,7 +25,12 @@ import { useProjectLibrary } from "@/hooks/useProjectLibrary";
 import { trpc } from "@/lib/trpc";
 import type { ImageLayer } from "@/types";
 import { parseGenerationError } from "@/lib/parseGenerationError";
-import { useGenerationQueueStore, truncatePromptLabel } from "@/store/generationQueueStore";
+import {
+    formatProjectQueueBadge,
+    truncatePromptLabel,
+    useGenerationQueueStore,
+    useProjectQueueCounts,
+} from "@/store/generationQueueStore";
 
 // Helper models lists
 const TEXT_MODELS = [
@@ -162,9 +167,7 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
     const [selectedGeneratedVariantId, setSelectedGeneratedVariantId] = useState<string | undefined>(undefined);
     const [generatedTargetLayerId, setGeneratedTargetLayerId] = useState<string | null>(null);
     const enqueueJob = useGenerationQueueStore((s) => s.enqueue);
-    const projectQueueJobs = useGenerationQueueStore((s) =>
-        projectId ? s.jobs.filter((j) => j.projectId === projectId) : [],
-    );
+    const queueCounts = useProjectQueueCounts(projectId);
     // Outpaint pipeline progress (only set during action === "outpaint";
     // null otherwise so the indicator collapses out of the layout).
     const [outpaintProgress, setOutpaintProgress] = useState<OutpaintProgressState | null>(null);
@@ -308,15 +311,7 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
         && activeVariants.length > 0
         && (activeVariants.length > 1 || activeVariants.some((v) => v.status === "loading"));
 
-    const queueBadge = (() => {
-        if (!projectId || projectQueueJobs.length === 0) return null;
-        const running = projectQueueJobs.filter((j) => j.status === "running").length;
-        const queued = projectQueueJobs.filter((j) => j.status === "queued").length;
-        if (running > 0 && queued > 0) return `${running} · ${queued} в очереди`;
-        if (running > 0) return `${running} генерируются`;
-        if (queued > 0) return `${queued} в очереди`;
-        return null;
-    })();
+    const queueBadge = formatProjectQueueBadge(queueCounts);
 
     useEffect(() => {
         if (imageCount > maxImageOutputs) {

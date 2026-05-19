@@ -16,6 +16,7 @@ import {
 import { projectExpansionToResize, type LayerExpansionOverride } from "@/utils/wizardExpand";
 import { downloadDataUrl, sanitizeExportFileName, zipPngDataUrls } from "@/utils/exportImage";
 import type { TemplatePackV2 } from "@/services/templateService";
+import type { ArtboardProps } from "@/store/canvas/types";
 
 type WizardExportMode = "single" | "batch";
 
@@ -24,6 +25,7 @@ interface WizardExportModalProps {
     onClose: () => void;
     selectedTemplate: TemplatePackV2;
     activeFormatId: string;
+    artboardProps: ArtboardProps;
     textValues: Record<string, string>;
     imageValues: Record<string, string>;
     imageViewOverrides: Record<string, WizardImageViewOverride>;
@@ -36,6 +38,7 @@ export function WizardExportModal({
     onClose,
     selectedTemplate,
     activeFormatId,
+    artboardProps,
     textValues,
     imageValues,
     imageViewOverrides,
@@ -346,6 +349,9 @@ export function WizardExportModal({
                         containerWidth={exportSource.width}
                         containerHeight={exportSource.height}
                         renderMode="artboard"
+                        artboardFill={artboardProps.fill}
+                        artboardBackgroundImage={artboardProps.backgroundImage}
+                        artboardCornerRadius={artboardProps.cornerRadius}
                         onImagesReadyChange={(ready) => {
                             readyRef.current = ready;
                         }}

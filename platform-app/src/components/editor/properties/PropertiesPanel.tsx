@@ -2,7 +2,6 @@
 
 import { useCanvasStore } from "@/store/canvasStore";
 import { useShallow } from "zustand/react/shallow";
-import type { ArtboardProps } from "@/store/canvasStore";
 import type { Layer, TextLayer, RectangleLayer, BadgeLayer, FrameLayer, ImageLayer, ConstraintH, ConstraintV, TemplateSlotRole } from "@/types";
 import { DEFAULT_CONSTRAINTS } from "@/types";
 import {
@@ -16,17 +15,12 @@ import {
     Anchor,
     Link,
     Unlink,
-    Blend,
-    ImageIcon,
-    Upload,
-    Palette,
-    Trash2,
 } from "lucide-react";
 import { Popover, PopoverButton } from "@/components/ui/Popover";
 import { Select } from "@/components/ui/Select";
-import { useRef, useState } from "react";
-import type { ArtboardBackgroundFit, BackgroundSwatchValue } from "@/types";
+import { useState } from "react";
 import { uploadForAI } from "@/utils/imageUpload";
+import { ArtboardBackgroundControls } from "./ArtboardBackgroundControls";
 import { SmartNumberInput } from "@/components/ui/SmartNumberInput";
 import { CompactInput } from "./CompactInput";
 import { ColorInput } from "./ColorInput";
@@ -52,12 +46,7 @@ export function PropertiesPanel() {
         createSwatchFromArtboardBackground: s.createSwatchFromArtboardBackground,
     })));
 
-    const bgUploadRef = useRef<HTMLInputElement>(null);
-    const [bgUploading, setBgUploading] = useState(false);
-    const [bgPopoverOpen, setBgPopoverOpen] = useState(false);
-
     const handleBgFilePick = async (file: File) => {
-        setBgUploading(true);
         try {
             const reader = new FileReader();
             const base64: string = await new Promise((resolve, reject) => {
@@ -77,8 +66,6 @@ export function PropertiesPanel() {
             });
         } catch (err) {
             console.error("[PropertiesPanel] Background upload failed:", err);
-        } finally {
-            setBgUploading(false);
         }
     };
 
@@ -143,18 +130,14 @@ export function PropertiesPanel() {
 
                 <div className="w-px h-5 bg-border-primary shrink-0" />
 
-                {/* ── Фон-картинка ────────── */}
-                <ArtboardBackgroundSection
+                <ArtboardBackgroundControls
                     artboardProps={artboardProps}
-                    updateArtboardProps={updateArtboardProps}
+                    onUpdate={updateArtboardProps}
                     paletteBackgrounds={palette.backgrounds}
-                    applyBackgroundSwatchToArtboard={applyBackgroundSwatchToArtboard}
-                    createSwatchFromArtboardBackground={createSwatchFromArtboardBackground}
-                    bgUploadRef={bgUploadRef}
-                    bgUploading={bgUploading}
-                    bgPopoverOpen={bgPopoverOpen}
-                    setBgPopoverOpen={setBgPopoverOpen}
-                    handleBgFilePick={handleBgFilePick}
+                    onApplyBackgroundSwatch={applyBackgroundSwatchToArtboard}
+                    onCreateSwatchFromBackground={createSwatchFromArtboardBackground}
+                    onUploadFile={handleBgFilePick}
+                    variant="toolbar"
                 />
             </div>
         );
@@ -483,152 +466,3 @@ export function PropertiesPanel() {
     );
 }
 
-// ─── Artboard Background Section ──────────────────────────────────────────
-
-interface ArtboardBackgroundSectionProps {
-    artboardProps: ArtboardProps;
-    updateArtboardProps: (updates: Partial<ArtboardProps>) => void;
-    paletteBackgrounds: ReturnType<typeof useCanvasStore.getState>["palette"]["backgrounds"];
-    applyBackgroundSwatchToArtboard: (swatchId: string) => void;
-    createSwatchFromArtboardBackground: (name?: string) => string | null;
-    bgUploadRef: React.RefObject<HTMLInputElement | null>;
-    bgUploading: boolean;
-    bgPopoverOpen: boolean;
-    setBgPopoverOpen: (open: boolean) => void;
-    handleBgFilePick: (file: File) => void | Promise<void>;
-}
-
-function ArtboardBackgroundSection({
-    artboardProps,
-    updateArtboardProps,
-    paletteBackgrounds,
-    applyBackgroundSwatchToArtboard,
-    createSwatchFromArtboardBackground,
-    bgUploadRef,
-    bgUploading,
-    bgPopoverOpen,
-    setBgPopoverOpen,
-    handleBgFilePick,
-}: ArtboardBackgroundSectionProps) {
-    const bg = artboardProps.backgroundImage;
-    const imageBackgrounds = paletteBackgrounds.filter((sw) => {
-        const v = sw.value as string | BackgroundSwatchValue;
-        return typeof v === "object" && v.kind === "image";
-    });
-
-    return (
-        <>
-            <input
-                ref={bgUploadRef}
-                type="file"
-                accept="image/*"
-                className="hidden"
-                onChange={(e) => {
-                    const f = e.target.files?.[0];
-                    if (f) void handleBgFilePick(f);
-                    e.target.value = "";
-                }}
-            />
-
-            {!bg && (
-                <div className="relative shrink-0">
-                    <PopoverButton
-                        icon={<ImageIcon size={12} />}
-                        label={bgUploading ? "Загрузка..." : "Фон"}
-                        isActive={bgPopoverOpen}
-                        onClick={() => setBgPopoverOpen(!bgPopoverOpen)}
-                    />
-                    <Popover isOpen={bgPopoverOpen} onClose={() => setBgPopoverOpen(false)}>
-                        <div className="space-y-2 min-w-[200px]">
-                            <button
-                                onClick={() => {
-                                    bgUploadRef.current?.click();
-                                    setBgPopoverOpen(false);
-                                }}
-                                className="w-full flex items-center gap-2 px-2 py-1.5 rounded-[var(--radius-sm)] hover:bg-bg-tertiary text-[11px] text-text-primary text-left cursor-pointer"
-                            >
-                                <Upload size={12} />
-                                Загрузить изображение
-                            </button>
-                            {imageBackgrounds.length > 0 && (
-                                <>
-                                    <div className="h-px bg-border-primary" />
-                                    <div className="text-[9px] text-text-tertiary uppercase tracking-wider px-1">Из палитры</div>
-                                    <div className="grid grid-cols-4 gap-1.5">
-                                        {imageBackgrounds.map((sw) => {
-                                            const v = sw.value as Extract<BackgroundSwatchValue, { kind: "image" }>;
-                                            return (
-                                                <button
-                                                    key={sw.id}
-                                                    onClick={() => {
-                                                        applyBackgroundSwatchToArtboard(sw.id);
-                                                        setBgPopoverOpen(false);
-                                                    }}
-                                                    title={sw.name}
-                                                    className="relative aspect-square rounded-[var(--radius-sm)] overflow-hidden border border-border-primary hover:border-accent-primary cursor-pointer"
-                                                >
-                                                    <img src={v.src} alt={sw.name} className="absolute inset-0 w-full h-full object-cover" />
-                                                </button>
-                                            );
-                                        })}
-                                    </div>
-                                </>
-                            )}
-                        </div>
-                    </Popover>
-                </div>
-            )}
-
-            {bg && (
-                <>
-                    <div
-                        className="w-6 h-6 rounded-[var(--radius-sm)] border border-border-primary shrink-0 bg-cover bg-center"
-                        style={{ backgroundImage: `url(${bg.src})` }}
-                        title="Фоновое изображение артборда"
-                    />
-                    <Select
-                        size="sm"
-                        value={bg.fit}
-                        onChange={(val) => updateArtboardProps({
-                            backgroundImage: { ...bg, fit: val as ArtboardBackgroundFit },
-                        })}
-                        options={[
-                            { value: "cover", label: "Cover" },
-                            { value: "contain", label: "Contain" },
-                            { value: "fill", label: "Fill" },
-                        ]}
-                    />
-                    <div className="flex items-center gap-1 shrink-0">
-                        <Blend size={10} className="text-text-tertiary" />
-                        <input
-                            type="range"
-                            min={0}
-                            max={1}
-                            step={0.05}
-                            value={bg.opacity ?? 1}
-                            onChange={(e) => updateArtboardProps({
-                                backgroundImage: { ...bg, opacity: Number(e.target.value) },
-                            })}
-                            className="w-16 accent-accent-primary cursor-pointer"
-                            title={`Прозрачность: ${Math.round((bg.opacity ?? 1) * 100)}%`}
-                        />
-                    </div>
-                    <button
-                        onClick={() => createSwatchFromArtboardBackground()}
-                        className="flex items-center gap-1 text-[10px] px-2 py-1 rounded-[var(--radius-sm)] border border-border-primary text-text-tertiary hover:text-text-primary hover:bg-bg-tertiary cursor-pointer shrink-0"
-                        title="Сохранить в палитру"
-                    >
-                        <Palette size={10} />
-                    </button>
-                    <button
-                        onClick={() => updateArtboardProps({ backgroundImage: undefined })}
-                        className="flex items-center gap-1 text-[10px] px-2 py-1 rounded-[var(--radius-sm)] border border-border-primary text-text-tertiary hover:text-red-500 hover:bg-red-500/10 cursor-pointer shrink-0"
-                        title="Удалить фон"
-                    >
-                        <Trash2 size={10} />
-                    </button>
-                </>
-            )}
-        </>
-    );
-}

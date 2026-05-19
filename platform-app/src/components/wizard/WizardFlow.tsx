@@ -1,6 +1,9 @@
 "use client";
 
 import { useState, useMemo, useEffect, useCallback } from "react";
+import type { ArtboardProps } from "@/store/canvas/types";
+import { DEFAULT_ARTBOARD_PROPS } from "@/store/canvas/types";
+import { resolveWizardArtboardProps } from "@/lib/resolveWizardArtboardProps";
 import { LayoutTemplate, Search, Star, X } from "lucide-react";
 import { useTemplateStore } from "@/store/templateStore";
 import { useTemplateListSync } from "@/hooks/useTemplateSync";
@@ -91,6 +94,7 @@ export function WizardFlow({
     const [productDescription, setProductDescription] = useState("");
     const [packSearch, setPackSearch] = useState("");
     const [activePreviewFormatId, setActivePreviewFormatId] = useState("");
+    const [wizardArtboardProps, setWizardArtboardProps] = useState<ArtboardProps>(DEFAULT_ARTBOARD_PROPS);
 
     const setLayerGeometry = useCallback(
         (id: string, override: LayerExpansionOverride) => {
@@ -249,6 +253,14 @@ export function WizardFlow({
     }, [selectedTemplateId, savedPacks]);
 
     const selectedTemplate = fullSelectedTemplate;
+
+    useEffect(() => {
+        if (!selectedTemplate) {
+            setWizardArtboardProps(DEFAULT_ARTBOARD_PROPS);
+            return;
+        }
+        setWizardArtboardProps(resolveWizardArtboardProps(selectedTemplate));
+    }, [selectedTemplate]);
 
     const handleApplyAndContinue = useCallback(async () => {
         if (templateMode !== "manual" && !selectedTemplateId) return;
@@ -459,6 +471,8 @@ export function WizardFlow({
             }
         }
 
+        (packToApply as { artboardProps?: ArtboardProps }).artboardProps = wizardArtboardProps;
+
         applyTemplatePack(packToApply, {
             contentOverrides: Object.keys(contentOverrides).length > 0 ? contentOverrides : undefined,
             onSuccess: () => {
@@ -476,6 +490,7 @@ export function WizardFlow({
         selectedTemplateId,
         templateMode,
         textValues,
+        wizardArtboardProps,
     ]);
 
     const nextDisabled =
@@ -787,6 +802,8 @@ export function WizardFlow({
                             <WizardContentWorkspace
                                 selectedTemplate={selectedTemplate}
                                 templateLoadError={templateLoadError}
+                                artboardProps={wizardArtboardProps}
+                                onArtboardPropsChange={setWizardArtboardProps}
                                 textValues={textValues}
                                 imageValues={imageValues}
                                 imageViewOverrides={imageViewOverrides}
@@ -811,6 +828,7 @@ export function WizardFlow({
                                 onClose={onExportClose ?? (() => undefined)}
                                 selectedTemplate={selectedTemplate}
                                 activeFormatId={activePreviewFormatId}
+                                artboardProps={wizardArtboardProps}
                                 textValues={textValues}
                                 imageValues={imageValues}
                                 imageViewOverrides={imageViewOverrides}
