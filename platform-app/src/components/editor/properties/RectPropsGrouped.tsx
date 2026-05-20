@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Paintbrush, Eye, EyeOff } from "lucide-react";
+import { StrokeControls } from "./StrokeControls";
 import { Popover, PopoverButton } from "@/components/ui/Popover";
 import type { RectangleLayer } from "@/types";
 import { ColorInput } from "./ColorInput";
@@ -19,7 +20,6 @@ export function RectPropsGrouped({
     const togglePopover = (name: string) => setActivePopover((prev) => (prev === name ? null : name));
 
     const fillEnabled = layer.fillEnabled !== false;
-    const strokeEnabled = layer.strokeEnabled !== false;
 
     return (
         <div className="flex items-center gap-1 relative">
@@ -77,18 +77,16 @@ export function RectPropsGrouped({
                         {/* Stroke */}
                         <div>
                             <label className="text-[9px] text-text-tertiary uppercase tracking-wider font-medium mb-1.5 block">Обводка</label>
-                            <div className="flex items-center gap-1.5">
-                                <div className={`transition-opacity ${strokeEnabled ? '' : 'opacity-30 pointer-events-none'}`}>
-                                    <ColorInput value={layer.stroke || "#000000"} onChange={(v) => onChange({ stroke: v })} />
-                                </div>
-                                <button
-                                    onClick={() => onChange({ strokeEnabled: !strokeEnabled })}
-                                    className={`p-1 rounded-[var(--radius-sm)] transition-colors cursor-pointer ${strokeEnabled ? 'text-text-secondary hover:text-text-primary' : 'text-text-tertiary/40 hover:text-text-tertiary'}`}
-                                    title={strokeEnabled ? "Скрыть обводку" : "Показать обводку"}
-                                >
-                                    {strokeEnabled ? <Eye size={12} /> : <EyeOff size={12} />}
-                                </button>
-                            </div>
+                            <StrokeControls
+                                value={{
+                                    stroke: layer.stroke || "#000000",
+                                    strokeEnabled: layer.strokeEnabled,
+                                    strokeWidth: layer.strokeWidth,
+                                    strokeAlign: layer.strokeAlign,
+                                    strokeJoin: layer.strokeJoin,
+                                }}
+                                onChange={onChange}
+                            />
                         </div>
                         {/* Corner Radius */}
                         <div>

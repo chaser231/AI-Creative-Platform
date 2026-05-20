@@ -27,6 +27,8 @@ import type {
     Swatch,
     SwatchType,
     Paint,
+    StrokeAlign,
+    StrokeJoin,
 } from "@/types";
 import type { SnapConfig } from "@/services/snapService";
 import type { SlotMapping } from "@/services/slotMappingService";
@@ -70,6 +72,8 @@ export interface ArtboardProps {
     clipContent: boolean;
     stroke: string;
     strokeWidth: number;
+    strokeAlign?: StrokeAlign;
+    strokeJoin?: StrokeJoin;
     /**
      * Optional background image, shared across all resize formats (MVP).
      * Rendered between the solid `fill` and the user layers.

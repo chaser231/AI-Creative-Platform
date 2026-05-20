@@ -2,7 +2,8 @@
 
 import { useCanvasStore } from "@/store/canvasStore";
 import { useShallow } from "zustand/react/shallow";
-import type { Layer, TextLayer, RectangleLayer, BadgeLayer, FrameLayer, ImageLayer, ConstraintH, ConstraintV, TemplateSlotRole } from "@/types";
+import type { Layer, TextLayer, RectangleLayer, BadgeLayer, FrameLayer, ImageLayer, ConstraintH, ConstraintV, TemplateSlotRole, StrokeAlign } from "@/types";
+import { STROKE_ALIGN_LABELS } from "@/types";
 import { DEFAULT_CONSTRAINTS } from "@/types";
 import {
     Link2,
@@ -115,6 +116,13 @@ export function PropertiesPanel() {
                 <span className="text-[10px] text-text-tertiary font-light shrink-0">Обводка</span>
                 <ColorInput value={artboardProps.stroke || "#000000"} onChange={(v) => updateArtboardProps({ stroke: v })} />
                 <CompactInput label="W" value={artboardProps.strokeWidth} min={0} onChange={(v) => updateArtboardProps({ strokeWidth: Math.max(0, Number(v)) })} />
+                <Select
+                    size="xs"
+                    value={artboardProps.strokeAlign ?? "center"}
+                    onChange={(val) => updateArtboardProps({ strokeAlign: val as StrokeAlign })}
+                    options={(Object.entries(STROKE_ALIGN_LABELS) as [StrokeAlign, string][]).map(([value, label]) => ({ value, label }))}
+                    className="w-[100px] shrink-0"
+                />
                 <div className="w-px h-5 bg-border-primary shrink-0" />
                 <button
                     onClick={() => updateArtboardProps({ clipContent: !artboardProps.clipContent })}

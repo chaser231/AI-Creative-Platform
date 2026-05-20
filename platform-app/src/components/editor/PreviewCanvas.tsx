@@ -12,6 +12,7 @@ import type {
 } from "@/types";
 import { computeImageFitProps } from "@/utils/imageFitUtils";
 import { normalizePaint, paintToKonvaProps } from "@/utils/paint";
+import { AlignedStrokeRect } from "@/components/editor/canvas/AlignedStrokeRect";
 import Konva from "konva";
 
 type ImageLoadStatus = "loading" | "loaded" | "error";
@@ -42,15 +43,22 @@ function PreviewLayer({ layer, allLayers, loadedImages, imageStatuses, renderX, 
     switch (layer.type) {
         case "rectangle":
             return (
-                <Rect
-                    {...commonProps}
-                    {...(layer.fillEnabled === false
-                        ? { fill: "transparent", fillPriority: "color" }
-                        : paintToKonvaProps(layer.fill, layer.width, layer.height))}
-                    stroke={layer.strokeEnabled === false ? undefined : (layer.stroke || undefined)}
-                    strokeWidth={layer.strokeEnabled === false ? 0 : layer.strokeWidth}
-                    cornerRadius={layer.cornerRadius}
-                />
+                <Group {...commonProps}>
+                    <AlignedStrokeRect
+                        width={layer.width}
+                        height={layer.height}
+                        cornerRadius={layer.cornerRadius}
+                        fillEnabled={layer.fillEnabled !== false}
+                        {...(layer.fillEnabled === false
+                            ? {}
+                            : paintToKonvaProps(layer.fill, layer.width, layer.height))}
+                        stroke={layer.stroke || undefined}
+                        strokeWidth={layer.strokeWidth}
+                        strokeAlign={layer.strokeAlign}
+                        strokeJoin={layer.strokeJoin}
+                        strokeEnabled={layer.strokeEnabled !== false}
+                    />
+                </Group>
             );
         case "text":
             return (
@@ -173,15 +181,19 @@ function PreviewLayer({ layer, allLayers, loadedImages, imageStatuses, renderX, 
                     clipWidth={layer.clipContent ? layer.width : undefined}
                     clipHeight={layer.clipContent ? layer.height : undefined}
                 >
-                    <Rect
+                    <AlignedStrokeRect
                         width={layer.width}
                         height={layer.height}
+                        cornerRadius={layer.cornerRadius}
+                        fillEnabled={layer.fillEnabled !== false}
                         {...(layer.fillEnabled === false
                             ? { fill: undefined, fillPriority: "color" }
                             : paintToKonvaProps(layer.fill, layer.width, layer.height))}
-                        stroke={layer.strokeEnabled === false ? undefined : (layer.stroke || undefined)}
-                        strokeWidth={layer.strokeEnabled === false ? 0 : layer.strokeWidth}
-                        cornerRadius={layer.cornerRadius}
+                        stroke={layer.stroke || undefined}
+                        strokeWidth={layer.strokeWidth}
+                        strokeAlign={layer.strokeAlign}
+                        strokeJoin={layer.strokeJoin}
+                        strokeEnabled={layer.strokeEnabled !== false}
                     />
                     {childLayers.map((child) => (
                         <PreviewLayer
