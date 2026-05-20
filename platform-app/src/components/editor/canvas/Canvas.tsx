@@ -24,8 +24,10 @@ import { usePanZoom } from "./usePanZoom";
 import { ArtboardBackgroundRenderer } from "./ArtboardBackgroundRenderer";
 import { useProjectLibrary } from "@/hooks/useProjectLibrary";
 import { normalizePaint, paintToKonvaProps, setGradientEndpoints } from "@/utils/paint";
+import { canLayerFitInFrame } from "@/utils/frameDropUtils";
 import { installLayerBoxGetClientRect } from "@/utils/strokeGeometry";
 import { AlignedStrokeRect } from "./AlignedStrokeRect";
+import { resolveKonvaLayerId } from "./resolveKonvaLayerId";
 /* ─── Constants ───────────────────────────────────── */
 const FRAME_HIGHLIGHT_STROKE = "#6366F1";
 const FRAME_HIGHLIGHT_WIDTH = 2;
@@ -129,6 +131,15 @@ function CanvasLayer({
         <>
             {layer.type === "rectangle" && (
                 <Group ref={groupRef as React.RefObject<Konva.Group | null>} {...commonProps}>
+                    <Rect
+                        x={0}
+                        y={0}
+                        width={layer.width}
+                        height={layer.height}
+                        fill="rgba(0,0,0,0.001)"
+                        listening={activeTool === "select"}
+                        perfectDrawEnabled={false}
+                    />
                     <AlignedStrokeRect
                         width={layer.width}
                         height={layer.height}
@@ -428,6 +439,15 @@ function FrameLayerRenderer({
             ref={groupRef}
             {...commonProps}
         >
+            <Rect
+                x={0}
+                y={0}
+                width={layer.width}
+                height={layer.height}
+                fill="rgba(0,0,0,0.001)"
+                listening={commonProps.listening as boolean}
+                perfectDrawEnabled={false}
+            />
             <Group
                 ref={clipGroupRef}
                 clipX={layer.clipContent ? 0 : undefined}
@@ -450,7 +470,6 @@ function FrameLayerRenderer({
                     } : undefined}
                 >
                     <AlignedStrokeRect
-                        id={layer.id}
                         width={layer.width}
                         height={layer.height}
                         cornerRadius={layer.cornerRadius}
@@ -878,7 +897,12 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
 
     const updateFrameHoverHighlight = useCallback((stage: Konva.Stage, draggedLayerId: string) => {
         const hoveredFrame = resolveFrameHoverTarget(stage, draggedLayerId);
-        const hoveredFrameId = hoveredFrame?.id ?? null;
+        const draggedLayer = layers.find((l) => l.id === draggedLayerId);
+        const droppableFrame =
+            hoveredFrame && draggedLayer && canLayerFitInFrame(draggedLayer, hoveredFrame)
+                ? hoveredFrame
+                : null;
+        const hoveredFrameId = droppableFrame?.id ?? null;
         const now = Date.now();
 
         if (hoveredFrameId !== frameHoverCandidate.current.frameId) {
@@ -894,12 +918,12 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
 
         if (now - frameHoverCandidate.current.since >= 220) {
             setHighlightedFrameId(hoveredFrameId);
-            return hoveredFrame;
+            return droppableFrame;
         }
 
         setHighlightedFrameId(null);
         return null;
-    }, [resolveFrameHoverTarget, setHighlightedFrameId]);
+    }, [resolveFrameHoverTarget, setHighlightedFrameId, layers]);
 
     // Collect all IDs that are children of any frame (to exclude from top-level SelectionTransformer)
     const frameChildIds = useMemo(() => {
@@ -994,7 +1018,7 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
             return;
         }
 
-        let id = e.target.id();
+        let id = resolveKonvaLayerId(e.target);
         if (!id) return;
 
         // Stop propagation so stage click doesn't deselect
@@ -1038,7 +1062,7 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
         setStageDraggable(false);
         isDragging.current = true;
         setHoveredLayerId(null); // Clear hover during drag
-        let id = e.target.id();
+        let id = resolveKonvaLayerId(e.target);
 
         // Block drag if the grab point is outside a clipped parent's bounds
         // EXCEPTION: allow if the layer is already selected (Figma-like behavior)
@@ -1141,7 +1165,7 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
     }, [selectedLayerIds, layers, canvasWidth, canvasHeight]);
 
     const handleLayerDragMove = useCallback((e: Konva.KonvaEventObject<DragEvent>) => {
-        const id = e.target.id();
+        const id = resolveKonvaLayerId(e.target);
         const startLoc = dragStartLocs.current[id];
         if (!startLoc) return;
 
@@ -1238,7 +1262,7 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
         setSpacingGuides([]);
         setStageDraggable(true);
         isDragging.current = false;
-        const id = e.target.id();
+        const id = resolveKonvaLayerId(e.target);
         const startLoc = dragStartLocs.current[id];
         const stage = e.target.getStage();
 
@@ -1600,7 +1624,7 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
             if (pointer) {
                 const canvasX = (pointer.x - stage.x()) / stage.scaleX();
                 const canvasY = (pointer.y - stage.y()) / stage.scaleY();
-                const targetId = target.id();
+                const targetId = resolveKonvaLayerId(target);
 
                 // Skip clip-bounds check if:
                 // 1. The target layer is already selected (drag from outside clip)

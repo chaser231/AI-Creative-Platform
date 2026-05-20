@@ -106,13 +106,16 @@ export function AlignedStrokeRect(props: AlignedStrokeRectProps) {
         ...(shadowBlur !== undefined ? { shadowBlur } : {}),
     };
 
+    // Visual only — parent Group owns hit area and drag (see CanvasLayer).
+    const shapeListening = listening ?? false;
+
     const fillRectProps = {
         x: 0,
         y: 0,
         width,
         height,
         cornerRadius,
-        listening,
+        listening: shapeListening,
         ...(id !== undefined ? { id } : {}),
         ...(name !== undefined ? { name } : {}),
         ...fillProps,
