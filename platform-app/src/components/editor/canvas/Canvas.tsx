@@ -24,6 +24,8 @@ import { usePanZoom } from "./usePanZoom";
 import { ArtboardBackgroundRenderer } from "./ArtboardBackgroundRenderer";
 import { useProjectLibrary } from "@/hooks/useProjectLibrary";
 import { normalizePaint, paintToKonvaProps, setGradientEndpoints } from "@/utils/paint";
+import { installLayerBoxGetClientRect } from "@/utils/strokeGeometry";
+import { AlignedStrokeRect } from "./AlignedStrokeRect";
 /* ─── Constants ───────────────────────────────────── */
 const FRAME_HIGHLIGHT_STROKE = "#6366F1";
 const FRAME_HIGHLIGHT_WIDTH = 2;
@@ -70,6 +72,26 @@ function CanvasLayer({
     const groupRef = useRef<Konva.Group>(null);
     const activeTool = useCanvasStore((s) => s.activeTool);
 
+    useEffect(() => {
+        if (!groupRef.current || (layer.type !== "rectangle" && layer.type !== "frame")) return;
+        const strokeLayer = layer as LayerType & { type: "rectangle" | "frame" };
+        installLayerBoxGetClientRect(groupRef.current, {
+            width: strokeLayer.width,
+            height: strokeLayer.height,
+            strokeWidth: strokeLayer.strokeWidth,
+            strokeAlign: strokeLayer.strokeAlign,
+            strokeEnabled: strokeLayer.strokeEnabled,
+        });
+    }, [
+        layer.type,
+        layer.width,
+        layer.height,
+        layer.type === "rectangle" || layer.type === "frame" ? layer.strokeWidth : 0,
+        layer.type === "rectangle" || layer.type === "frame" ? layer.strokeAlign : undefined,
+        layer.type === "rectangle" || layer.type === "frame" ? layer.strokeJoin : undefined,
+        layer.type === "rectangle" || layer.type === "frame" ? layer.strokeEnabled : undefined,
+    ]);
+
     if (!layer.visible) return null;
 
     const commonProps = {
@@ -106,16 +128,22 @@ function CanvasLayer({
     return (
         <>
             {layer.type === "rectangle" && (
-                <Rect
-                    ref={shapeRef as React.RefObject<Konva.Rect | null>}
-                    {...commonProps}
-                    {...(layer.fillEnabled === false
-                        ? { fill: "transparent", fillPriority: "color" }
-                        : paintToKonvaProps(layer.fill, layer.width, layer.height))}
-                    stroke={layer.strokeEnabled === false ? undefined : (layer.stroke || undefined)}
-                    strokeWidth={layer.strokeEnabled === false ? 0 : layer.strokeWidth}
-                    cornerRadius={layer.cornerRadius}
-                />
+                <Group ref={groupRef as React.RefObject<Konva.Group | null>} {...commonProps}>
+                    <AlignedStrokeRect
+                        width={layer.width}
+                        height={layer.height}
+                        cornerRadius={layer.cornerRadius}
+                        fillEnabled={layer.fillEnabled !== false}
+                        {...(layer.fillEnabled === false
+                            ? {}
+                            : paintToKonvaProps(layer.fill, layer.width, layer.height))}
+                        stroke={layer.stroke || undefined}
+                        strokeWidth={layer.strokeWidth}
+                        strokeAlign={layer.strokeAlign}
+                        strokeJoin={layer.strokeJoin}
+                        strokeEnabled={layer.strokeEnabled !== false}
+                    />
+                </Group>
             )}
             {layer.type === "text" && !isEditing && (
                 <Text
@@ -395,63 +423,6 @@ function FrameLayerRenderer({
         }
     }, [updateLayer, layer.x, layer.y, layer.layoutMode, layer.id, layers]);
 
-    // Force the bounding box of the frame to its own dimensions
-    // ignoring any overflowing children.
-    useEffect(() => {
-        if (groupRef.current) {
-            groupRef.current.getClientRect = (config?: { skipTransform?: boolean; skipShadow?: boolean; skipStroke?: boolean; relativeTo?: Konva.Container }) => {
-                const node = groupRef.current!;
-
-                // Base dimensions
-                let x = 0;
-                let y = 0;
-                let width = layer.width;
-                let height = layer.height;
-
-                if (!config?.skipStroke && layer.strokeWidth) {
-                    const sw = layer.strokeWidth;
-                    x -= sw / 2;
-                    y -= sw / 2;
-                    width += sw;
-                    height += sw;
-                }
-
-                const rect = { x, y, width, height };
-
-                if (config?.skipTransform) {
-                    return rect;
-                }
-
-                // Apply transforms
-                const abosluteTransform = node.getAbsoluteTransform();
-                const relativeToTransform = config?.relativeTo?.getAbsoluteTransform() ?? new Konva.Transform();
-
-                // We want to transform 'rect' into the destination coordinate space.
-                const relativeTransform = relativeToTransform.copy().invert().multiply(abosluteTransform);
-
-                // Get transforming points
-                const pts = [
-                    { x: rect.x, y: rect.y },
-                    { x: rect.x + rect.width, y: rect.y },
-                    { x: rect.x + rect.width, y: rect.y + rect.height },
-                    { x: rect.x, y: rect.y + rect.height }
-                ].map(p => relativeTransform.point(p));
-
-                const minX = Math.min(...pts.map(p => p.x));
-                const minY = Math.min(...pts.map(p => p.y));
-                const maxX = Math.max(...pts.map(p => p.x));
-                const maxY = Math.max(...pts.map(p => p.y));
-
-                return {
-                    x: minX,
-                    y: minY,
-                    width: maxX - minX,
-                    height: maxY - minY
-                };
-            };
-        }
-    }, [layer.width, layer.height, layer.strokeWidth, groupRef]);
-
     return (
         <Group
             ref={groupRef}
@@ -478,16 +449,20 @@ function FrameLayerRenderer({
                         ctx.closePath();
                     } : undefined}
                 >
-                    <Rect
+                    <AlignedStrokeRect
                         id={layer.id}
                         width={layer.width}
                         height={layer.height}
+                        cornerRadius={layer.cornerRadius}
+                        fillEnabled={layer.fillEnabled !== false}
                         {...(layer.fillEnabled === false
                             ? { fill: undefined, fillPriority: "color" }
                             : paintToKonvaProps(layer.fill, layer.width, layer.height))}
-                        stroke={isHighlighted ? FRAME_HIGHLIGHT_STROKE : (layer.strokeEnabled === false ? undefined : (layer.stroke || undefined))}
-                        strokeWidth={isHighlighted ? FRAME_HIGHLIGHT_WIDTH : (layer.strokeEnabled === false ? 0 : layer.strokeWidth)}
-                        cornerRadius={layer.cornerRadius}
+                        stroke={isHighlighted ? FRAME_HIGHLIGHT_STROKE : (layer.stroke || undefined)}
+                        strokeWidth={isHighlighted ? FRAME_HIGHLIGHT_WIDTH : layer.strokeWidth}
+                        strokeAlign={layer.strokeAlign}
+                        strokeJoin={layer.strokeJoin}
+                        strokeEnabled={isHighlighted || layer.strokeEnabled !== false}
                     />
                     {childLayers.map((child) => {
                         // Use STORE's absolute position for the frame, not the prop
@@ -2359,13 +2334,16 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
                                     ctx.closePath();
                                 } : undefined}
                             >
-                                <Rect
+                                <AlignedStrokeRect
                                     id="__artboard_fill"
                                     name="export-artboard-fill"
-                                    x={0} y={0} width={canvasWidth} height={canvasHeight}
+                                    width={canvasWidth}
+                                    height={canvasHeight}
                                     {...paintToKonvaProps(artboardProps.fill, canvasWidth, canvasHeight)}
                                     stroke={artboardProps.stroke || undefined}
                                     strokeWidth={artboardProps.strokeWidth}
+                                    strokeAlign={artboardProps.strokeAlign}
+                                    strokeEnabled={!!artboardProps.strokeWidth && !!artboardProps.stroke}
                                     cornerRadius={artboardProps.cornerRadius}
                                     shadowColor="rgba(0,0,0,0.1)"
                                     shadowBlur={20}
@@ -2392,13 +2370,16 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
                         </Group>
                     ) : (
                         <>
-                            <Rect
+                            <AlignedStrokeRect
                                 id="__artboard_fill"
                                 name="export-artboard-fill"
-                                x={0} y={0} width={canvasWidth} height={canvasHeight}
+                                width={canvasWidth}
+                                height={canvasHeight}
                                 {...paintToKonvaProps(artboardProps.fill, canvasWidth, canvasHeight)}
                                 stroke={artboardProps.stroke || undefined}
                                 strokeWidth={artboardProps.strokeWidth}
+                                strokeAlign={artboardProps.strokeAlign}
+                                strokeEnabled={!!artboardProps.strokeWidth && !!artboardProps.stroke}
                                 cornerRadius={artboardProps.cornerRadius}
                                 shadowColor="rgba(0,0,0,0.1)"
                                 shadowBlur={20}

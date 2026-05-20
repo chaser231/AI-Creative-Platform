@@ -14,7 +14,7 @@
  *  - Vector / Boolean nodes → rasterized as ImageLayer (svg URL is fetched by worker).
  *  - Gradients / multi-fill → flattened to first solid fill; warning emitted.
  *  - Effects (shadows/blurs) → ignored; warning emitted.
- *  - Stroke align / dashes → lost, only weight + color preserved.
+ *  - Stroke dashes → lost; align + weight + color preserved when present.
  *  - Text with mixed character styles → collapsed to node-level style.
  */
 
@@ -41,6 +41,8 @@ import type {
     Layer,
     LayerConstraints,
     RectangleLayer,
+    StrokeAlign,
+    StrokeJoin,
     TextLayer,
 } from "@/types";
 import type {
@@ -334,6 +336,8 @@ function mapTopLevelNode(node: SubcanvasNode, ctx: MapCtx): MapperFrame | null {
         stroke: resolveStrokeColor(node),
         strokeEnabled: hasVisibleStroke(node),
         strokeWidth: readStrokeWeight(node),
+        strokeAlign: readStrokeAlign(node),
+        strokeJoin: readStrokeJoin(node),
         cornerRadius: readCornerRadius(node),
         clipContent: (node as { clipsContent?: boolean }).clipsContent ?? true,
         childIds,
@@ -440,6 +444,8 @@ function mapFrame(
         stroke: resolveStrokeColor(node),
         strokeEnabled: hasVisibleStroke(node),
         strokeWidth: readStrokeWeight(node),
+        strokeAlign: readStrokeAlign(node),
+        strokeJoin: readStrokeJoin(node),
         cornerRadius: readCornerRadius(node),
         clipContent: (node as { clipsContent?: boolean }).clipsContent ?? false,
         childIds,
@@ -631,6 +637,8 @@ function mapRectangle(
         stroke: resolveStrokeColor(node),
         strokeEnabled: hasVisibleStroke(node),
         strokeWidth: readStrokeWeight(node),
+        strokeAlign: readStrokeAlign(node),
+        strokeJoin: readStrokeJoin(node),
         cornerRadius: readCornerRadius(node),
         metadata: { figmaNodeId: node.id, figmaOriginalType: node.type },
     };
@@ -681,6 +689,8 @@ function mapShape(
         stroke: resolveStrokeColor(node),
         strokeEnabled: hasVisibleStroke(node),
         strokeWidth: readStrokeWeight(node),
+        strokeAlign: readStrokeAlign(node),
+        strokeJoin: readStrokeJoin(node),
         cornerRadius,
         metadata: { figmaNodeId: node.id, figmaOriginalType: node.type },
     };
@@ -801,6 +811,34 @@ function readCornerRadius(node: SubcanvasNode): number {
 function readStrokeWeight(node: SubcanvasNode): number {
     const sw = (node as { strokeWeight?: number }).strokeWeight;
     return typeof sw === "number" ? Math.round(sw) : 0;
+}
+
+function readStrokeAlign(node: SubcanvasNode): StrokeAlign | undefined {
+    const align = (node as { strokeAlign?: string }).strokeAlign;
+    switch (align) {
+        case "INSIDE":
+            return "inside";
+        case "OUTSIDE":
+            return "outside";
+        case "CENTER":
+            return "center";
+        default:
+            return undefined;
+    }
+}
+
+function readStrokeJoin(node: SubcanvasNode): StrokeJoin | undefined {
+    const join = (node as { strokeJoin?: string }).strokeJoin;
+    switch (join) {
+        case "MITER":
+            return "miter";
+        case "ROUND":
+            return "round";
+        case "BEVEL":
+            return "bevel";
+        default:
+            return undefined;
+    }
 }
 
 function hasVisibleStroke(node: SubcanvasNode): boolean {

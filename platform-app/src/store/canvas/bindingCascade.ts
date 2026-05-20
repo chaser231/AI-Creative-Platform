@@ -4,7 +4,7 @@ import { applyConstraints } from "@/utils/resizeUtil";
 
 const CONTENT_PROPS = ["text", "src", "label"] as const;
 const STYLE_PROPS = [
-    "fill", "stroke", "strokeWidth", "fontSize", "fontFamily", "fontWeight",
+    "fill", "stroke", "strokeWidth", "strokeAlign", "strokeJoin", "fontSize", "fontFamily", "fontWeight",
     "align", "verticalAlign", "letterSpacing", "lineHeight", "cornerRadius", "objectFit",
     "focusX", "focusY",
     "textColor", "textAdjust", "truncateText", "verticalTrim", "textTransform",

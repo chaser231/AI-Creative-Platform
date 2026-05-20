@@ -233,6 +233,24 @@ export interface TextComponentProps extends BaseComponentProps {
     textTransform?: "none" | "uppercase" | "lowercase";
 }
 
+/** Stroke position relative to layer bounds (Figma-compatible). */
+export type StrokeAlign = "inside" | "center" | "outside";
+
+export const STROKE_ALIGN_LABELS: Record<StrokeAlign, string> = {
+    inside: "Внутри",
+    center: "По центру",
+    outside: "Снаружи",
+};
+
+/** Corner join style for strokes (maps to Konva `lineJoin`). */
+export type StrokeJoin = "miter" | "round" | "bevel";
+
+export const STROKE_JOIN_LABELS: Record<StrokeJoin, string> = {
+    miter: "Прямой",
+    round: "Скруглённый",
+    bevel: "Скошенный",
+};
+
 export interface RectangleComponentProps extends BaseComponentProps {
     type: "rectangle";
     fill: Paint;
@@ -240,6 +258,8 @@ export interface RectangleComponentProps extends BaseComponentProps {
     stroke: string;
     strokeEnabled?: boolean; // default true
     strokeWidth: number;
+    strokeAlign?: StrokeAlign;
+    strokeJoin?: StrokeJoin;
     cornerRadius: number;
 }
 
@@ -284,6 +304,8 @@ export interface FrameComponentProps extends BaseComponentProps {
     stroke: string;
     strokeEnabled?: boolean; // default true
     strokeWidth: number;
+    strokeAlign?: StrokeAlign;
+    strokeJoin?: StrokeJoin;
     cornerRadius: number;
     clipContent: boolean;
     childIds: string[];
@@ -463,6 +485,8 @@ export interface RectangleLayer extends BaseLayer {
     stroke: string;
     strokeEnabled?: boolean; // default true
     strokeWidth: number;
+    strokeAlign?: StrokeAlign;
+    strokeJoin?: StrokeJoin;
     cornerRadius: number;
 }
 
@@ -489,6 +513,8 @@ export interface FrameLayer extends BaseLayer {
     stroke: string;
     strokeEnabled?: boolean; // default true
     strokeWidth: number;
+    strokeAlign?: StrokeAlign;
+    strokeJoin?: StrokeJoin;
     cornerRadius: number;
     clipContent: boolean;
     childIds: string[];
