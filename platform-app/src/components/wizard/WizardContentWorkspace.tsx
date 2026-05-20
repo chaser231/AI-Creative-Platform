@@ -20,6 +20,7 @@ import {
     ZoomIn,
     ZoomOut,
     Maximize2,
+    Eraser,
 } from "lucide-react";
 import { RefAutocompleteTextarea, type RefAutocompleteTextareaHandle } from "@/components/ui/RefAutocompleteTextarea";
 import { ReferenceImageInput, ReferenceImagePreviewTray, getReferenceTrayReserveWidth } from "@/components/ui/ReferenceImageInput";
@@ -59,6 +60,9 @@ import { InpaintProvider, useSharedInpaintMask } from "@/components/inpaint/Inpa
 import { InpaintActionBar, type InpaintAction } from "@/components/inpaint/InpaintActionBar";
 import { DEFAULT_INPAINT_MODEL, PREFERRED_INPAINT_MODELS } from "@/lib/inpaintPrompts";
 import { WizardPreviewInpaintOverlay } from "@/components/wizard/WizardPreviewInpaintOverlay";
+import { AIScenariosModal } from "@/components/workflows/AIScenariosModal";
+import type { WorkflowScenarioRunResult } from "@/hooks/workflow/useWorkflowScenarioRun";
+import { useWorkspace } from "@/providers/WorkspaceProvider";
 import { projectExpansionToResize, type LayerExpansionOverride } from "@/utils/wizardExpand";
 import { computeWizardExpandGeometry } from "@/utils/wizardExpandGeometry";
 import { cropToLayerAspect } from "@/utils/cropToLayerAspect";
@@ -166,6 +170,8 @@ interface WizardContentWorkspaceProps {
     projectBU: BusinessUnit;
     projectId?: string;
     onActivePreviewFormatChange?: (id: string) => void;
+    /** Registers AI-scenarios open handler for the wizard page header. */
+    onAiScenariosToolsChange?: (tools: { canOpen: boolean; onOpen: () => void } | null) => void;
 }
 
 const TEXT_GEN_MODELS = [
@@ -193,6 +199,30 @@ const IMAGE_GEN_MODELS = [
 ];
 
 const S3_PERSIST_HOST = "storage.yandexcloud.net";
+
+async function callWizardRemoveBackground(sourceUrl: string, projectId: string): Promise<string> {
+    const imageUrl = await uploadForAI(sourceUrl, projectId);
+    const response = await fetch("/api/ai/image-edit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            action: "remove-bg",
+            imageBase64: imageUrl,
+            model: "bria-rmbg",
+            projectId,
+        }),
+    });
+    const data = await response.json();
+    if (data.error) {
+        throw new Error(
+            data.requestId ? `${data.error} [request: ${data.requestId}]` : data.error,
+        );
+    }
+    if (!data.content) {
+        throw new Error("Сервер вернул пустой результат удаления фона");
+    }
+    return persistWizardImageUrl(data.content, projectId, 0);
+}
 
 async function persistWizardImageUrl(url: string, projectId: string, index: number): Promise<string> {
     let persisted = await persistImageToS3(url, projectId);
@@ -289,11 +319,13 @@ export function WizardContentWorkspace({
     projectBU,
     projectId,
     onActivePreviewFormatChange,
+    onAiScenariosToolsChange,
 }: WizardContentWorkspaceProps) {
+    const { currentWorkspace } = useWorkspace();
     const canvasAppearance = useResolvedCanvasAppearance();
     const fileInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
     const previewFrameRef = useRef<HTMLDivElement | null>(null);
-    const { registerFile } = useProjectLibrary();
+    const { registerFile, registerUrl } = useProjectLibrary();
     const previewFormats = useMemo(() => getPreviewFormatSources(selectedTemplate), [selectedTemplate]);
     const [activePreviewFormatIdState, setActivePreviewFormatIdState] = useState(previewFormats[0]?.id ?? "");
     const setActivePreviewFormatId = (id: string) => {
@@ -335,6 +367,9 @@ export function WizardContentWorkspace({
     const [previewZoom, setPreviewZoom] = useState(1);
     const [wizardImageMode, setWizardImageMode] = useState<ImagePromptMode>("generate");
     const [wizardInpaintBusy, setWizardInpaintBusy] = useState(false);
+    const [aiScenariosOpen, setAiScenariosOpen] = useState(false);
+    const [removingBgLayerId, setRemovingBgLayerId] = useState<string | null>(null);
+    const [layerEditError, setLayerEditError] = useState<string | null>(null);
     const [uploadingLayerId, setUploadingLayerId] = useState<string | null>(null);
     const [uploadError, setUploadError] = useState<{ layerId: string; message: string } | null>(null);
     const [previewSize, setPreviewSize] = useState({ width: 820, height: 520 });
@@ -392,6 +427,10 @@ export function WizardContentWorkspace({
 
     const activeLayer = entries.find((entry) => entry.id === activeLayerId) ?? entries[0];
     const activeImageLayer = activeLayer?.type === "image" ? activeLayer : undefined;
+
+    useEffect(() => {
+        setLayerEditError(null);
+    }, [activeLayerId]);
     const assetsQuery = trpc.asset.listByProject.useQuery(
         { projectId: projectId ?? "", sortBy: "createdAt", sortOrder: "desc" },
         { enabled: !!projectId && sidebarTab === "assets", refetchOnWindowFocus: false },
@@ -515,6 +554,106 @@ export function WizardContentWorkspace({
         updateImageValue(activeImageLayer.id, asset.url);
         setSidebarTab("layers");
     };
+
+    const handleRemoveBackgroundForLayer = async (entry: EditableLayerEntry) => {
+        if (!projectId) {
+            setLayerEditError("Не указан проект для AI-правки");
+            return;
+        }
+        const sourceUrl = imageValues[entry.id] ?? String(entry.props.src ?? "");
+        if (!sourceUrl) {
+            setLayerEditError("Сначала загрузите изображение слоя");
+            return;
+        }
+        setLayerEditError(null);
+        setRemovingBgLayerId(entry.id);
+        try {
+            let persisted = await callWizardRemoveBackground(sourceUrl, projectId);
+            try {
+                const registered = await registerUrl({
+                    projectId,
+                    url: persisted,
+                    source: "wizard-remove-bg",
+                });
+                if (registered) persisted = registered;
+            } catch (e) {
+                console.warn("[Wizard] remove-bg register failed", e);
+            }
+            clearLayerGeometry(entry.id);
+            clearOutpaintHistory(entry.id);
+            updateImageValue(entry.id, persisted);
+        } catch (err) {
+            setLayerEditError(parseGenerationError(err));
+        } finally {
+            setRemovingBgLayerId(null);
+        }
+    };
+
+    const handleWizardScenarioResult = useCallback(
+        async (result: WorkflowScenarioRunResult) => {
+            if (!result.imageUrl || !activeImageLayer) return;
+            const behavior = result.scenarioConfig.output.behavior;
+
+            if (behavior === "open-banner") {
+                setLayerEditError("Сценарий «новый баннер» доступен только в студии");
+                return;
+            }
+
+            let persisted = result.imageUrl;
+            if (projectId) {
+                if (!persisted.includes(S3_PERSIST_HOST)) {
+                    persisted = await persistWizardImageUrl(persisted, projectId, 0);
+                }
+                try {
+                    const registered = await registerUrl({
+                        projectId,
+                        url: persisted,
+                        source: "workflow-scenario",
+                    });
+                    if (registered) persisted = registered;
+                } catch (e) {
+                    console.warn("[Wizard] scenario register failed", e);
+                }
+            }
+
+            clearLayerGeometry(activeImageLayer.id);
+            clearOutpaintHistory(activeImageLayer.id);
+            updateImageValue(activeImageLayer.id, persisted);
+        },
+        [
+            activeImageLayer,
+            projectId,
+            registerUrl,
+            clearLayerGeometry,
+            clearOutpaintHistory,
+            updateImageValue,
+        ],
+    );
+
+    const scenarioInputImageUrl = activeImageLayer
+        ? (imageValues[activeImageLayer.id] ?? String(activeImageLayer.props.src ?? ""))
+        : "";
+
+    const openAiScenarios = useCallback(() => {
+        setAiScenariosOpen(true);
+    }, []);
+
+    useEffect(() => {
+        if (!onAiScenariosToolsChange) return;
+        const canOpen = Boolean(
+            currentWorkspace?.id
+            && activeImageLayer
+            && scenarioInputImageUrl,
+        );
+        onAiScenariosToolsChange({ canOpen, onOpen: openAiScenarios });
+        return () => onAiScenariosToolsChange(null);
+    }, [
+        onAiScenariosToolsChange,
+        currentWorkspace?.id,
+        activeImageLayer,
+        scenarioInputImageUrl,
+        openAiScenarios,
+    ]);
 
     const previewContainerWidth = previewFormats.length > 1
         ? Math.max(320, previewSize.width - 80)
@@ -668,6 +807,26 @@ export function WizardContentWorkspace({
                                                 focusX,
                                             })}
                                         />
+                                        {Boolean(imageValues[entry.id] || entry.props.src) && projectId && (
+                                            <button
+                                                type="button"
+                                                disabled={removingBgLayerId === entry.id}
+                                                onClick={() => void handleRemoveBackgroundForLayer(entry)}
+                                                className="flex h-8 w-full items-center justify-center gap-1.5 rounded-[var(--radius-md)] border border-border-primary bg-bg-secondary text-[11px] font-medium text-text-secondary transition-colors hover:bg-bg-tertiary hover:text-text-primary cursor-pointer disabled:opacity-50"
+                                            >
+                                                {removingBgLayerId === entry.id ? (
+                                                    <Loader2 size={12} className="animate-spin" />
+                                                ) : (
+                                                    <Eraser size={12} />
+                                                )}
+                                                {removingBgLayerId === entry.id ? "Удаляю фон..." : "Удалить фон"}
+                                            </button>
+                                        )}
+                                        {layerEditError && entry.id === activeLayerId && (
+                                            <p className="text-[10px] font-medium leading-snug text-text-error">
+                                                {layerEditError}
+                                            </p>
+                                        )}
                                         {outpaintHistory[entry.id] && (
                                             <button
                                                 type="button"
@@ -819,6 +978,24 @@ export function WizardContentWorkspace({
                 </main>
             </div>
         </div>
+
+            <AIScenariosModal
+                open={aiScenariosOpen}
+                onClose={() => setAiScenariosOpen(false)}
+                workspaceId={currentWorkspace?.id}
+                projectId={projectId}
+                surface="banner"
+                input={
+                    activeImageLayer && scenarioInputImageUrl
+                        ? {
+                              kind: "image",
+                              imageUrl: scenarioInputImageUrl,
+                              selectedLayerId: activeImageLayer.id,
+                          }
+                        : undefined
+                }
+                onResult={handleWizardScenarioResult}
+            />
         </InpaintProvider>
     );
 }

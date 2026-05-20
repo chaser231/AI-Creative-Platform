@@ -36,6 +36,9 @@ export interface WizardHeaderState {
     onBack: () => void;
     onNext: () => void;
     onSwitchToStudio: () => void;
+    /** True when a photo layer with an image is selected (content step). */
+    canOpenAiScenarios?: boolean;
+    onOpenAiScenarios?: () => void;
 }
 
 interface WizardFlowProps {
@@ -95,6 +98,10 @@ export function WizardFlow({
     const [packSearch, setPackSearch] = useState("");
     const [activePreviewFormatId, setActivePreviewFormatId] = useState("");
     const [wizardArtboardProps, setWizardArtboardProps] = useState<ArtboardProps>(DEFAULT_ARTBOARD_PROPS);
+    const [aiScenariosTools, setAiScenariosTools] = useState<{
+        canOpen: boolean;
+        onOpen: () => void;
+    } | null>(null);
 
     const setLayerGeometry = useCallback(
         (id: string, override: LayerExpansionOverride) => {
@@ -537,8 +544,11 @@ export function WizardFlow({
             onBack: handleHeaderBack,
             onNext: handleHeaderNext,
             onSwitchToStudio: handleHeaderSwitchToStudio,
+            canOpenAiScenarios: step === "content" && (aiScenariosTools?.canOpen ?? false),
+            onOpenAiScenarios: aiScenariosTools?.onOpen,
         });
     }, [
+        aiScenariosTools,
         handleHeaderBack,
         handleHeaderNext,
         handleHeaderSwitchToStudio,
@@ -822,6 +832,7 @@ export function WizardFlow({
                                 projectBU={projectBU}
                                 projectId={projectId}
                                 onActivePreviewFormatChange={setActivePreviewFormatId}
+                                onAiScenariosToolsChange={setAiScenariosTools}
                             />
                             <WizardExportModal
                                 open={exportOpen}

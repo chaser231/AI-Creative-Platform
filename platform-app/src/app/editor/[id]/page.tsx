@@ -854,6 +854,22 @@ export default function EditorPage({ params }: EditorPageProps) {
                     actions={
                         isWizardMode ? (
                             <div className="flex items-center gap-2">
+                                {wizardHeaderState?.step === "content" && (
+                                    <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        icon={<Workflow size={14} />}
+                                        onClick={wizardHeaderState.onOpenAiScenarios}
+                                        disabled={!wizardHeaderState.canOpenAiScenarios}
+                                        title={
+                                            wizardHeaderState.canOpenAiScenarios
+                                                ? "AI сценарии"
+                                                : "Выберите слой с изображением"
+                                        }
+                                    >
+                                        AI сценарии
+                                    </Button>
+                                )}
                                 <Button
                                     variant="ghost"
                                     size="sm"
