@@ -60,8 +60,11 @@ export function ArtboardBackgroundControls({
         />
     );
 
+    const selectedBackgroundSwatchId = bg?.swatchRef;
+
     const paletteImageButtons = imageBackgrounds.map((swatch) => {
         const value = swatch.value as Extract<BackgroundSwatchValue, { kind: "image" }>;
+        const selected = selectedBackgroundSwatchId === swatch.id;
         return (
             <button
                 key={swatch.id}
@@ -71,7 +74,12 @@ export function ArtboardBackgroundControls({
                     setBgPopoverOpen(false);
                 }}
                 title={swatch.name}
-                className="relative aspect-square overflow-hidden rounded-[var(--radius-sm)] border border-border-primary hover:border-accent-primary cursor-pointer"
+                aria-pressed={selected}
+                className={`relative aspect-square overflow-hidden rounded-[var(--radius-sm)] border cursor-pointer transition-colors ${
+                    selected
+                        ? "border-accent-primary ring-2 ring-accent-primary/40"
+                        : "border-border-primary hover:border-accent-primary"
+                }`}
             >
                 <img
                     src={value.src}
@@ -186,13 +194,19 @@ function SidebarLayout({
                     </button>
                     {imageBackgrounds.length > 0 && onApplyBackgroundSwatch && (
                         <div className="space-y-1.5">
-                            <p className="text-[10px] font-medium text-text-tertiary">Из палитры</p>
+                            <p className="text-[10px] font-medium text-text-tertiary">Палитра фонов</p>
                             <div className="grid grid-cols-4 gap-1.5">{paletteImageButtons}</div>
                         </div>
                     )}
                 </>
             ) : (
-                <SidebarActiveBackground bg={bg} onUpdate={onUpdate} />
+                <SidebarActiveBackground
+                    bg={bg}
+                    onUpdate={onUpdate}
+                    imageBackgrounds={imageBackgrounds}
+                    paletteImageButtons={paletteImageButtons}
+                    onApplyBackgroundSwatch={onApplyBackgroundSwatch}
+                />
             )}
         </div>
     );
@@ -201,9 +215,15 @@ function SidebarLayout({
 function SidebarActiveBackground({
     bg,
     onUpdate,
+    imageBackgrounds,
+    paletteImageButtons,
+    onApplyBackgroundSwatch,
 }: {
     bg: NonNullable<ArtboardProps["backgroundImage"]>;
     onUpdate: (updates: Partial<ArtboardProps>) => void;
+    imageBackgrounds: Swatch[];
+    paletteImageButtons: ReactNode;
+    onApplyBackgroundSwatch?: (swatchId: string) => void;
 }) {
     return (
         <div className="space-y-2">
@@ -213,6 +233,12 @@ function SidebarActiveBackground({
             />
             <BackgroundFitSelect bg={bg} onUpdate={onUpdate} />
             <BackgroundOpacitySlider bg={bg} onUpdate={onUpdate} wide />
+            {imageBackgrounds.length > 0 && onApplyBackgroundSwatch && (
+                <div className="space-y-1.5">
+                    <p className="text-[10px] font-medium text-text-tertiary">Палитра фонов</p>
+                    <div className="grid grid-cols-4 gap-1.5">{paletteImageButtons}</div>
+                </div>
+            )}
             <button
                 type="button"
                 onClick={() => onUpdate({ backgroundImage: undefined })}
