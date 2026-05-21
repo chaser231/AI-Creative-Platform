@@ -1059,6 +1059,19 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
             return;
         }
 
+        // Konva `dragstart` bubbles. The frame Group's onDragStart receives
+        // bubbled events from any draggable descendant — including
+        // Konva.Transformer anchor handles which have no id. Without this
+        // guard, `resolveKonvaLayerId` would walk up to the frame Group and
+        // we'd register the frame in `dragStartLocs`, making the frame ride
+        // along with anchor `dragmove` events (visible as the parent frame
+        // following the child during resize). Real layer drags always start
+        // on a CanvasLayer Group whose id is set; if it's empty, this is a
+        // bubbled event from a non-layer node and we must ignore it.
+        if (!e.target.id()) {
+            return;
+        }
+
         setStageDraggable(false);
         isDragging.current = true;
         setHoveredLayerId(null); // Clear hover during drag
@@ -1268,74 +1281,81 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
     }, [layers, selectedLayerIds, setHighlightedFrameId, canvasWidth, canvasHeight, updateFrameHoverHighlight]);
 
     const handleLayerDragEnd = useCallback((e: Konva.KonvaEventObject<DragEvent>) => {
+        const id = resolveKonvaLayerId(e.target);
+        const startLoc = dragStartLocs.current[id];
+        const stage = e.target.getStage();
+
+        // Konva `dragend` bubbles up the parent chain. When a child layer is
+        // dragged inside a frame, the frame Group's onDragEnd ALSO receives
+        // bubbled `dragend` events from its own descendants — including
+        // Konva.Transformer anchor handles, which have no id. Without this
+        // guard, `resolveKonvaLayerId` would walk up to the frame Group and
+        // we'd `updateLayer(frame.id, { x, y })` with the rogue node's
+        // absolute position, dragging the frame along visually. We never
+        // started a drag for that id (no startLoc), so the only safe action
+        // is to ignore the bubbled tail event entirely — the primary
+        // dragend already cleaned up state for the layer that really moved.
+        if (!startLoc || !stage) {
+            return;
+        }
+
         setSnapLines([]);
         setDistanceMeasurements([]);
         setSpacingGuides([]);
         setStageDraggable(true);
         isDragging.current = false;
-        const id = resolveKonvaLayerId(e.target);
-        const startLoc = dragStartLocs.current[id];
-        const stage = e.target.getStage();
 
-        if (startLoc && stage) {
-            // Scene Coordinates
-            const absPos = e.target.getAbsolutePosition();
-            const currentSceneX = (absPos.x - stage.x()) / stage.scaleX();
-            const currentSceneY = (absPos.y - stage.y()) / stage.scaleY();
+        // Scene Coordinates
+        const absPos = e.target.getAbsolutePosition();
+        const currentSceneX = (absPos.x - stage.x()) / stage.scaleX();
+        const currentSceneY = (absPos.y - stage.y()) / stage.scaleY();
 
-            const dx = currentSceneX - startLoc.x;
-            const dy = currentSceneY - startLoc.y;
+        const dx = currentSceneX - startLoc.x;
+        const dy = currentSceneY - startLoc.y;
 
-            Object.keys(dragStartLocs.current).forEach(sid => {
-                const sLoc = dragStartLocs.current[sid];
-                if (sid === id) {
-                    updateLayer(sid, { x: currentSceneX, y: currentSceneY });
-                } else {
-                    updateLayer(sid, { x: sLoc.x + dx, y: sLoc.y + dy });
-                }
-            });
+        Object.keys(dragStartLocs.current).forEach(sid => {
+            const sLoc = dragStartLocs.current[sid];
+            if (sid === id) {
+                updateLayer(sid, { x: currentSceneX, y: currentSceneY });
+            } else {
+                updateLayer(sid, { x: sLoc.x + dx, y: sLoc.y + dy });
+            }
+        });
 
-            if (Object.keys(dragStartLocs.current).length === 1) {
-                const sceneWidth = e.target.width() * e.target.scaleX();
-                const sceneHeight = e.target.height() * e.target.scaleY();
-                const centerX = currentSceneX + sceneWidth / 2;
-                const centerY = currentSceneY + sceneHeight / 2;
-                const frame = updateFrameHoverHighlight(stage, id);
-                if (frame) {
-                    if (frame.layoutMode && frame.layoutMode !== "none") {
-                        const siblings = frame.childIds.filter(cId => cId !== id).map(cId => layers.find(l => l.id === cId)).filter(Boolean) as LayerType[];
-                        let dropIndex = siblings.length;
-                        for (let i = 0; i < siblings.length; i++) {
-                            const sib = siblings[i];
-                            if (frame.layoutMode === "horizontal") {
-                                if (centerX < sib.x + sib.width / 2) {
-                                    dropIndex = i;
-                                    break;
-                                }
-                            } else {
-                                if (centerY < sib.y + sib.height / 2) {
-                                    dropIndex = i;
-                                    break;
-                                }
+        if (Object.keys(dragStartLocs.current).length === 1) {
+            const sceneWidth = e.target.width() * e.target.scaleX();
+            const sceneHeight = e.target.height() * e.target.scaleY();
+            const centerX = currentSceneX + sceneWidth / 2;
+            const centerY = currentSceneY + sceneHeight / 2;
+            const frame = updateFrameHoverHighlight(stage, id);
+            if (frame) {
+                if (frame.layoutMode && frame.layoutMode !== "none") {
+                    const siblings = frame.childIds.filter(cId => cId !== id).map(cId => layers.find(l => l.id === cId)).filter(Boolean) as LayerType[];
+                    let dropIndex = siblings.length;
+                    for (let i = 0; i < siblings.length; i++) {
+                        const sib = siblings[i];
+                        if (frame.layoutMode === "horizontal") {
+                            if (centerX < sib.x + sib.width / 2) {
+                                dropIndex = i;
+                                break;
+                            }
+                        } else {
+                            if (centerY < sib.y + sib.height / 2) {
+                                dropIndex = i;
+                                break;
                             }
                         }
-                        moveLayerToFrame(id, frame.id, dropIndex);
-                    } else {
-                        moveLayerToFrame(id, frame.id);
                     }
+                    moveLayerToFrame(id, frame.id, dropIndex);
                 } else {
-                    // Dropped completely outside of any frame
-                    removeLayerFromFrame(id);
+                    moveLayerToFrame(id, frame.id);
                 }
-                frameHoverCandidate.current = { frameId: null, since: 0 };
-                setHighlightedFrameId(null);
+            } else {
+                // Dropped completely outside of any frame
+                removeLayerFromFrame(id);
             }
-        } else if (stage) {
-            // Fallback
-            const absPos = e.target.getAbsolutePosition();
-            const currentSceneX = (absPos.x - stage.x()) / stage.scaleX();
-            const currentSceneY = (absPos.y - stage.y()) / stage.scaleY();
-            updateLayer(id, { x: currentSceneX, y: currentSceneY });
+            frameHoverCandidate.current = { frameId: null, since: 0 };
+            setHighlightedFrameId(null);
         }
 
         dragStartLocs.current = {};
