@@ -15,6 +15,7 @@ import { RemoteTextProvider, RemoteImageProvider } from "@/services/aiService";
 import { getModelById, getMaxRefs, getMaxOutputs, getAspectRatios, getResolutions, getDefaultResolution, resolveRefTags, getLoraSpec, getModelsForCaps } from "@/lib/ai-models";
 import { InpaintActionBar, type InpaintAction } from "@/components/inpaint/InpaintActionBar";
 import { useOptionalSharedInpaintMask } from "@/components/inpaint/InpaintContext";
+import { useCanvasEditMode } from "@/hooks/useCanvasEditMode";
 import { DEFAULT_INPAINT_MODEL, PREFERRED_INPAINT_MODELS } from "@/lib/inpaintPrompts";
 import type { LoraWeight } from "@/lib/ai-providers";
 import { getImagePresetPromptSuffixForModel, getTextPresetInstruction } from "@/lib/stylePresets";
@@ -88,7 +89,7 @@ const OUTPAINT_RATIOS = [
 
 // Aspect ratios and resolutions are now dynamic per model — see ai-models.ts
 
-interface AIPromptBarProps {
+export interface AIPromptBarProps {
     open: boolean;
     onClose: () => void;
     onToggleChat: () => void;
@@ -181,7 +182,10 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
     const inpaintMode = useCanvasStore((s) => s.inpaintMode);
     const setInpaintMode = useCanvasStore((s) => s.setInpaintMode);
     const resetInpaintMode = useCanvasStore((s) => s.resetInpaintMode);
+    const expandTargetLayerId = useCanvasStore((s) => s.expandTargetLayerId);
+    const inpaintTargetLayerId = useCanvasStore((s) => s.inpaintTargetLayerId);
     const inpaintMask = useOptionalSharedInpaintMask();
+    const { exitCanvasEditMode } = useCanvasEditMode();
     const [activeTab, setActiveTab] = useState<"text" | "image" | "edit">("text");
     const [prompt, setPrompt] = useState("");
     const [selectedModel, setSelectedModel] = useState(TEXT_MODELS[0].id);
@@ -231,6 +235,28 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
         ? layers.find(l => l.id === selectedLayerIds[0] && l.type === "image") as ImageLayer | undefined
         : undefined;
 
+    const expandTargetLayer = expandTargetLayerId
+        ? layers.find((l) => l.id === expandTargetLayerId && l.type === "image") as ImageLayer | undefined
+        : undefined;
+
+    const inpaintTargetLayer = inpaintTargetLayerId
+        ? layers.find((l) => l.id === inpaintTargetLayerId && l.type === "image") as ImageLayer | undefined
+        : undefined;
+
+    // Keep local editAction in sync when store modes exit via selection change,
+    // prompt bar close, etc.
+    useEffect(() => {
+        if (!expandMode && editAction === "expand") {
+            setEditAction(null);
+        }
+    }, [expandMode, editAction]);
+
+    useEffect(() => {
+        if (!inpaintMode && editAction === "inpaint") {
+            setEditAction(null);
+        }
+    }, [inpaintMode, editAction]);
+
     // Reset model on tab change
     const handleTabChange = (tab: "text" | "image" | "edit") => {
         setActiveTab(tab);
@@ -250,12 +276,9 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
             setEditAction(null);
             setEditError(null);
         }
-        // Always reset expand mode when switching tabs
-        if (tab !== "edit") resetExpandMode();
-        // Same for inpaint — exclusive canvas mode shouldn't leak across tabs.
+        // Always reset exclusive canvas edit modes when leaving the edit tab.
         if (tab !== "edit") {
-            resetInpaintMode();
-            inpaintMask?.clear();
+            exitCanvasEditMode();
         }
     };
 
@@ -408,10 +431,11 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
 
     // ── Apply edited image to the selected layer on canvas ──
     const applyEditedImageToLayer = useCallback(async (
+        layer: ImageLayer,
         editedSrc: string,
         opts?: { action?: string; padding?: { top: number; right: number; bottom: number; left: number } },
     ) => {
-        if (!selectedImageLayer) return;
+        if (!layer) return;
 
         // Persist to S3
         let persistedSrc = editedSrc;
@@ -426,12 +450,12 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
         // ── Outpaint: use expand padding for sizing (not pixel ratio) ──
         if (opts?.action === "outpaint" && opts.padding) {
             const pad = opts.padding;
-            const newWidth = selectedImageLayer.width + pad.left + pad.right;
-            const newHeight = selectedImageLayer.height + pad.top + pad.bottom;
-            const newX = selectedImageLayer.x - pad.left;
-            const newY = selectedImageLayer.y - pad.top;
+            const newWidth = layer.width + pad.left + pad.right;
+            const newHeight = layer.height + pad.top + pad.bottom;
+            const newX = layer.x - pad.left;
+            const newY = layer.y - pad.top;
 
-            updateLayer(selectedImageLayer.id, {
+            updateLayer(layer.id, {
                 src: persistedSrc,
                 width: newWidth,
                 height: newHeight,
@@ -441,16 +465,16 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
             return;
         }
 
-        // ── Generic edit: only replace src, preserve layer geometry ──
-        // The edited image fills the same canvas space via objectFit;
-        // changing width/height/x/y would break positioning and cascade.
-        updateLayer(selectedImageLayer.id, { src: persistedSrc } as any);
-    }, [selectedImageLayer, projectId, updateLayer]);
+        updateLayer(layer.id, { src: persistedSrc } as any);
+    }, [projectId, updateLayer]);
 
     // ── Image edit API call (shared by all edit actions) ──
     const callImageEdit = useCallback(async (action: string, editPrompt?: string) => {
-        if (!selectedImageLayer || !projectId) return;
-        const layerId = selectedImageLayer.id;
+        const targetLayer = action === "outpaint"
+            ? expandTargetLayer
+            : (inpaintTargetLayer ?? selectedImageLayer);
+        if (!targetLayer || !projectId) return;
+        const layerId = targetLayer.id;
         const batchId = `edit-${Date.now()}`;
         const promptLabel = truncatePromptLabel(editPrompt || action);
         appendLoadingVariants(layerId, 1, promptLabel, batchId);
@@ -482,9 +506,9 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                 // the first stage label lands.
                 setOutpaintProgress({ label: "Подготавливаем изображение", percent: 5 });
                 const outpaintResult = await outpaintImage({
-                    imageSrc: selectedImageLayer.src,
+                    imageSrc: targetLayer.src,
                     canvasPadding: currentExpandPadding,
-                    layerSize: { width: selectedImageLayer.width, height: selectedImageLayer.height },
+                    layerSize: { width: targetLayer.width, height: targetLayer.height },
                     prompt: resolvedPrompt,
                     projectId,
                     model: getOutpaintModel(),
@@ -498,17 +522,18 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                     },
                 });
 
-                await applyEditedImageToLayer(outpaintResult.src, {
+                await applyEditedImageToLayer(targetLayer, outpaintResult.src, {
                     action: "outpaint",
                     padding: currentExpandPadding,
                 });
                 resetExpandMode();
+                setEditAction(null);
 
                 if (projectId) {
                     try {
                         const storeLayer = useCanvasStore
                             .getState()
-                            .layers.find((l) => l.id === selectedImageLayer.id) as ImageLayer | undefined;
+                            .layers.find((l) => l.id === targetLayer.id) as ImageLayer | undefined;
                         let persistedUrl = storeLayer?.src ?? outpaintResult.src;
                         if (!persistedUrl.startsWith("https://storage.yandexcloud.net")) {
                             persistedUrl = await persistImageToS3(persistedUrl, projectId);
@@ -548,7 +573,7 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                 return;
             }
 
-            let finalImageBase64 = selectedImageLayer.src;
+            let finalImageBase64 = targetLayer.src;
             let editDownscaleRatio = 1;
 
             try {
@@ -557,7 +582,7 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                 await new Promise<void>((resolve, reject) => {
                     img.onload = () => resolve();
                     img.onerror = reject;
-                    img.src = selectedImageLayer.src;
+                    img.src = targetLayer.src;
                 });
 
                 let realW = img.naturalWidth;
@@ -644,7 +669,7 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                     }
                 }
 
-                await applyEditedImageToLayer(finalContent);
+                await applyEditedImageToLayer(targetLayer, finalContent);
 
                 // ── Persist as workspace asset so the result shows up in the library ──
                 // applyEditedImageToLayer already uploaded the content to S3 and called
@@ -654,7 +679,7 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                     try {
                         const storeLayer = useCanvasStore
                             .getState()
-                            .layers.find((l) => l.id === selectedImageLayer.id) as ImageLayer | undefined;
+                            .layers.find((l) => l.id === targetLayer.id) as ImageLayer | undefined;
                         let persistedUrl = storeLayer?.src ?? finalContent;
                         if (!persistedUrl.startsWith("https://storage.yandexcloud.net")) {
                             persistedUrl = await persistImageToS3(persistedUrl, projectId);
@@ -696,6 +721,10 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
             const error = e as Error;
             console.error(`Image edit (${action}) failed:`, error);
             setEditError(parseGenerationError(error));
+            if (action === "outpaint") {
+                resetExpandMode();
+                setEditAction(null);
+            }
             resolveBatchVariants(layerId, batchId, [], promptLabel, "error");
             throw error;
         } finally {
@@ -703,7 +732,7 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
         }
             },
         );
-    }, [selectedImageLayer, selectedModel, scale, imageStyleId, imagePresets, referenceImages, expandPadding, projectId, applyEditedImageToLayer, onResult, resetExpandMode, saveGeneratedAssetMutation, trpcUtils, loraRequestFields, appendLoadingVariants, enqueueJob, resolveBatchVariants]);
+    }, [selectedImageLayer, expandTargetLayer, inpaintTargetLayer, selectedModel, scale, imageStyleId, imagePresets, referenceImages, expandPadding, projectId, applyEditedImageToLayer, onResult, resetExpandMode, saveGeneratedAssetMutation, trpcUtils, loraRequestFields, appendLoadingVariants, enqueueJob, resolveBatchVariants]);
 
     // ── Edit tab handlers ──
     const handleRemoveBg = () => callImageEdit("remove-bg");
@@ -716,7 +745,8 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
     // intent="edit"   → uses the user prompt + per-model style suffix
     // intent="remove" → uses the fixed object-removal instruction (server)
     const handleInpaintApply = useCallback(async (intent: InpaintAction) => {
-        if (!selectedImageLayer || !projectId) {
+        const targetLayer = inpaintTargetLayer ?? selectedImageLayer;
+        if (!targetLayer || !projectId) {
             setEditError("Выберите слой-картинку на канвасе.");
             return;
         }
@@ -727,15 +757,15 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
 
         // Load the source image to learn its natural pixel dimensions —
         // needed for the UV projection in exportMaskBlob.
-        let naturalWidth = selectedImageLayer.width;
-        let naturalHeight = selectedImageLayer.height;
+        let naturalWidth = targetLayer.width;
+        let naturalHeight = targetLayer.height;
         try {
             const img = new window.Image();
             img.crossOrigin = "anonymous";
             await new Promise<void>((resolve, reject) => {
                 img.onload = () => resolve();
                 img.onerror = reject;
-                img.src = selectedImageLayer.src;
+                img.src = targetLayer.src;
             });
             naturalWidth = img.naturalWidth;
             naturalHeight = img.naturalHeight;
@@ -749,10 +779,10 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
             {
                 naturalWidth,
                 naturalHeight,
-                layerWidth: selectedImageLayer.width,
-                layerHeight: selectedImageLayer.height,
-                objectFit: selectedImageLayer.objectFit,
-                viewIntent: { focusX: selectedImageLayer.focusX, focusY: selectedImageLayer.focusY },
+                layerWidth: targetLayer.width,
+                layerHeight: targetLayer.height,
+                objectFit: targetLayer.objectFit,
+                viewIntent: { focusX: targetLayer.focusX, focusY: targetLayer.focusY },
                 zoom,
             },
             modelEntry?.slug,
@@ -763,7 +793,7 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
         }
 
         const batchId = `inpaint-${Date.now()}`;
-        const layerId = selectedImageLayer.id;
+        const layerId = targetLayer.id;
         const editPrompt = intent === "edit" ? prompt : "";
         const promptLabel = truncatePromptLabel(
             intent === "edit"
@@ -790,7 +820,7 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                     const maskFile = new File([blob], "inpaint-mask.png", { type: "image/png" });
                     const maskBase64 = await blobToDataUrl(maskFile);
                     const [imageUrl, maskUrl] = await Promise.all([
-                        uploadForAI(selectedImageLayer.src, projectId),
+                        uploadForAI(targetLayer.src, projectId),
                         uploadForAI(maskBase64, projectId),
                     ]);
 
@@ -825,7 +855,7 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                         throw new Error("Сервер вернул пустой результат inpaint");
                     }
 
-                    await applyEditedImageToLayer(data.content);
+                    await applyEditedImageToLayer(targetLayer, data.content);
 
                     // Persist to library so the inpainted result shows up in the
                     // workspace asset library (same as text-edit/inpaint paths).
@@ -1302,8 +1332,7 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                             onAction={(action) => void handleInpaintApply(action)}
                             onCancel={() => {
                                 setEditAction(null);
-                                resetInpaintMode();
-                                inpaintMask.clear();
+                                exitCanvasEditMode();
                             }}
                         />
                     </div>
@@ -1348,6 +1377,7 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                                         if (editAction === "remove-bg") {
                                             setEditAction(null);
                                         } else {
+                                            exitCanvasEditMode();
                                             setEditAction("remove-bg");
                                             handleRemoveBg();
                                         }
@@ -1360,24 +1390,14 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                                     disabled={!selectedImageLayer}
                                     onClick={() => {
                                         if (editAction === "inpaint") {
-                                            // Toggle OFF: drop the overlay,
-                                            // clear strokes, switch back to
-                                            // the previous selected model
-                                            // (model picker selection is
-                                            // preserved across toggle).
                                             setEditAction(null);
                                             resetInpaintMode();
                                             inpaintMask?.clear();
                                         } else {
-                                            // Turning ON requires a selected
-                                            // image layer (slice guards this
-                                            // too, but the UI hint is nicer).
                                             if (!selectedImageLayer) return;
+                                            resetExpandMode();
                                             setEditAction("inpaint");
                                             setInpaintMode(true);
-                                            // Force the picker to a model that
-                                            // can actually inpaint — flux-fill
-                                            // is the most reliable default.
                                             const entry = getModelById(selectedModel);
                                             if (!entry?.caps.includes("inpaint")) {
                                                 setSelectedModel(DEFAULT_INPAINT_MODEL);
@@ -1395,6 +1415,9 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                                             setEditAction(null);
                                             resetExpandMode();
                                         } else {
+                                            if (!selectedImageLayer) return;
+                                            resetInpaintMode();
+                                            inpaintMask?.clear();
                                             setEditAction("expand");
                                             setExpandMode(true);
                                         }

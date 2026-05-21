@@ -5,6 +5,7 @@
 import type { StateCreator } from "zustand";
 import type { CanvasStore, Layer } from "./types";
 import { DEFAULT_RESIZE, DEFAULT_ARTBOARD_PROPS, DEFAULT_PALETTE } from "./types";
+import { getFullEditModeExitPatches } from "./editModeHelpers";
 import { v4 as uuid } from "uuid";
 
 export type TemplateSlice = Pick<CanvasStore,
@@ -29,6 +30,7 @@ export const createTemplateSlice: StateCreator<CanvasStore, [], [], TemplateSlic
             artboardProps: { ...DEFAULT_ARTBOARD_PROPS },
             highlightedFrameId: null,
             palette: { ...DEFAULT_PALETTE, colors: [], backgrounds: [] },
+            ...getFullEditModeExitPatches(),
         });
     },
 

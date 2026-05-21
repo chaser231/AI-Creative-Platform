@@ -2,31 +2,44 @@
 
 /**
  * ExpandOverlay — Konva overlay for free-form outpainting (Generative Expand)
- *
- * Renders on top of the selected image layer when expandMode is active:
- * - Semi-transparent blue overlay on expanded areas
- * - Dashed border around the new (expanded) bounding box
- * - 8 draggable handles (4 edges + 4 corners) to adjust per-side padding
- * - Live dimension label (e.g. "800 × 600") showing expanded size
- *
- * All coordinates are in canvas (stage) space; the overlay reads
- * the target layer's position from canvasStore.
  */
 
-import { useRef, useCallback } from "react";
-import { Group, Rect, Line, Text, Circle } from "react-konva";
+import { useCallback, useMemo } from "react";
+import { Group, Rect, Text, Circle } from "react-konva";
 import Konva from "konva";
 import { useCanvasStore } from "@/store/canvasStore";
+import {
+    EXPAND_MAX_PADDING,
+    computeTopPadding,
+    computeBottomPadding,
+    computeLeftPadding,
+    computeRightPadding,
+    expandHandleDragBound,
+} from "@/utils/expandOverlayMath";
 
-// ── Constants ──────────────────────────────────────────────
+const EXPAND_CONTROL_NAME = "expand-control";
+
+function stopExpandPointerEvent(e: Konva.KonvaEventObject<MouseEvent | DragEvent>) {
+    e.cancelBubble = true;
+}
+
+function resetExpandHandleCursor(e: Konva.KonvaEventObject<MouseEvent | DragEvent>) {
+    const container = e.target.getStage()?.container() as HTMLElement | undefined;
+    if (container) container.style.cursor = "default";
+}
+
+function setExpandHandleCursor(e: Konva.KonvaEventObject<MouseEvent>, cursor: string) {
+    const container = e.target.getStage()?.container() as HTMLElement | undefined;
+    if (container) container.style.cursor = cursor;
+}
 const HANDLE_RADIUS = 5;
+const HANDLE_HIT_WIDTH = 24;
 const HANDLE_FILL = "#FFFFFF";
 const HANDLE_STROKE = "#6366F1";
 const HANDLE_STROKE_WIDTH = 1.5;
-const OVERLAY_FILL = "rgba(99, 102, 241, 0.12)";     // semi-transparent indigo
+const OVERLAY_FILL = "rgba(99, 102, 241, 0.12)";
 const DASH_STROKE = "#6366F1";
 const DASH_PATTERN = [6, 4];
-const MAX_PADDING = 2000; // per-side pixel limit
 
 interface ExpandOverlayProps {
     layerId: string;
@@ -37,38 +50,37 @@ export function ExpandOverlay({ layerId }: ExpandOverlayProps) {
     const expandPadding = useCanvasStore((s) => s.expandPadding);
     const setExpandPadding = useCanvasStore((s) => s.setExpandPadding);
     const zoom = useCanvasStore((s) => s.zoom);
+    const canvasWidth = useCanvasStore((s) => s.canvasWidth);
+    const canvasHeight = useCanvasStore((s) => s.canvasHeight);
 
     const layer = layers.find((l) => l.id === layerId);
 
-    // Use safe fallback values so hooks below always run (React Rules of Hooks)
     const origX = layer?.x ?? 0;
     const origY = layer?.y ?? 0;
     const origW = layer?.width ?? 0;
     const origH = layer?.height ?? 0;
 
-    // Expanded bounds (outward from original)
     const { top, right, bottom, left } = expandPadding;
     const expX = origX - left;
     const expY = origY - top;
     const expW = origW + left + right;
     const expH = origH + top + bottom;
 
-    // Handle size scales inversely with zoom for consistent screen-space appearance
     const hr = HANDLE_RADIUS / zoom;
     const hsw = HANDLE_STROKE_WIDTH / zoom;
+    const hitWidth = HANDLE_HIT_WIDTH / zoom;
 
-    // Clamp helper
-    const clamp = (v: number, min: number, max: number) =>
-        Math.max(min, Math.min(max, v));
-
-    // ── Edge drag handlers ─────────────────────────────────
-    // Each handler captures the drag delta and applies it to the corresponding padding side
+    const dragBoundFunc = useMemo(
+        () => (pos: { x: number; y: number }) =>
+            expandHandleDragBound(pos, canvasWidth, canvasHeight, EXPAND_MAX_PADDING),
+        [canvasWidth, canvasHeight],
+    );
 
     const onDragTop = useCallback(
         (e: Konva.KonvaEventObject<DragEvent>) => {
             const node = e.target as Konva.Circle;
-            const newTop = clamp(origY - node.y(), 0, MAX_PADDING);
-            setExpandPadding({ top: Math.round(newTop) });
+            const newTop = computeTopPadding(origY, node.y());
+            setExpandPadding({ top: newTop });
             node.y(origY - newTop);
             node.x(origX + origW / 2);
         },
@@ -78,8 +90,8 @@ export function ExpandOverlay({ layerId }: ExpandOverlayProps) {
     const onDragBottom = useCallback(
         (e: Konva.KonvaEventObject<DragEvent>) => {
             const node = e.target as Konva.Circle;
-            const newBottom = clamp(node.y() - (origY + origH), 0, MAX_PADDING);
-            setExpandPadding({ bottom: Math.round(newBottom) });
+            const newBottom = computeBottomPadding(origY, origH, node.y());
+            setExpandPadding({ bottom: newBottom });
             node.y(origY + origH + newBottom);
             node.x(origX + origW / 2);
         },
@@ -89,8 +101,8 @@ export function ExpandOverlay({ layerId }: ExpandOverlayProps) {
     const onDragLeft = useCallback(
         (e: Konva.KonvaEventObject<DragEvent>) => {
             const node = e.target as Konva.Circle;
-            const newLeft = clamp(origX - node.x(), 0, MAX_PADDING);
-            setExpandPadding({ left: Math.round(newLeft) });
+            const newLeft = computeLeftPadding(origX, node.x());
+            setExpandPadding({ left: newLeft });
             node.x(origX - newLeft);
             node.y(origY + origH / 2);
         },
@@ -100,21 +112,20 @@ export function ExpandOverlay({ layerId }: ExpandOverlayProps) {
     const onDragRight = useCallback(
         (e: Konva.KonvaEventObject<DragEvent>) => {
             const node = e.target as Konva.Circle;
-            const newRight = clamp(node.x() - (origX + origW), 0, MAX_PADDING);
-            setExpandPadding({ right: Math.round(newRight) });
+            const newRight = computeRightPadding(origX, origW, node.x());
+            setExpandPadding({ right: newRight });
             node.x(origX + origW + newRight);
             node.y(origY + origH / 2);
         },
         [origX, origW, origY, origH, setExpandPadding],
     );
 
-    // ── Corner drag handlers ──────────────────────────────
     const onDragTopLeft = useCallback(
         (e: Konva.KonvaEventObject<DragEvent>) => {
             const node = e.target as Konva.Circle;
-            const newTop = clamp(origY - node.y(), 0, MAX_PADDING);
-            const newLeft = clamp(origX - node.x(), 0, MAX_PADDING);
-            setExpandPadding({ top: Math.round(newTop), left: Math.round(newLeft) });
+            const newTop = computeTopPadding(origY, node.y());
+            const newLeft = computeLeftPadding(origX, node.x());
+            setExpandPadding({ top: newTop, left: newLeft });
             node.x(origX - newLeft);
             node.y(origY - newTop);
         },
@@ -124,9 +135,9 @@ export function ExpandOverlay({ layerId }: ExpandOverlayProps) {
     const onDragTopRight = useCallback(
         (e: Konva.KonvaEventObject<DragEvent>) => {
             const node = e.target as Konva.Circle;
-            const newTop = clamp(origY - node.y(), 0, MAX_PADDING);
-            const newRight = clamp(node.x() - (origX + origW), 0, MAX_PADDING);
-            setExpandPadding({ top: Math.round(newTop), right: Math.round(newRight) });
+            const newTop = computeTopPadding(origY, node.y());
+            const newRight = computeRightPadding(origX, origW, node.x());
+            setExpandPadding({ top: newTop, right: newRight });
             node.x(origX + origW + newRight);
             node.y(origY - newTop);
         },
@@ -136,9 +147,9 @@ export function ExpandOverlay({ layerId }: ExpandOverlayProps) {
     const onDragBottomLeft = useCallback(
         (e: Konva.KonvaEventObject<DragEvent>) => {
             const node = e.target as Konva.Circle;
-            const newBottom = clamp(node.y() - (origY + origH), 0, MAX_PADDING);
-            const newLeft = clamp(origX - node.x(), 0, MAX_PADDING);
-            setExpandPadding({ bottom: Math.round(newBottom), left: Math.round(newLeft) });
+            const newBottom = computeBottomPadding(origY, origH, node.y());
+            const newLeft = computeLeftPadding(origX, node.x());
+            setExpandPadding({ bottom: newBottom, left: newLeft });
             node.x(origX - newLeft);
             node.y(origY + origH + newBottom);
         },
@@ -148,42 +159,49 @@ export function ExpandOverlay({ layerId }: ExpandOverlayProps) {
     const onDragBottomRight = useCallback(
         (e: Konva.KonvaEventObject<DragEvent>) => {
             const node = e.target as Konva.Circle;
-            const newBottom = clamp(node.y() - (origY + origH), 0, MAX_PADDING);
-            const newRight = clamp(node.x() - (origX + origW), 0, MAX_PADDING);
-            setExpandPadding({ bottom: Math.round(newBottom), right: Math.round(newRight) });
+            const newBottom = computeBottomPadding(origY, origH, node.y());
+            const newRight = computeRightPadding(origX, origW, node.x());
+            setExpandPadding({ bottom: newBottom, right: newRight });
             node.x(origX + origW + newRight);
             node.y(origY + origH + newBottom);
         },
         [origX, origW, origY, origH, setExpandPadding],
     );
 
+    const handleCommonProps = {
+        radius: hr,
+        fill: HANDLE_FILL,
+        stroke: HANDLE_STROKE,
+        strokeWidth: hsw,
+        draggable: true,
+        dragBoundFunc,
+        hitStrokeWidth: hitWidth,
+        name: EXPAND_CONTROL_NAME,
+        onMouseDown: stopExpandPointerEvent,
+        onDragStart: stopExpandPointerEvent,
+        onDragEnd: resetExpandHandleCursor,
+    };
+
     const hasPadding = top > 0 || right > 0 || bottom > 0 || left > 0;
     const labelFontSize = Math.max(11, 12 / zoom);
 
-    // ── Early return AFTER all hooks (React Rules of Hooks) ──
     if (!layer || layer.type !== "image") return null;
 
     return (
-        <Group listening={true}>
-            {/* ── Semi-transparent overlay on expanded areas ── */}
-            {/* Top strip */}
+        <Group listening={true} name={EXPAND_CONTROL_NAME}>
             {top > 0 && (
-                <Rect x={expX} y={expY} width={expW} height={top} fill={OVERLAY_FILL} />
+                <Rect x={expX} y={expY} width={expW} height={top} fill={OVERLAY_FILL} listening={false} />
             )}
-            {/* Bottom strip */}
             {bottom > 0 && (
-                <Rect x={expX} y={origY + origH} width={expW} height={bottom} fill={OVERLAY_FILL} />
+                <Rect x={expX} y={origY + origH} width={expW} height={bottom} fill={OVERLAY_FILL} listening={false} />
             )}
-            {/* Left strip (between top and bottom) */}
             {left > 0 && (
-                <Rect x={expX} y={origY} width={left} height={origH} fill={OVERLAY_FILL} />
+                <Rect x={expX} y={origY} width={left} height={origH} fill={OVERLAY_FILL} listening={false} />
             )}
-            {/* Right strip (between top and bottom) */}
             {right > 0 && (
-                <Rect x={origX + origW} y={origY} width={right} height={origH} fill={OVERLAY_FILL} />
+                <Rect x={origX + origW} y={origY} width={right} height={origH} fill={OVERLAY_FILL} listening={false} />
             )}
 
-            {/* ── Original layer border (solid) ── */}
             <Rect
                 x={origX}
                 y={origY}
@@ -192,9 +210,9 @@ export function ExpandOverlay({ layerId }: ExpandOverlayProps) {
                 stroke="#6366F1"
                 strokeWidth={1.5 / zoom}
                 fill="transparent"
+                listening={false}
             />
 
-            {/* ── Expanded border (dashed) ── */}
             {hasPadding && (
                 <Rect
                     x={expX}
@@ -205,12 +223,12 @@ export function ExpandOverlay({ layerId }: ExpandOverlayProps) {
                     strokeWidth={1.5 / zoom}
                     dash={DASH_PATTERN.map((d) => d / zoom)}
                     fill="transparent"
+                    listening={false}
                 />
             )}
 
-            {/* ── Dimension label ── */}
             {hasPadding && (
-                <Group x={expX + expW / 2} y={expY + expH + 8 / zoom}>
+                <Group x={expX + expW / 2} y={expY + expH + 8 / zoom} listening={false}>
                     <Rect
                         x={-40 / zoom}
                         y={-2 / zoom}
@@ -234,113 +252,69 @@ export function ExpandOverlay({ layerId }: ExpandOverlayProps) {
                 </Group>
             )}
 
-            {/* ── Edge handles (mid-points of each side) ── */}
-            {/* Top */}
             <Circle
+                {...handleCommonProps}
                 x={origX + origW / 2}
                 y={origY - top}
-                radius={hr}
-                fill={HANDLE_FILL}
-                stroke={HANDLE_STROKE}
-                strokeWidth={hsw}
-                draggable
                 onDragMove={onDragTop}
-                dragBoundFunc={(pos) => ({ x: pos.x, y: pos.y })} // free drag vertically
-                onMouseEnter={(e) => { (e.target.getStage()?.container() as HTMLDivElement).style.cursor = "n-resize"; }}
-                onMouseLeave={(e) => { (e.target.getStage()?.container() as HTMLDivElement).style.cursor = "default"; }}
+                onMouseEnter={(e) => { setExpandHandleCursor(e, "n-resize"); }}
+                onMouseLeave={(e) => { resetExpandHandleCursor(e); }}
             />
-            {/* Bottom */}
             <Circle
+                {...handleCommonProps}
                 x={origX + origW / 2}
                 y={origY + origH + bottom}
-                radius={hr}
-                fill={HANDLE_FILL}
-                stroke={HANDLE_STROKE}
-                strokeWidth={hsw}
-                draggable
                 onDragMove={onDragBottom}
-                onMouseEnter={(e) => { (e.target.getStage()?.container() as HTMLDivElement).style.cursor = "s-resize"; }}
-                onMouseLeave={(e) => { (e.target.getStage()?.container() as HTMLDivElement).style.cursor = "default"; }}
+                onMouseEnter={(e) => { setExpandHandleCursor(e, "s-resize"); }}
+                onMouseLeave={(e) => { resetExpandHandleCursor(e); }}
             />
-            {/* Left */}
             <Circle
+                {...handleCommonProps}
                 x={origX - left}
                 y={origY + origH / 2}
-                radius={hr}
-                fill={HANDLE_FILL}
-                stroke={HANDLE_STROKE}
-                strokeWidth={hsw}
-                draggable
                 onDragMove={onDragLeft}
-                onMouseEnter={(e) => { (e.target.getStage()?.container() as HTMLDivElement).style.cursor = "w-resize"; }}
-                onMouseLeave={(e) => { (e.target.getStage()?.container() as HTMLDivElement).style.cursor = "default"; }}
+                onMouseEnter={(e) => { setExpandHandleCursor(e, "w-resize"); }}
+                onMouseLeave={(e) => { resetExpandHandleCursor(e); }}
             />
-            {/* Right */}
             <Circle
+                {...handleCommonProps}
                 x={origX + origW + right}
                 y={origY + origH / 2}
-                radius={hr}
-                fill={HANDLE_FILL}
-                stroke={HANDLE_STROKE}
-                strokeWidth={hsw}
-                draggable
                 onDragMove={onDragRight}
-                onMouseEnter={(e) => { (e.target.getStage()?.container() as HTMLDivElement).style.cursor = "e-resize"; }}
-                onMouseLeave={(e) => { (e.target.getStage()?.container() as HTMLDivElement).style.cursor = "default"; }}
+                onMouseEnter={(e) => { setExpandHandleCursor(e, "e-resize"); }}
+                onMouseLeave={(e) => { resetExpandHandleCursor(e); }}
             />
-
-            {/* ── Corner handles ── */}
-            {/* Top-Left */}
             <Circle
+                {...handleCommonProps}
                 x={origX - left}
                 y={origY - top}
-                radius={hr}
-                fill={HANDLE_FILL}
-                stroke={HANDLE_STROKE}
-                strokeWidth={hsw}
-                draggable
                 onDragMove={onDragTopLeft}
-                onMouseEnter={(e) => { (e.target.getStage()?.container() as HTMLDivElement).style.cursor = "nw-resize"; }}
-                onMouseLeave={(e) => { (e.target.getStage()?.container() as HTMLDivElement).style.cursor = "default"; }}
+                onMouseEnter={(e) => { setExpandHandleCursor(e, "nw-resize"); }}
+                onMouseLeave={(e) => { resetExpandHandleCursor(e); }}
             />
-            {/* Top-Right */}
             <Circle
+                {...handleCommonProps}
                 x={origX + origW + right}
                 y={origY - top}
-                radius={hr}
-                fill={HANDLE_FILL}
-                stroke={HANDLE_STROKE}
-                strokeWidth={hsw}
-                draggable
                 onDragMove={onDragTopRight}
-                onMouseEnter={(e) => { (e.target.getStage()?.container() as HTMLDivElement).style.cursor = "ne-resize"; }}
-                onMouseLeave={(e) => { (e.target.getStage()?.container() as HTMLDivElement).style.cursor = "default"; }}
+                onMouseEnter={(e) => { setExpandHandleCursor(e, "ne-resize"); }}
+                onMouseLeave={(e) => { resetExpandHandleCursor(e); }}
             />
-            {/* Bottom-Left */}
             <Circle
+                {...handleCommonProps}
                 x={origX - left}
                 y={origY + origH + bottom}
-                radius={hr}
-                fill={HANDLE_FILL}
-                stroke={HANDLE_STROKE}
-                strokeWidth={hsw}
-                draggable
                 onDragMove={onDragBottomLeft}
-                onMouseEnter={(e) => { (e.target.getStage()?.container() as HTMLDivElement).style.cursor = "sw-resize"; }}
-                onMouseLeave={(e) => { (e.target.getStage()?.container() as HTMLDivElement).style.cursor = "default"; }}
+                onMouseEnter={(e) => { setExpandHandleCursor(e, "sw-resize"); }}
+                onMouseLeave={(e) => { resetExpandHandleCursor(e); }}
             />
-            {/* Bottom-Right */}
             <Circle
+                {...handleCommonProps}
                 x={origX + origW + right}
                 y={origY + origH + bottom}
-                radius={hr}
-                fill={HANDLE_FILL}
-                stroke={HANDLE_STROKE}
-                strokeWidth={hsw}
-                draggable
                 onDragMove={onDragBottomRight}
-                onMouseEnter={(e) => { (e.target.getStage()?.container() as HTMLDivElement).style.cursor = "se-resize"; }}
-                onMouseLeave={(e) => { (e.target.getStage()?.container() as HTMLDivElement).style.cursor = "default"; }}
+                onMouseEnter={(e) => { setExpandHandleCursor(e, "se-resize"); }}
+                onMouseLeave={(e) => { resetExpandHandleCursor(e); }}
             />
         </Group>
     );

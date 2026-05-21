@@ -12,13 +12,12 @@ import { Select } from "@/components/ui/Select";
 import { LayersPanel } from "@/components/editor/LayersPanel";
 import { PropertiesPanel } from "@/components/editor/properties";
 import { PaintInput } from "@/components/editor/properties/PaintInput";
-import { Toolbar } from "@/components/editor/Toolbar";
 import { ExportModal } from "@/components/editor/ExportModal";
 import { ResizePanel } from "@/components/editor/ResizePanel";
 import { SwatchesPanel } from "@/components/editor/swatches/SwatchesPanel";
 import { TemplatePanel } from "@/components/editor/TemplatePanel";
-import { AIPromptBar } from "@/components/editor/AIPromptBar";
-import { InpaintProvider } from "@/components/inpaint/InpaintContext";
+import { StudioInpaintWorkspace } from "@/components/editor/StudioInpaintWorkspace";
+import { EditorStudioChrome } from "@/components/editor/EditorStudioChrome";
 import { AIChatPanel } from "@/components/editor/ai-chat";
 import { VersionHistoryPanel } from "@/components/editor/VersionHistoryPanel";
 import { TabLeaderBadge } from "@/components/editor/TabLeaderBadge";
@@ -987,7 +986,7 @@ export default function EditorPage({ params }: EditorPageProps) {
                     onExportClose={() => setExportOpen(false)}
                 />
             ) : (
-                <InpaintProvider>
+                <StudioInpaintWorkspace>
                 <div className="relative flex-1 min-h-0">
                     {/* Canvas fills the entire area */}
                     <Canvas stageRef={stageRef} projectId={isTemplateMode ? undefined : id} />
@@ -1000,54 +999,47 @@ export default function EditorPage({ params }: EditorPageProps) {
                     {/* Floating Properties Panel — top center (Always visible now) */}
                     <PropertiesPanel />
 
-                    {/* Floating Toolbar — anchored like Figma; AI prompt opens above it */}
-                    <div className="absolute bottom-3 left-1/2 z-10 -translate-x-1/2 transition-all duration-300">
-                        <Toolbar
-                            onOpenTemplates={() => setTemplatesOpen(true)}
-                            onOpenAIScenarios={
-                                isTemplateMode ? undefined : () => setAiScenariosOpen(true)
-                            }
-                            onToggleAI={() => setAiPanelOpen(!aiPanelOpen)}
-                            aiActive={aiPanelOpen}
-                            projectId={isTemplateMode ? undefined : id}
-                        />
-                    </div>
-
-                    {/* AI Prompt Bar — Bottom Center */}
-                    {aiPanelOpen && (
-                        <div className="absolute bottom-[68px] left-1/2 z-20 -translate-x-1/2">
-                            <AIPromptBar
-                                open={true}
-                                onClose={() => setAiPanelOpen(false)}
-                                onToggleChat={() => setAiChatOpen(!aiChatOpen)}
-                                isChatOpen={aiChatOpen}
-                                projectId={id}
-                                onResult={(res) => {
-                                    const now = Date.now();
-                                    const resultType = (res.type === "edit" || res.type === "outpaint") ? "image" : res.type as "text" | "image";
-                                    const contents = resultType === "image" && res.contents?.length ? res.contents : [res.content];
-                                    addAiMessages([
-                                        {
-                                            id: now.toString(),
-                                            role: "user",
-                                            content: res.prompt,
-                                            type: "text",
-                                            timestamp: now,
-                                        },
-                                        ...contents.map((content, index) => ({
-                                            id: `${now}-${index + 1}`,
-                                            role: "assistant" as const,
-                                            content,
-                                            type: resultType,
-                                            timestamp: now + index + 1,
-                                            model: res.model,
-                                            costUnits: res.model ? (getModelById(res.model)?.costPerRun ?? 0) : undefined,
-                                        })),
-                                    ]);
-                                }}
-                            />
-                        </div>
-                    )}
+                    <EditorStudioChrome
+                        aiPanelOpen={aiPanelOpen}
+                        setAiPanelOpen={setAiPanelOpen}
+                        aiChatOpen={aiChatOpen}
+                        setAiChatOpen={setAiChatOpen}
+                        toolbarProps={{
+                            onOpenTemplates: () => setTemplatesOpen(true),
+                            onOpenAIScenarios: isTemplateMode
+                                ? undefined
+                                : () => setAiScenariosOpen(true),
+                            projectId: isTemplateMode ? undefined : id,
+                        }}
+                        promptBarProps={{
+                            onToggleChat: () => setAiChatOpen(!aiChatOpen),
+                            isChatOpen: aiChatOpen,
+                            projectId: id,
+                            onResult: (res) => {
+                                const now = Date.now();
+                                const resultType = (res.type === "edit" || res.type === "outpaint") ? "image" : res.type as "text" | "image";
+                                const contents = resultType === "image" && res.contents?.length ? res.contents : [res.content];
+                                addAiMessages([
+                                    {
+                                        id: now.toString(),
+                                        role: "user",
+                                        content: res.prompt,
+                                        type: "text",
+                                        timestamp: now,
+                                    },
+                                    ...contents.map((content, index) => ({
+                                        id: `${now}-${index + 1}`,
+                                        role: "assistant" as const,
+                                        content,
+                                        type: resultType,
+                                        timestamp: now + index + 1,
+                                        model: res.model,
+                                        costUnits: res.model ? (getModelById(res.model)?.costPerRun ?? 0) : undefined,
+                                    })),
+                                ]);
+                            },
+                        }}
+                    />
 
                     {/* AI Chat Panel — Right Sidebar */}
                     <AIChatPanel
@@ -1084,7 +1076,7 @@ export default function EditorPage({ params }: EditorPageProps) {
                         </button>
                     </div>
                 </div>
-                </InpaintProvider>
+                </StudioInpaintWorkspace>
             )}
 
             {/* Modals */}

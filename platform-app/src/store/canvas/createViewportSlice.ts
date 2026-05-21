@@ -165,7 +165,15 @@ export const createViewportSlice: StateCreator<CanvasStore, [], [], ViewportSlic
                 set({ expandMode: false, expandTargetLayerId: null, expandPadding: { ...DEFAULT_EXPAND_PADDING } });
                 return;
             }
-            set({ expandMode: true, expandTargetLayerId: targetId, expandPadding: { ...DEFAULT_EXPAND_PADDING } });
+            set({
+                expandMode: true,
+                expandTargetLayerId: targetId,
+                expandPadding: { ...DEFAULT_EXPAND_PADDING },
+                // Mutual exclusion — same as setInpaintMode turning off expand.
+                inpaintMode: false,
+                inpaintTargetLayerId: null,
+                activeGradientEditorTarget: null,
+            });
         } else {
             set({ expandMode: false, expandTargetLayerId: null, expandPadding: { ...DEFAULT_EXPAND_PADDING } });
         }

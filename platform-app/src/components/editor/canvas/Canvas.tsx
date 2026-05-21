@@ -702,6 +702,24 @@ function GradientDirectionHandles({
     );
 }
 
+const EXPAND_CONTROL_NAME = "expand-control";
+
+function isExpandControlNode(target: Konva.Node): boolean {
+    const stage = target.getStage();
+    let ancestor: Konva.Node | null = target;
+    while (ancestor && ancestor !== stage) {
+        const name = ancestor.name();
+        if (name?.split(" ").includes(EXPAND_CONTROL_NAME)) return true;
+        ancestor = ancestor.getParent();
+    }
+    return false;
+}
+
+function resetStageContainerCursor(stage: Konva.Stage | null | undefined) {
+    if (!stage) return;
+    (stage.container() as HTMLElement).style.cursor = "default";
+}
+
 /* ─── Main Canvas component ───────────────────────── */
 
 interface CanvasProps {
@@ -850,6 +868,7 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
     // Expand mode state
     const expandMode = useCanvasStore((s) => s.expandMode);
     const expandTargetLayerId = useCanvasStore((s) => s.expandTargetLayerId);
+    const resetExpandMode = useCanvasStore((s) => s.resetExpandMode);
 
     // Inpaint mode state — the slice carries only the UI flag + target id,
     // brush strokes live in the InpaintProvider hook (see InpaintContext).
@@ -860,6 +879,22 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
     const sharedInpaintMask = useOptionalSharedInpaintMask();
 
     const isDrawingTool = activeTool === "text" || activeTool === "rectangle" || activeTool === "frame";
+
+    // Prevent stage pan from competing with expand handles or inpaint brush.
+    useEffect(() => {
+        if (expandMode || inpaintMode) {
+            setStageDraggable(false);
+        } else if (!isEditingText) {
+            setStageDraggable(true);
+        }
+    }, [expandMode, inpaintMode, isEditingText]);
+
+    // Expand handles set the stage container cursor on hover; reset when mode ends.
+    useEffect(() => {
+        if (!expandMode && !inpaintMode) {
+            resetStageContainerCursor(stageRef.current);
+        }
+    }, [expandMode, inpaintMode, stageRef]);
 
     // Reset drawingStartPoint when leaving drawing mode (e.g. via Escape)
     useEffect(() => {
@@ -1052,8 +1087,14 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
     }, [toggleSelection, selectLayer, layers, isClickOutsideClipBounds]);
 
     const handleLayerDragStart = useCallback((e: Konva.KonvaEventObject<DragEvent>) => {
-        const { activeTool } = useCanvasStore.getState();
+        const { activeTool, expandMode: isExpand, inpaintMode: isInpaint } = useCanvasStore.getState();
         if (activeTool !== "select") {
+            e.target.stopDrag();
+            e.cancelBubble = true;
+            return;
+        }
+
+        if (isExpand || isInpaint) {
             e.target.stopDrag();
             e.cancelBubble = true;
             return;
@@ -1591,6 +1632,11 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
             return;
         }
 
+        if (isExpandControlNode(e.target)) {
+            e.cancelBubble = true;
+            return;
+        }
+
         // ── Drawing tool interception ──
         if (activeTool === "text" || activeTool === "rectangle" || activeTool === "frame") {
             const stage = e.target.getStage();
@@ -1680,7 +1726,7 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
                         }
                     }
 
-                    if (shouldBlock) {
+                    if (shouldBlock && !expandMode && !inpaintMode) {
                         // Prevent the shape from receiving any further events
                         // by stopping the event and deselecting
                         target.stopDrag();
@@ -1706,6 +1752,18 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
             // Convert to Scene Coordinates for starting point
             const startSceneX = (pointer.x - stage.x()) / stage.scaleX();
             const startSceneY = (pointer.y - stage.y()) / stage.scaleY();
+
+            // Exit exclusive edit modes on empty-canvas click with full UI reset.
+            if (expandMode || inpaintMode) {
+                if (expandMode) resetExpandMode();
+                resetStageContainerCursor(stage);
+                if (!e.evt.shiftKey && !e.evt.metaKey && !e.evt.ctrlKey) {
+                    selectLayer(null);
+                }
+                setContextMenu(null);
+                if (isEditingText) stopTextEditing();
+                return;
+            }
 
             // Figma-like: if clicking on the overflow area of a SELECTED layer
             // (outside clip bounds but inside the layer's bounding box),
@@ -1769,7 +1827,7 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
                 stopTextEditing();
             }
         }
-    }, [selectLayer, isEditingText, stopTextEditing, isPanning, activeGradientEditorTarget, selectedLayerIds, layers, zoom, artboardProps.clipContent, canvasWidth, canvasHeight, activeTool, addTextLayer, setActiveTool, setDrawingBox, startTextEditing]);
+    }, [selectLayer, isEditingText, stopTextEditing, isPanning, activeGradientEditorTarget, selectedLayerIds, layers, zoom, artboardProps.clipContent, canvasWidth, canvasHeight, activeTool, addTextLayer, setActiveTool, setDrawingBox, startTextEditing, expandMode, inpaintMode, resetExpandMode]);
 
     const handleStageMouseMove = useCallback((e: Konva.KonvaEventObject<MouseEvent>) => {
         const stage = e.target.getStage();
