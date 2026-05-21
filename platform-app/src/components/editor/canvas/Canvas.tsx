@@ -24,7 +24,7 @@ import { usePanZoom } from "./usePanZoom";
 import { ArtboardBackgroundRenderer } from "./ArtboardBackgroundRenderer";
 import { useProjectLibrary } from "@/hooks/useProjectLibrary";
 import { normalizePaint, paintToKonvaProps, setGradientEndpoints } from "@/utils/paint";
-import { canLayerFitInFrame } from "@/utils/frameDropUtils";
+import { canLayerFitInFrame, collectAncestorFrameIds } from "@/utils/frameDropUtils";
 import { installLayerBoxGetClientRect } from "@/utils/strokeGeometry";
 import { AlignedStrokeRect } from "./AlignedStrokeRect";
 import { resolveKonvaLayerId } from "./resolveKonvaLayerId";
@@ -1102,21 +1102,32 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
         // Note: selectedLayerIds from closure might be stale if we just called selectLayer?
         // Actually selectLayer triggers re-render, but this function closure 'selectedLayerIds' is from render start.
         // So if we just selected it, 'selectedLayerIds' here does NOT contain it yet.
-        // We can solve this by checking if id is in selectedLayerIds. 
+        // We can solve this by checking if id is in selectedLayerIds.
         // If not, we form a temporary list [id].
 
         const effectiveSelection = selectedLayerIds.includes(id)
             ? selectedLayerIds
             : [id];
 
+        // Figma-like: when the user grabs a layer that is nested in a frame,
+        // the frame (and any further ancestor frames) must NOT be moved even
+        // if it is also selected. Children render with coordinates local to
+        // their parent frame, so dragging the frame would visually duplicate
+        // the cursor delta on top of the child's own movement and pull the
+        // frame along. We therefore drop ancestor frames of `id` from the
+        // effective drag set. We do NOT drop other selected siblings — multi-
+        // dragging two selected children of the same frame still works.
+        const ancestorFrameIds = collectAncestorFrameIds(id, layers);
+        const filteredSelection = effectiveSelection.filter(sid => !ancestorFrameIds.has(sid));
+
         const locs: Record<string, { x: number; y: number }> = {};
-        effectiveSelection.forEach(sid => {
+        filteredSelection.forEach(sid => {
             const l = layers.find(lay => lay.id === sid);
             if (l) locs[sid] = { x: l.x, y: l.y };
         });
         dragStartLocs.current = locs;
 
-    }, [layers, selectedLayerIds, selectLayer]);
+    }, [layers, selectedLayerIds, selectLayer, isClickOutsideClipBounds, setHoveredLayerId]);
 
     // Alt key tracking for distance measurement (both drag and hover)
     useEffect(() => {
