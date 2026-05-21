@@ -4,3 +4,8 @@ node_modules/
 .idea
 .vscode
 *.log
+
+# Environment secrets (defense in depth; canonical rules in platform-app/.gitignore)
+.env
+.env.*
+!.env.example
