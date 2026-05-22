@@ -22,7 +22,7 @@ import { trpc } from "@/lib/trpc";
 import { useCanvasStore } from "@/store/canvasStore";
 import { DEFAULT_RESIZE } from "@/store/canvas/types";
 import { useWorkspace } from "@/providers/WorkspaceProvider";
-import { getCanvasStateForSave } from "@/utils/canvasState";
+import { getCanvasStateForSave, normalizeCanvasStateForLoad } from "@/utils/canvasState";
 import {
   saveLocalDraft,
   loadLocalDraft,
@@ -781,26 +781,33 @@ export function useLoadCanvasState(projectId: string) {
         const activeFormat = preserveCurrent
           ? resizes.find((r) => r.id === activeResizeId)
           : undefined;
+        const normalized = preserveCurrent
+          ? null
+          : normalizeCanvasStateForLoad({
+              ...state,
+              resizes,
+              activeResizeId,
+            } as Parameters<typeof normalizeCanvasStateForLoad>[0], currentStore);
         const resolvedLayers = (
-          activeFormat?.layerSnapshot ?? state.layers
+          activeFormat?.layerSnapshot ?? normalized?.layers ?? state.layers
         ) as Layers;
         const resolvedCanvasWidth = (
-          activeFormat?.width ?? state.canvasWidth ?? useCanvasStore.getState().canvasWidth
+          activeFormat?.width ?? normalized?.canvasWidth ?? state.canvasWidth ?? useCanvasStore.getState().canvasWidth
         ) as number;
         const resolvedCanvasHeight = (
-          activeFormat?.height ?? state.canvasHeight ?? useCanvasStore.getState().canvasHeight
+          activeFormat?.height ?? normalized?.canvasHeight ?? state.canvasHeight ?? useCanvasStore.getState().canvasHeight
         ) as number;
 
         useCanvasStore.setState({
           layers: resolvedLayers,
           masterComponents: (state.masterComponents ?? []) as ReturnType<typeof useCanvasStore.getState>["masterComponents"],
           componentInstances: (state.componentInstances ?? []) as ReturnType<typeof useCanvasStore.getState>["componentInstances"],
-          resizes,
-          activeResizeId,
-          artboardProps: (state.artboardProps ?? useCanvasStore.getState().artboardProps) as ReturnType<typeof useCanvasStore.getState>["artboardProps"],
+          resizes: (normalized?.resizes ?? resizes) as ReturnType<typeof useCanvasStore.getState>["resizes"],
+          activeResizeId: normalized?.activeResizeId ?? activeResizeId,
+          artboardProps: (normalized?.artboardProps ?? state.artboardProps ?? useCanvasStore.getState().artboardProps) as ReturnType<typeof useCanvasStore.getState>["artboardProps"],
           canvasWidth: resolvedCanvasWidth,
           canvasHeight: resolvedCanvasHeight,
-          palette: (state.palette ?? { colors: [], backgrounds: [] }) as ReturnType<typeof useCanvasStore.getState>["palette"],
+          palette: (normalized?.palette ?? state.palette ?? { colors: [], backgrounds: [] }) as ReturnType<typeof useCanvasStore.getState>["palette"],
         });
       }
     }
@@ -849,36 +856,28 @@ export function useLoadCanvasState(projectId: string) {
         const snapshot = draft.snapshot as Record<string, unknown> | null;
         if (!snapshot || typeof snapshot !== "object") return;
 
-        type Layers = ReturnType<typeof useCanvasStore.getState>["layers"];
-        type Resizes = ReturnType<typeof useCanvasStore.getState>["resizes"];
-        type MasterComponents = ReturnType<typeof useCanvasStore.getState>["masterComponents"];
-        type ComponentInstances = ReturnType<typeof useCanvasStore.getState>["componentInstances"];
-        type ArtboardProps = ReturnType<typeof useCanvasStore.getState>["artboardProps"];
-        type Palette = ReturnType<typeof useCanvasStore.getState>["palette"];
-
-        const draftLayers = snapshot.layers as Layers | undefined;
+        const draftLayers = snapshot.layers as ReturnType<typeof useCanvasStore.getState>["layers"] | undefined;
         if (!Array.isArray(draftLayers)) return;
 
-        const resizes = (snapshot.resizes ?? useCanvasStore.getState().resizes) as Resizes;
+        const resizes = (snapshot.resizes ?? useCanvasStore.getState().resizes) as ReturnType<typeof useCanvasStore.getState>["resizes"];
         const draftActiveResizeId = (snapshot.activeResizeId as string | undefined) ?? null;
-        const activeResizeId =
-          draftActiveResizeId && resizes.some((r) => r.id === draftActiveResizeId)
-            ? draftActiveResizeId
-            : (resizes.find((r) => r.isMaster)?.id
-                ?? resizes.find((r) => r.id === "master")?.id
-                ?? resizes[0]?.id
-                ?? "master");
+        const normalizedDraft = normalizeCanvasStateForLoad({
+          ...snapshot,
+          layers: draftLayers,
+          resizes,
+          activeResizeId: draftActiveResizeId,
+        } as Parameters<typeof normalizeCanvasStateForLoad>[0], useCanvasStore.getState());
 
         useCanvasStore.setState({
-          layers: draftLayers,
-          masterComponents: (snapshot.masterComponents ?? []) as MasterComponents,
-          componentInstances: (snapshot.componentInstances ?? []) as ComponentInstances,
-          resizes,
-          activeResizeId,
-          artboardProps: (snapshot.artboardProps ?? useCanvasStore.getState().artboardProps) as ArtboardProps,
-          canvasWidth: (snapshot.canvasWidth ?? useCanvasStore.getState().canvasWidth) as number,
-          canvasHeight: (snapshot.canvasHeight ?? useCanvasStore.getState().canvasHeight) as number,
-          palette: (snapshot.palette ?? { colors: [], backgrounds: [] }) as Palette,
+          layers: normalizedDraft.layers,
+          masterComponents: normalizedDraft.masterComponents,
+          componentInstances: normalizedDraft.componentInstances,
+          resizes: normalizedDraft.resizes,
+          activeResizeId: normalizedDraft.activeResizeId,
+          artboardProps: normalizedDraft.artboardProps ?? useCanvasStore.getState().artboardProps,
+          canvasWidth: normalizedDraft.canvasWidth,
+          canvasHeight: normalizedDraft.canvasHeight,
+          palette: normalizedDraft.palette ?? { colors: [], backgrounds: [] },
         });
         console.info(
           `[canvas] restored local draft for project ${projectId} (baseVersion=${draftBase}, ts=${new Date(draft.ts).toISOString()})`,

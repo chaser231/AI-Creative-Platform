@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { serializeTemplate } from "@/services/templateService";
-import type { RectangleLayer } from "@/types";
+import type { RectangleLayer, ResizeFormat } from "@/types";
 
 describe("serializeTemplate", () => {
     it("preserves raw canvas fields needed for reusable palettes", () => {
@@ -65,5 +65,57 @@ describe("serializeTemplate", () => {
         expect(pack.artboardProps?.backgroundImage).toMatchObject({ swatchRef: "hero-bg" });
         expect(pack.baseWidth).toBe(480);
         expect(pack.baseHeight).toBe(360);
+    });
+
+    it("preserves an edited default master format instead of dropping id=master", () => {
+        const layer: RectangleLayer = {
+            id: "rect-1",
+            type: "rectangle",
+            name: "Edited default",
+            x: 0,
+            y: 0,
+            width: 120,
+            height: 80,
+            rotation: 0,
+            visible: true,
+            locked: false,
+            fill: "#FFCC00",
+            stroke: "",
+            strokeWidth: 0,
+            cornerRadius: 0,
+        };
+        const resizes: ResizeFormat[] = [
+            {
+                id: "master",
+                name: "Основной формат",
+                width: 540,
+                height: 225,
+                label: "540 × 225",
+                instancesEnabled: false,
+                isMaster: true,
+            },
+        ];
+
+        const pack = serializeTemplate(
+            { name: "Default Format Template" },
+            [],
+            resizes,
+            [],
+            [layer],
+            {
+                canvasWidth: 540,
+                canvasHeight: 225,
+            },
+        );
+
+        expect(pack.resizes).toHaveLength(1);
+        expect(pack.resizes[0]).toMatchObject({
+            id: "master",
+            name: "Основной формат",
+            width: 540,
+            height: 225,
+            isMaster: true,
+        });
+        expect(pack.resizes[0]?.layerSnapshot).toEqual([layer]);
     });
 });
