@@ -14,6 +14,7 @@ import { Input } from "@/components/ui/Input";
 import { DEFAULT_PACKS, type TemplatePackMeta } from "@/constants/defaultPacks";
 import { serializeTemplate } from "@/services/templateService";
 import { searchPacks } from "@/services/templateCatalogService";
+import { getCanvasStateForSave } from "@/utils/canvasState";
 import type { TemplatePackV2, TemplatePack } from "@/services/templateService";
 import type { BusinessUnit, TemplateCategory, ContentType, TemplateTag, TemplateVisibility, TemplateEditPermission } from "@/types";
 import { SlotMappingModal } from "@/components/editor/SlotMappingModal";
@@ -321,20 +322,21 @@ export function TemplatePanel({ open, onClose, projectId }: TemplatePanelProps) 
         setSaveError(null);
 
         const state = useCanvasStore.getState();
+        const stateForSave = getCanvasStateForSave(state);
         const activeProject = projects.find((p) => p.id === activeProjectId);
         const projectData = activeProject || { name: saveName };
 
         const newPack = serializeTemplate(
             { ...projectData, name: saveName },
-            state.masterComponents,
-            state.resizes,
-            state.componentInstances,
-            state.layers,
+            stateForSave.masterComponents,
+            stateForSave.resizes,
+            stateForSave.componentInstances,
+            stateForSave.layers,
             {
-                artboardProps: state.artboardProps as unknown as Record<string, unknown>,
-                palette: state.palette,
-                canvasWidth: state.canvasWidth,
-                canvasHeight: state.canvasHeight,
+                artboardProps: stateForSave.artboardProps as unknown as Record<string, unknown>,
+                palette: stateForSave.palette,
+                canvasWidth: stateForSave.canvasWidth,
+                canvasHeight: stateForSave.canvasHeight,
             },
         );
 
