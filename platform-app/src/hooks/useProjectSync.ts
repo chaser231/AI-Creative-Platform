@@ -254,39 +254,22 @@ export function useCanvasAutoSave(
       return;
     }
 
-    // Migrate non-permanent images (base64 + temp external URLs) to S3 before saving
-    let layers = store.layers;
-    const hasUnpersistedImages = layers.some(
-      (l: { type: string; src?: string }) => {
-        if (l.type !== "image" || !l.src) return false;
-        // base64 check (legacy)
-        if (l.src.startsWith("data:") || l.src.length > 500) return true;
-        // external URL check (Replicate, OpenAI, etc.)
-        if ((l.src.startsWith("http://") || l.src.startsWith("https://")) && !l.src.includes("storage.yandexcloud.net")) return true;
-        return false;
-      }
-    );
+    // Serialize current canvas state (with per-format snapshots) before image
+    // migration so inactive resize snapshots are covered too.
+    let canvasState = getCanvasStateForSave(store);
 
-    if (hasUnpersistedImages) {
+    const { hasPersistableImageSources, persistImageSourcesInObject } = await import("@/utils/imageUpload");
+    if (hasPersistableImageSources(canvasState)) {
       try {
         isMigratingRef.current = true;
         setIsMigrating(true);
-        const { migrateImagesToS3Map } = await import("@/utils/imageUpload");
-        const migratedUrls = await migrateImagesToS3Map(
-          layers as unknown as Array<{ id: string; type: string; src?: string; [key: string]: unknown }>,
-          projectId
-        );
-        
-        // Update local store with S3 URLs for ONLY the migrated layers
-        if (Object.keys(migratedUrls).length > 0) {
-          useCanvasStore.setState((state) => {
-            const newLayers = state.layers.map((l: any) =>
-              migratedUrls[l.id] ? { ...l, src: migratedUrls[l.id] } : l
-            );
-            layers = newLayers as typeof layers; // use latest for this save
-            return { layers: newLayers };
-          });
-        }
+        canvasState = await persistImageSourcesInObject(canvasState, projectId);
+        useCanvasStore.setState({
+          layers: canvasState.layers,
+          resizes: canvasState.resizes,
+          artboardProps: canvasState.artboardProps,
+          palette: canvasState.palette,
+        });
       } catch (err) {
         console.warn("S3 migration skipped:", err);
         // Continue with base64 — better to save large than not save at all
@@ -295,9 +278,6 @@ export function useCanvasAutoSave(
         setIsMigrating(false);
       }
     }
-
-    // Serialize current canvas state (with per-format snapshots)
-    const canvasState = getCanvasStateForSave(store);
 
     const serialized = JSON.stringify(canvasState);
 
@@ -315,9 +295,8 @@ export function useCanvasAutoSave(
           const { uploadForAI } = await import("@/utils/imageUpload");
           const url = await uploadForAI(thumbBase64, projectId);
           if (url && url !== thumbBase64) thumbnailUrl = url;
-          else thumbnailUrl = thumbBase64;
         } catch {
-          thumbnailUrl = thumbBase64;
+          thumbnailUrl = undefined;
         }
       }
     }
@@ -416,8 +395,12 @@ export function useCanvasAutoSave(
     if (serialized === lastSavedRef.current) return;
     lastSavedRef.current = serialized;
 
-    // Always capture thumbnail on exit
-    const thumbnail = captureThumbnail();
+    // Never send a large inline thumbnail during unload; the request can be
+    // rejected before the server has a chance to drop it.
+    const capturedThumbnail = captureThumbnail();
+    const thumbnail = capturedThumbnail && capturedThumbnail.startsWith("data:") && capturedThumbnail.length > 200_000
+      ? null
+      : capturedThumbnail;
 
     // MF-3: ship last known version alongside the beacon. The endpoint
     // applies soft-merge (warn + last-wins) rather than rejecting, because
@@ -627,8 +610,12 @@ export function useCanvasAutoSave(
       const serialized = JSON.stringify(canvasState);
       if (serialized === lastSavedRef.current) return;
 
-      // Capture thumbnail on page unload
-      const thumbnail = captureThumbnail();
+      // Never send a large inline thumbnail during unload; the request can be
+      // rejected before the server has a chance to drop it.
+      const capturedThumbnail = captureThumbnail();
+      const thumbnail = capturedThumbnail && capturedThumbnail.startsWith("data:") && capturedThumbnail.length > 200_000
+        ? null
+        : capturedThumbnail;
 
       const expectedVersion = lastKnownVersionRef.current;
       const payload = JSON.stringify({

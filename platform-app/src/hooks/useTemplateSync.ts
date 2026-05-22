@@ -111,27 +111,32 @@ export function useSaveTemplateSync() {
       }
 
       try {
+        const { hasPersistableImageSources, persistImageSourcesInObject } = await import("@/utils/imageUpload");
+        const packForSave = hasPersistableImageSources(pack)
+          ? await persistImageSourcesInObject(pack, "tmp")
+          : pack;
+
         // Merge businessUnits into categories so they're searchable in Prisma
         const mergedCategories = [
           ...new Set([
-            ...((pack.categories || []) as string[]),
-            ...((pack.businessUnits || []) as string[]),
+            ...((packForSave.categories || []) as string[]),
+            ...((packForSave.businessUnits || []) as string[]),
           ]),
         ];
 
         const template = await createMutation.mutateAsync({
           workspaceId: wsId,
-          name: pack.name,
-          description: pack.description,
+          name: packForSave.name,
+          description: packForSave.description,
           categories: mergedCategories,
-          contentType: pack.contentType,
-          occasion: pack.occasion,
-          tags: pack.tags,
-          data: pack, // Store the entire pack as JSON
-          isOfficial: pack.isOfficial,
-          visibility: (pack.visibility || "WORKSPACE") as "PRIVATE" | "WORKSPACE" | "PUBLIC" | "SHARED",
-          editPermission: (pack.editPermission || "AUTHOR_ONLY") as "AUTHOR_ONLY" | "WORKSPACE" | "SPECIFIC",
-          thumbnailUrl: pack.thumbnailUrl,
+          contentType: packForSave.contentType,
+          occasion: packForSave.occasion,
+          tags: packForSave.tags,
+          data: packForSave, // Store the entire pack as JSON
+          isOfficial: packForSave.isOfficial,
+          visibility: (packForSave.visibility || "WORKSPACE") as "PRIVATE" | "WORKSPACE" | "PUBLIC" | "SHARED",
+          editPermission: (packForSave.editPermission || "AUTHOR_ONLY") as "AUTHOR_ONLY" | "WORKSPACE" | "SPECIFIC",
+          thumbnailUrl: packForSave.thumbnailUrl,
         });
         return template;
       } catch (err) {
