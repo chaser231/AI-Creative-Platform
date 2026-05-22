@@ -305,6 +305,64 @@ export function needsPersistence(src: string): boolean {
   return isBase64Image(src) || isExternalTempUrl(src);
 }
 
+function shouldPersistImageField(key: string | null, value: unknown): value is string {
+  return (key === "src" || key === "thumbnailUrl") && typeof value === "string" && needsPersistence(value);
+}
+
+/**
+ * Fast preflight for canvas/template payloads. We only rewrite known image
+ * source fields so arbitrary external links in metadata keep their original
+ * values.
+ */
+export function hasPersistableImageSources(value: unknown): boolean {
+  const visit = (node: unknown, key: string | null = null): boolean => {
+    if (shouldPersistImageField(key, node)) return true;
+    if (!node || typeof node !== "object") return false;
+    if (Array.isArray(node)) return node.some((item) => visit(item));
+
+    for (const [childKey, childValue] of Object.entries(node as Record<string, unknown>)) {
+      if (visit(childValue, childKey)) return true;
+    }
+    return false;
+  };
+
+  return visit(value);
+}
+
+/**
+ * Clone a JSON-like canvas/template payload and replace inline or temporary
+ * image sources with permanent S3 URLs before it is sent through tRPC.
+ */
+export async function persistImageSourcesInObject<T>(value: T, projectId: string): Promise<T> {
+  const sourceCache = new Map<string, string>();
+
+  const persistSrc = async (src: string) => {
+    const cached = sourceCache.get(src);
+    if (cached) return cached;
+    const persisted = await persistImageToS3(src, projectId);
+    sourceCache.set(src, persisted);
+    return persisted;
+  };
+
+  const visit = async (node: unknown, key: string | null = null): Promise<unknown> => {
+    if (shouldPersistImageField(key, node)) {
+      return persistSrc(node);
+    }
+    if (!node || typeof node !== "object") return node;
+    if (Array.isArray(node)) {
+      return Promise.all(node.map((item) => visit(item)));
+    }
+
+    const out: Record<string, unknown> = {};
+    for (const [childKey, childValue] of Object.entries(node as Record<string, unknown>)) {
+      out[childKey] = await visit(childValue, childKey);
+    }
+    return out;
+  };
+
+  return await visit(value) as T;
+}
+
 /**
  * Process canvas state layers: upload any non-permanent image sources to S3,
  * replacing them with public URLs. Returns a map of layer ID to new S3 URL.
