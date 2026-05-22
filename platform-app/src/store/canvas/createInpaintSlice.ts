@@ -18,6 +18,7 @@
 
 import type { StateCreator } from "zustand";
 import type { CanvasStore } from "./types";
+import { DEFAULT_EXPAND_PADDING } from "./types";
 
 export type InpaintSlice = Pick<CanvasStore,
     | "inpaintMode"
@@ -46,6 +47,7 @@ export const createInpaintSlice: StateCreator<CanvasStore, [], [], InpaintSlice>
                 inpaintTargetLayerId: targetId,
                 expandMode: false,
                 expandTargetLayerId: null,
+                expandPadding: { ...DEFAULT_EXPAND_PADDING },
                 activeGradientEditorTarget: null,
             });
         } else {

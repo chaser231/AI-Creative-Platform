@@ -25,6 +25,7 @@ import { createResizeSlice } from "./canvas/createResizeSlice";
 import { createTemplateSlice } from "./canvas/createTemplateSlice";
 import { createPaletteSlice } from "./canvas/createPaletteSlice";
 import { createInpaintSlice } from "./canvas/createInpaintSlice";
+import { createEditModeSlice } from "./canvas/createEditModeSlice";
 
 // ─── Re-exports for backwards compatibility ─────────────
 export { computeConstrainedPosition } from "./canvas/helpers";
@@ -41,4 +42,5 @@ export const useCanvasStore = create<CanvasStore>((...args) => ({
     ...createTemplateSlice(...args),
     ...createPaletteSlice(...args),
     ...createInpaintSlice(...args),
+    ...createEditModeSlice(...args),
 }));

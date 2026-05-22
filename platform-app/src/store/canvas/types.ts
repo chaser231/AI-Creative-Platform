@@ -323,6 +323,9 @@ export interface CanvasStore {
     setInpaintMode: (active: boolean) => void;
     resetInpaintMode: () => void;
 
+    /** Reset both inpaint and expand modes (mask clear is handled in React). */
+    exitCanvasEditModes: () => void;
+
     // Stage ref (for Copy as PNG)
     stageRef: React.RefObject<Konva.Stage | null> | null;
     setStageRef: (ref: React.RefObject<Konva.Stage | null>) => void;
