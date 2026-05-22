@@ -1101,12 +1101,14 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
         }
 
         // Konva `dragstart` bubbles. The frame Group's onDragStart receives
-        // bubbled events from draggable descendants — including
+        // bubbled events from any draggable descendant — including
         // Konva.Transformer anchor handles which have no id. Without this
         // guard, `resolveKonvaLayerId` would walk up to the frame Group and
         // we'd register the frame in `dragStartLocs`, making the frame ride
-        // along with anchor `dragmove` events. Real layer drags always start
-        // on a CanvasLayer Group whose id is set.
+        // along with anchor `dragmove` events (visible as the parent frame
+        // following the child during resize). Real layer drags always start
+        // on a CanvasLayer Group whose id is set; if it's empty, this is a
+        // bubbled event from a non-layer node and we must ignore it.
         if (!e.target.id()) {
             return;
         }
@@ -1324,10 +1326,16 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
         const startLoc = dragStartLocs.current[id];
         const stage = e.target.getStage();
 
-        // Konva `dragend` bubbles. Bubbled events from Transformer anchors (no
-        // id) resolve to the parent frame — but we never tracked that id in
-        // dragStartLocs, so ignore the tail event. The primary dragend for the
-        // layer that actually moved already applied the position update.
+        // Konva `dragend` bubbles up the parent chain. When a child layer is
+        // dragged inside a frame, the frame Group's onDragEnd ALSO receives
+        // bubbled `dragend` events from its own descendants — including
+        // Konva.Transformer anchor handles, which have no id. Without this
+        // guard, `resolveKonvaLayerId` would walk up to the frame Group and
+        // we'd `updateLayer(frame.id, { x, y })` with the rogue node's
+        // absolute position, dragging the frame along visually. We never
+        // started a drag for that id (no startLoc), so the only safe action
+        // is to ignore the bubbled tail event entirely — the primary
+        // dragend already cleaned up state for the layer that really moved.
         if (!startLoc || !stage) {
             return;
         }

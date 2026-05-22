@@ -33,6 +33,7 @@ import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { useCanvasAutoSave, useLoadCanvasState } from "@/hooks/useProjectSync";
 import { useCanvasTabLeader } from "@/hooks/useCanvasTabLeader";
 import { useAISessionSync } from "@/hooks/useAISessionSync";
+import { getCanvasStateForSave, normalizeCanvasStateForLoad } from "@/utils/canvasState";
 import { getModelById } from "@/lib/ai-models";
 import { trpc } from "@/lib/trpc";
 import { loadAllCustomFonts, type WorkspaceFontAsset } from "@/lib/customFonts";
@@ -136,39 +137,50 @@ export default function EditorPage({ params }: EditorPageProps) {
         const data = templateQuery.data.data as any;
         if (!data.layers && !data.masterComponents && !data.layerTree) return;
 
+        const fallbackStore = useCanvasStore.getState();
+
         // If data has canvas state format (layers, masterComponents, etc.), load directly
         if (data.layers && Array.isArray(data.layers)) {
-            // Determine the correct active resize — default to first available or "master"
             const resizes = data.resizes ?? [{ id: "master", name: "Мастер макет", width: data.canvasWidth || 1080, height: data.canvasHeight || 1080, label: `${data.canvasWidth || 1080} × ${data.canvasHeight || 1080}`, instancesEnabled: false }];
-            const activeResizeId = resizes[0]?.id || "master";
-            const activeResize = resizes.find((r: any) => r.id === activeResizeId);
+            const normalized = normalizeCanvasStateForLoad({ ...data, resizes }, fallbackStore);
 
             useCanvasStore.setState({
-                layers: data.layers,
-                masterComponents: data.masterComponents ?? [],
-                componentInstances: data.componentInstances ?? [],
-                resizes,
-                activeResizeId,
+                layers: normalized.layers,
+                masterComponents: normalized.masterComponents,
+                componentInstances: normalized.componentInstances,
+                resizes: normalized.resizes,
+                activeResizeId: normalized.activeResizeId,
                 selectedLayerIds: [],
                 history: [],
-                artboardProps: data.artboardProps ?? useCanvasStore.getState().artboardProps,
-                canvasWidth: activeResize?.width ?? data.canvasWidth ?? 1080,
-                canvasHeight: activeResize?.height ?? data.canvasHeight ?? 1080,
-                palette: data.palette ?? { colors: [], backgrounds: [] },
+                artboardProps: normalized.artboardProps ?? fallbackStore.artboardProps,
+                canvasWidth: normalized.canvasWidth,
+                canvasHeight: normalized.canvasHeight,
+                palette: normalized.palette ?? { colors: [], backgrounds: [] },
             });
         } else {
             // It's a TemplatePack format — hydrate it
             try {
                 const hydrated = hydrateTemplate(data);
-                useCanvasStore.setState({
+                const normalized = normalizeCanvasStateForLoad({
                     layers: hydrated.layers ?? [],
                     masterComponents: hydrated.masterComponents,
                     componentInstances: hydrated.componentInstances,
-                    resizes: hydrated.resizes.length > 0 ? hydrated.resizes : useCanvasStore.getState().resizes,
-                    canvasWidth: hydrated.baseWidth || useCanvasStore.getState().canvasWidth,
-                    canvasHeight: hydrated.baseHeight || useCanvasStore.getState().canvasHeight,
-                    artboardProps: data.artboardProps ?? useCanvasStore.getState().artboardProps,
-                    palette: data.palette ?? { colors: [], backgrounds: [] },
+                    resizes: hydrated.resizes.length > 0 ? hydrated.resizes : fallbackStore.resizes,
+                    artboardProps: data.artboardProps,
+                    canvasWidth: hydrated.baseWidth,
+                    canvasHeight: hydrated.baseHeight,
+                    palette: data.palette,
+                }, fallbackStore);
+                useCanvasStore.setState({
+                    layers: normalized.layers,
+                    masterComponents: normalized.masterComponents,
+                    componentInstances: normalized.componentInstances,
+                    resizes: normalized.resizes,
+                    activeResizeId: normalized.activeResizeId,
+                    canvasWidth: normalized.canvasWidth,
+                    canvasHeight: normalized.canvasHeight,
+                    artboardProps: normalized.artboardProps ?? fallbackStore.artboardProps,
+                    palette: normalized.palette ?? { colors: [], backgrounds: [] },
                 });
             } catch (err) {
                 console.error("Failed to hydrate template:", err);
@@ -202,20 +214,8 @@ export default function EditorPage({ params }: EditorPageProps) {
         setTemplateSaveStatus("saving");
         const store = useCanvasStore.getState();
 
-        // Snapshot ALL formats: active format uses store.layers, others keep their existing snapshot
-        const resizesWithSnapshot = store.resizes.map(r =>
-            r.id === store.activeResizeId
-                ? { ...r, layerSnapshot: store.layers }
-                : r
-        );
-
-        // Find master format — its layers are the canonical "layers" field
-        const masterFormat = resizesWithSnapshot.find(r => r.isMaster);
-        const masterLayers = masterFormat
-            ? (masterFormat.id === store.activeResizeId
-                ? store.layers                     // master is currently active → use live layers
-                : masterFormat.layerSnapshot ?? []) // master is not active → use its snapshot
-            : store.layers; // no master designated → fall back to current layers
+        const stateForSave = getCanvasStateForSave(store);
+        const masterLayers = stateForSave.layers;
 
         // ── Rebuild masterComponents from master layers ──
         // This ensures the wizard always sees up-to-date fields,
@@ -238,14 +238,9 @@ export default function EditorPage({ params }: EditorPageProps) {
             }));
 
         const canvasState = {
+            ...stateForSave,
             layers: masterLayers,
             masterComponents: rebuiltMC.length > 0 ? rebuiltMC : store.masterComponents,
-            componentInstances: store.componentInstances,
-            resizes: resizesWithSnapshot,
-            artboardProps: store.artboardProps,
-            canvasWidth: masterFormat?.width ?? store.canvasWidth,
-            canvasHeight: masterFormat?.height ?? store.canvasHeight,
-            palette: store.palette,
             // v1.2+: embed font metadata for missing-font detection
             requiredFonts: extractRequiredFonts(masterLayers as any[]),
         };

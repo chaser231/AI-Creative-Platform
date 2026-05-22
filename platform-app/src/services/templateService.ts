@@ -1,5 +1,6 @@
 import { v4 as uuid } from "uuid";
 import { extractRequiredFonts } from "@/utils/fontUtils";
+import { normalizeCanvasStateForLoad } from "@/utils/canvasState";
 import type {
     Project,
     MasterComponent,
@@ -65,6 +66,20 @@ export interface TemplatePackV2 extends TemplatePack {
 
 /* ─── Serialization ─────────────────────────────────────── */
 
+function cloneSerializableResizes(resizes: ResizeFormat[], activeLayers?: Layer[]): ResizeFormat[] {
+    return resizes.map((resize) => ({
+        ...resize,
+        layerSnapshot: resize.layerSnapshot
+            ? resize.layerSnapshot.map((layer) => ({ ...layer }))
+            : (resize.isMaster || resize.id === "master") && activeLayers
+                ? activeLayers.map((layer) => ({ ...layer }))
+                : resize.layerSnapshot,
+        layerBindings: resize.layerBindings
+            ? resize.layerBindings.map((binding) => ({ ...binding }))
+            : resize.layerBindings,
+    }));
+}
+
 /**
  * Serializes the current project state into a portable Template Pack.
  * Now includes layerTree to preserve frame→children nesting.
@@ -97,7 +112,7 @@ export function serializeTemplate(
         baseHeight: extras?.canvasHeight ?? 1080,
         masterComponents: masters,
         componentInstances: instances,
-        resizes: resizes.filter(r => r.id !== "master"),
+        resizes: cloneSerializableResizes(resizes, layers),
         layers: layers ? layers.map((layer) => ({ ...layer })) : undefined,
         layerTree: layers ? buildLayerTree(layers) : undefined,
         requiredFonts,
@@ -326,10 +341,20 @@ export async function applyTemplatePack(
 
         // If data is raw canvas state (saved from template editor), load directly.
         // This preserves layer hierarchy (parentId), slots, and all structure.
-        // Raw canvas state has a `layers` array at the top level — TemplatePack format does not.
         const dataAny = data as any;
         if (dataAny.layers && Array.isArray(dataAny.layers) && dataAny.layers.length > 0) {
             const layers = dataAny.layers.map((l: any) => ({ ...l })); // shallow clone to avoid mutating original
+            const resizes = Array.isArray(dataAny.resizes)
+                ? dataAny.resizes.map((resize: ResizeFormat) => ({
+                    ...resize,
+                    layerSnapshot: resize.layerSnapshot
+                        ? resize.layerSnapshot.map((layer) => ({ ...layer }))
+                        : resize.layerSnapshot,
+                    layerBindings: resize.layerBindings
+                        ? resize.layerBindings.map((binding) => ({ ...binding }))
+                        : resize.layerBindings,
+                }))
+                : [{ id: "master", name: "Мастер макет", width: dataAny.canvasWidth || 1080, height: dataAny.canvasHeight || 1080, label: `${dataAny.canvasWidth || 1080} × ${dataAny.canvasHeight || 1080}`, instancesEnabled: false }];
 
             // Apply content overrides before loading
             if (overrides && Object.keys(overrides).length > 0) {
@@ -339,12 +364,6 @@ export async function applyTemplatePack(
                 layers.length = 0;
                 layers.push(...updatedLayers);
             }
-
-            const resizes = dataAny.resizes ?? [{ id: "master", name: "Мастер макет", width: dataAny.canvasWidth || 1080, height: dataAny.canvasHeight || 1080, label: `${dataAny.canvasWidth || 1080} × ${dataAny.canvasHeight || 1080}`, instancesEnabled: false }];
-
-            // Find master format — prefer isMaster flag, then fall back to first resize
-            const masterResize = resizes.find((r: any) => r.isMaster) || resizes[0];
-            const activeResizeId = masterResize?.id || "master";
 
             // Apply content overrides to ALL format snapshots (for instance formats)
             if (overrides && Object.keys(overrides).length > 0) {
@@ -357,18 +376,26 @@ export async function applyTemplatePack(
                 }
             }
 
-            useCanvasStore.setState({
+            const fallbackStore = useCanvasStore.getState();
+            const normalized = normalizeCanvasStateForLoad({
+                ...dataAny,
                 layers,
-                masterComponents: dataAny.masterComponents ?? [],
-                componentInstances: dataAny.componentInstances ?? [],
                 resizes,
-                activeResizeId,
+                palette: dataAny.palette ?? DEFAULT_PALETTE,
+            }, fallbackStore);
+
+            useCanvasStore.setState({
+                layers: normalized.layers,
+                masterComponents: normalized.masterComponents,
+                componentInstances: normalized.componentInstances,
+                resizes: normalized.resizes,
+                activeResizeId: normalized.activeResizeId,
                 selectedLayerIds: [],
                 history: [],
-                canvasWidth: masterResize?.width ?? dataAny.canvasWidth ?? 1080,
-                canvasHeight: masterResize?.height ?? dataAny.canvasHeight ?? 1080,
-                artboardProps: dataAny.artboardProps ?? useCanvasStore.getState().artboardProps,
-                palette: dataAny.palette ?? DEFAULT_PALETTE,
+                canvasWidth: normalized.canvasWidth,
+                canvasHeight: normalized.canvasHeight,
+                artboardProps: normalized.artboardProps ?? fallbackStore.artboardProps,
+                palette: normalized.palette ?? DEFAULT_PALETTE,
             });
         } else {
             // Legacy TemplatePack format — hydrate with ID regeneration

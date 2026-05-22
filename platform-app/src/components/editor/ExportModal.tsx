@@ -11,6 +11,7 @@ import { useShallow } from "zustand/react/shallow";
 import type { FrameLayer } from "@/types";
 import { cn } from "@/lib/cn";
 import { downloadDataUrl, zipPngDataUrls } from "@/utils/exportImage";
+import { getCanvasStateForSave } from "@/utils/canvasState";
 
 interface ExportModalProps {
     open: boolean;
@@ -268,8 +269,13 @@ export function ExportModal({ open, onClose, stageRef }: ExportModalProps) {
                         <Button
                             onClick={() => {
                                 import("@/services/templateService").then(({ serializeTemplate }) => {
-                                    const { masterComponents, resizes, layers } = useCanvasStore.getState();
-                                    const pack = serializeTemplate({}, masterComponents, resizes, undefined, layers);
+                                    const state = getCanvasStateForSave(useCanvasStore.getState());
+                                    const pack = serializeTemplate({}, state.masterComponents, state.resizes, state.componentInstances, state.layers, {
+                                        artboardProps: state.artboardProps as unknown as Record<string, unknown>,
+                                        palette: state.palette,
+                                        canvasWidth: state.canvasWidth,
+                                        canvasHeight: state.canvasHeight,
+                                    });
                                     const blob = new Blob([JSON.stringify(pack, null, 2)], { type: "application/json" });
                                     const url = URL.createObjectURL(blob);
                                     const link = document.createElement("a");
