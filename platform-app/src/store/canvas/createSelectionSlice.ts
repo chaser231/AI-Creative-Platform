@@ -6,6 +6,10 @@ import type { StateCreator } from "zustand";
 import type { CanvasStore, Layer, FrameLayer, HistorySnapshot } from "./types";
 import { MAX_HISTORY } from "./types";
 import { applyAllAutoLayouts } from "@/utils/layoutEngine";
+import {
+    getEditModeExitPatchesForSelection,
+    getPrimarySelectedLayerId,
+} from "./editModeHelpers";
 
 export type SelectionSlice = Pick<CanvasStore,
     | "selectedLayerIds"
@@ -17,35 +21,51 @@ export const createSelectionSlice: StateCreator<CanvasStore, [], [], SelectionSl
     selectedLayerIds: [],
 
     selectLayer: (id) => {
-        if (id === null) {
-            set({ selectedLayerIds: [] });
-        } else if (Array.isArray(id)) {
-            set({ selectedLayerIds: id });
-        } else {
-            set({ selectedLayerIds: [id] });
-        }
+        set((state) => {
+            const nextIds = id === null ? [] : Array.isArray(id) ? id : [id];
+            const exitPatches = getEditModeExitPatchesForSelection(
+                state,
+                getPrimarySelectedLayerId(nextIds),
+            );
+            return { ...exitPatches, selectedLayerIds: nextIds };
+        });
     },
 
     toggleSelection: (id) => {
-        set((state) => ({
-            selectedLayerIds: state.selectedLayerIds.includes(id)
+        set((state) => {
+            const nextIds = state.selectedLayerIds.includes(id)
                 ? state.selectedLayerIds.filter((sid) => sid !== id)
-                : [...state.selectedLayerIds, id],
-        }));
+                : [...state.selectedLayerIds, id];
+            const exitPatches = getEditModeExitPatchesForSelection(
+                state,
+                getPrimarySelectedLayerId(nextIds),
+            );
+            return { ...exitPatches, selectedLayerIds: nextIds };
+        });
     },
 
     addToSelection: (id) => {
-        set((state) => ({
-            selectedLayerIds: state.selectedLayerIds.includes(id)
+        set((state) => {
+            const nextIds = state.selectedLayerIds.includes(id)
                 ? state.selectedLayerIds
-                : [...state.selectedLayerIds, id],
-        }));
+                : [...state.selectedLayerIds, id];
+            const exitPatches = getEditModeExitPatchesForSelection(
+                state,
+                getPrimarySelectedLayerId(nextIds),
+            );
+            return { ...exitPatches, selectedLayerIds: nextIds };
+        });
     },
 
     removeFromSelection: (id) => {
-        set((state) => ({
-            selectedLayerIds: state.selectedLayerIds.filter((sid) => sid !== id),
-        }));
+        set((state) => {
+            const nextIds = state.selectedLayerIds.filter((sid) => sid !== id);
+            const exitPatches = getEditModeExitPatchesForSelection(
+                state,
+                getPrimarySelectedLayerId(nextIds),
+            );
+            return { ...exitPatches, selectedLayerIds: nextIds };
+        });
     },
 
     alignSelectedLayers: (alignment) => {

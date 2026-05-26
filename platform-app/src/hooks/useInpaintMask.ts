@@ -16,8 +16,9 @@
  *     state forces a re-render whenever the visible mask changes.
  *   • The overlay redraw is throttled via requestAnimationFrame so we never
  *     paint more than once per frame, regardless of pointer rate.
- *   • All public functions are stable across renders (wrapped in useCallback)
- *     so callers can drop them into event handlers without stale closures.
+ *   • Point spacing skips redundant samples so fast drags stay smooth.
+ *   • Finished strokes are cached in an offscreen bitmap; only the active
+ *     stroke is redrawn each frame during drag.
  */
 
 import { useCallback, useRef, useState } from "react";
@@ -38,65 +39,70 @@ export interface UseInpaintMaskOptions {
 }
 
 export interface UseInpaintMaskApi {
-    /** Brush diameter in screen pixels (controls cursor + stroke width). */
     brushSize: number;
     setBrushSize: (size: number) => void;
-
-    /** Brush hardness 0..1. Currently render-equivalent to 1 (hard edge). */
     hardness: number;
     setHardness: (h: number) => void;
-
-    /** Toggle between draw (false) and erase (true). */
     eraserActive: boolean;
     setEraserActive: (active: boolean) => void;
-
-    /** True when at least one stroke exists. */
     hasMask: boolean;
-
-    /**
-     * Monotonic counter that bumps whenever the stroke buffer changes.
-     * Consumers tie their overlay redraw effect to this so the live preview
-     * stays in sync with the underlying ref-stored strokes without
-     * re-creating the renderToOverlay callback on every change.
-     */
     maskVersion: number;
-
-    /** Begin a new stroke at the given overlay (screen-bbox-relative) point. */
     beginStroke: (point: BrushPoint) => void;
-    /** Add a point to the currently active stroke. */
     extendStroke: (point: BrushPoint) => void;
-    /** Finalise the current stroke (no-op if none in progress). */
     endStroke: () => void;
-
-    /** Remove the most recent stroke. */
     undo: () => void;
-    /** Clear all strokes. */
     clear: () => void;
-
-    /**
-     * Imperatively redraw the overlay canvas with the current strokes in
-     * screen coordinates. The canvas should be sized to the overlay bbox.
-     */
     renderToOverlay: (canvas: HTMLCanvasElement | null) => void;
-
-    /**
-     * Build the AI-ready mask as a PNG Blob in the source image's natural
-     * pixel space. Returns null when there are no strokes.
-     *
-     * Caller is responsible for uploading the blob to S3 (fal.ai inpaint
-     * endpoints require URLs, not data URIs).
-     */
     exportMaskBlob: (
         target: InpaintMaskTarget,
         modelSlug?: string,
     ) => Promise<Blob | null>;
 }
 
-/**
- * Public color of the overlay paint preview. Bright, slightly transparent
- * so the user sees the underlying image through their mask.
- */
 const OVERLAY_PAINT_COLOR = "rgba(99, 102, 241, 0.55)";
+
+/** Min distance between sampled points as a fraction of brush diameter. */
+export const INPAINT_BRUSH_SPACING_FACTOR = 0.15;
+
+export function shouldAddBrushPoint(
+    last: BrushPoint | undefined,
+    next: BrushPoint,
+    brushSize: number,
+): boolean {
+    if (!last) return true;
+    const minDist = Math.max(1, brushSize * INPAINT_BRUSH_SPACING_FACTOR);
+    const dx = next.x - last.x;
+    const dy = next.y - last.y;
+    return dx * dx + dy * dy >= minDist * minDist;
+}
+
+function drawStrokeOnContext(ctx: CanvasRenderingContext2D, stroke: BrushStroke) {
+    if (stroke.points.length === 0) return;
+    ctx.save();
+    ctx.globalCompositeOperation =
+        stroke.type === "erase" ? "destination-out" : "source-over";
+    ctx.fillStyle = OVERLAY_PAINT_COLOR;
+    ctx.strokeStyle = OVERLAY_PAINT_COLOR;
+    ctx.lineWidth = stroke.size;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+
+    if (stroke.points.length === 1) {
+        const p = stroke.points[0];
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, stroke.size / 2, 0, Math.PI * 2);
+        ctx.fill();
+    } else {
+        ctx.beginPath();
+        ctx.moveTo(stroke.points[0].x, stroke.points[0].y);
+        for (let i = 1; i < stroke.points.length; i++) {
+            const p = stroke.points[i];
+            ctx.lineTo(p.x, p.y);
+        }
+        ctx.stroke();
+    }
+    ctx.restore();
+}
 
 export function useInpaintMask(opts: UseInpaintMaskOptions = {}): UseInpaintMaskApi {
     const strokesRef = useRef<BrushStroke[]>([]);
@@ -106,9 +112,15 @@ export function useInpaintMask(opts: UseInpaintMaskOptions = {}): UseInpaintMask
     const [hardness, setHardness] = useState(opts.initialHardness ?? 1);
     const [eraserActive, setEraserActive] = useState(false);
 
-    // RAF-coalesced re-render trigger so we don't bump state more than once
-    // per frame during a fast mousemove.
     const rafScheduledRef = useRef(false);
+    const finishedCacheRef = useRef<HTMLCanvasElement | null>(null);
+    const finishedCacheStrokeCountRef = useRef(0);
+    const finishedCacheSizeRef = useRef<{ w: number; h: number }>({ w: 0, h: 0 });
+
+    const invalidateFinishedCache = useCallback(() => {
+        finishedCacheStrokeCountRef.current = -1;
+    }, []);
+
     const scheduleRender = useCallback(() => {
         if (rafScheduledRef.current) return;
         rafScheduledRef.current = true;
@@ -137,9 +149,8 @@ export function useInpaintMask(opts: UseInpaintMaskOptions = {}): UseInpaintMask
         (point: BrushPoint) => {
             const active = activeStrokeRef.current;
             if (!active) return;
-            // Mutate the points array in-place — we never compare strokes by
-            // identity from outside this hook, and the version bump below is
-            // what drives re-render.
+            const last = active.points[active.points.length - 1];
+            if (!shouldAddBrushPoint(last, point, active.size)) return;
             active.points.push(point);
             scheduleRender();
         },
@@ -148,64 +159,81 @@ export function useInpaintMask(opts: UseInpaintMaskOptions = {}): UseInpaintMask
 
     const endStroke = useCallback(() => {
         activeStrokeRef.current = null;
+        invalidateFinishedCache();
         scheduleRender();
-    }, [scheduleRender]);
+    }, [invalidateFinishedCache, scheduleRender]);
 
     const undo = useCallback(() => {
         if (strokesRef.current.length === 0) return;
         strokesRef.current = strokesRef.current.slice(0, -1);
         activeStrokeRef.current = null;
+        invalidateFinishedCache();
         scheduleRender();
-    }, [scheduleRender]);
+    }, [invalidateFinishedCache, scheduleRender]);
 
     const clear = useCallback(() => {
         strokesRef.current = [];
         activeStrokeRef.current = null;
+        invalidateFinishedCache();
         scheduleRender();
-    }, [scheduleRender]);
+    }, [invalidateFinishedCache, scheduleRender]);
+
+    const ensureFinishedCache = useCallback(
+        (width: number, height: number) => {
+            const finishedCount = activeStrokeRef.current
+                ? strokesRef.current.length - 1
+                : strokesRef.current.length;
+            const sizeChanged =
+                finishedCacheSizeRef.current.w !== width
+                || finishedCacheSizeRef.current.h !== height;
+            if (
+                !sizeChanged
+                && finishedCacheStrokeCountRef.current === finishedCount
+                && finishedCacheRef.current
+            ) {
+                return finishedCacheRef.current;
+            }
+
+            let cache = finishedCacheRef.current;
+            if (!cache || cache.width !== width || cache.height !== height) {
+                cache = document.createElement("canvas");
+                cache.width = width;
+                cache.height = height;
+                finishedCacheRef.current = cache;
+                finishedCacheSizeRef.current = { w: width, h: height };
+            }
+
+            const ctx = cache.getContext("2d");
+            if (!ctx) return cache;
+            ctx.clearRect(0, 0, width, height);
+            for (let i = 0; i < finishedCount; i++) {
+                drawStrokeOnContext(ctx, strokesRef.current[i]);
+            }
+            finishedCacheStrokeCountRef.current = finishedCount;
+            return cache;
+        },
+        [],
+    );
 
     const renderToOverlay = useCallback(
         (canvas: HTMLCanvasElement | null) => {
             if (!canvas) return;
             const ctx = canvas.getContext("2d");
             if (!ctx) return;
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-            // Draw strokes in screen coords. The canvas dimensions == overlay
-            // pixel dimensions, so coordinates can be used as-is.
-            for (const stroke of strokesRef.current) {
-                if (stroke.points.length === 0) continue;
-                ctx.save();
-                ctx.globalCompositeOperation =
-                    stroke.type === "erase" ? "destination-out" : "source-over";
-                ctx.fillStyle = OVERLAY_PAINT_COLOR;
-                ctx.strokeStyle = OVERLAY_PAINT_COLOR;
-                ctx.lineWidth = stroke.size;
-                ctx.lineCap = "round";
-                ctx.lineJoin = "round";
-
-                ctx.beginPath();
-                const first = stroke.points[0];
-                ctx.moveTo(first.x, first.y);
-                for (let i = 1; i < stroke.points.length; i++) {
-                    const p = stroke.points[i];
-                    ctx.lineTo(p.x, p.y);
-                }
-                ctx.stroke();
-
-                // Cap each point with a circle so a click without drag still
-                // produces a visible dot (lineTo on a single point is a no-op).
-                for (const p of stroke.points) {
-                    ctx.beginPath();
-                    ctx.arc(p.x, p.y, stroke.size / 2, 0, Math.PI * 2);
-                    ctx.fill();
-                }
-                ctx.restore();
+            const w = canvas.width;
+            const h = canvas.height;
+            const cache = ensureFinishedCache(w, h);
+            ctx.clearRect(0, 0, w, h);
+            if (cache) {
+                ctx.drawImage(cache, 0, 0);
+            }
+            const active = activeStrokeRef.current;
+            if (active) {
+                drawStrokeOnContext(ctx, active);
             }
         },
-        // version drives re-render via consumer effect; not a dep of the cb
-        // because the cb doesn't read it.
-        [],
+        [ensureFinishedCache],
     );
 
     const exportMaskBlob = useCallback(
@@ -240,9 +268,4 @@ export function useInpaintMask(opts: UseInpaintMaskOptions = {}): UseInpaintMask
     };
 }
 
-/**
- * Re-export the version counter accessor so consumers that need to redraw
- * an overlay imperatively can wire it into their effect deps. Implementation
- * stays internal because we don't want consumers reading the counter directly.
- */
 export type { BrushPoint, BrushStroke, InpaintMaskTarget };
