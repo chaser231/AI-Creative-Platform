@@ -102,6 +102,90 @@ describe("computePackOutpaintPlan", () => {
         expect(Math.abs(outputAspect - rectAspect) / Math.max(outputAspect, rectAspect)).toBeLessThan(0.005);
     });
 
+    it("keeps outputSizePx aligned with the pack rect when the cap is breached (delivery-crop default)", () => {
+        // Master 1192×300 alone has aspect 3.97:1 → after a 32px symmetric
+        // bleed the pack rect is 1256×364 (3.45:1), still outside the GPT
+        // 3:1 envelope. Under the legacy "pad" strategy the master rect would
+        // inflate to ~1256×419 (centering the product); under the new
+        // delivery-crop default the pack rect must stay 1256×364 and the cap
+        // padding must live only in the GPT request canvas.
+        const plan = computePackOutpaintPlan({
+            masterLayer: { id: "master-image", slotId: "image-primary", x: 0, y: 0, width: 1192, height: 300 },
+            masterArtboard: { width: 1192, height: 300 },
+            formats: [{ id: "master", isMaster: true, width: 1192, height: 300 }],
+            sourceSizePx: { width: 1192, height: 300 },
+            options: { bleedPx: 32 },
+        });
+
+        // Output stays equal to the pack rect (no symmetric inflation).
+        expect(plan.outputSizePx).toEqual({ width: 1256, height: 364 });
+        expect(plan.nextMasterRect).toEqual({ x: -32, y: -32, width: 1256, height: 364 });
+        expect(plan.canvasPadding).toEqual({ top: 32, right: 32, bottom: 32, left: 32 });
+        // Source placement inside the OUTPUT canvas is unaffected by the cap.
+        expect(plan.sourcePlacementPx).toEqual({ x: 32, y: 32, width: 1192, height: 300 });
+
+        // Request canvas honours the cap (≤ 3:1 within rounding-to-16).
+        const requestAspect = plan.requestSizePx.width / plan.requestSizePx.height;
+        expect(requestAspect).toBeLessThanOrEqual(GPT_IMAGE2_MAX_ASPECT + 0.05);
+
+        // Diagnostic still surfaces so observability is preserved.
+        expect(plan.diagnostics.find((d) => d.code === "aspect-pad-added")).toBeDefined();
+
+        // Source inside the REQUEST canvas is shifted down by the request-only top pad.
+        expect(plan.requestSourcePlacementPx.y).toBeGreaterThan(plan.sourcePlacementPx.y);
+        expect(plan.requestSourcePlacementPx.x + plan.requestSourcePlacementPx.width).toBeLessThanOrEqual(plan.requestSizePx.width);
+        expect(plan.requestSourcePlacementPx.y + plan.requestSourcePlacementPx.height).toBeLessThanOrEqual(plan.requestSizePx.height);
+
+        // Crop rect strips the top/bottom symmetric request-only pad and yields the pack aspect.
+        expect(plan.requestOutputCropPx.x).toBe(0);
+        expect(plan.requestOutputCropPx.y).toBeGreaterThan(0);
+        expect(plan.requestOutputCropPx.width).toBe(plan.requestSizePx.width);
+        expect(plan.requestOutputCropPx.height).toBeLessThan(plan.requestSizePx.height);
+        const cropAspect = plan.requestOutputCropPx.width / plan.requestOutputCropPx.height;
+        const outAspect = plan.outputSizePx.width / plan.outputSizePx.height;
+        expect(Math.abs(cropAspect - outAspect) / outAspect).toBeLessThan(0.02);
+    });
+
+    it("keeps requestOutputCropPx as the full request when no cap padding is needed", () => {
+        // Screenshot pack 1192×300 + 470×762 + 853×92 lands at 1356×899
+        // (aspect 1.508) — well inside the 3:1 envelope. The crop must equal
+        // the request canvas so delivery is a 1:1 copy after the GPT call.
+        const plan = computePackOutpaintPlan({
+            masterLayer: MASTER,
+            masterArtboard: { width: 1192, height: 300 },
+            formats: [
+                { id: "master", isMaster: true, width: 1192, height: 300 },
+                {
+                    id: "vertical",
+                    width: 470,
+                    height: 762,
+                    layers: [
+                        { id: "vertical-image", slotId: "image-primary", x: 0, y: 0, width: 470, height: 300 },
+                    ],
+                },
+                {
+                    id: "top-banner",
+                    width: 853,
+                    height: 92,
+                    layers: [
+                        { id: "top-image", slotId: "image-primary", x: 0, y: 0, width: 853, height: 92 },
+                    ],
+                },
+            ],
+            sourceSizePx: { width: 1192, height: 300 },
+            options: { bleedPx: 32 },
+        });
+
+        expect(plan.diagnostics.find((d) => d.code === "aspect-pad-added")).toBeUndefined();
+        expect(plan.requestOutputCropPx.x).toBe(0);
+        expect(plan.requestOutputCropPx.y).toBe(0);
+        expect(plan.requestOutputCropPx.width).toBe(plan.requestSizePx.width);
+        expect(plan.requestOutputCropPx.height).toBe(plan.requestSizePx.height);
+        // Source-in-request should differ from source-in-output only by request rescaling.
+        expect(plan.requestSourcePlacementPx.x).toBeCloseTo(plan.sourcePlacementPx.x, 0);
+        expect(plan.requestSourcePlacementPx.y).toBeCloseTo(plan.sourcePlacementPx.y, 0);
+    });
+
     it("keeps the asymmetric pack padding under aspectCapStrategy: downscale-request", () => {
         const formats: PackOutpaintFormat[] = [
             { id: "master", isMaster: true, width: 1192, height: 300 },

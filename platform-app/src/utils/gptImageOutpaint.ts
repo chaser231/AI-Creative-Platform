@@ -230,16 +230,27 @@ export async function outpaintWithGptImage2PackPlan(
     const outputH = plan.outputSizePx.height;
     const requestW = plan.requestSizePx.width;
     const requestH = plan.requestSizePx.height;
-    const scaleX = requestW / outputW;
-    const scaleY = requestH / outputH;
     const requestSourceRect = {
-        x: Math.round(plan.sourcePlacementPx.x * scaleX),
-        y: Math.round(plan.sourcePlacementPx.y * scaleY),
-        width: Math.max(1, Math.round(plan.sourcePlacementPx.width * scaleX)),
-        height: Math.max(1, Math.round(plan.sourcePlacementPx.height * scaleY)),
+        x: Math.round(plan.requestSourcePlacementPx.x),
+        y: Math.round(plan.requestSourcePlacementPx.y),
+        width: Math.max(1, Math.round(plan.requestSourcePlacementPx.width)),
+        height: Math.max(1, Math.round(plan.requestSourcePlacementPx.height)),
+    };
+    const requestOutputCrop = {
+        x: Math.round(plan.requestOutputCropPx.x),
+        y: Math.round(plan.requestOutputCropPx.y),
+        width: Math.max(1, Math.round(plan.requestOutputCropPx.width)),
+        height: Math.max(1, Math.round(plan.requestOutputCropPx.height)),
     };
 
-    onProgress?.("outpaint-canvas-start", { outputW, outputH, requestW, requestH });
+    onProgress?.("outpaint-canvas-start", {
+        outputW,
+        outputH,
+        requestW,
+        requestH,
+        requestSourceRect,
+        requestOutputCrop,
+    });
 
     const paddedCanvas = document.createElement("canvas");
     paddedCanvas.width = requestW;
@@ -324,6 +335,7 @@ export async function outpaintWithGptImage2PackPlan(
             requestSizePx: { width: requestW, height: requestH },
             outputSizePx: { width: outputW, height: outputH },
             aspectDrift,
+            requestOutputCrop,
         });
     }
     if (aspectDrift > ASPECT_DRIFT_TOLERANCE) {
@@ -343,28 +355,26 @@ export async function outpaintWithGptImage2PackPlan(
     finalCtx.imageSmoothingEnabled = true;
     finalCtx.imageSmoothingQuality = "high";
 
-    if (aspectDrift <= ASPECT_DRIFT_TOLERANCE) {
-        // Aspects match within tolerance — single uniform rescale of the GPT
-        // bitmap into the pack-required output rect. fal mask guarantees the
-        // preserved (black) region is unchanged, so no further composite is
-        // needed.
-        finalCtx.drawImage(gptImg, 0, 0, outputW, outputH);
-    } else {
-        // Aspect drift breaks the assumption that drawImage(0,0,outW,outH) is
-        // a uniform scale. Letterbox the GPT bitmap into outputSizePx using a
-        // single scale factor, leaving thin transparent bands on the
-        // mismatched axis. Callers are expected to detect this via the
-        // `pixelPadding` returned from the plan and the warning above.
-        const containRect = computeUniformContainRect(
-            { width: gptW, height: gptH },
-            { width: outputW, height: outputH },
-        );
-        finalCtx.drawImage(
-            gptImg,
-            0, 0, gptW, gptH,
-            containRect.x, containRect.y, containRect.width, containRect.height,
-        );
-    }
+    // Map the request-space crop rect into the actual returned bitmap. When the
+    // GPT response matches the requested aspect (the common case under
+    // delivery-crop), this is just the request crop scaled by gpt/request. When
+    // aspects drift slightly we still crop along the same fractional bounds so
+    // the produced output keeps the pack-required aspect with no letterbox.
+    const cropScaleX = gptW / requestW;
+    const cropScaleY = gptH / requestH;
+    const sourceCrop = {
+        x: Math.max(0, Math.round(requestOutputCrop.x * cropScaleX)),
+        y: Math.max(0, Math.round(requestOutputCrop.y * cropScaleY)),
+        width: Math.max(1, Math.round(requestOutputCrop.width * cropScaleX)),
+        height: Math.max(1, Math.round(requestOutputCrop.height * cropScaleY)),
+    };
+    sourceCrop.width = Math.min(sourceCrop.width, gptW - sourceCrop.x);
+    sourceCrop.height = Math.min(sourceCrop.height, gptH - sourceCrop.y);
+    finalCtx.drawImage(
+        gptImg,
+        sourceCrop.x, sourceCrop.y, sourceCrop.width, sourceCrop.height,
+        0, 0, outputW, outputH,
+    );
 
     const finalUrl = await persistImageToS3(finalCanvas.toDataURL("image/png"), projectId);
     if (debug) onProgress?.("debug-final-result", { finalUrl });

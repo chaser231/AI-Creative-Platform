@@ -46,9 +46,21 @@ export interface PackOutpaintDiagnostic {
 export interface PackOutpaintPlan {
     canvasPadding: { top: number; right: number; bottom: number; left: number };
     nextMasterRect: { x: number; y: number; width: number; height: number };
+    /** Final delivery size (pack-required). Equals nextMasterRect aspect. */
     outputSizePx: PixelSize;
+    /** Size sent to fal/GPT (may be larger than outputSizePx for aspect-cap padding). */
     requestSizePx: PixelSize;
+    /** Source placement inside the OUTPUT canvas (used for client-side mask). */
     sourcePlacementPx: { x: number; y: number; width: number; height: number };
+    /** Source placement inside the REQUEST canvas (used to build the fal payload). */
+    requestSourcePlacementPx: { x: number; y: number; width: number; height: number };
+    /**
+     * Crop rect inside the REQUEST canvas that yields the OUTPUT delivery.
+     * For pack-required aspects within the GPT envelope this is the whole
+     * request canvas; for ultra-wide / ultra-tall packs it strips the
+     * symmetric cap padding that was added only for the GPT request.
+     */
+    requestOutputCropPx: { x: number; y: number; width: number; height: number };
     diagnostics: PackOutpaintDiagnostic[];
 }
 
@@ -56,19 +68,25 @@ export interface PackOutpaintPlan {
  * Controls what happens when the union of pack-required paddings produces an
  * aspect outside the GPT Image 2 3:1 / 1:3 envelope.
  *
- * - "pad" (legacy): grow the canvas with extra symmetric padding on the
- *   short axis to bring the aspect inside the cap. The product on the
- *   master moves to the geometric center, which is undesirable for
- *   asymmetric banner packs but matches the original behaviour.
+ * - "delivery-crop" (default): keep `outputSizePx` and `nextMasterRect`
+ *   exactly equal to what the pack needs (asymmetric padding only). When
+ *   the pack rect breaches the 3:1 envelope, add symmetric cap padding to
+ *   the *request canvas only* and crop the GPT bitmap back to the pack
+ *   rect after the call. The product never moves and the layer rect never
+ *   inflates from the cap.
+ * - "pad" (legacy): grow the output canvas with extra symmetric padding on
+ *   the short axis to bring the aspect inside the cap. The product on the
+ *   master moves toward the geometric center, which is undesirable for
+ *   asymmetric banner packs but matches the original behaviour. Kept for
+ *   backwards compatibility with existing callers and tests.
  * - "downscale-request": keep `outputSizePx` exactly equal to what the pack
- *   needs (asymmetric padding only), and let `computeGptImage2RequestSize`
- *   shrink the request canvas if it exceeds the edge/area caps. The
- *   resulting `requestSizePx` may breach the 3:1 aspect — callers can detect
- *   this from the `request-aspect-out-of-range` diagnostic and either retry
- *   with `"pad"` or use a different engine for that format.
+ *   needs and let `computeGptImage2RequestSize` shrink the request canvas
+ *   to fit the edge/area caps without padding it for aspect. The resulting
+ *   `requestSizePx` may breach the 3:1 aspect — callers can detect this
+ *   from `request-aspect-out-of-range` and route to a different engine.
  * - "off": skip the cap entirely. Used when the engine has no aspect limit.
  */
-export type PackAspectCapStrategy = "pad" | "downscale-request" | "off";
+export type PackAspectCapStrategy = "delivery-crop" | "pad" | "downscale-request" | "off";
 
 export interface ComputePackOutpaintPlanOptions {
     bleedPx?: number;
@@ -236,57 +254,82 @@ export function computeGptImage2RequestSize(
     return { size: { width, height }, diagnostics };
 }
 
-function enforceAspectCap(
+interface AspectCapExtra {
+    extra: { top: number; right: number; bottom: number; left: number };
+    diagnostic?: PackOutpaintDiagnostic;
+}
+
+function computeAspectCapExtra(
     padding: { top: number; right: number; bottom: number; left: number },
     masterLayer: PackOutpaintRect,
     sourceSize: PixelSize,
-    diagnostics: PackOutpaintDiagnostic[],
-): { top: number; right: number; bottom: number; left: number } {
+): AspectCapExtra {
+    const zero = { extra: { top: 0, right: 0, bottom: 0, left: 0 } } as AspectCapExtra;
     const scaleX = sourceSize.width / masterLayer.width;
     const scaleY = sourceSize.height / masterLayer.height;
     if (!Number.isFinite(scaleX) || !Number.isFinite(scaleY) || scaleX <= 0 || scaleY <= 0) {
-        return padding;
+        return zero;
     }
 
-    let next = { ...padding };
-    let outW = sourceSize.width + (next.left + next.right) * scaleX;
-    let outH = sourceSize.height + (next.top + next.bottom) * scaleY;
+    const outW = sourceSize.width + (padding.left + padding.right) * scaleX;
+    const outH = sourceSize.height + (padding.top + padding.bottom) * scaleY;
+    if (!Number.isFinite(outW) || !Number.isFinite(outH) || outW <= 0 || outH <= 0) {
+        return zero;
+    }
     const aspect = outW / outH;
 
     if (aspect > GPT_IMAGE2_MAX_ASPECT) {
         const targetH = outW / GPT_IMAGE2_MAX_ASPECT;
         const extraCanvas = Math.ceil((targetH - outH) / scaleY);
         const extraTop = Math.ceil(extraCanvas / 2);
-        next = {
-            ...next,
-            top: next.top + extraTop,
-            bottom: next.bottom + (extraCanvas - extraTop),
+        return {
+            extra: {
+                top: extraTop,
+                bottom: extraCanvas - extraTop,
+                left: 0,
+                right: 0,
+            },
+            diagnostic: {
+                code: "aspect-pad-added",
+                message: "Vertical padding was added so the GPT request stays within the 3:1 aspect limit.",
+            },
         };
-        diagnostics.push({
-            code: "aspect-pad-added",
-            message: "Vertical padding was added so the GPT request stays within the 3:1 aspect limit.",
-        });
-    } else if (aspect < 1 / GPT_IMAGE2_MAX_ASPECT) {
+    }
+    if (aspect < 1 / GPT_IMAGE2_MAX_ASPECT) {
         const targetW = outH / GPT_IMAGE2_MAX_ASPECT;
         const extraCanvas = Math.ceil((targetW - outW) / scaleX);
         const extraLeft = Math.ceil(extraCanvas / 2);
-        next = {
-            ...next,
-            left: next.left + extraLeft,
-            right: next.right + (extraCanvas - extraLeft),
+        return {
+            extra: {
+                top: 0,
+                bottom: 0,
+                left: extraLeft,
+                right: extraCanvas - extraLeft,
+            },
+            diagnostic: {
+                code: "aspect-pad-added",
+                message: "Horizontal padding was added so the GPT request stays within the 3:1 aspect limit.",
+            },
         };
-        diagnostics.push({
-            code: "aspect-pad-added",
-            message: "Horizontal padding was added so the GPT request stays within the 3:1 aspect limit.",
-        });
     }
 
-    outW = sourceSize.width + (next.left + next.right) * scaleX;
-    outH = sourceSize.height + (next.top + next.bottom) * scaleY;
-    if (outW / outH > GPT_IMAGE2_MAX_ASPECT || outH / outW > GPT_IMAGE2_MAX_ASPECT) {
-        return next;
-    }
-    return next;
+    return zero;
+}
+
+function enforceAspectCap(
+    padding: { top: number; right: number; bottom: number; left: number },
+    masterLayer: PackOutpaintRect,
+    sourceSize: PixelSize,
+    diagnostics: PackOutpaintDiagnostic[],
+): { top: number; right: number; bottom: number; left: number } {
+    const cap = computeAspectCapExtra(padding, masterLayer, sourceSize);
+    if (cap.diagnostic) diagnostics.push(cap.diagnostic);
+    return {
+        top: padding.top + cap.extra.top,
+        right: padding.right + cap.extra.right,
+        bottom: padding.bottom + cap.extra.bottom,
+        left: padding.left + cap.extra.left,
+    };
 }
 
 export function computePackOutpaintPlan(input: ComputePackOutpaintPlanInput): PackOutpaintPlan {
@@ -351,33 +394,55 @@ export function computePackOutpaintPlan(input: ComputePackOutpaintPlanInput): Pa
         }
     }
 
-    const aspectCapStrategy: PackAspectCapStrategy = input.options?.aspectCapStrategy ?? "pad";
+    const aspectCapStrategy: PackAspectCapStrategy = input.options?.aspectCapStrategy ?? "delivery-crop";
     const rawPadded = {
         top: ceilNonNegative(required.top),
         right: ceilNonNegative(required.right),
         bottom: ceilNonNegative(required.bottom),
         left: ceilNonNegative(required.left),
     };
-    const padded = aspectCapStrategy === "pad"
+
+    // Output padding controls the layer rect / nextMasterRect / outputSizePx.
+    // Only the legacy "pad" strategy inflates the output to obey the GPT cap.
+    const outputPadded = aspectCapStrategy === "pad"
         ? enforceAspectCap(rawPadded, masterLayer, input.sourceSizePx, diagnostics)
         : rawPadded;
+
+    // Request-only cap pad keeps `outputSizePx` aligned with the pack rect for
+    // "delivery-crop" while still feeding the GPT model an in-envelope canvas.
+    const requestCapExtra = aspectCapStrategy === "delivery-crop"
+        ? computeAspectCapExtra(outputPadded, masterLayer, input.sourceSizePx)
+        : ({ extra: { top: 0, right: 0, bottom: 0, left: 0 } } as AspectCapExtra);
+    if (aspectCapStrategy === "delivery-crop" && requestCapExtra.diagnostic) {
+        diagnostics.push(requestCapExtra.diagnostic);
+    }
 
     const scaleX = input.sourceSizePx.width / masterLayer.width;
     const scaleY = input.sourceSizePx.height / masterLayer.height;
     const padPx = {
-        left: Math.round(padded.left * scaleX),
-        right: Math.round(padded.right * scaleX),
-        top: Math.round(padded.top * scaleY),
-        bottom: Math.round(padded.bottom * scaleY),
+        left: Math.round(outputPadded.left * scaleX),
+        right: Math.round(outputPadded.right * scaleX),
+        top: Math.round(outputPadded.top * scaleY),
+        bottom: Math.round(outputPadded.bottom * scaleY),
+    };
+    const requestExtraPadPx = {
+        left: Math.round(requestCapExtra.extra.left * scaleX),
+        right: Math.round(requestCapExtra.extra.right * scaleX),
+        top: Math.round(requestCapExtra.extra.top * scaleY),
+        bottom: Math.round(requestCapExtra.extra.bottom * scaleY),
     };
     const outputSizePx = {
         width: Math.max(1, Math.round(input.sourceSizePx.width + padPx.left + padPx.right)),
         height: Math.max(1, Math.round(input.sourceSizePx.height + padPx.top + padPx.bottom)),
     };
-    const request = computeGptImage2RequestSize(outputSizePx);
+    const requestRawSize = {
+        width: Math.max(1, outputSizePx.width + requestExtraPadPx.left + requestExtraPadPx.right),
+        height: Math.max(1, outputSizePx.height + requestExtraPadPx.top + requestExtraPadPx.bottom),
+    };
+    const request = computeGptImage2RequestSize(requestRawSize);
     diagnostics.push(...request.diagnostics);
 
-    if (aspectCapStrategy !== "pad" && request.size.width > 0 && request.size.height > 0) {
+    if (aspectCapStrategy === "downscale-request" && request.size.width > 0 && request.size.height > 0) {
         const requestAspect = request.size.width / request.size.height;
         if (requestAspect > GPT_IMAGE2_MAX_ASPECT || requestAspect < 1 / GPT_IMAGE2_MAX_ASPECT) {
             diagnostics.push({
@@ -387,13 +452,34 @@ export function computePackOutpaintPlan(input: ComputePackOutpaintPlanInput): Pa
         }
     }
 
+    const reqScaleX = request.size.width / requestRawSize.width;
+    const reqScaleY = request.size.height / requestRawSize.height;
+    const requestSourcePlacementPx = {
+        x: Math.round((requestExtraPadPx.left + padPx.left) * reqScaleX),
+        y: Math.round((requestExtraPadPx.top + padPx.top) * reqScaleY),
+        width: Math.max(1, Math.round(input.sourceSizePx.width * reqScaleX)),
+        height: Math.max(1, Math.round(input.sourceSizePx.height * reqScaleY)),
+    };
+    const cropRawX = Math.round(requestExtraPadPx.left * reqScaleX);
+    const cropRawY = Math.round(requestExtraPadPx.top * reqScaleY);
+    const cropRawW = Math.max(1, Math.round(outputSizePx.width * reqScaleX));
+    const cropRawH = Math.max(1, Math.round(outputSizePx.height * reqScaleY));
+    const cropX = Math.max(0, Math.min(cropRawX, request.size.width - 1));
+    const cropY = Math.max(0, Math.min(cropRawY, request.size.height - 1));
+    const requestOutputCropPx = {
+        x: cropX,
+        y: cropY,
+        width: Math.max(1, Math.min(cropRawW, request.size.width - cropX)),
+        height: Math.max(1, Math.min(cropRawH, request.size.height - cropY)),
+    };
+
     return {
-        canvasPadding: padded,
+        canvasPadding: outputPadded,
         nextMasterRect: {
-            x: masterLayer.x - padded.left,
-            y: masterLayer.y - padded.top,
-            width: masterLayer.width + padded.left + padded.right,
-            height: masterLayer.height + padded.top + padded.bottom,
+            x: masterLayer.x - outputPadded.left,
+            y: masterLayer.y - outputPadded.top,
+            width: masterLayer.width + outputPadded.left + outputPadded.right,
+            height: masterLayer.height + outputPadded.top + outputPadded.bottom,
         },
         outputSizePx,
         requestSizePx: request.size,
@@ -403,6 +489,8 @@ export function computePackOutpaintPlan(input: ComputePackOutpaintPlanInput): Pa
             width: Math.round(input.sourceSizePx.width),
             height: Math.round(input.sourceSizePx.height),
         },
+        requestSourcePlacementPx,
+        requestOutputCropPx,
         diagnostics,
     };
 }

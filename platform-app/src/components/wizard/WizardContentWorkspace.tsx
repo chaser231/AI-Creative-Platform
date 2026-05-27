@@ -2363,11 +2363,15 @@ function WizardLayerPromptBar({
                                 options: {
                                     bleedPx: WIZARD_OUTPAINT_BLEED_PX,
                                     exportScale: 2,
-                                    // Keep outputSizePx exactly equal to the
-                                    // pack-required asymmetric padding instead
-                                    // of inflating the master rect with
-                                    // symmetric aspect-cap pads.
-                                    aspectCapStrategy: "downscale-request",
+                                    // delivery-crop keeps outputSizePx and the
+                                    // layer rect exactly equal to the pack
+                                    // requirement. Aspect-cap padding lives
+                                    // only in the GPT request canvas and is
+                                    // cropped out after the call, so the
+                                    // product never moves and the bitmap is
+                                    // never letterboxed for ultra-wide /
+                                    // ultra-tall packs.
+                                    aspectCapStrategy: "delivery-crop",
                                 },
                             });
                             if (jobSnapshot.outpaintDebug) {
