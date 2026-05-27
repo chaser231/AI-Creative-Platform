@@ -36,6 +36,7 @@ export interface PackOutpaintDiagnostic {
         | "missing-target-layer"
         | "invalid-target-layer"
         | "aspect-pad-added"
+        | "request-aspect-out-of-range"
         | "request-scaled-to-caps"
         | "request-upscaled-to-min";
     formatId?: string;
@@ -51,9 +52,28 @@ export interface PackOutpaintPlan {
     diagnostics: PackOutpaintDiagnostic[];
 }
 
+/**
+ * Controls what happens when the union of pack-required paddings produces an
+ * aspect outside the GPT Image 2 3:1 / 1:3 envelope.
+ *
+ * - "pad" (legacy): grow the canvas with extra symmetric padding on the
+ *   short axis to bring the aspect inside the cap. The product on the
+ *   master moves to the geometric center, which is undesirable for
+ *   asymmetric banner packs but matches the original behaviour.
+ * - "downscale-request": keep `outputSizePx` exactly equal to what the pack
+ *   needs (asymmetric padding only), and let `computeGptImage2RequestSize`
+ *   shrink the request canvas if it exceeds the edge/area caps. The
+ *   resulting `requestSizePx` may breach the 3:1 aspect — callers can detect
+ *   this from the `request-aspect-out-of-range` diagnostic and either retry
+ *   with `"pad"` or use a different engine for that format.
+ * - "off": skip the cap entirely. Used when the engine has no aspect limit.
+ */
+export type PackAspectCapStrategy = "pad" | "downscale-request" | "off";
+
 export interface ComputePackOutpaintPlanOptions {
     bleedPx?: number;
     exportScale?: number;
+    aspectCapStrategy?: PackAspectCapStrategy;
 }
 
 export interface ComputePackOutpaintPlanInput {
@@ -331,17 +351,16 @@ export function computePackOutpaintPlan(input: ComputePackOutpaintPlanInput): Pa
         }
     }
 
-    const padded = enforceAspectCap(
-        {
-            top: ceilNonNegative(required.top),
-            right: ceilNonNegative(required.right),
-            bottom: ceilNonNegative(required.bottom),
-            left: ceilNonNegative(required.left),
-        },
-        masterLayer,
-        input.sourceSizePx,
-        diagnostics,
-    );
+    const aspectCapStrategy: PackAspectCapStrategy = input.options?.aspectCapStrategy ?? "pad";
+    const rawPadded = {
+        top: ceilNonNegative(required.top),
+        right: ceilNonNegative(required.right),
+        bottom: ceilNonNegative(required.bottom),
+        left: ceilNonNegative(required.left),
+    };
+    const padded = aspectCapStrategy === "pad"
+        ? enforceAspectCap(rawPadded, masterLayer, input.sourceSizePx, diagnostics)
+        : rawPadded;
 
     const scaleX = input.sourceSizePx.width / masterLayer.width;
     const scaleY = input.sourceSizePx.height / masterLayer.height;
@@ -357,6 +376,16 @@ export function computePackOutpaintPlan(input: ComputePackOutpaintPlanInput): Pa
     };
     const request = computeGptImage2RequestSize(outputSizePx);
     diagnostics.push(...request.diagnostics);
+
+    if (aspectCapStrategy !== "pad" && request.size.width > 0 && request.size.height > 0) {
+        const requestAspect = request.size.width / request.size.height;
+        if (requestAspect > GPT_IMAGE2_MAX_ASPECT || requestAspect < 1 / GPT_IMAGE2_MAX_ASPECT) {
+            diagnostics.push({
+                code: "request-aspect-out-of-range",
+                message: `Request aspect ${requestAspect.toFixed(2)} is outside the GPT Image 2 ${GPT_IMAGE2_MAX_ASPECT}:1 envelope; the configured engine must accept it.`,
+            });
+        }
+    }
 
     return {
         canvasPadding: padded,

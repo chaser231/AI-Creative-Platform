@@ -2360,7 +2360,15 @@ function WizardLayerPromptBar({
                                 masterArtboard,
                                 formats: outpaintFormats,
                                 sourceSizePx: { width: derivative.width, height: derivative.height },
-                                options: { bleedPx: WIZARD_OUTPAINT_BLEED_PX, exportScale: 2 },
+                                options: {
+                                    bleedPx: WIZARD_OUTPAINT_BLEED_PX,
+                                    exportScale: 2,
+                                    // Keep outputSizePx exactly equal to the
+                                    // pack-required asymmetric padding instead
+                                    // of inflating the master rect with
+                                    // symmetric aspect-cap pads.
+                                    aspectCapStrategy: "downscale-request",
+                                },
                             });
                             if (jobSnapshot.outpaintDebug) {
                                 console.log("[Wizard/GPTOutpaint/debug-plan]", {
