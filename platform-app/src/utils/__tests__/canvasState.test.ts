@@ -98,6 +98,70 @@ describe("getCanvasStateForSave", () => {
         expect(state.resizes.find((resize) => resize.id === "feed")?.layerSnapshot).toEqual(activeLayers);
         expect(state.resizes.find((resize) => resize.id === "landing")?.layerSnapshot).toEqual(masterLayers);
     });
+
+    /**
+     * Regression: the auto-save image-migration path in `useProjectSync.saveNow`
+     * used to write `canvasState.layers` straight back into the live store
+     * after S3 migration. Since `getCanvasStateForSave` deliberately fills
+     * `canvasState.layers` with the master snapshot (canonical for backend
+     * persistence), that wrote master layers on top of whatever the user was
+     * actually editing — the on-screen format would visually flip back to the
+     * master's content a few seconds after every format switch (any state
+     * with inline base64 images would re-trigger the migration).
+     *
+     * The fix hydrates the live `state.layers` from
+     * `canvasState.resizes[active].layerSnapshot` instead. This test pins
+     * down the invariant the fix relies on: for a non-master active format,
+     * looking up the active resize's snapshot in the produced `canvasState`
+     * must give back the user's currently-displayed layers (not the master).
+     */
+    it("exposes the active format's layers via resizes[active].layerSnapshot for post-migration rehydration", () => {
+        const masterLayers = [{ id: "master-layer", type: "rectangle", name: "Master" }] as Layer[];
+        const activeLayers = [{ id: "feed-layer", type: "rectangle", name: "Feed edited" }] as Layer[];
+        const resizes = [
+            {
+                id: "feed",
+                name: "Feed",
+                width: 540,
+                height: 225,
+                label: "540 × 225",
+                instancesEnabled: false,
+                layerSnapshot: [{ id: "feed-old", type: "rectangle", name: "Feed old" }],
+            },
+            {
+                id: "landing",
+                name: "Landing Header",
+                width: 1192,
+                height: 300,
+                label: "1192 × 300",
+                instancesEnabled: false,
+                isMaster: true,
+                layerSnapshot: masterLayers,
+            },
+        ] as ResizeFormat[];
+
+        const canvasState = getCanvasStateForSave({
+            layers: activeLayers,
+            masterComponents: [],
+            componentInstances: [],
+            resizes,
+            activeResizeId: "feed",
+            artboardProps: DEFAULT_ARTBOARD_PROPS,
+            canvasWidth: 540,
+            canvasHeight: 225,
+            palette: { colors: [], backgrounds: [] },
+        });
+
+        // Mirrors the `useProjectSync.saveNow` post-migration rehydration:
+        // never use the canonical (master) `canvasState.layers` for the
+        // live store; always pull the active resize's migrated snapshot.
+        const migratedActiveLayers =
+            canvasState.resizes.find((resize) => resize.id === "feed")?.layerSnapshot
+            ?? canvasState.layers;
+
+        expect(migratedActiveLayers).toEqual(activeLayers);
+        expect(migratedActiveLayers).not.toEqual(masterLayers);
+    });
 });
 
 describe("normalizeCanvasStateForLoad", () => {

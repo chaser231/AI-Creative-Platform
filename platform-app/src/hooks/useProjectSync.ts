@@ -264,8 +264,20 @@ export function useCanvasAutoSave(
         isMigratingRef.current = true;
         setIsMigrating(true);
         canvasState = await persistImageSourcesInObject(canvasState, projectId);
+        // CRITICAL: `canvasState.layers` is the canonical (master) snapshot
+        // produced by `getCanvasStateForSave` — it intentionally diverges
+        // from `store.layers` whenever the user is editing a non-master
+        // format. Writing it back into the live store would replace the
+        // active format's layers with the master's layers and visually
+        // wipe per-format edits a few seconds after the user switches
+        // formats. Hydrate the live `layers` from the migrated active
+        // resize's snapshot instead, so the canvas keeps showing what the
+        // user is actually editing.
+        const migratedActiveLayers =
+          canvasState.resizes.find((r) => r.id === store.activeResizeId)?.layerSnapshot
+          ?? canvasState.layers;
         useCanvasStore.setState({
-          layers: canvasState.layers,
+          layers: migratedActiveLayers,
           resizes: canvasState.resizes,
           artboardProps: canvasState.artboardProps,
           palette: canvasState.palette,
