@@ -1,8 +1,8 @@
 import { persistImageToS3, uploadForAI } from "@/utils/imageUpload";
 import type { PackOutpaintDiagnostic, PackOutpaintPlan } from "@/utils/packOutpaintPlan";
 
-const SEAM_BAND_PX = 24;
-const EDGE_CONTEXT_EXPERIMENT_ENV = process.env.NEXT_PUBLIC_WIZARD_OUTPAINT_EDGE_CONTEXT;
+const EDGE_CONTEXT_OPT_OUT_ENV = process.env.NEXT_PUBLIC_WIZARD_OUTPAINT_EDGE_CONTEXT;
+const ASPECT_DRIFT_TOLERANCE = 0.01;
 
 export interface GptImageOutpaintParams {
     imageSrc: string;
@@ -47,32 +47,6 @@ function pixelPaddingFromPlan(plan: PackOutpaintPlan): { top: number; right: num
     };
 }
 
-export function computeOutpaintMaskAlphaAt(
-    x: number,
-    y: number,
-    sourceRect: { x: number; y: number; width: number; height: number },
-    outputSize: { width: number; height: number },
-    seamPx = SEAM_BAND_PX,
-): number {
-    const inside =
-        x >= sourceRect.x
-        && y >= sourceRect.y
-        && x < sourceRect.x + sourceRect.width
-        && y < sourceRect.y + sourceRect.height;
-    if (!inside) return 0;
-
-    let alpha = 1;
-    if (sourceRect.x > 0) alpha = Math.min(alpha, (x - sourceRect.x) / seamPx);
-    if (sourceRect.y > 0) alpha = Math.min(alpha, (y - sourceRect.y) / seamPx);
-    if (sourceRect.x + sourceRect.width < outputSize.width) {
-        alpha = Math.min(alpha, (sourceRect.x + sourceRect.width - 1 - x) / seamPx);
-    }
-    if (sourceRect.y + sourceRect.height < outputSize.height) {
-        alpha = Math.min(alpha, (sourceRect.y + sourceRect.height - 1 - y) / seamPx);
-    }
-    return Math.max(0, Math.min(1, alpha));
-}
-
 function isInsideRect(
     x: number,
     y: number,
@@ -86,7 +60,9 @@ function isInsideRect(
 
 /**
  * fal's openai/gpt-image-2/edit endpoint documents mask_url as a black/white
- * PNG: white pixels are editable, black pixels are preserved.
+ * PNG: white pixels are editable, black pixels are preserved. The mask is
+ * binary on purpose — fal preserves the black region pixel-for-pixel, so we
+ * never need to re-paste the source on the client side.
  */
 export function computeFalOutpaintMaskPixelAt(
     x: number,
@@ -141,15 +117,23 @@ function buildFalMaskDataUrl(
     return canvas.toDataURL("image/png");
 }
 
-function isEdgeContextExperimentEnabled(): boolean {
-    if (process.env.NODE_ENV === "production") return false;
-    if (EDGE_CONTEXT_EXPERIMENT_ENV === "1") return true;
+/**
+ * Edge-extended background fill is the default for GPT input padding. Without
+ * it the editable region is fully transparent and the model often produces
+ * symmetric, low-context fills. The opt-out env flag exists only to
+ * troubleshoot models that prefer a clean transparent canvas.
+ */
+function isEdgeContextEnabled(): boolean {
+    if (EDGE_CONTEXT_OPT_OUT_ENV === "0") return false;
     try {
-        return typeof window !== "undefined"
-            && window.localStorage?.getItem("wizardOutpaintEdgeContext") === "1";
+        if (typeof window !== "undefined"
+            && window.localStorage?.getItem("wizardOutpaintEdgeContext") === "0") {
+            return false;
+        }
     } catch {
-        return false;
+        // Ignore localStorage access errors — feature stays enabled.
     }
+    return true;
 }
 
 function buildEdgeExtendedContext(
@@ -167,7 +151,11 @@ function buildEdgeExtendedContext(
     const sourceH = sourceImg.naturalHeight || sourceImg.height;
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = "high";
-    ctx.drawImage(sourceImg, placement.x, placement.y, placement.width, placement.height);
+    ctx.drawImage(
+        sourceImg,
+        0, 0, sourceW, sourceH,
+        placement.x, placement.y, placement.width, placement.height,
+    );
 
     const strip = Math.max(1, Math.round(Math.min(sourceW, sourceH) * 0.01));
     if (placement.x > 0) {
@@ -195,61 +183,10 @@ function buildEdgeExtendedContext(
     return canvas;
 }
 
-function buildSourceOverlay(
-    sourceImg: HTMLImageElement,
-    placement: { width: number; height: number },
-    outputSize: { width: number; height: number },
-    sourceOffset: { x: number; y: number },
-): HTMLCanvasElement {
-    const overlay = document.createElement("canvas");
-    overlay.width = placement.width;
-    overlay.height = placement.height;
-    const octx = overlay.getContext("2d");
-    if (!octx) throw new Error("Failed to create GPT outpaint source overlay canvas");
-
-    octx.imageSmoothingEnabled = true;
-    octx.imageSmoothingQuality = "high";
-    octx.drawImage(sourceImg, 0, 0, placement.width, placement.height);
-
-    const mask = octx.createImageData(placement.width, placement.height);
-    for (let y = 0; y < placement.height; y++) {
-        for (let x = 0; x < placement.width; x++) {
-            const i = (y * placement.width + x) * 4;
-            mask.data[i] = 255;
-            mask.data[i + 1] = 255;
-            mask.data[i + 2] = 255;
-            mask.data[i + 3] = Math.round(
-                computeOutpaintMaskAlphaAt(
-                    x + sourceOffset.x,
-                    y + sourceOffset.y,
-                    {
-                        x: sourceOffset.x,
-                        y: sourceOffset.y,
-                        width: placement.width,
-                        height: placement.height,
-                    },
-                    outputSize,
-                ) * 255,
-            );
-        }
-    }
-    const maskCanvas = document.createElement("canvas");
-    maskCanvas.width = placement.width;
-    maskCanvas.height = placement.height;
-    const mctx = maskCanvas.getContext("2d");
-    if (!mctx) throw new Error("Failed to create GPT outpaint overlay mask canvas");
-    mctx.putImageData(mask, 0, 0);
-
-    octx.globalCompositeOperation = "destination-in";
-    octx.drawImage(maskCanvas, 0, 0);
-    octx.globalCompositeOperation = "source-over";
-    return overlay;
-}
-
 export function chooseOutpaintObjectFitForRect(
     imageSize: { width: number; height: number },
     layerRect: { width: number; height: number },
-    tolerance = 0.01,
+    tolerance = ASPECT_DRIFT_TOLERANCE,
 ): "fill" | "cover" {
     if (imageSize.width <= 0 || imageSize.height <= 0 || layerRect.width <= 0 || layerRect.height <= 0) {
         return "cover";
@@ -260,11 +197,35 @@ export function chooseOutpaintObjectFitForRect(
     return mismatch <= tolerance ? "fill" : "cover";
 }
 
+/**
+ * Compute the fitted rect that draws `source` into `target` using a single
+ * uniform scale factor (object-contain). The result is centered inside the
+ * target, leaving small letterbox bands on the axis that would otherwise be
+ * stretched. This is what we use after GPT returns a result whose aspect
+ * deviates from the requested aspect by more than ASPECT_DRIFT_TOLERANCE.
+ */
+export function computeUniformContainRect(
+    source: { width: number; height: number },
+    target: { width: number; height: number },
+): { x: number; y: number; width: number; height: number } {
+    const scale = Math.min(target.width / source.width, target.height / source.height);
+    const width = Math.round(source.width * scale);
+    const height = Math.round(source.height * scale);
+    return {
+        x: Math.round((target.width - width) / 2),
+        y: Math.round((target.height - height) / 2),
+        width,
+        height,
+    };
+}
+
 export async function outpaintWithGptImage2PackPlan(
     params: GptImageOutpaintParams,
 ): Promise<GptImageOutpaintResult> {
     const { imageSrc, plan, prompt, projectId, debug, onProgress } = params;
     const sourceImg = await loadImage(imageSrc);
+    const sourceNaturalW = sourceImg.naturalWidth || sourceImg.width;
+    const sourceNaturalH = sourceImg.naturalHeight || sourceImg.height;
     const outputW = plan.outputSizePx.width;
     const outputH = plan.outputSizePx.height;
     const requestW = plan.requestSizePx.width;
@@ -278,7 +239,7 @@ export async function outpaintWithGptImage2PackPlan(
         height: Math.max(1, Math.round(plan.sourcePlacementPx.height * scaleY)),
     };
 
-    onProgress?.("gpt-outpaint-canvas-start", { outputW, outputH, requestW, requestH });
+    onProgress?.("outpaint-canvas-start", { outputW, outputH, requestW, requestH });
 
     const paddedCanvas = document.createElement("canvas");
     paddedCanvas.width = requestW;
@@ -287,7 +248,7 @@ export async function outpaintWithGptImage2PackPlan(
     if (!paddedCtx) throw new Error("Failed to create GPT outpaint padded canvas");
     paddedCtx.imageSmoothingEnabled = true;
     paddedCtx.imageSmoothingQuality = "high";
-    if (isEdgeContextExperimentEnabled()) {
+    if (isEdgeContextEnabled()) {
         const edgeContext = buildEdgeExtendedContext(
             sourceImg,
             requestSourceRect,
@@ -302,10 +263,8 @@ export async function outpaintWithGptImage2PackPlan(
     }
     paddedCtx.drawImage(
         sourceImg,
-        requestSourceRect.x,
-        requestSourceRect.y,
-        requestSourceRect.width,
-        requestSourceRect.height,
+        0, 0, sourceNaturalW, sourceNaturalH,
+        requestSourceRect.x, requestSourceRect.y, requestSourceRect.width, requestSourceRect.height,
     );
 
     const paddedUrl = await uploadForAI(paddedCanvas.toDataURL("image/png"), projectId);
@@ -353,6 +312,28 @@ export async function outpaintWithGptImage2PackPlan(
     const gptSrc = await persistImageToS3(data.content as string, projectId);
     if (debug) onProgress?.("debug-raw-result", { rawUrl: gptSrc });
     const gptImg = await loadImage(gptSrc);
+    const gptW = gptImg.naturalWidth || gptImg.width;
+    const gptH = gptImg.naturalHeight || gptImg.height;
+
+    const requestAspect = requestW / requestH;
+    const gptAspect = gptW / gptH;
+    const aspectDrift = Math.abs(gptAspect - requestAspect) / Math.max(gptAspect, requestAspect);
+    if (debug) {
+        onProgress?.("debug-gpt-output-size", {
+            gptSizePx: { width: gptW, height: gptH },
+            requestSizePx: { width: requestW, height: requestH },
+            outputSizePx: { width: outputW, height: outputH },
+            aspectDrift,
+        });
+    }
+    if (aspectDrift > ASPECT_DRIFT_TOLERANCE) {
+        console.warn("[gptImageOutpaint] gpt response aspect drift exceeds tolerance", {
+            aspectDrift,
+            tolerance: ASPECT_DRIFT_TOLERANCE,
+            requestSizePx: { width: requestW, height: requestH },
+            gptSizePx: { width: gptW, height: gptH },
+        });
+    }
 
     const finalCanvas = document.createElement("canvas");
     finalCanvas.width = outputW;
@@ -361,16 +342,29 @@ export async function outpaintWithGptImage2PackPlan(
     if (!finalCtx) throw new Error("Failed to create GPT outpaint final canvas");
     finalCtx.imageSmoothingEnabled = true;
     finalCtx.imageSmoothingQuality = "high";
-    finalCtx.drawImage(gptImg, 0, 0, outputW, outputH);
 
-    const overlay = buildSourceOverlay(
-        sourceImg,
-        { width: plan.sourcePlacementPx.width, height: plan.sourcePlacementPx.height },
-        { width: outputW, height: outputH },
-        { x: plan.sourcePlacementPx.x, y: plan.sourcePlacementPx.y },
-    );
-    finalCtx.drawImage(overlay, plan.sourcePlacementPx.x, plan.sourcePlacementPx.y);
-    onProgress?.("preserve-composite-done", { model: "gpt-image-2" });
+    if (aspectDrift <= ASPECT_DRIFT_TOLERANCE) {
+        // Aspects match within tolerance — single uniform rescale of the GPT
+        // bitmap into the pack-required output rect. fal mask guarantees the
+        // preserved (black) region is unchanged, so no further composite is
+        // needed.
+        finalCtx.drawImage(gptImg, 0, 0, outputW, outputH);
+    } else {
+        // Aspect drift breaks the assumption that drawImage(0,0,outW,outH) is
+        // a uniform scale. Letterbox the GPT bitmap into outputSizePx using a
+        // single scale factor, leaving thin transparent bands on the
+        // mismatched axis. Callers are expected to detect this via the
+        // `pixelPadding` returned from the plan and the warning above.
+        const containRect = computeUniformContainRect(
+            { width: gptW, height: gptH },
+            { width: outputW, height: outputH },
+        );
+        finalCtx.drawImage(
+            gptImg,
+            0, 0, gptW, gptH,
+            containRect.x, containRect.y, containRect.width, containRect.height,
+        );
+    }
 
     const finalUrl = await persistImageToS3(finalCanvas.toDataURL("image/png"), projectId);
     if (debug) onProgress?.("debug-final-result", { finalUrl });

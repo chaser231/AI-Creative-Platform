@@ -2383,14 +2383,12 @@ function WizardLayerPromptBar({
                                 debug: jobSnapshot.outpaintDebug,
                                 onProgress: (stage, info) => {
                                     console.log(`[Wizard/GPTOutpaint/${stage}]`, info ?? "");
-                                    if (stage === "gpt-outpaint-canvas-start") {
+                                    if (stage === "outpaint-canvas-start") {
                                         setOutpaintProgress({ label: "Собираем canvas и маску", percent: 18 });
                                     } else if (stage === "outpaint-api-start") {
                                         setOutpaintProgress({ label: "Расширяем фон через GPT Image 2", percent: 42 });
                                     } else if (stage === "outpaint-api-done") {
-                                        setOutpaintProgress({ label: "Фиксируем исходный центр", percent: 78 });
-                                    } else if (stage === "preserve-composite-done") {
-                                        setOutpaintProgress({ label: "Сохраняем результат", percent: 92 });
+                                        setOutpaintProgress({ label: "Сохраняем результат", percent: 88 });
                                     }
                                 },
                             });

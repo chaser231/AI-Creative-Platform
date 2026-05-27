@@ -4,38 +4,9 @@ import {
     buildFalOutpaintMaskPixels,
     chooseOutpaintObjectFitForRect,
     computeFalOutpaintMaskPixelAt,
-    computeOutpaintMaskAlphaAt,
     computeTransparentPaddedInputAlphaAt,
+    computeUniformContainRect,
 } from "./gptImageOutpaint";
-
-describe("computeOutpaintMaskAlphaAt", () => {
-    const sourceRect = { x: 10, y: 20, width: 100, height: 80 };
-    const outputSize = { width: 130, height: 120 };
-
-    it("marks padding as transparent edit area", () => {
-        expect(computeOutpaintMaskAlphaAt(0, 60, sourceRect, outputSize)).toBe(0);
-        expect(computeOutpaintMaskAlphaAt(60, 10, sourceRect, outputSize)).toBe(0);
-        expect(computeOutpaintMaskAlphaAt(125, 60, sourceRect, outputSize)).toBe(0);
-    });
-
-    it("keeps the source core opaque for preserve", () => {
-        expect(computeOutpaintMaskAlphaAt(60, 60, sourceRect, outputSize)).toBe(1);
-    });
-
-    it("limits soft transition to the 24px seam band", () => {
-        expect(computeOutpaintMaskAlphaAt(10, 60, sourceRect, outputSize)).toBe(0);
-        expect(computeOutpaintMaskAlphaAt(22, 60, sourceRect, outputSize)).toBeCloseTo(0.5);
-        expect(computeOutpaintMaskAlphaAt(34, 60, sourceRect, outputSize)).toBe(1);
-        expect(computeOutpaintMaskAlphaAt(85, 60, sourceRect, outputSize)).toBe(1);
-        expect(computeOutpaintMaskAlphaAt(109, 60, sourceRect, outputSize)).toBe(0);
-    });
-
-    it("does not feather an edge that has no padding", () => {
-        const flushLeft = { x: 0, y: 20, width: 100, height: 80 };
-
-        expect(computeOutpaintMaskAlphaAt(0, 60, flushLeft, outputSize)).toBe(1);
-    });
-});
 
 describe("chooseOutpaintObjectFitForRect", () => {
     it("uses fill when bitmap and layer aspects match", () => {
@@ -83,8 +54,67 @@ describe("fal GPT Image 2 outpaint request helpers", () => {
         expect(pixels.data).toHaveLength(13 * 7 * 4);
     });
 
+    it("emits a strictly binary mask — only 0 or 255 on every channel", () => {
+        const pixels = buildFalOutpaintMaskPixels(
+            { width: 64, height: 32 },
+            { x: 12, y: 4, width: 30, height: 20 },
+        );
+
+        for (let i = 0; i < pixels.data.length; i++) {
+            const v = pixels.data[i];
+            expect(v === 0 || v === 255).toBe(true);
+        }
+    });
+
+    it("preserves asymmetric source placement — mask reflects the requested rect, not the canvas center", () => {
+        const size = { width: 200, height: 120 };
+        const asymmetric = { x: 10, y: 80, width: 150, height: 30 };
+        const pixels = buildFalOutpaintMaskPixels(size, asymmetric);
+
+        const px = (x: number, y: number) => pixels.data[(y * size.width + x) * 4];
+        expect(px(0, 0)).toBe(255); // top-left padding → editable
+        expect(px(50, 90)).toBe(0); // inside source → preserved
+        expect(px(100, 50)).toBe(255); // above the source rect → editable
+        expect(px(180, 90)).toBe(255); // right of the source rect → editable
+    });
+
     it("uses transparent padding for the default GPT input canvas", () => {
         expect(computeTransparentPaddedInputAlphaAt(0, 60, sourceRect)).toBe(0);
         expect(computeTransparentPaddedInputAlphaAt(60, 60, sourceRect)).toBe(255);
+    });
+});
+
+describe("computeUniformContainRect", () => {
+    it("centers a wider source inside a square target with horizontal letterbox", () => {
+        const rect = computeUniformContainRect(
+            { width: 200, height: 100 },
+            { width: 300, height: 300 },
+        );
+
+        expect(rect.width).toBe(300);
+        expect(rect.height).toBe(150);
+        expect(rect.x).toBe(0);
+        expect(rect.y).toBe(75);
+    });
+
+    it("centers a taller source inside a wider target with vertical letterbox", () => {
+        const rect = computeUniformContainRect(
+            { width: 100, height: 200 },
+            { width: 400, height: 300 },
+        );
+
+        expect(rect.width).toBe(150);
+        expect(rect.height).toBe(300);
+        expect(rect.x).toBe(125);
+        expect(rect.y).toBe(0);
+    });
+
+    it("preserves source aspect when source already matches target aspect", () => {
+        const rect = computeUniformContainRect(
+            { width: 1356, height: 899 },
+            { width: 1356, height: 899 },
+        );
+
+        expect(rect).toEqual({ x: 0, y: 0, width: 1356, height: 899 });
     });
 });
