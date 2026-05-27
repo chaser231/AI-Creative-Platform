@@ -4,10 +4,8 @@ import {
     buildFalOutpaintMaskPixels,
     chooseOutpaintObjectFitForRect,
     computeFalOutpaintMaskPixelAt,
-    computeHardSourcePreserveAlphaAt,
     computeOutpaintMaskAlphaAt,
     computeTransparentPaddedInputAlphaAt,
-    gptOutputSizeMatchesRequest,
 } from "./gptImageOutpaint";
 
 describe("computeOutpaintMaskAlphaAt", () => {
@@ -88,32 +86,5 @@ describe("fal GPT Image 2 outpaint request helpers", () => {
     it("uses transparent padding for the default GPT input canvas", () => {
         expect(computeTransparentPaddedInputAlphaAt(0, 60, sourceRect)).toBe(0);
         expect(computeTransparentPaddedInputAlphaAt(60, 60, sourceRect)).toBe(255);
-    });
-});
-
-describe("source-preserve composite policy", () => {
-    const sourceRect = { x: 10, y: 20, width: 100, height: 80 };
-
-    it("hard-preserves the full source rect without feathering inside it", () => {
-        expect(computeHardSourcePreserveAlphaAt(10, 20, sourceRect)).toBe(255);
-        expect(computeHardSourcePreserveAlphaAt(22, 60, sourceRect)).toBe(255);
-        expect(computeHardSourcePreserveAlphaAt(109, 99, sourceRect)).toBe(255);
-        expect(computeHardSourcePreserveAlphaAt(9, 60, sourceRect)).toBe(0);
-        expect(computeHardSourcePreserveAlphaAt(110, 60, sourceRect)).toBe(0);
-    });
-
-    it("detects when raw GPT output size differs from request size", () => {
-        expect(
-            gptOutputSizeMatchesRequest(
-                { width: 1536, height: 1024 },
-                { width: 1536, height: 1024 },
-            ),
-        ).toBe(true);
-        expect(
-            gptOutputSizeMatchesRequest(
-                { width: 1536, height: 1024 },
-                { width: 1536, height: 1008 },
-            ),
-        ).toBe(false);
     });
 });

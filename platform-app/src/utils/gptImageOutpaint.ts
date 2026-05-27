@@ -124,22 +124,6 @@ export function computeTransparentPaddedInputAlphaAt(
     return isInsideRect(x, y, sourceRect) ? 255 : 0;
 }
 
-export function computeHardSourcePreserveAlphaAt(
-    x: number,
-    y: number,
-    sourceRect: { x: number; y: number; width: number; height: number },
-): number {
-    return isInsideRect(x, y, sourceRect) ? 255 : 0;
-}
-
-export function gptOutputSizeMatchesRequest(
-    actual: { width: number; height: number },
-    request: { width: number; height: number },
-): boolean {
-    return Math.round(actual.width) === Math.round(request.width)
-        && Math.round(actual.height) === Math.round(request.height);
-}
-
 function buildFalMaskDataUrl(
     size: { width: number; height: number },
     requestSourceRect: { x: number; y: number; width: number; height: number },
@@ -209,6 +193,57 @@ function buildEdgeExtendedContext(
     }
 
     return canvas;
+}
+
+function buildSourceOverlay(
+    sourceImg: HTMLImageElement,
+    placement: { width: number; height: number },
+    outputSize: { width: number; height: number },
+    sourceOffset: { x: number; y: number },
+): HTMLCanvasElement {
+    const overlay = document.createElement("canvas");
+    overlay.width = placement.width;
+    overlay.height = placement.height;
+    const octx = overlay.getContext("2d");
+    if (!octx) throw new Error("Failed to create GPT outpaint source overlay canvas");
+
+    octx.imageSmoothingEnabled = true;
+    octx.imageSmoothingQuality = "high";
+    octx.drawImage(sourceImg, 0, 0, placement.width, placement.height);
+
+    const mask = octx.createImageData(placement.width, placement.height);
+    for (let y = 0; y < placement.height; y++) {
+        for (let x = 0; x < placement.width; x++) {
+            const i = (y * placement.width + x) * 4;
+            mask.data[i] = 255;
+            mask.data[i + 1] = 255;
+            mask.data[i + 2] = 255;
+            mask.data[i + 3] = Math.round(
+                computeOutpaintMaskAlphaAt(
+                    x + sourceOffset.x,
+                    y + sourceOffset.y,
+                    {
+                        x: sourceOffset.x,
+                        y: sourceOffset.y,
+                        width: placement.width,
+                        height: placement.height,
+                    },
+                    outputSize,
+                ) * 255,
+            );
+        }
+    }
+    const maskCanvas = document.createElement("canvas");
+    maskCanvas.width = placement.width;
+    maskCanvas.height = placement.height;
+    const mctx = maskCanvas.getContext("2d");
+    if (!mctx) throw new Error("Failed to create GPT outpaint overlay mask canvas");
+    mctx.putImageData(mask, 0, 0);
+
+    octx.globalCompositeOperation = "destination-in";
+    octx.drawImage(maskCanvas, 0, 0);
+    octx.globalCompositeOperation = "source-over";
+    return overlay;
 }
 
 export function chooseOutpaintObjectFitForRect(
@@ -318,21 +353,6 @@ export async function outpaintWithGptImage2PackPlan(
     const gptSrc = await persistImageToS3(data.content as string, projectId);
     if (debug) onProgress?.("debug-raw-result", { rawUrl: gptSrc });
     const gptImg = await loadImage(gptSrc);
-    const gptSizePx = {
-        width: gptImg.naturalWidth || gptImg.width,
-        height: gptImg.naturalHeight || gptImg.height,
-    };
-    if (debug) {
-        onProgress?.("debug-gpt-output-size", {
-            gptSizePx,
-            requestSizePx: { width: requestW, height: requestH },
-            outputSizePx: { width: outputW, height: outputH },
-            matchesRequest: gptOutputSizeMatchesRequest(
-                gptSizePx,
-                { width: requestW, height: requestH },
-            ),
-        });
-    }
 
     const finalCanvas = document.createElement("canvas");
     finalCanvas.width = outputW;
@@ -341,38 +361,16 @@ export async function outpaintWithGptImage2PackPlan(
     if (!finalCtx) throw new Error("Failed to create GPT outpaint final canvas");
     finalCtx.imageSmoothingEnabled = true;
     finalCtx.imageSmoothingQuality = "high";
+    finalCtx.drawImage(gptImg, 0, 0, outputW, outputH);
 
-    const requestCanvas = document.createElement("canvas");
-    requestCanvas.width = requestW;
-    requestCanvas.height = requestH;
-    const requestCtx = requestCanvas.getContext("2d");
-    if (!requestCtx) throw new Error("Failed to create GPT outpaint request-space canvas");
-    requestCtx.imageSmoothingEnabled = true;
-    requestCtx.imageSmoothingQuality = "high";
-    requestCtx.drawImage(gptImg, 0, 0, requestW, requestH);
-    finalCtx.drawImage(requestCanvas, 0, 0, outputW, outputH);
-
-    const sourcePlacement = plan.sourcePlacementPx;
-    const sourceW = sourceImg.naturalWidth || sourceImg.width;
-    const sourceH = sourceImg.naturalHeight || sourceImg.height;
-    finalCtx.clearRect(
-        sourcePlacement.x,
-        sourcePlacement.y,
-        sourcePlacement.width,
-        sourcePlacement.height,
-    );
-    finalCtx.drawImage(
+    const overlay = buildSourceOverlay(
         sourceImg,
-        0,
-        0,
-        sourceW,
-        sourceH,
-        sourcePlacement.x,
-        sourcePlacement.y,
-        sourcePlacement.width,
-        sourcePlacement.height,
+        { width: plan.sourcePlacementPx.width, height: plan.sourcePlacementPx.height },
+        { width: outputW, height: outputH },
+        { x: plan.sourcePlacementPx.x, y: plan.sourcePlacementPx.y },
     );
-    onProgress?.("preserve-composite-done", { model: "gpt-image-2", preserve: "hard-source-rect" });
+    finalCtx.drawImage(overlay, plan.sourcePlacementPx.x, plan.sourcePlacementPx.y);
+    onProgress?.("preserve-composite-done", { model: "gpt-image-2" });
 
     const finalUrl = await persistImageToS3(finalCanvas.toDataURL("image/png"), projectId);
     if (debug) onProgress?.("debug-final-result", { finalUrl });
