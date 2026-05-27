@@ -2410,14 +2410,17 @@ function WizardLayerPromptBar({
                                 source: "wizard-edit-expand",
                             });
                             expandUrl = registered ?? expandResult.src;
-                            // Always render the freshly generated bitmap with
-                            // objectFit: "fill" so we never crop the new pack
-                            // padding. If the bitmap aspect drifted from the
-                            // planned nextMasterRect (rounding or post-letterbox
-                            // from the helper), shrink nextRect to match the
-                            // bitmap aspect around its center instead of
-                            // falling back to "cover", which would crop the
-                            // freshly generated edges.
+                            // Render the freshly generated bitmap with
+                            // objectFit: "cover" + a focus that tracks
+                            // the source product centre inside the bitmap.
+                            // When bitmap aspect matches the layer aspect
+                            // (the master case under delivery-crop) cover
+                            // degenerates to fill — no scale, no crop. For
+                            // instance layers (vertical / top-banner)
+                            // whose aspects differ after the bindings
+                            // cascade, cover preserves the bitmap aspect
+                            // and crops only the background, never
+                            // deforming the product.
                             const planned = plan.nextMasterRect;
                             const bitmapAspect = expandResult.outputSizePx.width / expandResult.outputSizePx.height;
                             const plannedAspect = planned.width / planned.height;
@@ -2448,7 +2451,16 @@ function WizardLayerPromptBar({
                                     aspectDrift,
                                 });
                             }
-                            nextImageView = { objectFit: "fill", focusX: 0.5, focusY: 0.5 };
+                            const sourcePlacement = plan.sourcePlacementPx;
+                            const outputW = Math.max(1, plan.outputSizePx.width);
+                            const outputH = Math.max(1, plan.outputSizePx.height);
+                            const focusX = (sourcePlacement.x + sourcePlacement.width / 2) / outputW;
+                            const focusY = (sourcePlacement.y + sourcePlacement.height / 2) / outputH;
+                            nextImageView = {
+                                objectFit: "cover",
+                                focusX: Math.max(0, Math.min(1, focusX)),
+                                focusY: Math.max(0, Math.min(1, focusY)),
+                            };
                         }
 
                         onOutpaintHistorySave(layerId, {

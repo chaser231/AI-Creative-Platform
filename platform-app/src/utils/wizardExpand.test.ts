@@ -154,6 +154,60 @@ describe("projectExpansionToResize", () => {
         });
     });
 
+    it("propagates an asymmetric outpaint focus (burger-near-top) onto resize instances", () => {
+        // The wizard derives focusY from the source placement inside the
+        // pack bitmap. For a screenshot pack (master 1192x300 +
+        // vertical 470x762 + top-banner 853x92) the bottom extension is
+        // far larger than the top extension, so focusY ≈ 0.28 — i.e. the
+        // product centre lives in the upper third of the bitmap. The
+        // resize-side cascade must carry this focus to the vertical /
+        // top-banner instances or cover would crop the product out of
+        // view.
+        const resizeLayers: Layer[] = [{
+            id: "vertical-image",
+            type: "image",
+            name: "Product",
+            x: 0,
+            y: 0,
+            width: 470,
+            height: 300,
+            rotation: 0,
+            visible: true,
+            locked: false,
+            src: "image.png",
+            slotId: "image-primary",
+            objectFit: "fill",
+        }];
+
+        const projected = projectExpansionToResize({
+            resizeLayers,
+            resizeArtboard: { width: 470, height: 762 },
+            masterArtboard: { width: 1192, height: 300 },
+            overrides: {
+                "master-image": {
+                    prev: { x: 0, y: 0, width: 1192, height: 300 },
+                    next: { x: -82, y: -105, width: 1356, height: 899 },
+                    slotId: "image-primary",
+                    masterId: "master-image",
+                },
+            },
+            imageViewOverrides: {
+                "master-image": { objectFit: "cover", focusX: 0.5, focusY: 0.284 },
+            },
+        });
+
+        expect(projected[0]).toMatchObject({
+            objectFit: "cover",
+            focusX: 0.5,
+            focusY: 0.284,
+        });
+        // Geometry: vertical instance must extend symmetrically with the
+        // master expansion; the focus then pins the burger in view.
+        const projectedRect = projected[0] as Layer;
+        expect(projectedRect.width).toBeGreaterThan(470);
+        expect(projectedRect.height).toBeGreaterThan(300);
+    });
+
     it("applies image view override even when content-only binding skips geometry", () => {
         const resizeLayers: Layer[] = [{
             id: "resize-image",
