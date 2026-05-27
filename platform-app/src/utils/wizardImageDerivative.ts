@@ -119,6 +119,29 @@ export async function prepareWizardWorkingImage(
         };
     }
 
+    // The downstream GPT outpaint pipeline assumes a uniform scale between the
+    // crop rect and the working derivative. A non-uniform stretch here would
+    // make the planner's scaleX != scaleY, which in turn skews the source
+    // placement and is one of the documented sources of the wizard outpaint
+    // shift artifact. Detect it explicitly and fall back to the original when
+    // the rounding drift exceeds half a percent.
+    const scaleX = target.width / cropW;
+    const scaleY = target.height / cropH;
+    const scaleDrift = Math.abs(scaleX - scaleY) / Math.max(scaleX, scaleY);
+    if (scaleDrift > 0.005) {
+        console.warn(
+            "[prepareWizardWorkingImage] non-uniform target scale, returning untouched source",
+            { cropW, cropH, target, scaleX, scaleY, scaleDrift },
+        );
+        return {
+            src: imageSrc,
+            nativeW: naturalW,
+            nativeH: naturalH,
+            changed: false,
+            crop: { x: cropX, y: cropY, width: cropW, height: cropH },
+        };
+    }
+
     try {
         ctx.imageSmoothingEnabled = true;
         ctx.imageSmoothingQuality = "high";
