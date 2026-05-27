@@ -71,7 +71,7 @@ import {
     type PackOutpaintFormat,
     type PackOutpaintRect,
 } from "@/utils/packOutpaintPlan";
-import { chooseOutpaintObjectFitForRect, outpaintWithGptImage2PackPlan } from "@/utils/gptImageOutpaint";
+import { outpaintWithGptImage2PackPlan } from "@/utils/gptImageOutpaint";
 import { prepareWizardWorkingImage, type WizardWorkingImageLayer } from "@/utils/wizardImageDerivative";
 import { cropToLayerAspect } from "@/utils/cropToLayerAspect";
 import { useThemeStore } from "@/store/themeStore";
@@ -2406,16 +2406,45 @@ function WizardLayerPromptBar({
                                 source: "wizard-edit-expand",
                             });
                             expandUrl = registered ?? expandResult.src;
-                            nextRect = plan.nextMasterRect;
-                            const objectFit = chooseOutpaintObjectFitForRect(expandResult.outputSizePx, nextRect);
-                            nextImageView = { objectFit, focusX: 0.5, focusY: 0.5 };
-                            if (objectFit !== "fill") {
-                                console.warn("[Wizard/GPTOutpaint/aspect-mismatch-fallback]", {
+                            // Always render the freshly generated bitmap with
+                            // objectFit: "fill" so we never crop the new pack
+                            // padding. If the bitmap aspect drifted from the
+                            // planned nextMasterRect (rounding or post-letterbox
+                            // from the helper), shrink nextRect to match the
+                            // bitmap aspect around its center instead of
+                            // falling back to "cover", which would crop the
+                            // freshly generated edges.
+                            const planned = plan.nextMasterRect;
+                            const bitmapAspect = expandResult.outputSizePx.width / expandResult.outputSizePx.height;
+                            const plannedAspect = planned.width / planned.height;
+                            const aspectDrift = Math.abs(bitmapAspect - plannedAspect)
+                                / Math.max(bitmapAspect, plannedAspect);
+                            if (aspectDrift <= 0.005) {
+                                nextRect = planned;
+                            } else {
+                                const cx = planned.x + planned.width / 2;
+                                const cy = planned.y + planned.height / 2;
+                                let w = planned.width;
+                                let h = planned.height;
+                                if (bitmapAspect > plannedAspect) {
+                                    h = w / bitmapAspect;
+                                } else {
+                                    w = h * bitmapAspect;
+                                }
+                                nextRect = {
+                                    x: Math.round(cx - w / 2),
+                                    y: Math.round(cy - h / 2),
+                                    width: Math.round(w),
+                                    height: Math.round(h),
+                                };
+                                console.warn("[Wizard/GPTOutpaint/rect-adjusted-to-bitmap]", {
                                     outputSizePx: expandResult.outputSizePx,
-                                    nextRect,
-                                    objectFit,
+                                    planned,
+                                    adjusted: nextRect,
+                                    aspectDrift,
                                 });
                             }
+                            nextImageView = { objectFit: "fill", focusX: 0.5, focusY: 0.5 };
                         }
 
                         onOutpaintHistorySave(layerId, {
