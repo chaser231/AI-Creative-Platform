@@ -65,6 +65,14 @@ import type { WorkflowScenarioRunResult } from "@/hooks/workflow/useWorkflowScen
 import { useWorkspace } from "@/providers/WorkspaceProvider";
 import { projectExpansionToResize, type LayerExpansionOverride } from "@/utils/wizardExpand";
 import { computeWizardExpandGeometry } from "@/utils/wizardExpandGeometry";
+import {
+    computePackOutpaintPlan,
+    findPackOutpaintTargetLayer,
+    type PackOutpaintFormat,
+    type PackOutpaintRect,
+} from "@/utils/packOutpaintPlan";
+import { outpaintWithGptImage2PackPlan } from "@/utils/gptImageOutpaint";
+import { prepareWizardWorkingImage, type WizardWorkingImageLayer } from "@/utils/wizardImageDerivative";
 import { cropToLayerAspect } from "@/utils/cropToLayerAspect";
 import { useThemeStore } from "@/store/themeStore";
 import type { BusinessUnit, ImageFitMode, ImageLayer, Layer, LayerBinding, MasterComponent, TextGenPreset } from "@/types";
@@ -264,6 +272,11 @@ type ImagePromptMode = "generate" | "edit" | "expand" | "inpaint";
  */
 const EXPAND_SAFETY_BUFFER_PX = 200;
 const TEXT_COLOR_SWATCHES = ["#000000", "#FFFFFF", "#1F2937", "#F9FAFB"];
+const WIZARD_OUTPAINT_BLEED_PX = 32;
+const WIZARD_OUTPAINT_ENGINE = process.env.NEXT_PUBLIC_WIZARD_OUTPAINT_ENGINE === "legacy"
+    ? "legacy"
+    : "gpt-image-2";
+const WIZARD_OUTPAINT_DEBUG_ENV = process.env.NEXT_PUBLIC_WIZARD_OUTPAINT_DEBUG;
 /**
  * Asymmetric padding bias for wizard expand. Banner layouts in our
  * design system typically anchor the product bottom-right and place
@@ -327,6 +340,10 @@ export function WizardContentWorkspace({
     const previewFrameRef = useRef<HTMLDivElement | null>(null);
     const { registerFile, registerUrl } = useProjectLibrary();
     const previewFormats = useMemo(() => getPreviewFormatSources(selectedTemplate), [selectedTemplate]);
+    const packOutpaintFormats = useMemo(
+        () => previewFormats.map(previewFormatToPackOutpaintFormat),
+        [previewFormats],
+    );
     const [activePreviewFormatIdState, setActivePreviewFormatIdState] = useState(previewFormats[0]?.id ?? "");
     const setActivePreviewFormatId = (id: string) => {
         setActivePreviewFormatIdState(id);
@@ -479,6 +496,7 @@ export function WizardContentWorkspace({
             resizeArtboard: { width: previewSource.width, height: previewSource.height },
             masterArtboard: masterCanvasSize,
             overrides: overridesForActive,
+            imageViewOverrides,
         });
 
         return buildDraftPreviewLayers(
@@ -968,8 +986,11 @@ export function WizardContentWorkspace({
                         productDescription={productDescription}
                         packMaxSize={packMaxSize}
                         packFormats={previewFormats.map((f) => ({ width: f.width, height: f.height }))}
+                        packOutpaintFormats={packOutpaintFormats}
+                        masterCanvasSize={masterCanvasSize}
                         onTextChange={updateTextValue}
                         onImageChange={updateImageValue}
+                        onImageViewChange={setImageViewOverride}
                         onOutpaintHistorySave={setOutpaintHistory}
                         onOutpaintHistoryClear={clearOutpaintHistory}
                         onLayerGeometryChange={setLayerGeometry}
@@ -1554,6 +1575,153 @@ function blobToDataUrl(blob: Blob): Promise<string> {
     });
 }
 
+function numberProp(value: unknown): number {
+    return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function optionalNumberProp(value: unknown): number | undefined {
+    return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function imageFitProp(value: unknown): ImageFitMode | undefined {
+    return value === "cover" || value === "contain" || value === "fill" || value === "crop"
+        ? value
+        : undefined;
+}
+
+function layerToPackOutpaintRect(layer: Layer): PackOutpaintRect {
+    return {
+        id: layer.id,
+        x: numberProp(layer.x),
+        y: numberProp(layer.y),
+        width: numberProp(layer.width),
+        height: numberProp(layer.height),
+        slotId: layer.slotId,
+        masterId: layer.masterId,
+        type: layer.type,
+    };
+}
+
+function previewFormatToPackOutpaintFormat(format: PreviewFormatSource): PackOutpaintFormat {
+    return {
+        id: format.id,
+        width: format.width,
+        height: format.height,
+        isMaster: format.isMaster,
+        layers: format.layers.map(layerToPackOutpaintRect),
+        layerBindings: format.layerBindings,
+    };
+}
+
+function entryToPackOutpaintRect(entry: EditableLayerEntry): PackOutpaintRect {
+    const props = entry.props;
+    const propsMasterId = typeof props.masterId === "string" ? props.masterId : undefined;
+    return {
+        id: entry.layerId ?? entry.id,
+        x: numberProp(props.x),
+        y: numberProp(props.y),
+        width: numberProp(props.width),
+        height: numberProp(props.height),
+        slotId: entry.slotId,
+        masterId: propsMasterId ?? entry.masterComponentId,
+        type: entry.type,
+    };
+}
+
+function entryToWorkingImageLayer(
+    entry: EditableLayerEntry,
+    viewOverride?: WizardImageViewOverride,
+): WizardWorkingImageLayer {
+    const props = entry.props;
+    return {
+        width: numberProp(props.width),
+        height: numberProp(props.height),
+        objectFit: viewOverride?.objectFit ?? imageFitProp(props.objectFit),
+        focusX: viewOverride?.focusX ?? optionalNumberProp(props.focusX),
+        focusY: viewOverride?.focusY ?? optionalNumberProp(props.focusY),
+    };
+}
+
+function collectPackImageUsageSizes(
+    masterLayer: PackOutpaintRect,
+    formats: PackOutpaintFormat[],
+): Array<{ width: number; height: number }> {
+    const sizes: Array<{ width: number; height: number }> = [];
+    const push = (rect: { width: number; height: number } | undefined) => {
+        if (!rect || rect.width <= 0 || rect.height <= 0) return;
+        sizes.push({ width: rect.width, height: rect.height });
+    };
+
+    push(masterLayer);
+    for (const format of formats) {
+        push(format.isMaster ? masterLayer : findPackOutpaintTargetLayer(masterLayer, format));
+    }
+    return sizes;
+}
+
+function shouldPrepareWorkingDerivative(model: string, scale: string): boolean {
+    return model === "nano-banana-2" && (scale === "2K" || scale === "4K");
+}
+
+function isWizardOutpaintDebugEnabled(): boolean {
+    if (process.env.NODE_ENV === "production") return false;
+    if (WIZARD_OUTPAINT_DEBUG_ENV === "1") return true;
+    try {
+        return typeof window !== "undefined"
+            && window.localStorage?.getItem("wizardOutpaintDebug") === "1";
+    } catch {
+        return false;
+    }
+}
+
+async function prepareAndRegisterWizardDerivative({
+    imageSrc,
+    layer,
+    usageSizes,
+    projectId,
+    registerUrl,
+}: {
+    imageSrc: string;
+    layer: WizardWorkingImageLayer;
+    usageSizes: Array<{ width: number; height: number }>;
+    projectId: string;
+    registerUrl: (opts: {
+        projectId: string;
+        url: string;
+        source?: string;
+        mimeType?: string;
+        width?: number;
+        height?: number;
+    }) => Promise<string | null>;
+}): Promise<{ src: string; width: number; height: number; changed: boolean }> {
+    const working = await prepareWizardWorkingImage(imageSrc, layer, usageSizes);
+    if (!working.changed) {
+        return {
+            src: imageSrc,
+            width: working.nativeW || layer.width,
+            height: working.nativeH || layer.height,
+            changed: false,
+        };
+    }
+
+    const persisted = await persistWizardImageUrl(working.src, projectId, 0);
+    const registered = await registerUrl({
+        projectId,
+        url: persisted,
+        source: "wizard-working-derivative",
+        mimeType: "image/webp",
+        width: working.nativeW,
+        height: working.nativeH,
+    });
+
+    return {
+        src: registered ?? persisted,
+        width: working.nativeW,
+        height: working.nativeH,
+        changed: true,
+    };
+}
+
 function WizardLayerPromptBar({
     activeLayer,
     textValues,
@@ -1569,8 +1737,11 @@ function WizardLayerPromptBar({
     productDescription,
     packMaxSize,
     packFormats,
+    packOutpaintFormats,
+    masterCanvasSize,
     onTextChange,
     onImageChange,
+    onImageViewChange,
     onOutpaintHistorySave,
     onOutpaintHistoryClear,
     onLayerGeometryChange,
@@ -1596,8 +1767,11 @@ function WizardLayerPromptBar({
      * it as a "Цель: WxH" badge, but the geometry math needs the full list.
      */
     packFormats: Array<{ width: number; height: number }>;
+    packOutpaintFormats: PackOutpaintFormat[];
+    masterCanvasSize: { width: number; height: number };
     onTextChange: (id: string, value: string) => void;
     onImageChange: (id: string, value: string) => void;
+    onImageViewChange: (id: string, override: WizardImageViewOverride | null) => void;
     onOutpaintHistorySave: (id: string, entry: WizardOutpaintHistoryEntry) => void;
     onOutpaintHistoryClear: (id: string) => void;
     onLayerGeometryChange: (id: string, override: LayerExpansionOverride) => void;
@@ -1971,10 +2145,19 @@ function WizardLayerPromptBar({
             layerHeight: number;
             layerX: number;
             layerY: number;
-            padTop: number;
-            padRight: number;
-            padBottom: number;
-            padLeft: number;
+            slotId?: string;
+            masterId?: string;
+            masterLayer: PackOutpaintRect;
+            workingLayer: WizardWorkingImageLayer;
+            usageSizes: Array<{ width: number; height: number }>;
+            packOutpaintFormats: PackOutpaintFormat[];
+            masterArtboard: { width: number; height: number };
+            legacyPadding?: {
+                top: number;
+                right: number;
+                bottom: number;
+                left: number;
+            };
         } | null = null;
 
         if (imageMode === "expand") {
@@ -1993,22 +2176,35 @@ function WizardLayerPromptBar({
                 return;
             }
 
-            const geometry = computeWizardExpandGeometry(
-                { width: layerWidth, height: layerHeight },
-                packFormats,
-                {
-                    buffer: EXPAND_SAFETY_BUFFER_PX,
-                    leftBias: EXPAND_LEFT_BIAS,
-                    topBias: EXPAND_TOP_BIAS,
-                },
-            );
-            const { padTop, padRight, padBottom, padLeft } = geometry;
-            const hPad = padLeft + padRight;
-            const vPad = padTop + padBottom;
+            const masterLayer = entryToPackOutpaintRect(activeLayer);
+            const usageSizes = collectPackImageUsageSizes(masterLayer, packOutpaintFormats);
+            let legacyPadding: { top: number; right: number; bottom: number; left: number } | undefined;
 
-            if (hPad === 0 && vPad === 0) {
-                setError("Изображение уже покрывает максимальный формат пакета — расширение не требуется");
-                return;
+            if (WIZARD_OUTPAINT_ENGINE === "legacy") {
+                const geometry = computeWizardExpandGeometry(
+                    { width: layerWidth, height: layerHeight },
+                    packFormats,
+                    {
+                        buffer: EXPAND_SAFETY_BUFFER_PX,
+                        leftBias: EXPAND_LEFT_BIAS,
+                        topBias: EXPAND_TOP_BIAS,
+                    },
+                );
+                const { padTop, padRight, padBottom, padLeft } = geometry;
+                const hPad = padLeft + padRight;
+                const vPad = padTop + padBottom;
+
+                if (hPad === 0 && vPad === 0) {
+                    setError("Изображение уже покрывает максимальный формат пакета — расширение не требуется");
+                    return;
+                }
+
+                legacyPadding = {
+                    top: padTop,
+                    right: padRight,
+                    bottom: padBottom,
+                    left: padLeft,
+                };
             }
 
             expandSnapshot = {
@@ -2016,11 +2212,41 @@ function WizardLayerPromptBar({
                 layerHeight,
                 layerX,
                 layerY,
-                padTop,
-                padRight,
-                padBottom,
-                padLeft,
+                slotId: activeLayer.slotId,
+                masterId: masterLayer.masterId,
+                masterLayer,
+                workingLayer: entryToWorkingImageLayer(activeLayer, activeImageViewOverride),
+                usageSizes,
+                packOutpaintFormats,
+                masterArtboard: masterCanvasSize,
+                legacyPadding,
             };
+        }
+
+        const workingSnapshot = activeLayer.type === "image"
+            ? (() => {
+                const masterLayer = expandSnapshot?.masterLayer ?? entryToPackOutpaintRect(activeLayer);
+                return {
+                    layer: expandSnapshot?.workingLayer ?? entryToWorkingImageLayer(activeLayer, activeImageViewOverride),
+                    usageSizes: expandSnapshot?.usageSizes ?? collectPackImageUsageSizes(masterLayer, packOutpaintFormats),
+                };
+            })()
+            : null;
+        const outpaintDebug = imageMode === "expand" && isWizardOutpaintDebugEnabled();
+
+        if (imageMode === "expand") {
+            console.log("[Wizard/Expand/start]", {
+                engine: WIZARD_OUTPAINT_ENGINE,
+                env: process.env.NEXT_PUBLIC_WIZARD_OUTPAINT_ENGINE ?? "",
+                debug: outpaintDebug,
+                layerId,
+                targetFormats: packOutpaintFormats.map((format) => ({
+                    id: format.id,
+                    width: format.width,
+                    height: format.height,
+                    isMaster: Boolean(format.isMaster),
+                })),
+            });
         }
 
         appendLoadingVariants(layerId, requestedImageCount, promptLabel, batchId);
@@ -2037,6 +2263,8 @@ function WizardLayerPromptBar({
             referenceImages: referenceImages.length > 0 ? [...referenceImages] : [],
             loraRequestFields: { ...loraRequestFields },
             activeImageViewOverride,
+            workingSnapshot,
+            outpaintDebug,
         };
 
         enqueueJob(
@@ -2056,105 +2284,184 @@ function WizardLayerPromptBar({
                             layerHeight,
                             layerX,
                             layerY,
-                            padTop,
-                            padRight,
-                            padBottom,
-                            padLeft,
+                            masterLayer,
+                            workingLayer,
+                            usageSizes,
+                            packOutpaintFormats: outpaintFormats,
+                            masterArtboard,
+                            legacyPadding,
+                            slotId,
+                            masterId,
                         } = jobSnapshot.expandSnapshot;
 
-                // Seed an initial label so the user sees feedback the
-                // moment the request fires — the first event from the
-                // pipeline ("input-persisted") only lands ~200-500 ms
-                // later, which feels like a hang on slow connections.
-                setOutpaintProgress({ label: "Подготавливаем изображение", percent: 5 });
+                        setOutpaintProgress({ label: "Подготавливаем изображение", percent: 5 });
 
-                // Pre-crop the source to the layer aspect ratio
-                // (object-fit:cover style — exactly the slice the
-                // wizard preview already shows). This symmetrises
-                // pixelScale before outpaintImage computes pixel
-                // padding, which is what keeps the resulting canvas
-                // inside flux 2 pro's 2560 / 4 MP caps and avoids the
-                // multipass + bria fallback path for typical banner
-                // packs. On any failure (cross-origin load, tainted
-                // canvas, etc.) the helper returns the original src
-                // and the pipeline runs un-cropped — strictly no worse
-                // than before.
-                const layerAspect = layerWidth / layerHeight;
-                const cropResult = await cropToLayerAspect(jobSnapshot.currentImage, layerAspect, {
-                    tolerance: EXPAND_ASPECT_TOLERANCE,
-                });
-                console.log("[Wizard/Expand/pre-crop]", {
-                    cropped: cropResult.cropped,
-                    layerAspect: Math.round(layerAspect * 100) / 100,
-                    nativeW: cropResult.nativeW,
-                    nativeH: cropResult.nativeH,
-                });
+                        let expandUrl: string;
+                        let nextRect: { x: number; y: number; width: number; height: number };
+                        let nextImageView: WizardImageViewOverride | null = null;
 
-                const { outpaintImage } = await import("@/utils/outpaintPipeline");
-                const expandResult = await outpaintImage({
-                    imageSrc: cropResult.src,
-                    canvasPadding: { top: padTop, right: padRight, bottom: padBottom, left: padLeft },
-                    layerSize: { width: layerWidth, height: layerHeight },
-                    prompt: jobSnapshot.basePrompt || undefined,
-                    projectId,
-                    model: getOutpaintModel(),
-                    upscaleModel: "seedvr",
-                    maxFinalPixels: WIZARD_MAX_FINAL_PIXELS,
-                    minFluxDownscaleRatio: 0.25,
-                    enableMultipass: false,
-                    onProgress: (stage, info) => {
-                        console.log(`[Wizard/Expand/${stage}]`, info ?? "");
-                        // Internal/diagnostic stages return null — keep
-                        // the previous label visible so the bar doesn't
-                        // flicker on noisy internal transitions.
-                        const next = mapOutpaintStage(stage);
-                        if (next) setOutpaintProgress(next);
-                    },
-                });
+                        if (WIZARD_OUTPAINT_ENGINE === "legacy") {
+                            if (!legacyPadding) {
+                                throw new Error("Не удалось подготовить legacy-параметры расширения");
+                            }
 
-                // outpaintImage now persists its composite output to S3
-                // before returning, so expandResult.src is always a URL
-                // (never a data URI). This eliminates the
-                // `Unterminated string at position ~10MB` tRPC failure
-                // that fired when ai.addMessage tried to serialize a
-                // multi-megabyte data URI from the layer state.
-                const registered = projectId
-                    ? await registerUrl({
-                        projectId,
-                        url: expandResult.src,
-                        source: "wizard-edit-expand",
-                    })
-                    : null;
-                onOutpaintHistorySave(layerId, {
-                    src: jobSnapshot.currentImage,
-                    rect: { x: layerX, y: layerY, width: layerWidth, height: layerHeight },
-                    imageView: jobSnapshot.activeImageViewOverride,
-                });
-                const expandUrl = registered ?? expandResult.src;
-                onImageChange(layerId, expandUrl);
-                // Grow the master layer to match the new (extended) image so
-                // it actually shows up in the preview instead of being cropped
-                // back into the original tiny rect by object-fit cover.
-                //
-                // We record both the original rect (`prev`) and the expanded
-                // rect (`next`) so non-master snapshots can replay the same
-                // geometry change via the studio's master→instance cascade
-                // (see {@link projectExpansionToResize}).
-                const masterId =
-                    typeof activeLayer.props.masterId === "string"
-                        ? (activeLayer.props.masterId as string)
-                        : activeLayer.masterComponentId;
-                onLayerGeometryChange(layerId, {
-                    prev: { x: layerX, y: layerY, width: layerWidth, height: layerHeight },
-                    next: {
-                        x: layerX - padLeft,
-                        y: layerY - padTop,
-                        width: layerWidth + padLeft + padRight,
-                        height: layerHeight + padTop + padBottom,
-                    },
-                    slotId: activeLayer.slotId,
-                    masterId,
-                });
+                            const layerAspect = layerWidth / layerHeight;
+                            const cropResult = await cropToLayerAspect(jobSnapshot.currentImage, layerAspect, {
+                                tolerance: EXPAND_ASPECT_TOLERANCE,
+                            });
+                            console.log("[Wizard/Expand/pre-crop]", {
+                                cropped: cropResult.cropped,
+                                layerAspect: Math.round(layerAspect * 100) / 100,
+                                nativeW: cropResult.nativeW,
+                                nativeH: cropResult.nativeH,
+                            });
+
+                            const { outpaintImage } = await import("@/utils/outpaintPipeline");
+                            const expandResult = await outpaintImage({
+                                imageSrc: cropResult.src,
+                                canvasPadding: legacyPadding,
+                                layerSize: { width: layerWidth, height: layerHeight },
+                                prompt: jobSnapshot.basePrompt || undefined,
+                                projectId,
+                                model: getOutpaintModel(),
+                                upscaleModel: "seedvr",
+                                maxFinalPixels: WIZARD_MAX_FINAL_PIXELS,
+                                minFluxDownscaleRatio: 0.25,
+                                enableMultipass: false,
+                                onProgress: (stage, info) => {
+                                    console.log(`[Wizard/Expand/${stage}]`, info ?? "");
+                                    const next = mapOutpaintStage(stage);
+                                    if (next) setOutpaintProgress(next);
+                                },
+                            });
+
+                            const registered = await registerUrl({
+                                projectId,
+                                url: expandResult.src,
+                                source: "wizard-edit-expand",
+                            });
+                            expandUrl = registered ?? expandResult.src;
+                            nextRect = {
+                                x: layerX - legacyPadding.left,
+                                y: layerY - legacyPadding.top,
+                                width: layerWidth + legacyPadding.left + legacyPadding.right,
+                                height: layerHeight + legacyPadding.top + legacyPadding.bottom,
+                            };
+                        } else {
+                            const derivative = await prepareAndRegisterWizardDerivative({
+                                imageSrc: jobSnapshot.currentImage,
+                                layer: workingLayer,
+                                usageSizes,
+                                projectId,
+                                registerUrl,
+                            });
+                            const plan = computePackOutpaintPlan({
+                                masterLayer,
+                                masterArtboard,
+                                formats: outpaintFormats,
+                                sourceSizePx: { width: derivative.width, height: derivative.height },
+                                options: {
+                                    bleedPx: WIZARD_OUTPAINT_BLEED_PX,
+                                    exportScale: 2,
+                                    // Keep outputSizePx exactly equal to the
+                                    // pack-required asymmetric padding instead
+                                    // of inflating the master rect with
+                                    // symmetric aspect-cap pads.
+                                    aspectCapStrategy: "downscale-request",
+                                },
+                            });
+                            if (jobSnapshot.outpaintDebug) {
+                                console.log("[Wizard/GPTOutpaint/debug-plan]", {
+                                    derivative,
+                                    plan,
+                                    diagnostics: plan.diagnostics,
+                                });
+                            }
+
+                            const p = plan.canvasPadding;
+                            if (p.top + p.right + p.bottom + p.left === 0) {
+                                throw new Error("Изображение уже покрывает максимальный формат пакета — расширение не требуется");
+                            }
+
+                            const expandResult = await outpaintWithGptImage2PackPlan({
+                                imageSrc: derivative.src,
+                                plan,
+                                prompt: jobSnapshot.basePrompt || undefined,
+                                projectId,
+                                debug: jobSnapshot.outpaintDebug,
+                                onProgress: (stage, info) => {
+                                    console.log(`[Wizard/GPTOutpaint/${stage}]`, info ?? "");
+                                    if (stage === "outpaint-canvas-start") {
+                                        setOutpaintProgress({ label: "Собираем canvas и маску", percent: 18 });
+                                    } else if (stage === "outpaint-api-start") {
+                                        setOutpaintProgress({ label: "Расширяем фон через GPT Image 2", percent: 42 });
+                                    } else if (stage === "outpaint-api-done") {
+                                        setOutpaintProgress({ label: "Сохраняем результат", percent: 88 });
+                                    }
+                                },
+                            });
+                            const registered = await registerUrl({
+                                projectId,
+                                url: expandResult.src,
+                                source: "wizard-edit-expand",
+                            });
+                            expandUrl = registered ?? expandResult.src;
+                            // Always render the freshly generated bitmap with
+                            // objectFit: "fill" so we never crop the new pack
+                            // padding. If the bitmap aspect drifted from the
+                            // planned nextMasterRect (rounding or post-letterbox
+                            // from the helper), shrink nextRect to match the
+                            // bitmap aspect around its center instead of
+                            // falling back to "cover", which would crop the
+                            // freshly generated edges.
+                            const planned = plan.nextMasterRect;
+                            const bitmapAspect = expandResult.outputSizePx.width / expandResult.outputSizePx.height;
+                            const plannedAspect = planned.width / planned.height;
+                            const aspectDrift = Math.abs(bitmapAspect - plannedAspect)
+                                / Math.max(bitmapAspect, plannedAspect);
+                            if (aspectDrift <= 0.005) {
+                                nextRect = planned;
+                            } else {
+                                const cx = planned.x + planned.width / 2;
+                                const cy = planned.y + planned.height / 2;
+                                let w = planned.width;
+                                let h = planned.height;
+                                if (bitmapAspect > plannedAspect) {
+                                    h = w / bitmapAspect;
+                                } else {
+                                    w = h * bitmapAspect;
+                                }
+                                nextRect = {
+                                    x: Math.round(cx - w / 2),
+                                    y: Math.round(cy - h / 2),
+                                    width: Math.round(w),
+                                    height: Math.round(h),
+                                };
+                                console.warn("[Wizard/GPTOutpaint/rect-adjusted-to-bitmap]", {
+                                    outputSizePx: expandResult.outputSizePx,
+                                    planned,
+                                    adjusted: nextRect,
+                                    aspectDrift,
+                                });
+                            }
+                            nextImageView = { objectFit: "fill", focusX: 0.5, focusY: 0.5 };
+                        }
+
+                        onOutpaintHistorySave(layerId, {
+                            src: jobSnapshot.currentImage,
+                            rect: { x: layerX, y: layerY, width: layerWidth, height: layerHeight },
+                            imageView: jobSnapshot.activeImageViewOverride,
+                        });
+                        onImageChange(layerId, expandUrl);
+                        if (nextImageView) {
+                            onImageViewChange(layerId, nextImageView);
+                        }
+                        onLayerGeometryChange(layerId, {
+                            prev: { x: layerX, y: layerY, width: layerWidth, height: layerHeight },
+                            next: nextRect,
+                            slotId,
+                            masterId,
+                        });
                         resolveBatchVariants(layerId, batchId, [expandUrl], promptLabel, "ready");
                     } else if (jobSnapshot.imageMode === "edit") {
                         const [imageUrl, refUrls] = await Promise.all([
@@ -2254,13 +2561,36 @@ function WizardLayerPromptBar({
                             if (i > 0) {
                                 await new Promise((resolve) => setTimeout(resolve, 150));
                             }
-                            const persisted = await persistWizardImageUrl(rawUrls[i], projectId, i);
-                            persistedUrls.push(persisted);
-                            void registerUrl({
-                                projectId,
-                                url: persisted,
-                                source: "wizard-generation",
-                            }).catch((e) => console.warn("[Wizard] registerUrl failed:", e));
+                            const sourcePersisted = await persistWizardImageUrl(rawUrls[i], projectId, i);
+                            let layerUrl = sourcePersisted;
+
+                            if (
+                                jobSnapshot.workingSnapshot
+                                && shouldPrepareWorkingDerivative(jobSnapshot.selectedModel, jobSnapshot.scale)
+                            ) {
+                                void registerUrl({
+                                    projectId,
+                                    url: sourcePersisted,
+                                    source: "wizard-generation-source",
+                                }).catch((e) => console.warn("[Wizard] source registerUrl failed:", e));
+
+                                const derivative = await prepareAndRegisterWizardDerivative({
+                                    imageSrc: sourcePersisted,
+                                    layer: jobSnapshot.workingSnapshot.layer,
+                                    usageSizes: jobSnapshot.workingSnapshot.usageSizes,
+                                    projectId,
+                                    registerUrl,
+                                });
+                                layerUrl = derivative.src;
+                            } else {
+                                void registerUrl({
+                                    projectId,
+                                    url: sourcePersisted,
+                                    source: "wizard-generation",
+                                }).catch((e) => console.warn("[Wizard] registerUrl failed:", e));
+                            }
+
+                            persistedUrls.push(layerUrl);
                         }
                         if (persistedUrls.length === 0) {
                             throw new Error(
