@@ -208,6 +208,82 @@ describe("projectExpansionToResize", () => {
         expect(projectedRect.height).toBeGreaterThan(300);
     });
 
+    it("forces every instance image layer to the resize artboard when fillInstanceArtboard is set", () => {
+        // Single-pass pack outpaint: one bitmap is rendered with
+        // `cover` into every format. Bindings cascade is bypassed for
+        // the outpaint geometry, so each instance image rect collapses
+        // to (0, 0, artboardW, artboardH). Without this, vertical
+        // formats overhang the artboard and the bitmap's vertical
+        // extension is hidden behind the artboard mask.
+        const resizeLayers: Layer[] = [
+            {
+                id: "vertical-image",
+                type: "image",
+                name: "Product",
+                x: 0,
+                y: 0,
+                width: 470,
+                height: 300,
+                rotation: 0,
+                visible: true,
+                locked: false,
+                src: "image.png",
+                slotId: "image-primary",
+                objectFit: "fill",
+            },
+            {
+                id: "headline",
+                type: "text",
+                name: "Headline",
+                x: 24,
+                y: 320,
+                width: 200,
+                height: 40,
+                rotation: 0,
+                visible: true,
+                locked: false,
+                text: "Sale",
+                fontSize: 24,
+                fontFamily: "Inter",
+                fontWeight: "700",
+                fill: "#111111",
+                align: "left",
+                letterSpacing: 0,
+                lineHeight: 1.2,
+            },
+        ];
+
+        const projected = projectExpansionToResize({
+            resizeLayers,
+            resizeArtboard: { width: 470, height: 762 },
+            masterArtboard: { width: 1192, height: 300 },
+            overrides: {
+                "master-image": {
+                    prev: { x: 0, y: 0, width: 1192, height: 300 },
+                    next: { x: -82, y: -105, width: 1356, height: 899 },
+                    slotId: "image-primary",
+                    masterId: "master-image",
+                    fillInstanceArtboard: true,
+                },
+            },
+            imageViewOverrides: {
+                "master-image": { objectFit: "cover", focusX: 0.5, focusY: 0.117 },
+            },
+        });
+
+        expect(projected[0]).toMatchObject({
+            x: 0,
+            y: 0,
+            width: 470,
+            height: 762,
+            objectFit: "cover",
+            focusX: 0.5,
+            focusY: 0.117,
+        });
+        // Other layers (text) must remain untouched.
+        expect(projected[1]).toBe(resizeLayers[1]);
+    });
+
     it("applies image view override even when content-only binding skips geometry", () => {
         const resizeLayers: Layer[] = [{
             id: "resize-image",

@@ -45,6 +45,17 @@ export interface LayerExpansionOverride {
     slotId?: string;
     /** Master component id, if the source layer had one. */
     masterId?: string;
+    /**
+     * If true, instance image layers in non-master snapshots are forced to
+     * the resize artboard rect (`(0, 0, resizeArtboard.width,
+     * resizeArtboard.height)`) instead of being projected through the
+     * bindings cascade. This is what single-pass pack outpaint wants:
+     * one bitmap is rendered with `objectFit: "cover"` into every format's
+     * artboard, so the vertical extension of the bitmap shows up in tall
+     * artboards (Feed, vertical) and the layer never overhangs the
+     * artboard in any format.
+     */
+    fillInstanceArtboard?: boolean;
 }
 
 export interface LayerImageViewOverride {
@@ -182,6 +193,26 @@ export function projectExpansionToResize(args: ProjectArgs): Layer[] {
 
         const mode = resolveModeFor(layer, override, resizeBindings);
         if (mode === "content") return layerWithView;
+
+        // Single-pass pack outpaint: every instance image layer becomes
+        // the resize artboard so a single bitmap can be `cover`-fitted
+        // into every format. This bypasses the bindings cascade for the
+        // outpaint geometry, which used to produce layer rects that
+        // overhung the artboard and hid the vertical extension of the
+        // bitmap in tall formats.
+        if (
+            override.fillInstanceArtboard
+            && resizeArtboard.width > 0
+            && resizeArtboard.height > 0
+        ) {
+            return {
+                ...layerWithView,
+                x: 0,
+                y: 0,
+                width: round(resizeArtboard.width),
+                height: round(resizeArtboard.height),
+            } as Layer;
+        }
 
         const instanceRect: LayerRect = {
             x: Number(layer.x ?? 0),

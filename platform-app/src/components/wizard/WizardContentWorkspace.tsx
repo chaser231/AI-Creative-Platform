@@ -2454,8 +2454,15 @@ function WizardLayerPromptBar({
                             const sourcePlacement = plan.sourcePlacementPx;
                             const outputW = Math.max(1, plan.outputSizePx.width);
                             const outputH = Math.max(1, plan.outputSizePx.height);
+                            // Anchor focus so the source product never gets
+                            // cropped off the top of the bitmap when
+                            // `cover` chops vertically (master/top-banner)
+                            // and so the full vertical extension below the
+                            // product remains visible in tall instance
+                            // artboards (Feed, vertical). Horizontally we
+                            // pin the source centre.
                             const focusX = (sourcePlacement.x + sourcePlacement.width / 2) / outputW;
-                            const focusY = (sourcePlacement.y + sourcePlacement.height / 2) / outputH;
+                            const focusY = sourcePlacement.y / outputH;
                             nextImageView = {
                                 objectFit: "cover",
                                 focusX: Math.max(0, Math.min(1, focusX)),
@@ -2477,6 +2484,13 @@ function WizardLayerPromptBar({
                             next: nextRect,
                             slotId,
                             masterId,
+                            // Single-pass pack outpaint: instance image
+                            // layers are forced to the resize artboard
+                            // (cover-fit shows full bitmap including
+                            // vertical extension), the master keeps the
+                            // pack-extended rect (cover degenerates to
+                            // 1:1 fill since aspects match).
+                            fillInstanceArtboard: true,
                         });
                         resolveBatchVariants(layerId, batchId, [expandUrl], promptLabel, "ready");
                     } else if (jobSnapshot.imageMode === "edit") {
