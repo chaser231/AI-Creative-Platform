@@ -21,6 +21,7 @@ import {
 import { pushSnapshot } from "./createHistorySlice";
 import { useBrandKitStore } from "@/store/brandKitStore";
 import { applyCascade, type CascadeContext } from "./bindingCascade";
+import { getEditModeExitPatchesForRemovedLayers } from "./editModeHelpers";
 
 // Throttle timer for updateLayer history
 let _updateHistoryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -507,11 +508,13 @@ export const createLayerSlice: StateCreator<CanvasStore, [], [], LayerSlice> = (
             const masterIdsToRemove = new Set(
                 state.layers.filter((l) => idsToRemove.has(l.id) && l.masterId).map((l) => l.masterId!)
             );
+            const editExitPatches = getEditModeExitPatchesForRemovedLayers(state, idsToRemove);
             return {
                 layers: applyAllAutoLayouts(newLayers),
                 selectedLayerIds: state.selectedLayerIds.filter((sid) => !idsToRemove.has(sid)),
                 masterComponents: state.masterComponents.filter((m) => !masterIdsToRemove.has(m.id)),
                 componentInstances: state.componentInstances.filter((i) => !masterIdsToRemove.has(i.masterId)),
+                ...editExitPatches,
             };
         });
     },
@@ -562,12 +565,14 @@ export const createLayerSlice: StateCreator<CanvasStore, [], [], LayerSlice> = (
             const masterIdsToRemove = new Set(
                 state.layers.filter((l) => idsToRemove.has(l.id) && l.masterId).map((l) => l.masterId!)
             );
+            const editExitPatches = getEditModeExitPatchesForRemovedLayers(state, idsToRemove);
 
             return {
                 layers: applyAllAutoLayouts(newLayers),
                 selectedLayerIds: [],
                 masterComponents: state.masterComponents.filter((m) => !masterIdsToRemove.has(m.id)),
                 componentInstances: state.componentInstances.filter((i) => !masterIdsToRemove.has(i.masterId)),
+                ...editExitPatches,
             };
         });
     },

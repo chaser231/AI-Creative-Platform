@@ -1902,6 +1902,12 @@ function WizardLayerPromptBar({
     }, [activeLayer?.id, onImageModeChange]);
 
     useEffect(() => {
+        if (imageMode !== "inpaint") {
+            inpaintMaskRef.current.clear();
+        }
+    }, [imageMode]);
+
+    useEffect(() => {
         if (imageCount > maxImageOutputs) setImageCount(maxImageOutputs);
     }, [imageCount, maxImageOutputs]);
 
