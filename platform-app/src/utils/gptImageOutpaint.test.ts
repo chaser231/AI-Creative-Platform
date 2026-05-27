@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { chooseOutpaintObjectFitForRect, computeOutpaintMaskAlphaAt } from "./gptImageOutpaint";
+import {
+    buildFalOutpaintMaskPixels,
+    chooseOutpaintObjectFitForRect,
+    computeFalOutpaintMaskPixelAt,
+    computeOutpaintMaskAlphaAt,
+    computeTransparentPaddedInputAlphaAt,
+} from "./gptImageOutpaint";
 
 describe("computeOutpaintMaskAlphaAt", () => {
     const sourceRect = { x: 10, y: 20, width: 100, height: 80 };
@@ -48,5 +54,37 @@ describe("chooseOutpaintObjectFitForRect", () => {
                 { width: 800, height: 600 },
             ),
         ).toBe("cover");
+    });
+});
+
+describe("fal GPT Image 2 outpaint request helpers", () => {
+    const sourceRect = { x: 10, y: 20, width: 100, height: 80 };
+
+    it("builds a black/white fal mask where padding is editable and source is preserved", () => {
+        expect(computeFalOutpaintMaskPixelAt(0, 60, sourceRect)).toEqual({
+            r: 255,
+            g: 255,
+            b: 255,
+            a: 255,
+        });
+        expect(computeFalOutpaintMaskPixelAt(60, 60, sourceRect)).toEqual({
+            r: 0,
+            g: 0,
+            b: 0,
+            a: 255,
+        });
+    });
+
+    it("builds fal mask pixels with the requested dimensions", () => {
+        const pixels = buildFalOutpaintMaskPixels({ width: 13, height: 7 }, sourceRect);
+
+        expect(pixels.width).toBe(13);
+        expect(pixels.height).toBe(7);
+        expect(pixels.data).toHaveLength(13 * 7 * 4);
+    });
+
+    it("uses transparent padding for the default GPT input canvas", () => {
+        expect(computeTransparentPaddedInputAlphaAt(0, 60, sourceRect)).toBe(0);
+        expect(computeTransparentPaddedInputAlphaAt(60, 60, sourceRect)).toBe(255);
     });
 });

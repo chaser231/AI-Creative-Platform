@@ -496,6 +496,7 @@ export function WizardContentWorkspace({
             resizeArtboard: { width: previewSource.width, height: previewSource.height },
             masterArtboard: masterCanvasSize,
             overrides: overridesForActive,
+            imageViewOverrides,
         });
 
         return buildDraftPreviewLayers(

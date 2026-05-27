@@ -321,14 +321,31 @@ export function WizardFlow({
 
         const findDraft = <T,>(layer: any, drafts: Record<string, T>): T | undefined => {
             const ids = [layer.id, layer.masterId].filter(Boolean) as string[];
-            if (layer.slotId && layer.slotId !== "none") {
+            const slotId = layer.slotId || layer.props?.slotId;
+            if (slotId && slotId !== "none") {
                 const mc = packToApply.masterComponents.find((candidate) => {
                     const candidateSlot = candidate.slotId || (candidate.props as any).slotId;
-                    return candidateSlot === layer.slotId;
+                    return candidateSlot === slotId;
                 });
                 if (mc) ids.push(mc.id);
             }
             return ids.map((id) => drafts[id]).find((value) => value !== undefined);
+        };
+        const findExpansionDraft = (layer: any): LayerExpansionOverride | undefined => {
+            const ids = [layer.id, layer.masterId, layer.masterComponentId].filter(Boolean) as string[];
+            for (const id of ids) {
+                const direct = layerGeometryOverrides[id];
+                if (direct) return direct;
+            }
+            const slotId = layer.slotId || layer.props?.slotId;
+            if (slotId && slotId !== "none") {
+                const bySlot = Object.values(layerGeometryOverrides).find((override) => override.slotId === slotId);
+                if (bySlot) return bySlot;
+            }
+            if (layer.masterId) {
+                return Object.values(layerGeometryOverrides).find((override) => override.masterId === layer.masterId);
+            }
+            return undefined;
         };
 
         const applyVisualDraftsToLayer = (layer: any) => {
@@ -402,8 +419,8 @@ export function WizardFlow({
 
         // Also apply content by mc.id directly to masterComponents (for hydration path)
         packToApply.masterComponents = packToApply.masterComponents.map(mc => {
-            const override = layerGeometryOverrides[mc.id];
-            const viewDraft = imageViewOverrides[mc.id];
+            const override = findExpansionDraft(mc);
+            const viewDraft = findDraft(mc, imageViewOverrides);
             const styleDraft = layerStyleOverrides[mc.id];
             const baseProps = {
                 ...(override ? { ...mc.props, ...override.next } : mc.props),
@@ -437,44 +454,38 @@ export function WizardFlow({
         //     extended image actually fills each resize instead of being
         //     cropped back into the original tiny slot by object-fit cover.
         const hasOverrides = Object.keys(layerGeometryOverrides).length > 0;
-        if (hasOverrides && Array.isArray(dataAny.resizes)) {
+        const hasViewOverrides = Object.keys(imageViewOverrides).length > 0;
+        const hasProjectionOverrides = hasOverrides || hasViewOverrides;
+        if (hasProjectionOverrides) {
             const masterResize =
-                dataAny.resizes.find((r: any) => r.isMaster) ?? dataAny.resizes[0];
+                Array.isArray(dataAny.resizes)
+                    ? dataAny.resizes.find((r: any) => r.isMaster) ?? dataAny.resizes[0]
+                    : null;
             const masterArtboard = masterResize
                 ? { width: masterResize.width, height: masterResize.height }
                 : { width: dataAny.canvasWidth ?? 0, height: dataAny.canvasHeight ?? 0 };
 
-            if (masterResize?.layerSnapshot && Array.isArray(masterResize.layerSnapshot)) {
-                for (const layer of masterResize.layerSnapshot) {
-                    const override = layerGeometryOverrides[layer.id];
-                    if (!override) continue;
-                    layer.x = override.next.x;
-                    layer.y = override.next.y;
-                    layer.width = override.next.width;
-                    layer.height = override.next.height;
+            if (Array.isArray(dataAny.resizes)) {
+                for (const resize of dataAny.resizes) {
+                    if (!Array.isArray(resize.layerSnapshot)) continue;
+                    resize.layerSnapshot = projectExpansionToResize({
+                        resizeLayers: resize.layerSnapshot,
+                        resizeBindings: resize.layerBindings,
+                        resizeArtboard: { width: resize.width, height: resize.height },
+                        masterArtboard,
+                        overrides: layerGeometryOverrides,
+                        imageViewOverrides,
+                    });
                 }
             }
-
-            for (const resize of dataAny.resizes) {
-                if (resize === masterResize) continue;
-                if (!Array.isArray(resize.layerSnapshot)) continue;
-                resize.layerSnapshot = projectExpansionToResize({
-                    resizeLayers: resize.layerSnapshot,
-                    resizeBindings: resize.layerBindings,
-                    resizeArtboard: { width: resize.width, height: resize.height },
+            if (dataAny.layers && Array.isArray(dataAny.layers)) {
+                dataAny.layers = projectExpansionToResize({
+                    resizeLayers: dataAny.layers,
+                    resizeArtboard: masterArtboard,
                     masterArtboard,
                     overrides: layerGeometryOverrides,
+                    imageViewOverrides,
                 });
-            }
-        }
-        if (hasOverrides && dataAny.layers && Array.isArray(dataAny.layers)) {
-            for (const layer of dataAny.layers) {
-                const override = layerGeometryOverrides[layer.id];
-                if (!override) continue;
-                layer.x = override.next.x;
-                layer.y = override.next.y;
-                layer.width = override.next.width;
-                layer.height = override.next.height;
             }
         }
 

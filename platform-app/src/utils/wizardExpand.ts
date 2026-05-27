@@ -21,7 +21,7 @@
 import { applyConstraints } from "@/utils/resizeUtil";
 import { computeExpansionDelta } from "@/store/canvas/bindingCascade";
 import { resolveImageSyncMode, migrateLegacyBinding } from "@/types";
-import type { ImageSyncMode, Layer, LayerBinding } from "@/types";
+import type { ImageFitMode, ImageSyncMode, Layer, LayerBinding } from "@/types";
 
 export interface LayerRect {
     x: number;
@@ -47,6 +47,12 @@ export interface LayerExpansionOverride {
     masterId?: string;
 }
 
+export interface LayerImageViewOverride {
+    objectFit?: ImageFitMode;
+    focusX?: number;
+    focusY?: number;
+}
+
 export interface ArtboardSize {
     width: number;
     height: number;
@@ -63,6 +69,8 @@ interface ProjectArgs {
     masterArtboard: ArtboardSize;
     /** All overrides recorded by the wizard, keyed by anchor id. */
     overrides: Record<string, LayerExpansionOverride>;
+    /** Optional image view overrides recorded by the wizard, keyed by anchor id. */
+    imageViewOverrides?: Record<string, LayerImageViewOverride>;
 }
 
 const GEOM_DECIMALS = 100;
@@ -72,23 +80,59 @@ const round = (value: number): number => Math.round(value * GEOM_DECIMALS) / GEO
  * Find the override that matches a given layer in a non-master snapshot.
  * Match priority: slotId (most stable) → masterId → direct id equality.
  */
-function findOverrideForLayer(
+function findOverrideEntryForLayer(
     layer: Layer,
     overrides: Record<string, LayerExpansionOverride>,
-): LayerExpansionOverride | undefined {
+): { key: string; override: LayerExpansionOverride } | undefined {
     if (layer.slotId && layer.slotId !== "none") {
-        for (const value of Object.values(overrides)) {
-            if (value.slotId && value.slotId === layer.slotId) return value;
+        for (const [key, value] of Object.entries(overrides)) {
+            if (value.slotId && value.slotId === layer.slotId) return { key, override: value };
         }
     }
     if (layer.masterId) {
         const direct = overrides[layer.masterId];
-        if (direct) return direct;
-        for (const value of Object.values(overrides)) {
-            if (value.masterId && value.masterId === layer.masterId) return value;
+        if (direct) return { key: layer.masterId, override: direct };
+        for (const [key, value] of Object.entries(overrides)) {
+            if (value.masterId && value.masterId === layer.masterId) return { key, override: value };
         }
     }
-    return overrides[layer.id];
+    const direct = overrides[layer.id];
+    return direct ? { key: layer.id, override: direct } : undefined;
+}
+
+function findViewOverrideForLayer(
+    layer: Layer,
+    imageViewOverrides: Record<string, LayerImageViewOverride> | undefined,
+    overrideEntry: { key: string; override: LayerExpansionOverride } | undefined,
+): LayerImageViewOverride | undefined {
+    if (!imageViewOverrides) return undefined;
+    if (layer.slotId && layer.slotId !== "none" && overrideEntry?.override.slotId === layer.slotId) {
+        const byAnchorKey = imageViewOverrides[overrideEntry.key];
+        if (byAnchorKey) return byAnchorKey;
+    }
+    if (layer.masterId) {
+        const byMasterId = imageViewOverrides[layer.masterId];
+        if (byMasterId) return byMasterId;
+        if (overrideEntry?.override.masterId === layer.masterId) {
+            const byAnchorKey = imageViewOverrides[overrideEntry.key];
+            if (byAnchorKey) return byAnchorKey;
+            const byOverrideMasterId = overrideEntry.override.masterId
+                ? imageViewOverrides[overrideEntry.override.masterId]
+                : undefined;
+            if (byOverrideMasterId) return byOverrideMasterId;
+        }
+    }
+    return imageViewOverrides[layer.id];
+}
+
+function applyViewOverride(layer: Layer, view: LayerImageViewOverride | undefined): Layer {
+    if (!view || layer.type !== "image") return layer;
+    return {
+        ...layer,
+        objectFit: view.objectFit ?? layer.objectFit,
+        focusX: view.focusX ?? layer.focusX,
+        focusY: view.focusY ?? layer.focusY,
+    } as Layer;
 }
 
 /**
@@ -120,20 +164,24 @@ function resolveModeFor(
  * override are returned untouched.
  */
 export function projectExpansionToResize(args: ProjectArgs): Layer[] {
-    const { resizeLayers, resizeBindings, resizeArtboard, masterArtboard, overrides } = args;
+    const { resizeLayers, resizeBindings, resizeArtboard, masterArtboard, overrides, imageViewOverrides } = args;
+    const hasViewOverrides = imageViewOverrides ? Object.keys(imageViewOverrides).length > 0 : false;
 
-    if (Object.keys(overrides).length === 0) return resizeLayers;
+    if (Object.keys(overrides).length === 0 && !hasViewOverrides) return resizeLayers;
     if (resizeLayers.length === 0) return resizeLayers;
 
     return resizeLayers.map((layer) => {
         if (layer.type !== "image") return layer;
         if ((layer as { isFixedAsset?: boolean }).isFixedAsset) return layer;
 
-        const override = findOverrideForLayer(layer, overrides);
-        if (!override) return layer;
+        const overrideEntry = findOverrideEntryForLayer(layer, overrides);
+        const viewOverride = findViewOverrideForLayer(layer, imageViewOverrides, overrideEntry);
+        const layerWithView = applyViewOverride(layer, viewOverride);
+        const override = overrideEntry?.override;
+        if (!override) return layerWithView;
 
         const mode = resolveModeFor(layer, override, resizeBindings);
-        if (mode === "content") return layer;
+        if (mode === "content") return layerWithView;
 
         const instanceRect: LayerRect = {
             x: Number(layer.x ?? 0),
@@ -144,9 +192,9 @@ export function projectExpansionToResize(args: ProjectArgs): Layer[] {
 
         if (mode === "relative_size") {
             const delta = computeExpansionDelta(override.prev, override.next, instanceRect);
-            if (!delta) return layer;
+            if (!delta) return layerWithView;
             return {
-                ...layer,
+                ...layerWithView,
                 x: round(delta.x),
                 y: round(delta.y),
                 width: round(delta.width),
@@ -162,7 +210,7 @@ export function projectExpansionToResize(args: ProjectArgs): Layer[] {
             || resizeArtboard.width <= 0
             || resizeArtboard.height <= 0
         ) {
-            return layer;
+            return layerWithView;
         }
 
         const scaled = applyConstraints(
@@ -178,7 +226,7 @@ export function projectExpansionToResize(args: ProjectArgs): Layer[] {
         );
 
         return {
-            ...layer,
+            ...layerWithView,
             x: round(scaled.x),
             y: round(scaled.y),
             width: round(scaled.width),

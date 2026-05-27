@@ -2,6 +2,7 @@ import { persistImageToS3, uploadForAI } from "@/utils/imageUpload";
 import type { PackOutpaintDiagnostic, PackOutpaintPlan } from "@/utils/packOutpaintPlan";
 
 const SEAM_BAND_PX = 24;
+const EDGE_CONTEXT_EXPERIMENT_ENV = process.env.NEXT_PUBLIC_WIZARD_OUTPAINT_EDGE_CONTEXT;
 
 export interface GptImageOutpaintParams {
     imageSrc: string;
@@ -17,6 +18,13 @@ export interface GptImageOutpaintResult {
     outputSizePx: { width: number; height: number };
     pixelPadding: { top: number; right: number; bottom: number; left: number };
     diagnostics: PackOutpaintDiagnostic[];
+}
+
+export interface RgbaPixel {
+    r: number;
+    g: number;
+    b: number;
+    a: number;
 }
 
 function loadImage(src: string): Promise<HTMLImageElement> {
@@ -65,7 +73,58 @@ export function computeOutpaintMaskAlphaAt(
     return Math.max(0, Math.min(1, alpha));
 }
 
-function buildMaskDataUrl(
+function isInsideRect(
+    x: number,
+    y: number,
+    rect: { x: number; y: number; width: number; height: number },
+): boolean {
+    return x >= rect.x
+        && y >= rect.y
+        && x < rect.x + rect.width
+        && y < rect.y + rect.height;
+}
+
+/**
+ * fal's openai/gpt-image-2/edit endpoint documents mask_url as a black/white
+ * PNG: white pixels are editable, black pixels are preserved.
+ */
+export function computeFalOutpaintMaskPixelAt(
+    x: number,
+    y: number,
+    sourceRect: { x: number; y: number; width: number; height: number },
+): RgbaPixel {
+    return isInsideRect(x, y, sourceRect)
+        ? { r: 0, g: 0, b: 0, a: 255 }
+        : { r: 255, g: 255, b: 255, a: 255 };
+}
+
+export function buildFalOutpaintMaskPixels(
+    size: { width: number; height: number },
+    requestSourceRect: { x: number; y: number; width: number; height: number },
+): { width: number; height: number; data: Uint8ClampedArray } {
+    const data = new Uint8ClampedArray(size.width * size.height * 4);
+    for (let y = 0; y < size.height; y++) {
+        for (let x = 0; x < size.width; x++) {
+            const i = (y * size.width + x) * 4;
+            const pixel = computeFalOutpaintMaskPixelAt(x, y, requestSourceRect);
+            data[i] = pixel.r;
+            data[i + 1] = pixel.g;
+            data[i + 2] = pixel.b;
+            data[i + 3] = pixel.a;
+        }
+    }
+    return { width: size.width, height: size.height, data };
+}
+
+export function computeTransparentPaddedInputAlphaAt(
+    x: number,
+    y: number,
+    sourceRect: { x: number; y: number; width: number; height: number },
+): number {
+    return isInsideRect(x, y, sourceRect) ? 255 : 0;
+}
+
+function buildFalMaskDataUrl(
     size: { width: number; height: number },
     requestSourceRect: { x: number; y: number; width: number; height: number },
 ): string {
@@ -75,21 +134,22 @@ function buildMaskDataUrl(
     const ctx = canvas.getContext("2d");
     if (!ctx) throw new Error("Failed to create GPT outpaint mask canvas");
 
+    const pixels = buildFalOutpaintMaskPixels(size, requestSourceRect);
     const imageData = ctx.createImageData(size.width, size.height);
-    const data = imageData.data;
-    for (let y = 0; y < size.height; y++) {
-        for (let x = 0; x < size.width; x++) {
-            const i = (y * size.width + x) * 4;
-            data[i] = 0;
-            data[i + 1] = 0;
-            data[i + 2] = 0;
-            data[i + 3] = Math.round(
-                computeOutpaintMaskAlphaAt(x, y, requestSourceRect, size) * 255,
-            );
-        }
-    }
+    imageData.data.set(pixels.data);
     ctx.putImageData(imageData, 0, 0);
     return canvas.toDataURL("image/png");
+}
+
+function isEdgeContextExperimentEnabled(): boolean {
+    if (process.env.NODE_ENV === "production") return false;
+    if (EDGE_CONTEXT_EXPERIMENT_ENV === "1") return true;
+    try {
+        return typeof window !== "undefined"
+            && window.localStorage?.getItem("wizardOutpaintEdgeContext") === "1";
+    } catch {
+        return false;
+    }
 }
 
 function buildEdgeExtendedContext(
@@ -227,17 +287,19 @@ export async function outpaintWithGptImage2PackPlan(
     if (!paddedCtx) throw new Error("Failed to create GPT outpaint padded canvas");
     paddedCtx.imageSmoothingEnabled = true;
     paddedCtx.imageSmoothingQuality = "high";
-    const edgeContext = buildEdgeExtendedContext(
-        sourceImg,
-        requestSourceRect,
-        { width: requestW, height: requestH },
-    );
-    paddedCtx.drawImage(edgeContext, 0, 0);
-    paddedCtx.save();
-    paddedCtx.filter = "blur(12px)";
-    paddedCtx.globalAlpha = 0.85;
-    paddedCtx.drawImage(edgeContext, 0, 0);
-    paddedCtx.restore();
+    if (isEdgeContextExperimentEnabled()) {
+        const edgeContext = buildEdgeExtendedContext(
+            sourceImg,
+            requestSourceRect,
+            { width: requestW, height: requestH },
+        );
+        paddedCtx.drawImage(edgeContext, 0, 0);
+        paddedCtx.save();
+        paddedCtx.filter = "blur(12px)";
+        paddedCtx.globalAlpha = 0.85;
+        paddedCtx.drawImage(edgeContext, 0, 0);
+        paddedCtx.restore();
+    }
     paddedCtx.drawImage(
         sourceImg,
         requestSourceRect.x,
@@ -247,7 +309,7 @@ export async function outpaintWithGptImage2PackPlan(
     );
 
     const paddedUrl = await uploadForAI(paddedCanvas.toDataURL("image/png"), projectId);
-    const maskUrl = await uploadForAI(buildMaskDataUrl({ width: requestW, height: requestH }, requestSourceRect), projectId);
+    const maskUrl = await uploadForAI(buildFalMaskDataUrl({ width: requestW, height: requestH }, requestSourceRect), projectId);
     if (debug) {
         onProgress?.("debug-artifacts-prepared", {
             paddedUrl,
@@ -272,6 +334,7 @@ export async function outpaintWithGptImage2PackPlan(
             imageBase64: paddedUrl,
             maskBase64: maskUrl,
             model: "gpt-image-2",
+            promptProfile: "outpaint",
             scale: "high",
             imageSize: { width: requestW, height: requestH },
             projectId,

@@ -5,7 +5,7 @@ import { auth } from "@/server/auth";
 import { prisma } from "@/server/db";
 import { checkRateLimit } from "@/lib/rateLimit";
 import { randomUUID } from "crypto";
-import { buildInpaintPrompt, DEFAULT_INPAINT_MODEL, type InpaintIntent } from "@/lib/inpaintPrompts";
+import { buildInpaintPrompt, DEFAULT_INPAINT_MODEL, type InpaintIntent, type InpaintPromptProfile } from "@/lib/inpaintPrompts";
 
 export const maxDuration = 300;
 
@@ -38,6 +38,7 @@ export async function POST(req: NextRequest) {
             // a per-model style hint; "remove" overrides the prompt with the
             // object-removal instruction. Anything else falls back to "edit".
             intent,
+            promptProfile,
         } = body;
 
         if (!action) {
@@ -92,16 +93,20 @@ export async function POST(req: NextRequest) {
                 // standard object-removal instruction.
                 const resolvedIntent: InpaintIntent =
                     intent === "remove" ? "remove" : "edit";
+                const resolvedPromptProfile: InpaintPromptProfile =
+                    promptProfile === "outpaint" ? "outpaint" : "default";
                 const built = buildInpaintPrompt({
                     model: inpaintModel,
                     intent: resolvedIntent,
                     userPrompt: prompt,
+                    promptProfile: resolvedPromptProfile,
                 });
 
                 console.log("[/api/ai/image-edit] inpaint", {
                     requestId,
                     model: inpaintModel,
                     intent: built.effectiveIntent,
+                    promptProfile: built.effectiveProfile,
                     promptPreview: built.prompt.slice(0, 80),
                 });
 
