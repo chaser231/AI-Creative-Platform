@@ -65,6 +65,8 @@ export interface AIRequestParams {
     expandPadding?: { top: number; right: number; bottom: number; left: number };
     /** Scale factor for upscale (e.g. 2.0 = double resolution) */
     upscaleScale?: number;
+    /** Exact image size for providers that support custom edit dimensions. */
+    imageSize?: { width: number; height: number };
     // ── LoRA-aware models (fal-ai/flux-lora, fal-ai/flux-2/lora, etc.) ──
     /** LoRA weights to merge into the run (1..loraSpec.maxCount). */
     loras?: LoraWeight[];
@@ -1550,6 +1552,12 @@ class FalProvider implements AIProviderImplementation {
             input.image_urls = [params.imageBase64];
             input.mask_url = params.maskBase64;
             input.output_format = "png";
+            if (params.imageSize) {
+                input.image_size = {
+                    width: Math.round(params.imageSize.width),
+                    height: Math.round(params.imageSize.height),
+                };
+            }
             // High quality by default; caller can override via scale.
             input.quality = params.scale || "high";
             if (params.count && params.count > 1) {

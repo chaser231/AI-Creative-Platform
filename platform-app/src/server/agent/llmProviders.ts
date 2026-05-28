@@ -63,26 +63,105 @@ export function getProviderChain(): AgentProvider[] {
 
 // ─── Prompt Size Safety ──────────────────────────────────
 
-const MAX_PROMPT_CHARS = 60_000;
+const MAX_PROMPT_CHARS = Number(process.env.AGENT_MAX_PROMPT_CHARS) || 60_000;
+const MAX_MESSAGE_CHARS = Number(process.env.AGENT_MAX_MESSAGE_CHARS) || 8_000;
+const MAX_SUMMARY_CHARS = Number(process.env.AGENT_MAX_SUMMARY_CHARS) || 6_000;
+const SUMMARY_RESERVE_CHARS = MAX_SUMMARY_CHARS + 1_000;
 
-function truncateHistory(messages: ChatMessage[], maxChars: number): ChatMessage[] {
-  const system = messages.filter(m => m.role === "system");
-  const rest = messages.filter(m => m.role !== "system");
+function sanitizeMessageContent(content: string): string {
+  return content
+    .replace(/data:image\/[a-zA-Z0-9.+-]+;base64,[a-zA-Z0-9+/=]+/g, "[image data omitted]")
+    .replace(/\bhttps?:\/\/\S{500,}/g, (url) => `${url.slice(0, 240)}...[url truncated]`);
+}
+
+function clipMessage(message: ChatMessage): ChatMessage {
+  const clean = sanitizeMessageContent(message.content);
+  if (message.role === "system" || clean.length <= MAX_MESSAGE_CHARS) {
+    return { ...message, content: clean };
+  }
+  return {
+    ...message,
+    content: `${clean.slice(0, MAX_MESSAGE_CHARS)}\n[message truncated: ${clean.length - MAX_MESSAGE_CHARS} chars omitted]`,
+  };
+}
+
+function messageSize(message: ChatMessage): number {
+  return message.content.length + message.role.length + 4;
+}
+
+function compactDroppedMessages(messages: ChatMessage[]): ChatMessage | null {
+  if (messages.length === 0) return null;
+
+  const imageRefs = messages
+    .map((m) => m.content.match(/^https?:\/\/\S+$/)?.[0])
+    .filter((url): url is string => !!url)
+    .slice(-5);
+
+  const lines = messages.slice(-24).map((m) => {
+    const content = sanitizeMessageContent(m.content)
+      .replace(/\s+/g, " ")
+      .trim();
+    const clipped = content.length > 320 ? `${content.slice(0, 320)}...` : content;
+    return `- ${m.role}: ${clipped || "[empty]"}`;
+  });
+
+  const summary = [
+    "Краткая сводка более ранней части диалога, автоматически добавленная из-за лимита контекста:",
+    `Всего свернуто сообщений: ${messages.length}.`,
+    ...lines,
+    imageRefs.length > 0 ? `Последние ссылки на изображения: ${imageRefs.join(", ")}` : "",
+    "Используй эту сводку как контекст, но приоритет отдавай свежим сообщениям ниже.",
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  return {
+    role: "system",
+    content: summary.length > MAX_SUMMARY_CHARS
+      ? `${summary.slice(0, MAX_SUMMARY_CHARS)}\n[summary truncated]`
+      : summary,
+  };
+}
+
+export function prepareMessagesForLLM(messages: ChatMessage[], maxChars = MAX_PROMPT_CHARS): ChatMessage[] {
+  const normalized = messages.map(clipMessage);
+  const system = normalized.filter((m) => m.role === "system");
+  const rest = normalized.filter((m) => m.role !== "system");
 
   let budget = maxChars;
-  for (const s of system) budget -= s.content.length;
+  for (const s of system) budget -= messageSize(s);
 
   const kept: ChatMessage[] = [];
-  for (let i = rest.length - 1; i >= 0 && budget > 0; i--) {
-    if (rest[i].content.length <= budget) {
+  const dropped: ChatMessage[] = [];
+  const keepBudget = Math.max(0, budget - SUMMARY_RESERVE_CHARS);
+
+  let remaining = keepBudget;
+  for (let i = rest.length - 1; i >= 0; i--) {
+    const size = messageSize(rest[i]);
+    if (size <= remaining) {
       kept.unshift(rest[i]);
-      budget -= rest[i].content.length;
+      remaining -= size;
     } else {
-      kept.unshift({ ...rest[i], content: rest[i].content.slice(0, budget) });
-      budget = 0;
+      dropped.unshift(rest[i]);
     }
   }
-  return [...system, ...kept];
+
+  const summary = compactDroppedMessages(dropped);
+  const out = summary ? [...system, summary, ...kept] : [...system, ...kept];
+
+  const total = out.reduce((sum, m) => sum + messageSize(m), 0);
+  if (total <= maxChars) return out;
+
+  let hardBudget = maxChars - system.reduce((sum, m) => sum + messageSize(m), 0);
+  const hardKept: ChatMessage[] = [];
+  for (let i = rest.length - 1; i >= 0 && hardBudget > 0; i--) {
+    const size = messageSize(rest[i]);
+    if (size <= hardBudget) {
+      hardKept.unshift(rest[i]);
+      hardBudget -= size;
+    }
+  }
+  return [...system, ...hardKept];
 }
 
 // ─── Unified LLM call ────────────────────────────────────
@@ -98,6 +177,7 @@ export async function callLLM(messages: ChatMessage[]): Promise<string> {
 
 async function callOpenAI(messages: ChatMessage[]): Promise<string> {
   const apiKey = process.env.OPENAI_API_KEY!;
+  const safe = prepareMessagesForLLM(messages);
 
   const response = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
@@ -107,7 +187,7 @@ async function callOpenAI(messages: ChatMessage[]): Promise<string> {
     },
     body: JSON.stringify({
       model: "gpt-4o-mini",
-      messages,
+      messages: safe,
       temperature: 0.7,
       max_tokens: 1024,
     }),
@@ -126,6 +206,7 @@ async function callOpenAI(messages: ChatMessage[]): Promise<string> {
 export async function callOpenAIWithTools(messages: ChatMessage[]): Promise<AgentToolResponse> {
   const apiKey = process.env.OPENAI_API_KEY!;
   const tools = actionsToOpenAITools();
+  const safe = prepareMessagesForLLM(messages);
 
   const response = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
@@ -135,7 +216,7 @@ export async function callOpenAIWithTools(messages: ChatMessage[]): Promise<Agen
     },
     body: JSON.stringify({
       model: "gpt-4o-mini",
-      messages,
+      messages: safe,
       tools,
       tool_choice: "auto",
       temperature: 0.3,
@@ -282,7 +363,7 @@ const FAL_FALLBACK_MODEL = "anthropic/claude-haiku-4.5";
 
 async function callFalText(messages: ChatMessage[], model: string): Promise<string> {
   const apiKey = process.env.FAL_KEY!;
-  const safe = truncateHistory(messages, MAX_PROMPT_CHARS);
+  const safe = prepareMessagesForLLM(messages);
 
   const systemMsg = safe.find((m) => m.role === "system")?.content || "";
   const convMessages = safe.filter((m) => m.role !== "system");
@@ -420,7 +501,7 @@ const REPLICATE_TEXT_MODEL = "deepseek-ai/deepseek-v3";
 
 async function callReplicateText(messages: ChatMessage[]): Promise<string> {
   const token = process.env.REPLICATE_API_TOKEN!;
-  const safe = truncateHistory(messages, MAX_PROMPT_CHARS);
+  const safe = prepareMessagesForLLM(messages);
 
   const systemMsg = safe.find((m) => m.role === "system")?.content || "";
   const convMessages = safe.filter((m) => m.role !== "system");

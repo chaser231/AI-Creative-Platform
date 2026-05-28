@@ -868,7 +868,7 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
     // Expand mode state
     const expandMode = useCanvasStore((s) => s.expandMode);
     const expandTargetLayerId = useCanvasStore((s) => s.expandTargetLayerId);
-    const resetExpandMode = useCanvasStore((s) => s.resetExpandMode);
+    const exitCanvasEditModes = useCanvasStore((s) => s.exitCanvasEditModes);
 
     // Inpaint mode state — the slice carries only the UI flag + target id,
     // brush strokes live in the InpaintProvider hook (see InpaintContext).
@@ -1775,7 +1775,8 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
 
             // Exit exclusive edit modes on empty-canvas click with full UI reset.
             if (expandMode || inpaintMode) {
-                if (expandMode) resetExpandMode();
+                exitCanvasEditModes();
+                sharedInpaintMask?.clear();
                 resetStageContainerCursor(stage);
                 if (!e.evt.shiftKey && !e.evt.metaKey && !e.evt.ctrlKey) {
                     selectLayer(null);
@@ -1847,7 +1848,7 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
                 stopTextEditing();
             }
         }
-    }, [selectLayer, isEditingText, stopTextEditing, isPanning, activeGradientEditorTarget, selectedLayerIds, layers, zoom, artboardProps.clipContent, canvasWidth, canvasHeight, activeTool, addTextLayer, setActiveTool, setDrawingBox, startTextEditing, expandMode, inpaintMode, resetExpandMode]);
+    }, [selectLayer, isEditingText, stopTextEditing, isPanning, activeGradientEditorTarget, selectedLayerIds, layers, zoom, artboardProps.clipContent, canvasWidth, canvasHeight, activeTool, addTextLayer, setActiveTool, setDrawingBox, startTextEditing, expandMode, inpaintMode, exitCanvasEditModes, sharedInpaintMask]);
 
     const handleStageMouseMove = useCallback((e: Konva.KonvaEventObject<MouseEvent>) => {
         const stage = e.target.getStage();

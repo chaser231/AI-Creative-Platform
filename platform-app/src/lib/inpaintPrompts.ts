@@ -29,6 +29,7 @@
 import { getModelById } from "./ai-models";
 
 export type InpaintIntent = "edit" | "remove";
+export type InpaintPromptProfile = "default" | "outpaint";
 
 /**
  * Output of {@link buildInpaintPrompt}.
@@ -39,6 +40,7 @@ export type InpaintIntent = "edit" | "remove";
 export interface BuiltInpaintPrompt {
     prompt: string;
     effectiveIntent: InpaintIntent;
+    effectiveProfile: InpaintPromptProfile;
 }
 
 /**
@@ -52,6 +54,11 @@ const REMOVE_BASE = [
     "Fill the area seamlessly with the surrounding background,",
     "matching texture, lighting, color, perspective, depth of field,",
     "and shadow direction. Do not add new objects, text, or watermarks.",
+].join(" ");
+
+const OUTPAINT_BASE = [
+    "Extend the scene naturally into the masked white areas.",
+    "Preserve the original subject, composition, text/logos, and perspective.",
 ].join(" ");
 
 interface PromptProfile {
@@ -117,10 +124,12 @@ export function buildInpaintPrompt({
     model,
     intent = "edit",
     userPrompt,
+    promptProfile = "default",
 }: {
     model: string;
     intent?: InpaintIntent;
     userPrompt?: string;
+    promptProfile?: InpaintPromptProfile;
 }): BuiltInpaintPrompt {
     const profile = profileForModel(model);
 
@@ -129,6 +138,17 @@ export function buildInpaintPrompt({
         return {
             prompt: `${REMOVE_BASE}${suffix}`,
             effectiveIntent: "remove",
+            effectiveProfile: "default",
+        };
+    }
+
+    if (promptProfile === "outpaint") {
+        const trimmed = (userPrompt || "").trim();
+        const hint = trimmed.length > 0 ? ` User context/style hint: ${trimmed}` : "";
+        return {
+            prompt: `${OUTPAINT_BASE}${hint}`,
+            effectiveIntent: "edit",
+            effectiveProfile: "outpaint",
         };
     }
 
@@ -138,6 +158,7 @@ export function buildInpaintPrompt({
     return {
         prompt: `${base}${suffix}`,
         effectiveIntent: "edit",
+        effectiveProfile: "default",
     };
 }
 

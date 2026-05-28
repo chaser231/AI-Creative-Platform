@@ -218,3 +218,31 @@ describe("FalProvider — native fal multi-output payloads", () => {
         expect(body.num_images).toBe(count);
     });
 });
+
+describe("FalProvider — gpt-image-2 inpaint payload", () => {
+    it("forwards image_urls, mask_url, image_size, quality and PNG output", async () => {
+        mockFetch.mockResolvedValueOnce(
+            okJson({ images: [{ url: "https://fal.media/outpaint.png", width: 1536, height: 1024 }] }),
+        );
+
+        await generateWithFallback({
+            prompt: "extend the background",
+            type: "inpainting",
+            model: "gpt-image-2",
+            imageBase64: "https://cdn.example.com/source.png",
+            maskBase64: "https://cdn.example.com/mask.png",
+            imageSize: { width: 1536, height: 1024 },
+            scale: "high",
+        });
+
+        const [url, init] = mockFetch.mock.calls[0] as [string, RequestInit];
+        expect(url).toBe("https://queue.fal.run/openai/gpt-image-2/edit");
+
+        const body = JSON.parse(init.body as string);
+        expect(body.image_urls).toEqual(["https://cdn.example.com/source.png"]);
+        expect(body.mask_url).toBe("https://cdn.example.com/mask.png");
+        expect(body.image_size).toEqual({ width: 1536, height: 1024 });
+        expect(body.quality).toBe("high");
+        expect(body.output_format).toBe("png");
+    });
+});

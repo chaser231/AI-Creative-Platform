@@ -84,6 +84,7 @@ export function WizardExportModal({
                 resizeArtboard: { width: exportSource.width, height: exportSource.height },
                 masterArtboard: masterCanvasSize,
                 overrides: layerGeometryOverrides,
+                imageViewOverrides,
             })
             : exportSource.layers;
 
