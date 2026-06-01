@@ -21,7 +21,8 @@ import { X, Loader2, Sparkles, Maximize2 } from "lucide-react";
 import { useInpaintMask } from "@/hooks/useInpaintMask";
 import { InpaintMaskOverlay } from "@/components/inpaint/InpaintMaskOverlay";
 import { InpaintActionBar, type InpaintAction } from "@/components/inpaint/InpaintActionBar";
-import { uploadForAI } from "@/utils/imageUpload";
+import { persistImageToS3, uploadForAI } from "@/utils/imageUpload";
+import { compositeInpaintResult, prepareInpaintProviderCrop, type InpaintMaskAlphaMode } from "@/utils/imageComposite";
 import { getModelById } from "@/lib/ai-models";
 import { DEFAULT_INPAINT_MODEL, PREFERRED_INPAINT_MODELS } from "@/lib/inpaintPrompts";
 import { SelectPill } from "@/components/ui/SelectPill";
@@ -131,6 +132,9 @@ export function InpaintImageModal({
 
         const naturalSize = natural ?? { w: bbox?.width ?? 1024, h: bbox?.height ?? 1024 };
         const modelEntry = getModelById(model);
+        const maskAlphaMode: InpaintMaskAlphaMode = modelEntry?.slug?.startsWith("openai/")
+            ? "transparent-edit"
+            : "auto";
         setIsProcessing(true);
         setProcessingStage("Готовим маску…");
         setErrorMsg(null);
@@ -154,14 +158,34 @@ export function InpaintImageModal({
             const maskDataUrl = await blobToDataUrl(blob);
             setProcessingStage("Загружаем изображение и маску…");
             const uploadStartedAt = performance.now();
-            const [imageUrl, maskUrl] = await Promise.all([
-                uploadForAI(sourceUrl, projectId),
-                uploadForAI(maskDataUrl, projectId),
-            ]);
+            let cropPrep: Awaited<ReturnType<typeof prepareInpaintProviderCrop>> = null;
+            try {
+                cropPrep = await prepareInpaintProviderCrop({
+                    originalSrc: sourceUrl,
+                    maskSrc: maskDataUrl,
+                    maskAlphaMode,
+                });
+            } catch (cropErr) {
+                console.warn("[InpaintImageModal] crop prep failed, using full image:", cropErr);
+            }
+            const uploadInputs = cropPrep
+                ? [sourceUrl, maskDataUrl, cropPrep.sourceSrc, cropPrep.maskSrc]
+                : [sourceUrl, maskDataUrl];
+            const uploaded = await Promise.all(uploadInputs.map((src) => uploadForAI(src, projectId)));
+            const imageUrl = uploaded[0];
+            const maskUrl = uploaded[1];
+            const providerImageUrl = cropPrep ? uploaded[2] : imageUrl;
+            const providerMaskUrl = cropPrep ? uploaded[3] : maskUrl;
             console.info("[InpaintImageModal] uploads done", {
                 model,
                 uploadMs: Math.round(performance.now() - uploadStartedAt),
                 naturalSize,
+                crop: cropPrep
+                    ? {
+                        rect: cropPrep.editedRect,
+                        output: { w: cropPrep.outputWidth, h: cropPrep.outputHeight },
+                    }
+                    : null,
             });
 
             const genHint =
@@ -180,8 +204,8 @@ export function InpaintImageModal({
                     action: "inpaint",
                     intent,
                     prompt: intent === "remove" ? "" : prompt,
-                    imageBase64: imageUrl,
-                    maskBase64: maskUrl,
+                    imageBase64: providerImageUrl,
+                    maskBase64: providerMaskUrl,
                     model,
                     projectId,
                     scale: "high",
@@ -198,8 +222,27 @@ export function InpaintImageModal({
                 totalMs: Math.round(performance.now() - clientStartedAt),
             });
 
+            setProcessingStage("Компонуем результат…");
+            let finalContent = data.content as string;
+            try {
+                const safeEditedUrl = await persistImageToS3(finalContent, projectId);
+                const safeOriginalUrl = await persistImageToS3(imageUrl, projectId);
+                finalContent = await compositeInpaintResult({
+                    editedSrc: safeEditedUrl,
+                    originalSrc: safeOriginalUrl,
+                    maskSrc: maskUrl,
+                    maskAlphaMode,
+                    editedRect: cropPrep?.editedRect,
+                });
+            } catch (compositeErr) {
+                if (cropPrep) {
+                    throw compositeErr;
+                }
+                console.warn("[InpaintImageModal] inpaint post-compose failed, using raw provider result:", compositeErr);
+            }
+
             setProcessingStage("Сохраняем результат…");
-            await onApply(data.content as string, {
+            await onApply(finalContent, {
                 model: (data.model as string | undefined) ?? model,
                 intent,
                 prompt,

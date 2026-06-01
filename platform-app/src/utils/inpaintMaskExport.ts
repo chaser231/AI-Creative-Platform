@@ -225,11 +225,11 @@ export function renderInpaintMaskToCanvas(
     }
 
     if (withAlpha) {
-        // For OpenAI: start fully transparent; draw strokes with alpha=1.
-        // black/white doesn't matter as long as alpha channel is correct
-        // (OpenAI looks at alpha: opaque = preserve, transparent = regenerate).
-        // We use white fill so the file is also viewable.
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        // For OpenAI-style edit endpoints: opaque = preserve, transparent = regenerate.
+        // We first build the same black/white edit mask as RGB providers use,
+        // then invert luma into alpha after all draw/erase strokes are applied.
+        ctx.fillStyle = "#000000";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
     } else if (blackBackground) {
         // For FLUX Fill / Nano Banana: black background = preserve.
         ctx.fillStyle = "#000000";
@@ -247,6 +247,20 @@ export function renderInpaintMaskToCanvas(
 
     for (const stroke of strokes) {
         renderStrokeToImageSpace(ctx, stroke, target, fit);
+    }
+
+    if (withAlpha) {
+        const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const data = imgData.data;
+        for (let i = 0; i < data.length; i += 4) {
+            const luma = data[i] * 0.2126 + data[i + 1] * 0.7152 + data[i + 2] * 0.0722;
+            const editAlpha = data[i + 3] > 0 && luma > 8 ? 255 : 0;
+            data[i] = 0;
+            data[i + 1] = 0;
+            data[i + 2] = 0;
+            data[i + 3] = 255 - editAlpha;
+        }
+        ctx.putImageData(imgData, 0, 0);
     }
 
     return canvas;

@@ -22,6 +22,7 @@ import { getImagePresetPromptSuffixForModel, getTextPresetInstruction } from "@/
 import { useStylePresets } from "@/hooks/useStylePresets";
 import { persistImageToS3, uploadForAI, uploadManyForAI } from "@/utils/imageUpload";
 import { outpaintImage } from "@/utils/outpaintPipeline";
+import { compositeInpaintResult, prepareInpaintProviderCrop, type InpaintMaskAlphaMode } from "@/utils/imageComposite";
 import { getOutpaintModel } from "@/utils/outpaintModel";
 import { mapOutpaintStage, type OutpaintProgressState } from "@/utils/outpaintProgress";
 import { OutpaintProgressIndicator } from "@/components/ui/OutpaintProgressIndicator";
@@ -775,6 +776,9 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
 
         const zoom = useCanvasStore.getState().zoom;
         const modelEntry = getModelById(selectedModel);
+        const maskAlphaMode: InpaintMaskAlphaMode = modelEntry?.slug?.startsWith("openai/")
+            ? "transparent-edit"
+            : "auto";
         const blob = await inpaintMask.exportMaskBlob(
             {
                 naturalWidth,
@@ -819,10 +823,24 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                     // URLs for both fields, so we always go through uploadForAI.
                     const maskFile = new File([blob], "inpaint-mask.png", { type: "image/png" });
                     const maskBase64 = await blobToDataUrl(maskFile);
-                    const [imageUrl, maskUrl] = await Promise.all([
-                        uploadForAI(targetLayer.src, projectId),
-                        uploadForAI(maskBase64, projectId),
-                    ]);
+                    let cropPrep: Awaited<ReturnType<typeof prepareInpaintProviderCrop>> = null;
+                    try {
+                        cropPrep = await prepareInpaintProviderCrop({
+                            originalSrc: targetLayer.src,
+                            maskSrc: maskBase64,
+                            maskAlphaMode,
+                        });
+                    } catch (cropErr) {
+                        console.warn("[AIPromptBar] inpaint crop prep failed, using full image:", cropErr);
+                    }
+                    const uploadInputs = cropPrep
+                        ? [targetLayer.src, maskBase64, cropPrep.sourceSrc, cropPrep.maskSrc]
+                        : [targetLayer.src, maskBase64];
+                    const uploaded = await Promise.all(uploadInputs.map((src) => uploadForAI(src, projectId)));
+                    const imageUrl = uploaded[0];
+                    const maskUrl = uploaded[1];
+                    const providerImageUrl = cropPrep ? uploaded[2] : imageUrl;
+                    const providerMaskUrl = cropPrep ? uploaded[3] : maskUrl;
 
                     const styleSuffix = getImagePresetPromptSuffixForModel(imageStyleId, selectedModel, imagePresets);
                     const styledPrompt = styleSuffix && editPrompt ? `${editPrompt}. Style: ${styleSuffix}` : editPrompt;
@@ -835,8 +853,8 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                             action: "inpaint",
                             intent,
                             prompt: resolvedPrompt,
-                            imageBase64: imageUrl,
-                            maskBase64: maskUrl,
+                            imageBase64: providerImageUrl,
+                            maskBase64: providerMaskUrl,
                             model: selectedModel,
                             projectId,
                             scale: scale || "high",
@@ -855,15 +873,38 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                         throw new Error("Сервер вернул пустой результат inpaint");
                     }
 
-                    await applyEditedImageToLayer(targetLayer, data.content);
+                    let finalContent = data.content as string;
+                    try {
+                        const safeEditedUrl = finalContent.includes(S3_PERSIST_HOST)
+                            ? finalContent
+                            : await persistImageToS3(finalContent, projectId);
+                        const safeOriginalUrl = imageUrl.includes(S3_PERSIST_HOST)
+                            ? imageUrl
+                            : await persistImageToS3(imageUrl, projectId);
+                        finalContent = await compositeInpaintResult({
+                            editedSrc: safeEditedUrl,
+                            originalSrc: safeOriginalUrl,
+                            maskSrc: maskUrl,
+                            maskAlphaMode,
+                            editedRect: cropPrep?.editedRect,
+                        });
+                    } catch (compositeErr) {
+                        if (cropPrep) {
+                            throw compositeErr;
+                        }
+                        console.warn("[AIPromptBar] inpaint post-compose failed, using raw provider result:", compositeErr);
+                    }
+
+                    await applyEditedImageToLayer(targetLayer, finalContent);
+                    const storeLayerAfterApply = useCanvasStore
+                        .getState()
+                        .layers.find((l) => l.id === layerId) as ImageLayer | undefined;
+                    const appliedResultUrl = storeLayerAfterApply?.src ?? finalContent;
 
                     // Persist to library so the inpainted result shows up in the
                     // workspace asset library (same as text-edit/inpaint paths).
                     try {
-                        const storeLayer = useCanvasStore
-                            .getState()
-                            .layers.find((l) => l.id === layerId) as ImageLayer | undefined;
-                        let persistedUrl = storeLayer?.src ?? data.content;
+                        let persistedUrl = appliedResultUrl;
                         if (!persistedUrl.startsWith("https://storage.yandexcloud.net")) {
                             persistedUrl = await persistImageToS3(persistedUrl, projectId);
                         }
@@ -884,16 +925,12 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
 
                     onResult({
                         type: "edit",
-                        content: data.content,
+                        content: appliedResultUrl,
                         prompt: editPrompt || (intent === "remove" ? "Удалить объект" : "Inpaint"),
                         model: data.model,
                     });
 
-                    const storeLayer = useCanvasStore
-                        .getState()
-                        .layers.find((l) => l.id === layerId) as ImageLayer | undefined;
-                    const resultUrl = storeLayer?.src ?? data.content;
-                    resolveBatchVariants(layerId, batchId, [resultUrl], promptLabel, "ready");
+                    resolveBatchVariants(layerId, batchId, [appliedResultUrl], promptLabel, "ready");
 
                     // Clear the mask so the next inpaint starts fresh and
                     // the action bar collapses Edit/Remove buttons.

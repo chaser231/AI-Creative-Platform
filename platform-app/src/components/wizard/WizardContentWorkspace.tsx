@@ -53,6 +53,7 @@ import type { LoraWeight } from "@/lib/ai-providers";
 import { getImagePresetPromptSuffixForModel } from "@/lib/stylePresets";
 import { applyAllAutoLayouts } from "@/utils/layoutEngine";
 import { compressImageFile, persistImageToS3, uploadForAI, uploadManyForAI } from "@/utils/imageUpload";
+import { compositeInpaintResult, prepareInpaintProviderCrop, type InpaintMaskAlphaMode } from "@/utils/imageComposite";
 import { getOutpaintModel } from "@/utils/outpaintModel";
 import { mapOutpaintStage, type OutpaintProgressState } from "@/utils/outpaintProgress";
 import { OutpaintProgressIndicator } from "@/components/ui/OutpaintProgressIndicator";
@@ -1789,6 +1790,9 @@ function WizardLayerPromptBar({
         }
 
         const modelEntry = getModelById(selectedModel);
+        const maskAlphaMode: InpaintMaskAlphaMode = modelEntry?.slug?.startsWith("openai/")
+            ? "transparent-edit"
+            : "auto";
         const blob = await inpaintMask.exportMaskBlob(
             {
                 naturalWidth,
@@ -1831,10 +1835,24 @@ function WizardLayerPromptBar({
                 try {
                     const maskFile = new File([blob], "inpaint-mask.png", { type: "image/png" });
                     const maskBase64 = await blobToDataUrl(maskFile);
-                    const [imageUrl, maskUrl] = await Promise.all([
-                        uploadForAI(currentImage, projectId),
-                        uploadForAI(maskBase64, projectId),
-                    ]);
+                    let cropPrep: Awaited<ReturnType<typeof prepareInpaintProviderCrop>> = null;
+                    try {
+                        cropPrep = await prepareInpaintProviderCrop({
+                            originalSrc: currentImage,
+                            maskSrc: maskBase64,
+                            maskAlphaMode,
+                        });
+                    } catch (cropErr) {
+                        console.warn("[WizardInpaint] crop prep failed, using full image", cropErr);
+                    }
+                    const uploadInputs = cropPrep
+                        ? [currentImage, maskBase64, cropPrep.sourceSrc, cropPrep.maskSrc]
+                        : [currentImage, maskBase64];
+                    const uploaded = await Promise.all(uploadInputs.map((src) => uploadForAI(src, projectId)));
+                    const imageUrl = uploaded[0];
+                    const maskUrl = uploaded[1];
+                    const providerImageUrl = cropPrep ? uploaded[2] : imageUrl;
+                    const providerMaskUrl = cropPrep ? uploaded[3] : maskUrl;
 
                     const styleSuffix = getImagePresetPromptSuffixForModel(imageStyleId, selectedModel, imagePresets);
                     const styledPrompt = styleSuffix && editPrompt ? `${editPrompt}. Style: ${styleSuffix}` : editPrompt;
@@ -1847,8 +1865,8 @@ function WizardLayerPromptBar({
                             action: "inpaint",
                             intent,
                             prompt: resolvedPrompt,
-                            imageBase64: imageUrl,
-                            maskBase64: maskUrl,
+                            imageBase64: providerImageUrl,
+                            maskBase64: providerMaskUrl,
                             model: selectedModel,
                             projectId,
                             scale: scale || "high",
@@ -1867,7 +1885,25 @@ function WizardLayerPromptBar({
                         throw new Error("Сервер вернул пустой результат inpaint");
                     }
 
-                    let persisted = data.content as string;
+                    let finalContent = data.content as string;
+                    try {
+                        const safeEditedUrl = await persistImageToS3(finalContent, projectId);
+                        const safeOriginalUrl = await persistImageToS3(imageUrl, projectId);
+                        finalContent = await compositeInpaintResult({
+                            editedSrc: safeEditedUrl,
+                            originalSrc: safeOriginalUrl,
+                            maskSrc: maskUrl,
+                            maskAlphaMode,
+                            editedRect: cropPrep?.editedRect,
+                        });
+                    } catch (compositeErr) {
+                        if (cropPrep) {
+                            throw compositeErr;
+                        }
+                        console.warn("[WizardInpaint] post-compose failed, using raw provider result", compositeErr);
+                    }
+
+                    let persisted = finalContent;
                     if (!persisted.includes(S3_PERSIST_HOST)) {
                         persisted = await persistWizardImageUrl(persisted, projectId, 0);
                     }
