@@ -49,6 +49,10 @@ export function WizardExportModal({
     const readyRef = useRef(false);
     const imageLoadStateRef = useRef({ pending: 0, failed: 0 });
     const previewFormats = useMemo(() => getPreviewFormatSources(selectedTemplate), [selectedTemplate]);
+    const exportableFormats = useMemo(
+        () => previewFormats.filter((format) => !format.hidden),
+        [previewFormats],
+    );
     const [exportMode, setExportMode] = useState<WizardExportMode>("single");
     const [scale, setScale] = useState(1);
     const [selectedFormatIds, setSelectedFormatIds] = useState<Set<string>>(new Set());
@@ -58,13 +62,18 @@ export function WizardExportModal({
 
     useEffect(() => {
         if (!open) return;
-        setCurrentExportFormatId(activeFormatId || previewFormats[0]?.id || "");
-        setSelectedFormatIds(new Set(previewFormats.map((format) => format.id)));
-    }, [activeFormatId, open, previewFormats]);
+        const nextCurrent = activeFormatId || exportableFormats[0]?.id || previewFormats[0]?.id || "";
+        const nextSelected = new Set(exportableFormats.map((format) => format.id));
+        queueMicrotask(() => {
+            setCurrentExportFormatId(nextCurrent);
+            setSelectedFormatIds(nextSelected);
+        });
+    }, [activeFormatId, exportableFormats, open, previewFormats]);
 
-    const masterSource = previewFormats[0];
-    const exportSource = previewFormats.find((format) => format.id === currentExportFormatId)
-        ?? previewFormats.find((format) => format.id === activeFormatId)
+    const masterSource = previewFormats.find((format) => format.isMaster) ?? previewFormats[0];
+    const exportSource = exportableFormats.find((format) => format.id === currentExportFormatId)
+        ?? exportableFormats.find((format) => format.id === activeFormatId)
+        ?? exportableFormats[0]
         ?? masterSource;
     const entries = useMemo(
         () => getEditableLayerEntries(selectedTemplate, masterSource?.layers ?? []),
@@ -77,7 +86,7 @@ export function WizardExportModal({
     const exportLayers = useMemo(() => {
         if (!exportSource) return [];
         const hasOverrides = Object.keys(layerGeometryOverrides).length > 0;
-        const sourceLayers = hasOverrides && exportSource.id !== masterSource?.id
+        const sourceLayers = hasOverrides
             ? projectExpansionToResize({
                 resizeLayers: exportSource.layers,
                 resizeBindings: exportSource.layerBindings,
@@ -95,7 +104,6 @@ export function WizardExportModal({
             imageValues,
             imageViewOverrides,
             layerStyleOverrides,
-            exportSource.id === masterSource?.id ? layerGeometryOverrides : undefined,
         );
     }, [
         entries,
@@ -111,7 +119,7 @@ export function WizardExportModal({
 
     if (!exportSource) return null;
 
-    const allFormatIds = previewFormats.map((format) => format.id);
+    const allFormatIds = exportableFormats.map((format) => format.id);
     const toggleFormat = (id: string) => {
         setSelectedFormatIds((prev) => {
             const next = new Set(prev);
@@ -165,7 +173,7 @@ export function WizardExportModal({
     };
 
     const handleBatchExport = async () => {
-        const formats = previewFormats.filter((format) => selectedFormatIds.has(format.id));
+        const formats = exportableFormats.filter((format) => selectedFormatIds.has(format.id));
         if (formats.length === 0) return;
         setIsExporting(true);
         setExportError(null);
@@ -199,7 +207,7 @@ export function WizardExportModal({
         } catch (err) {
             setExportError(err instanceof Error ? err.message : "Не удалось экспортировать пакет");
         } finally {
-            setCurrentExportFormatId(activeFormatId || previewFormats[0]?.id || "");
+            setCurrentExportFormatId(activeFormatId || exportableFormats[0]?.id || previewFormats[0]?.id || "");
             setIsExporting(false);
         }
     };
@@ -308,7 +316,7 @@ export function WizardExportModal({
                             </div>
                         </div>
                         <div className="max-h-48 space-y-1 overflow-y-auto rounded-[var(--radius-md)] border border-border-primary p-2">
-                            {previewFormats.map((format) => (
+                            {exportableFormats.map((format) => (
                                 <label
                                     key={format.id}
                                     className={`flex cursor-pointer items-center gap-2.5 rounded-[var(--radius-md)] border px-2.5 py-2 transition-colors ${

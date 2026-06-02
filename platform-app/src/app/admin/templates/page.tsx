@@ -15,6 +15,7 @@ import { Select } from "@/components/ui/Select";
 import { Textarea } from "@/components/ui/Textarea";
 import { Input } from "@/components/ui/Input";
 import { trpc } from "@/lib/trpc";
+import { compressImageFile, persistImageToS3 } from "@/utils/imageUpload";
 
 /* ─── Types ──────────────────────────────────────────── */
 
@@ -63,6 +64,9 @@ export default function AdminTemplatesPage() {
     const [editOfficial, setEditOfficial] = useState(false);
     const [editCategories, setEditCategories] = useState<string[]>([]);
     const [editContentType, setEditContentType] = useState("visual");
+    const [editThumbnailUrl, setEditThumbnailUrl] = useState("");
+    const [thumbnailBusy, setThumbnailBusy] = useState(false);
+    const [thumbnailError, setThumbnailError] = useState<string | null>(null);
 
     // Context menu state
     const [contextMenu, setContextMenu] = useState<{ id: string; x: number; y: number } | null>(null);
@@ -101,12 +105,14 @@ export default function AdminTemplatesPage() {
         { value: "mixed", label: "Смешанный" },
     ];
 
-    const openEditModal = (template: { id: string; name: string; description: string | null; isOfficial: boolean; categories: string[] }) => {
+    const openEditModal = (template: { id: string; name: string; description: string | null; isOfficial: boolean; categories: string[]; thumbnailUrl?: string | null }) => {
         setEditingTemplate(template);
         setEditName(template.name);
         setEditDesc(template.description || "");
         setEditOfficial(template.isOfficial);
         setEditCategories(template.categories || []);
+        setEditThumbnailUrl(template.thumbnailUrl || "");
+        setThumbnailError(null);
     };
 
     const handleSaveEdit = async () => {
@@ -117,8 +123,24 @@ export default function AdminTemplatesPage() {
             description: editDesc,
             isOfficial: editOfficial,
             categories: editCategories,
+            thumbnailUrl: editThumbnailUrl.trim() || null,
         });
         setEditingTemplate(null);
+    };
+
+    const handleThumbnailFile = async (file: File | null) => {
+        if (!file || !editingTemplate) return;
+        setThumbnailBusy(true);
+        setThumbnailError(null);
+        try {
+            const compressed = await compressImageFile(file, 900);
+            const persisted = await persistImageToS3(compressed, `template-${editingTemplate.id}`);
+            setEditThumbnailUrl(persisted);
+        } catch (err) {
+            setThumbnailError(err instanceof Error ? err.message : "Не удалось загрузить thumbnail");
+        } finally {
+            setThumbnailBusy(false);
+        }
     };
 
     const handleDuplicate = async (id: string) => {
@@ -491,7 +513,7 @@ export default function AdminTemplatesPage() {
                 footer={
                     <>
                         <Button variant="ghost" onClick={() => setEditingTemplate(null)}>Отмена</Button>
-                        <Button onClick={handleSaveEdit} disabled={updateMutation.isPending}>
+                        <Button onClick={handleSaveEdit} disabled={updateMutation.isPending || thumbnailBusy}>
                             {updateMutation.isPending ? "Сохранение..." : "Сохранить"}
                         </Button>
                     </>
@@ -514,6 +536,57 @@ export default function AdminTemplatesPage() {
                             onChange={(e) => setEditDesc(e.target.value)}
                             rows={3}
                         />
+                    </div>
+
+                    <div>
+                        <label className="text-xs font-medium text-text-secondary mb-1.5 block">Thumbnail</label>
+                        <div className="flex gap-3">
+                            <div className="h-20 w-28 shrink-0 overflow-hidden rounded-xl border border-border-primary bg-bg-secondary flex items-center justify-center">
+                                {editThumbnailUrl ? (
+                                    <img
+                                        src={editThumbnailUrl}
+                                        alt="Thumbnail шаблона"
+                                        className="h-full w-full object-cover"
+                                        draggable={false}
+                                    />
+                                ) : (
+                                    <LayoutTemplate size={22} className="text-text-tertiary/60" />
+                                )}
+                            </div>
+                            <div className="min-w-0 flex-1 space-y-2">
+                                <Input
+                                    value={editThumbnailUrl}
+                                    onChange={(e) => setEditThumbnailUrl(e.target.value)}
+                                    placeholder="https://... или загрузите файл"
+                                    className="h-9 text-xs"
+                                />
+                                <div className="flex items-center gap-2">
+                                    <label className="inline-flex h-8 cursor-pointer items-center rounded-[var(--radius-md)] border border-border-primary bg-bg-secondary px-3 text-xs font-medium text-text-secondary hover:text-text-primary">
+                                        {thumbnailBusy ? "Загрузка..." : "Загрузить картинку"}
+                                        <input
+                                            type="file"
+                                            accept="image/*"
+                                            className="sr-only"
+                                            disabled={thumbnailBusy}
+                                            onChange={(event) => {
+                                                void handleThumbnailFile(event.target.files?.[0] ?? null);
+                                                event.target.value = "";
+                                            }}
+                                        />
+                                    </label>
+                                    {editThumbnailUrl && (
+                                        <button
+                                            type="button"
+                                            onClick={() => setEditThumbnailUrl("")}
+                                            className="text-xs text-text-tertiary hover:text-text-primary cursor-pointer"
+                                        >
+                                            Очистить
+                                        </button>
+                                    )}
+                                </div>
+                                {thumbnailError && <p className="text-[10px] text-red-400">{thumbnailError}</p>}
+                            </div>
+                        </div>
                     </div>
 
                     {/* Categories / BU chips */}

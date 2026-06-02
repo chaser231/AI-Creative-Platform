@@ -13,6 +13,7 @@ import {
   deleteS3Objects,
   extractS3KeyFromUrl,
 } from "../utils/s3-cleanup";
+import { persistThumbnailToS3 } from "../utils/persistThumbnail";
 import { assertTemplateAccess, assertWorkspaceAccess } from "../authz/guards";
 import { syncTemplateImageAssets } from "../templateAssetSync";
 
@@ -245,9 +246,11 @@ export const templateRouter = createTRPCRouter({
     )
     .mutation(async ({ ctx, input }) => {
       await assertWorkspaceAccess(ctx, input.workspaceId, "USER");
+      const thumbnailUrl = await persistThumbnailToS3(input.thumbnailUrl, input.workspaceId);
       const template = await ctx.prisma.template.create({
         data: {
           ...input,
+          thumbnailUrl,
           author: ctx.user.id,
         },
       });
@@ -317,6 +320,10 @@ export const templateRouter = createTRPCRouter({
         }
       }
 
+      if (data.thumbnailUrl !== undefined) {
+        data.thumbnailUrl = await persistThumbnailToS3(data.thumbnailUrl, existing.workspaceId);
+      }
+
       const template = await ctx.prisma.template.update({
         where: { id },
         data,
@@ -372,7 +379,7 @@ export const templateRouter = createTRPCRouter({
 
       const updateData: Record<string, unknown> = { data: input.data };
       if (input.thumbnailUrl !== undefined) {
-        updateData.thumbnailUrl = input.thumbnailUrl;
+        updateData.thumbnailUrl = await persistThumbnailToS3(input.thumbnailUrl, existing.workspaceId);
       }
 
       const template = await ctx.prisma.template.update({

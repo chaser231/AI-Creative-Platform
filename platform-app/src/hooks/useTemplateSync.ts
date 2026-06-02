@@ -54,6 +54,7 @@ export function useTemplateListSync() {
     createdAt: Date;
     updatedAt: Date;
     author: string;
+    workspaceId: string;
     resizes: any[]; // Include resizes mapped from template.list
   };
 
@@ -78,6 +79,7 @@ export function useTemplateListSync() {
     occasion: (t.occasion || "default") as TemplatePackV2["occasion"],
     tags: (Array.isArray(t.tags) ? t.tags : []) as TemplatePackV2["tags"],
     author: t.author,
+    workspaceId: t.workspaceId,
     isOfficial: t.isOfficial,
     visibility: (t.visibility || "WORKSPACE") as TemplatePackV2["visibility"],
     editPermission: (t.editPermission || "AUTHOR_ONLY") as TemplatePackV2["editPermission"],

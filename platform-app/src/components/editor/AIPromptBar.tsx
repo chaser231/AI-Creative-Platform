@@ -22,8 +22,10 @@ import { getImagePresetPromptSuffixForModel, getTextPresetInstruction } from "@/
 import { useStylePresets } from "@/hooks/useStylePresets";
 import { persistImageToS3, uploadForAI, uploadManyForAI } from "@/utils/imageUpload";
 import { outpaintImage } from "@/utils/outpaintPipeline";
+import { buildGptImage2ManualOutpaintPlan, outpaintWithGptImage2PackPlan } from "@/utils/gptImageOutpaint";
 import { getOutpaintModel } from "@/utils/outpaintModel";
 import { mapOutpaintStage, type OutpaintProgressState } from "@/utils/outpaintProgress";
+import { computeStudioOutpaintRasterPlan } from "@/utils/studioOutpaintSource";
 import { OutpaintProgressIndicator } from "@/components/ui/OutpaintProgressIndicator";
 import { useProjectLibrary } from "@/hooks/useProjectLibrary";
 import { trpc } from "@/lib/trpc";
@@ -86,6 +88,51 @@ const OUTPAINT_RATIOS = [
     { id: "1:1", label: "1:1" },
     { id: "21:9", label: "21:9" },
 ];
+
+async function prepareStudioOutpaintSource(
+    imageSrc: string,
+    layer: ImageLayer,
+): Promise<{ src: string; width: number; height: number; changed: boolean }> {
+    const img = new window.Image();
+    img.crossOrigin = "anonymous";
+    await new Promise<void>((resolve, reject) => {
+        img.onload = () => resolve();
+        img.onerror = reject;
+        img.src = imageSrc;
+    });
+
+    const naturalWidth = img.naturalWidth || layer.width;
+    const naturalHeight = img.naturalHeight || layer.height;
+    const plan = computeStudioOutpaintRasterPlan(
+        { width: naturalWidth, height: naturalHeight },
+        layer,
+    );
+
+    if (!plan.changed) {
+        return { src: imageSrc, width: naturalWidth, height: naturalHeight, changed: false };
+    }
+
+    const canvas = document.createElement("canvas");
+    canvas.width = plan.canvasWidth;
+    canvas.height = plan.canvasHeight;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) {
+        return { src: imageSrc, width: naturalWidth, height: naturalHeight, changed: false };
+    }
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(
+        img,
+        plan.source.x, plan.source.y, plan.source.width, plan.source.height,
+        plan.dest.x, plan.dest.y, plan.dest.width, plan.dest.height,
+    );
+    return {
+        src: canvas.toDataURL("image/png"),
+        width: plan.canvasWidth,
+        height: plan.canvasHeight,
+        changed: true,
+    };
+}
 
 // Aspect ratios and resolutions are now dynamic per model — see ai-models.ts
 
@@ -461,6 +508,9 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                 height: newHeight,
                 x: newX,
                 y: newY,
+                objectFit: "fill",
+                focusX: 0.5,
+                focusY: 0.5,
             } as any);
             return;
         }
@@ -505,22 +555,63 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                 // a previous run's "Готово" doesn't briefly flash before
                 // the first stage label lands.
                 setOutpaintProgress({ label: "Подготавливаем изображение", percent: 5 });
-                const outpaintResult = await outpaintImage({
-                    imageSrc: targetLayer.src,
-                    canvasPadding: currentExpandPadding,
-                    layerSize: { width: targetLayer.width, height: targetLayer.height },
-                    prompt: resolvedPrompt,
-                    projectId,
-                    model: getOutpaintModel(),
-                    onProgress: (stage, info) => {
-                        console.log(`[Outpaint/${stage}]`, info ?? "");
-                        // Internal/diagnostic stages return null —
-                        // keep the previous user-facing label visible
-                        // so the bar doesn't flicker.
-                        const next = mapOutpaintStage(stage);
-                        if (next) setOutpaintProgress(next);
-                    },
-                });
+                const outpaintModel = getOutpaintModel("gpt-image-2");
+                const outpaintResult = outpaintModel === "gpt-image-2"
+                    ? await (async () => {
+                        let sourceForOutpaint = targetLayer.src;
+                        if (!sourceForOutpaint.startsWith("https://storage.yandexcloud.net")) {
+                            try {
+                                sourceForOutpaint = await persistImageToS3(sourceForOutpaint, projectId);
+                            } catch (persistErr) {
+                                console.warn("[Outpaint/GPT] source persist failed, using original src", persistErr);
+                            }
+                        }
+                        let preparedSource = await prepareStudioOutpaintSource(sourceForOutpaint, targetLayer);
+                        if (preparedSource.changed) {
+                            preparedSource = {
+                                ...preparedSource,
+                                src: await persistImageToS3(preparedSource.src, projectId),
+                            };
+                        }
+                        const plan = buildGptImage2ManualOutpaintPlan({
+                            sourceSizePx: { width: preparedSource.width, height: preparedSource.height },
+                            layerSize: { width: targetLayer.width, height: targetLayer.height },
+                            canvasPadding: currentExpandPadding,
+                        });
+                        const result = await outpaintWithGptImage2PackPlan({
+                            imageSrc: preparedSource.src,
+                            plan,
+                            prompt: resolvedPrompt,
+                            projectId,
+                            onProgress: (stage, info) => {
+                                console.log(`[Outpaint/GPT/${stage}]`, info ?? "");
+                                if (stage === "outpaint-canvas-start") {
+                                    setOutpaintProgress({ label: "Собираем canvas и маску", percent: 18 });
+                                } else if (stage === "outpaint-api-start") {
+                                    setOutpaintProgress({ label: "Расширяем фон через GPT Image 2", percent: 42 });
+                                } else if (stage === "outpaint-api-done") {
+                                    setOutpaintProgress({ label: "Сохраняем результат", percent: 88 });
+                                }
+                            },
+                        });
+                        return { src: result.src, model: "gpt-image-2" };
+                    })()
+                    : await outpaintImage({
+                        imageSrc: targetLayer.src,
+                        canvasPadding: currentExpandPadding,
+                        layerSize: { width: targetLayer.width, height: targetLayer.height },
+                        prompt: resolvedPrompt,
+                        projectId,
+                        model: outpaintModel,
+                        onProgress: (stage, info) => {
+                            console.log(`[Outpaint/${stage}]`, info ?? "");
+                            // Internal/diagnostic stages return null —
+                            // keep the previous user-facing label visible
+                            // so the bar doesn't flicker.
+                            const next = mapOutpaintStage(stage);
+                            if (next) setOutpaintProgress(next);
+                        },
+                    });
 
                 await applyEditedImageToLayer(targetLayer, outpaintResult.src, {
                     action: "outpaint",

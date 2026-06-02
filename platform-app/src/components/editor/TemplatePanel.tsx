@@ -60,6 +60,42 @@ const CONTENT_TYPE_OPTIONS: { value: ContentType; label: string }[] = [
     { value: "mixed", label: "📦 Смешанный" },
 ];
 
+async function captureTemplateThumbnail(ownerId: string): Promise<string | undefined> {
+    const state = useCanvasStore.getState();
+    const stage = state.stageRef?.current;
+    if (!stage) return undefined;
+    const oldScaleX = stage.scaleX();
+    const oldScaleY = stage.scaleY();
+    const oldX = stage.x();
+    const oldY = stage.y();
+
+    try {
+        stage.scale({ x: 1, y: 1 });
+        stage.position({ x: 0, y: 0 });
+        stage.draw();
+
+        const dataUrl = stage.toDataURL({
+            x: 0,
+            y: 0,
+            width: state.canvasWidth,
+            height: state.canvasHeight,
+            pixelRatio: 0.5,
+            mimeType: "image/jpeg",
+            quality: 0.82,
+        });
+
+        const { persistImageToS3 } = await import("@/utils/imageUpload");
+        const url = await persistImageToS3(dataUrl, ownerId);
+        return url && url !== dataUrl ? url : undefined;
+    } catch {
+        return undefined;
+    } finally {
+        stage.scale({ x: oldScaleX, y: oldScaleY });
+        stage.position({ x: oldX, y: oldY });
+        stage.draw();
+    }
+}
+
 /* ─── Filter Chip ──────────────────────────────────────── */
 
 function Chip({
@@ -113,6 +149,9 @@ export function TemplatePanel({ open, onClose, projectId }: TemplatePanelProps) 
     const updateMutation = trpc.template.update.useMutation({
         onSuccess: () => refetch(),
     });
+    const deleteTemplateMutation = trpc.template.delete.useMutation({
+        onSuccess: () => refetch(),
+    });
 
     // Merge backend + local templates, backend takes priority
     const allPacks = useMemo(() => {
@@ -120,6 +159,7 @@ export function TemplatePanel({ open, onClose, projectId }: TemplatePanelProps) 
         const uniqueLocal = savedPacks.filter(p => !backendIds.has(p.id));
         return [...backendTemplates, ...uniqueLocal];
     }, [backendTemplates, savedPacks]);
+    const backendTemplateIds = useMemo(() => new Set(backendTemplates.map((template) => template.id)), [backendTemplates]);
     const masterComponentCount = useCanvasStore((s) => s.masterComponents.length);
     const { projects, activeProjectId } = useProjectStore();
     const [activeTab, setActiveTab] = useState<"single" | "pack">("single");
@@ -162,6 +202,19 @@ export function TemplatePanel({ open, onClose, projectId }: TemplatePanelProps) 
     const [saveTagInput, setSaveTagInput] = useState("");
     const [saveTags, setSaveTags] = useState<string[]>([]);
     const [saveError, setSaveError] = useState<string | null>(null);
+
+    const handleDeletePack = useCallback(async (packId: string) => {
+        setSaveError(null);
+        if (backendTemplateIds.has(packId)) {
+            try {
+                await deleteTemplateMutation.mutateAsync({ id: packId });
+            } catch (err) {
+                setSaveError(err instanceof Error ? err.message : "Не удалось удалить шаблон из базы");
+            }
+            return;
+        }
+        deletePack(packId);
+    }, [backendTemplateIds, deletePack, deleteTemplateMutation]);
 
     // Smart Resize state
     const [smartResizePack, setSmartResizePack] = useState<TemplatePack | null>(null);
@@ -291,6 +344,7 @@ export function TemplatePanel({ open, onClose, projectId }: TemplatePanelProps) 
             isOfficial: false,
             visibility: "WORKSPACE",
         };
+        const thumbnailUrl = await captureTemplateThumbnail(newPack.id);
 
         // Persist to backend DB so it appears in Catalog & Admin
         const v2Pack: TemplatePackV2 = {
@@ -305,6 +359,7 @@ export function TemplatePanel({ open, onClose, projectId }: TemplatePanelProps) 
             visibility: meta.visibility as TemplatePackV2["visibility"],
             editPermission: "AUTHOR_ONLY" as TemplatePackV2["editPermission"],
             popularity: 0,
+            thumbnailUrl,
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString(),
         };
@@ -313,7 +368,7 @@ export function TemplatePanel({ open, onClose, projectId }: TemplatePanelProps) 
             setSaveError("Не удалось сохранить шаблон. Попробуйте ещё раз.");
             return;
         }
-        addPack(newPack, meta);
+        addPack(newPack, { ...meta, thumbnailUrl });
         refetch();
     };
 
@@ -351,6 +406,7 @@ export function TemplatePanel({ open, onClose, projectId }: TemplatePanelProps) 
             visibility: saveVisibility,
             editPermission: saveEditPermission,
         };
+        const thumbnailUrl = await captureTemplateThumbnail(newPack.id);
 
         // Persist to backend DB so it appears in Catalog & Admin
         const v2Pack: TemplatePackV2 = {
@@ -366,6 +422,7 @@ export function TemplatePanel({ open, onClose, projectId }: TemplatePanelProps) 
             visibility: (meta.visibility || "WORKSPACE") as TemplatePackV2["visibility"],
             editPermission: (meta.editPermission || "AUTHOR_ONLY") as TemplatePackV2["editPermission"],
             popularity: 0,
+            thumbnailUrl,
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString(),
         };
@@ -374,7 +431,7 @@ export function TemplatePanel({ open, onClose, projectId }: TemplatePanelProps) 
             setSaveError("Не удалось сохранить пакет. Форма оставлена открытой, чтобы не потерять введённые данные.");
             return;
         }
-        addPack(newPack, meta);
+        addPack(newPack, { ...meta, thumbnailUrl });
         refetch();
 
         setShowSaveForm(false);
@@ -472,9 +529,18 @@ export function TemplatePanel({ open, onClose, projectId }: TemplatePanelProps) 
                 >
                     <div
                         className="w-full h-20 rounded-lg mb-2 relative overflow-hidden flex items-center justify-center"
-                        style={{ backgroundColor: displayColor + "15" }}
+                        style={!v2.thumbnailUrl ? { backgroundColor: displayColor + "15" } : undefined}
                     >
-                        <LayoutTemplate size={22} style={{ color: displayColor }} />
+                        {v2.thumbnailUrl ? (
+                            <img
+                                src={v2.thumbnailUrl}
+                                alt={v2.name || "Шаблон"}
+                                className="h-full w-full object-cover"
+                                draggable={false}
+                            />
+                        ) : (
+                            <LayoutTemplate size={22} style={{ color: displayColor }} />
+                        )}
                         {v2.isOfficial && (
                             <div className="absolute top-1 right-1 flex items-center gap-0.5 px-1 py-0.5 rounded-full bg-amber-500/15 border border-amber-500/20">
                                 <Star size={7} className="text-amber-500 fill-amber-500" />
@@ -650,7 +716,7 @@ export function TemplatePanel({ open, onClose, projectId }: TemplatePanelProps) 
                                         <PackCard
                                             key={pack.id}
                                             pack={pack}
-                                            onDelete={!pack._originalId ? () => deletePack(pack.id) : undefined}
+                                            onDelete={!pack._originalId ? () => { void handleDeletePack(pack.id); } : undefined}
                                         />
                                     ))}
                                 </div>
@@ -923,7 +989,7 @@ export function TemplatePanel({ open, onClose, projectId }: TemplatePanelProps) 
                                                     <PackCard
                                                         key={pack.id}
                                                         pack={pack}
-                                                        onDelete={() => deletePack(pack.id)}
+                                                        onDelete={() => { void handleDeletePack(pack.id); }}
                                                     />
                                                 ))}
                                             </div>

@@ -119,6 +119,7 @@ export interface PreviewFormatSource {
     name: string;
     label: string;
     isMaster: boolean;
+    hidden?: boolean;
     layers: Layer[];
     width: number;
     height: number;
@@ -340,18 +341,24 @@ export function WizardContentWorkspace({
     const previewFrameRef = useRef<HTMLDivElement | null>(null);
     const { registerFile, registerUrl } = useProjectLibrary();
     const previewFormats = useMemo(() => getPreviewFormatSources(selectedTemplate), [selectedTemplate]);
-    const packOutpaintFormats = useMemo(
-        () => previewFormats.map(previewFormatToPackOutpaintFormat),
+    const visiblePreviewFormats = useMemo(
+        () => previewFormats.filter((format) => !format.hidden),
         [previewFormats],
     );
-    const [activePreviewFormatIdState, setActivePreviewFormatIdState] = useState(previewFormats[0]?.id ?? "");
+    const packOutpaintFormats = useMemo(
+        () => getPackOutpaintFormatsFromPreviewSources(previewFormats),
+        [previewFormats],
+    );
+    const [activePreviewFormatIdState, setActivePreviewFormatIdState] = useState(visiblePreviewFormats[0]?.id ?? previewFormats[0]?.id ?? "");
     const setActivePreviewFormatId = (id: string) => {
         setActivePreviewFormatIdState(id);
         onActivePreviewFormatChange?.(id);
     };
     const activePreviewFormatId = activePreviewFormatIdState;
-    const masterPreviewSource = previewFormats[0];
-    const previewSource = previewFormats.find((format) => format.id === activePreviewFormatId) ?? masterPreviewSource;
+    const masterPreviewSource = previewFormats.find((format) => format.isMaster) ?? previewFormats[0];
+    const previewSource = visiblePreviewFormats.find((format) => format.id === activePreviewFormatId)
+        ?? visiblePreviewFormats[0]
+        ?? masterPreviewSource;
     /**
      * The largest width and tallest height across the pack — these are the
      * target dimensions for the wizard's "expand background" generation.
@@ -359,15 +366,15 @@ export function WizardContentWorkspace({
      * 1920×1080 + 1080×1920 yields 1920×1920 (covers any format with no crop).
      */
     const packMaxSize = useMemo(() => {
-        if (previewFormats.length === 0) return { width: 0, height: 0 };
+        if (visiblePreviewFormats.length === 0) return { width: 0, height: 0 };
         let maxW = 0;
         let maxH = 0;
-        for (const format of previewFormats) {
+        for (const format of visiblePreviewFormats) {
             if (format.width > maxW) maxW = format.width;
             if (format.height > maxH) maxH = format.height;
         }
         return { width: maxW, height: maxH };
-    }, [previewFormats]);
+    }, [visiblePreviewFormats]);
     const masterCanvasSize = useMemo(
         () => ({
             width: masterPreviewSource?.width ?? 0,
@@ -399,20 +406,20 @@ export function WizardContentWorkspace({
     const templatePalette = selectedTemplate.palette ?? DEFAULT_PALETTE;
 
     useEffect(() => {
-        const nextId = previewFormats[0]?.id ?? "";
+        const nextId = visiblePreviewFormats[0]?.id ?? previewFormats[0]?.id ?? "";
         setActivePreviewFormatIdState(nextId);
         onActivePreviewFormatChange?.(nextId);
-    }, [onActivePreviewFormatChange, selectedTemplate.id, previewFormats]);
+    }, [onActivePreviewFormatChange, selectedTemplate.id, previewFormats, visiblePreviewFormats]);
 
     useEffect(() => {
-        if (previewFormats.length === 0) {
+        if (visiblePreviewFormats.length === 0) {
             setActivePreviewFormatId("");
             return;
         }
-        if (!previewFormats.some((format) => format.id === activePreviewFormatId)) {
-            setActivePreviewFormatId(previewFormats[0].id);
+        if (!visiblePreviewFormats.some((format) => format.id === activePreviewFormatId)) {
+            setActivePreviewFormatId(visiblePreviewFormats[0].id);
         }
-    }, [activePreviewFormatId, previewFormats]);
+    }, [activePreviewFormatId, visiblePreviewFormats]);
 
     useEffect(() => {
         if (entries.length === 0) {
@@ -454,13 +461,11 @@ export function WizardContentWorkspace({
     );
     const projectAssets = (assetsQuery.data ?? []) as AssetRow[];
     /**
-     * Apply expand overrides to the active preview format:
-     *   - master format gets the override's `next` rect directly
-     *     (that's where the wizard measured the new geometry)
-     *   - every non-master format is projected through the studio's
-     *     master→instance cascade so the user sees exactly how the
-     *     extended image will land in this resize before clicking
-     *     "Применить".
+     * Apply expand overrides to the active preview format through the same
+     * projection path Studio uses. In particular, `fillInstanceArtboard`
+     * must also affect the master preview; applying `next` directly makes
+     * the wizard show an overhanging, cover-cropped master while Studio
+     * correctly renders the bitmap inside the artboard.
      */
     const draftPreviewLayers = useMemo(() => {
         const overridesForActive = Object.keys(layerGeometryOverrides).length === 0
@@ -475,18 +480,6 @@ export function WizardContentWorkspace({
                 imageValues,
                 imageViewOverrides,
                 layerStyleOverrides,
-            );
-        }
-
-        if (previewSource.id === masterPreviewSource?.id) {
-            return buildDraftPreviewLayers(
-                previewSource.layers,
-                entries,
-                textValues,
-                imageValues,
-                imageViewOverrides,
-                layerStyleOverrides,
-                overridesForActive,
             );
         }
 
@@ -963,9 +956,9 @@ export function WizardContentWorkspace({
                         )}
                     </div>
 
-                    {previewFormats.length > 1 && (
+                    {visiblePreviewFormats.length > 1 && (
                         <FormatThumbnailRail
-                            formats={previewFormats}
+                            formats={visiblePreviewFormats}
                             activeFormatId={previewSource.id}
                             onSelect={setActivePreviewFormatId}
                         />
@@ -988,6 +981,7 @@ export function WizardContentWorkspace({
                         packFormats={previewFormats.map((f) => ({ width: f.width, height: f.height }))}
                         packOutpaintFormats={packOutpaintFormats}
                         masterCanvasSize={masterCanvasSize}
+                        masterLayers={masterPreviewSource?.layers ?? []}
                         onTextChange={updateTextValue}
                         onImageChange={updateImageValue}
                         onImageViewChange={setImageViewOverride}
@@ -1583,6 +1577,65 @@ function optionalNumberProp(value: unknown): number | undefined {
     return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
+function clampUnit(value: number): number {
+    return Math.max(0, Math.min(1, value));
+}
+
+function isMainOutpaintLayer(layer: Layer, masterLayer: Pick<PackOutpaintRect, "id" | "slotId" | "masterId">): boolean {
+    if (layer.id === masterLayer.id) return true;
+    if (masterLayer.slotId && layer.slotId === masterLayer.slotId && layer.type === "image" && !(layer as { isFixedAsset?: boolean }).isFixedAsset) {
+        return true;
+    }
+    if (masterLayer.masterId && layer.masterId === masterLayer.masterId) return true;
+    return false;
+}
+
+function isForegroundAnchorLayer(layer: Layer): boolean {
+    if (layer.visible === false) return false;
+    if (layer.type === "text" || layer.type === "badge") return true;
+    if (layer.type === "image") {
+        const fixed = (layer as { isFixedAsset?: boolean }).isFixedAsset === true;
+        const name = typeof layer.name === "string" ? layer.name.toLowerCase() : "";
+        return fixed || name.includes("logo") || name.includes("логотип");
+    }
+    return false;
+}
+
+export function inferOutpaintProductFocusX(
+    layers: Layer[],
+    masterLayer: Pick<PackOutpaintRect, "id" | "slotId" | "masterId">,
+    masterArtboard: { width: number; height: number },
+    fallbackFocusX = 0.5,
+): number {
+    const fallback = clampUnit(fallbackFocusX);
+    if (masterArtboard.width <= 0 || layers.length === 0) return fallback;
+
+    let weightedCenter = 0;
+    let totalWeight = 0;
+
+    for (const layer of layers) {
+        if (isMainOutpaintLayer(layer, masterLayer)) continue;
+        if (!isForegroundAnchorLayer(layer)) continue;
+
+        const x = optionalNumberProp(layer.x) ?? 0;
+        const width = optionalNumberProp(layer.width) ?? 0;
+        const height = optionalNumberProp(layer.height) ?? 0;
+        if (width <= 0 || height <= 0) continue;
+
+        const centerX = clampUnit((x + width / 2) / masterArtboard.width);
+        const weight = Math.max(1, Math.min(width * height, masterArtboard.width * masterArtboard.height));
+        weightedCenter += centerX * weight;
+        totalWeight += weight;
+    }
+
+    if (totalWeight <= 0) return fallback;
+
+    const foregroundCenterX = weightedCenter / totalWeight;
+    if (foregroundCenterX <= 0.5) return Math.max(fallback, 0.84);
+    if (foregroundCenterX >= 0.58) return Math.min(fallback, 0.16);
+    return fallback;
+}
+
 function imageFitProp(value: unknown): ImageFitMode | undefined {
     return value === "cover" || value === "contain" || value === "fill" || value === "crop"
         ? value
@@ -1611,6 +1664,16 @@ function previewFormatToPackOutpaintFormat(format: PreviewFormatSource): PackOut
         layers: format.layers.map(layerToPackOutpaintRect),
         layerBindings: format.layerBindings,
     };
+}
+
+export function getPackOutpaintFormatsFromPreviewSources(
+    formats: PreviewFormatSource[],
+): PackOutpaintFormat[] {
+    // Hidden master formats are intentionally excluded from the visible rail
+    // and export picker, but the outpaint planner still needs them as the
+    // source geometry anchor. Dropping them makes selected-only packs plan
+    // from an instance format and can reintroduce scaled/stretched products.
+    return formats.map(previewFormatToPackOutpaintFormat);
 }
 
 function entryToPackOutpaintRect(entry: EditableLayerEntry): PackOutpaintRect {
@@ -1739,6 +1802,7 @@ function WizardLayerPromptBar({
     packFormats,
     packOutpaintFormats,
     masterCanvasSize,
+    masterLayers,
     onTextChange,
     onImageChange,
     onImageViewChange,
@@ -1769,6 +1833,7 @@ function WizardLayerPromptBar({
     packFormats: Array<{ width: number; height: number }>;
     packOutpaintFormats: PackOutpaintFormat[];
     masterCanvasSize: { width: number; height: number };
+    masterLayers: Layer[];
     onTextChange: (id: string, value: string) => void;
     onImageChange: (id: string, value: string) => void;
     onImageViewChange: (id: string, override: WizardImageViewOverride | null) => void;
@@ -2460,13 +2525,26 @@ function WizardLayerPromptBar({
                             // and so the full vertical extension below the
                             // product remains visible in tall instance
                             // artboards (Feed, vertical). Horizontally we
-                            // pin the source centre.
-                            const focusX = (sourcePlacement.x + sourcePlacement.width / 2) / outputW;
+                            // preserve an explicit user focus; otherwise
+                            // infer the product side from foreground layout
+                            // (text/logo on the left usually means product
+                            // on the right).
+                            const sourceFocusX = (sourcePlacement.x + sourcePlacement.width / 2) / outputW;
+                            const explicitFocusX = typeof jobSnapshot.activeImageViewOverride?.focusX === "number"
+                                && Math.abs(jobSnapshot.activeImageViewOverride.focusX - 0.5) > 0.01
+                                ? jobSnapshot.activeImageViewOverride.focusX
+                                : undefined;
+                            const focusX = explicitFocusX ?? inferOutpaintProductFocusX(
+                                masterLayers,
+                                masterLayer,
+                                masterArtboard,
+                                sourceFocusX,
+                            );
                             const focusY = sourcePlacement.y / outputH;
                             nextImageView = {
                                 objectFit: "cover",
-                                focusX: Math.max(0, Math.min(1, focusX)),
-                                focusY: Math.max(0, Math.min(1, focusY)),
+                                focusX: clampUnit(focusX),
+                                focusY: clampUnit(focusY),
                             };
                         }
 
@@ -2986,7 +3064,8 @@ export function getPreviewFormatSources(template: TemplatePackV2): PreviewFormat
         canvasWidth?: number;
         canvasHeight?: number;
     };
-    const resizes = template.resizes ?? [];
+    const resizes = (template.resizes ?? []) as WizardPreviewResize[];
+    const isHiddenMaster = (resize: WizardPreviewResize | undefined): boolean => Boolean(resize?._wizardHidden);
     const masterResize = resizes.find((resize) => resize.isMaster) ?? resizes[0];
     const fallbackLayers =
         data.layers?.length
@@ -3012,12 +3091,16 @@ export function getPreviewFormatSources(template: TemplatePackV2): PreviewFormat
             layers: fallbackLayers,
             width: fallbackWidth,
             height: fallbackHeight,
+            hidden: isHiddenMaster(masterResize),
         });
     }
 
     for (const resize of resizes) {
         if (!resize.layerSnapshot?.length) continue;
-        pushSource(resizeToPreviewSource(resize, resize.id === masterResize?.id || resize.isMaster === true));
+        const isMaster = resize.isMaster === true
+            || isHiddenMaster(resize)
+            || resize.id === masterResize?.id;
+        pushSource(resizeToPreviewSource(resize, isMaster));
     }
 
     return sources.length > 0
@@ -3033,8 +3116,10 @@ export function getPreviewFormatSources(template: TemplatePackV2): PreviewFormat
         }];
 }
 
+type WizardPreviewResize = NonNullable<TemplatePackV2["resizes"]>[number] & { _wizardHidden?: boolean };
+
 function resizeToPreviewSource(
-    resize: NonNullable<TemplatePackV2["resizes"]>[number],
+    resize: WizardPreviewResize,
     isMaster: boolean,
 ): PreviewFormatSource {
     return {
@@ -3042,6 +3127,7 @@ function resizeToPreviewSource(
         name: isMaster ? (resize.name || "Мастер") : (resize.name || "Формат"),
         label: resize.label ?? `${resize.width} × ${resize.height}`,
         isMaster,
+        hidden: resize._wizardHidden,
         layers: resize.layerSnapshot ?? [],
         width: resize.width,
         height: resize.height,

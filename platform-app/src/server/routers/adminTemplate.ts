@@ -13,6 +13,7 @@ import {
   collectS3KeysFromTemplate,
   deleteS3Objects,
 } from "../utils/s3-cleanup";
+import { persistThumbnailToS3 } from "../utils/persistThumbnail";
 
 type ResizeMeta = { id: string; name: string; width: number; height: number };
 
@@ -224,6 +225,14 @@ export const adminTemplateRouter = createTRPCRouter({
     )
     .mutation(async ({ ctx, input }) => {
       const { id, ...data } = input;
+      if (data.thumbnailUrl !== undefined) {
+        const existing = await ctx.prisma.template.findUnique({
+          where: { id },
+          select: { workspaceId: true },
+        });
+        if (!existing) throw new TRPCError({ code: "NOT_FOUND", message: "Шаблон не найден" });
+        data.thumbnailUrl = await persistThumbnailToS3(data.thumbnailUrl, existing.workspaceId);
+      }
       const template = await ctx.prisma.template.update({
         where: { id },
         data,

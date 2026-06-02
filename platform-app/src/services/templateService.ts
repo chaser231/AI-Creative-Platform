@@ -58,6 +58,7 @@ export interface TemplatePackV2 extends TemplatePack {
     isOfficial: boolean;
     visibility?: TemplateVisibility;
     editPermission?: TemplateEditPermission;
+    workspaceId?: string;
     thumbnailUrl?: string;
     popularity: number;
     createdAt: string;
