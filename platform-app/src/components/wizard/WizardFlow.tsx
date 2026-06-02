@@ -1,19 +1,18 @@
 "use client";
 
-import { useState, useMemo, useEffect, useCallback } from "react";
+import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import type { ArtboardProps } from "@/store/canvas/types";
 import { DEFAULT_ARTBOARD_PROPS } from "@/store/canvas/types";
 import { resolveWizardArtboardProps } from "@/lib/resolveWizardArtboardProps";
-import { LayoutTemplate, Search, Star, X } from "lucide-react";
+import { Check, Globe2, LayoutTemplate, Layers3, Search, Star, Users, X } from "lucide-react";
 import { useTemplateStore } from "@/store/templateStore";
 import { useTemplateListSync } from "@/hooks/useTemplateSync";
 import { useProjectStore } from "@/store/projectStore";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
-import { DEFAULT_PACKS, type TemplatePackMeta } from "@/constants/defaultPacks";
-import { getRecommendedPacks, searchPacks } from "@/services/templateCatalogService";
-import { type TemplatePackV2, extractSingleFormatFromPack } from "@/services/templateService";
-import type { BusinessUnit, TemplateTag } from "@/types";
+import { DEFAULT_PACKS } from "@/constants/defaultPacks";
+import { type TemplatePackV2 } from "@/services/templateService";
+import type { BusinessUnit, ResizeFormat, TemplateTag } from "@/types";
 import {
     WizardContentWorkspace,
     type WizardImageViewOverride,
@@ -27,6 +26,12 @@ import {
 } from "@/utils/wizardExpand";
 
 export type WizardStep = "template" | "content";
+type CatalogScope = "workspace" | "global" | "manual";
+type CatalogPack = TemplatePackV2 & {
+    _catalogSource: Exclude<CatalogScope, "manual">;
+    _catalogKey: string;
+    _thumbnailColor?: string;
+};
 
 export interface WizardHeaderState {
     step: WizardStep;
@@ -50,6 +55,173 @@ interface WizardFlowProps {
     onExportClose?: () => void;
 }
 
+const GLOBAL_VISIBILITIES = new Set(["PUBLIC"]);
+const DEFAULT_THUMBNAIL_COLOR = "#6366F1";
+
+function normalizeCatalogText(value: string | undefined): string {
+    return (value ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function getResizeSignature(resize: ResizeFormat): string {
+    return `${normalizeCatalogText(resize.name || resize.label)}:${resize.width}x${resize.height}`;
+}
+
+function getPackSignature(pack: TemplatePackV2): string {
+    const formats = (pack.resizes ?? [])
+        .map(getResizeSignature)
+        .sort()
+        .join("|");
+    return `${normalizeCatalogText(pack.name)}::${formats || "single"}`;
+}
+
+function isExplicitMasterFormat(resize: ResizeFormat): boolean {
+    return resize.isMaster === true || resize.id === "master";
+}
+
+function getMasterFormat(pack: TemplatePackV2): ResizeFormat | undefined {
+    return (pack.resizes ?? []).find((resize) => resize.isMaster) ?? pack.resizes?.[0];
+}
+
+function getSelectableFormats(pack: TemplatePackV2): ResizeFormat[] {
+    const resizes = pack.resizes ?? [];
+    const userFormats = resizes.filter((resize) => !isExplicitMasterFormat(resize));
+    return userFormats.length > 0 ? userFormats : resizes;
+}
+
+function getDefaultSelectedFormatIds(pack: TemplatePackV2): string[] {
+    return getSelectableFormats(pack).map((resize) => resize.id);
+}
+
+function buildCatalogKey(pack: TemplatePackV2, source: CatalogPack["_catalogSource"], fallbackId?: string): string {
+    const workspaceId = (pack as TemplatePackV2 & { workspaceId?: string }).workspaceId ?? "local";
+    return `${source}:${workspaceId}:${fallbackId ?? pack.id}`;
+}
+
+function isGlobalCatalogPack(pack: TemplatePackV2, currentWorkspaceId?: string | null): boolean {
+    const workspaceId = (pack as TemplatePackV2 & { workspaceId?: string }).workspaceId;
+    if (pack.isOfficial) return true;
+    if (pack.visibility && GLOBAL_VISIBILITIES.has(pack.visibility)) return true;
+    return Boolean(currentWorkspaceId && workspaceId && workspaceId !== currentWorkspaceId);
+}
+
+function dedupeCatalogPacks(packs: CatalogPack[]): CatalogPack[] {
+    const byId = new Set<string>();
+    const bySignature = new Set<string>();
+    const result: CatalogPack[] = [];
+
+    for (const pack of packs) {
+        const idKey = pack.id;
+        const signature = getPackSignature(pack);
+        if (byId.has(idKey) || bySignature.has(signature)) continue;
+        byId.add(idKey);
+        bySignature.add(signature);
+        result.push(pack);
+    }
+
+    return result;
+}
+
+function buildCatalogPacks(
+    backendAndLocalPacks: TemplatePackV2[],
+    currentWorkspaceId?: string | null,
+): CatalogPack[] {
+    const runtimePacks = backendAndLocalPacks.map((pack) => {
+        const source = isGlobalCatalogPack(pack, currentWorkspaceId) ? "global" : "workspace";
+        return {
+            ...pack,
+            _catalogSource: source,
+            _catalogKey: buildCatalogKey(pack, source),
+        } satisfies CatalogPack;
+    });
+
+    const defaultPacks = DEFAULT_PACKS.map((pack) => ({
+        ...pack.data,
+        _catalogSource: "global" as const,
+        _catalogKey: buildCatalogKey(pack.data, "global", pack.id),
+        _thumbnailColor: pack.thumbnailColor,
+    }));
+
+    return dedupeCatalogPacks([...runtimePacks, ...defaultPacks]);
+}
+
+function matchesCatalogSearch(pack: CatalogPack, query: string): boolean {
+    const normalized = normalizeCatalogText(query);
+    if (!normalized) return true;
+
+    const haystack = [
+        pack.name,
+        pack.description,
+        ...(pack.categories ?? []),
+        ...(pack.businessUnits ?? []),
+        ...(pack.tags ?? []).flatMap((tag) => [tag.id, tag.label]),
+        ...(pack.resizes ?? []).flatMap((resize) => [
+            resize.name,
+            resize.label,
+            `${resize.width}x${resize.height}`,
+            `${resize.width}×${resize.height}`,
+        ]),
+    ].map((value) => normalizeCatalogText(value)).join(" ");
+
+    return haystack.includes(normalized);
+}
+
+function sortCatalogPacks(packs: CatalogPack[], projectBU: BusinessUnit): CatalogPack[] {
+    return [...packs].sort((a, b) => {
+        const aRecommended = a.businessUnits?.includes(projectBU) ? 1 : 0;
+        const bRecommended = b.businessUnits?.includes(projectBU) ? 1 : 0;
+        if (aRecommended !== bRecommended) return bRecommended - aRecommended;
+        if ((a.isOfficial ? 1 : 0) !== (b.isOfficial ? 1 : 0)) {
+            return (b.isOfficial ? 1 : 0) - (a.isOfficial ? 1 : 0);
+        }
+        if ((a.popularity ?? 0) !== (b.popularity ?? 0)) return (b.popularity ?? 0) - (a.popularity ?? 0);
+        return a.name.localeCompare(b.name);
+    });
+}
+
+function getFormatLabel(format: ResizeFormat): string {
+    return format.label || `${format.width}×${format.height}`;
+}
+
+function getFormatName(format: ResizeFormat): string {
+    return format.name || getFormatLabel(format);
+}
+
+function buildWizardFormatPack(
+    pack: TemplatePackV2,
+    selectedFormatIds: string[],
+    options: { includeHiddenMaster: boolean; selectedOnly?: boolean },
+): TemplatePackV2 {
+    if (!pack.resizes?.length) return pack;
+
+    const selectedSet = new Set(selectedFormatIds);
+    const selectableFormats = getSelectableFormats(pack);
+    const masterFormat = getMasterFormat(pack);
+    const effectiveSelectedRaw = selectedSet.size > 0
+        ? pack.resizes.filter((resize) => selectedSet.has(resize.id))
+        : selectableFormats;
+    const effectiveSelected = effectiveSelectedRaw.map((resize) => (
+        masterFormat && resize.id === masterFormat.id
+            ? { ...resize, isMaster: true }
+            : resize
+    ));
+    const shouldAddHiddenMaster =
+        options.includeHiddenMaster
+        && masterFormat
+        && !effectiveSelected.some((resize) => resize.id === masterFormat.id);
+    const resizes = [
+        ...(shouldAddHiddenMaster ? [{ ...masterFormat, isMaster: true, _wizardHidden: true } as ResizeFormat] : []),
+        ...effectiveSelected,
+    ];
+
+    return {
+        ...pack,
+        resizes,
+        id: options.selectedOnly ? `${pack.id}__wizard_selection` : pack.id,
+        name: pack.name,
+        ...(options.selectedOnly ? { _wizardSelectedOnly: true } : {}),
+    } as TemplatePackV2;
+}
+
 export function WizardFlow({
     projectId,
     onSwitchToStudio,
@@ -59,7 +231,7 @@ export function WizardFlow({
     onExportClose,
 }: WizardFlowProps) {
     const { savedPacks } = useTemplateStore();
-    const { backendTemplates } = useTemplateListSync();
+    const { backendTemplates, workspaceId } = useTemplateListSync();
 
     // Merge backend + local templates, backend takes priority
     const allPacks = useMemo(() => {
@@ -69,8 +241,9 @@ export function WizardFlow({
     }, [backendTemplates, savedPacks]);
     const { projects } = useProjectStore();
     const [step, setStep] = useState<WizardStep>(initialTemplateId ? "content" : "template");
-    const [templateMode, setTemplateMode] = useState<"single" | "pack" | "manual">("single");
+    const [catalogScope, setCatalogScope] = useState<CatalogScope>("workspace");
     const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(initialTemplateId || null);
+    const [selectedFormatIds, setSelectedFormatIds] = useState<string[]>([]);
     const [fullSelectedTemplate, setFullSelectedTemplate] = useState<TemplatePackV2 | null>(null);
     const [templateLoadError, setTemplateLoadError] = useState<string | null>(null);
     const [manualSizes, setManualSizes] = useState<{width: number; height: number; id: string}[]>([]);
@@ -98,6 +271,7 @@ export function WizardFlow({
     const [packSearch, setPackSearch] = useState("");
     const [activePreviewFormatId, setActivePreviewFormatId] = useState("");
     const [wizardArtboardProps, setWizardArtboardProps] = useState<ArtboardProps>(DEFAULT_ARTBOARD_PROPS);
+    const loadedTemplateIdRef = useRef<string | null>(initialTemplateId || null);
     const [aiScenariosTools, setAiScenariosTools] = useState<{
         canOpen: boolean;
         onOpen: () => void;
@@ -158,78 +332,52 @@ export function WizardFlow({
     const activeProject = projects.find(p => p.id === projectId);
     const projectBU: BusinessUnit = activeProject?.businessUnit || "yandex-market";
 
-    // Recommended packs for this project's BU
-    const recommended = useMemo(
-        () => getRecommendedPacks(projectBU, allPacks, 4),
-        [projectBU, allPacks]
+    const catalogPacks = useMemo(
+        () => buildCatalogPacks(allPacks, workspaceId),
+        [allPacks, workspaceId],
     );
-
-    // Search results (all packs filtered by search query)
-    const searchResults = useMemo(() => {
-        if (!packSearch) return null;
-        return searchPacks({
-            query: packSearch,
-            sortBy: "popularity",
-            sortOrder: "desc",
-        }, allPacks);
-    }, [packSearch, allPacks]);
-
-    // Search results (all packs filtered by search query)
-    const singlePacks = useMemo(() => {
-        const list: (TemplatePackV2 & { _originalId?: string; _sourceResizeId?: string })[] = [];
-        allPacks.forEach(pack => {
-            if (!pack.resizes || pack.resizes.length === 0) {
-                list.push(pack);
-            } else {
-                pack.resizes.forEach(resize => {
-                    list.push({
-                        ...pack,
-                        id: `${pack.id}_${resize.id}`,
-                        name: resize.name || `${resize.width}×${resize.height}`,
-                        description: pack.name,
-                        _originalId: pack.id,
-                        _sourceResizeId: resize.id,
-                    });
-                });
-            }
-        });
-        return list;
-    }, [allPacks]);
-
-    const allPacksRef = { current: allPacks };
-    const singlePacksRef = { current: singlePacks };
+    const visibleCatalogPacks = useMemo(() => {
+        if (catalogScope === "manual") return [];
+        return sortCatalogPacks(
+            catalogPacks.filter((pack) => pack._catalogSource === catalogScope && matchesCatalogSearch(pack, packSearch)),
+            projectBU,
+        );
+    }, [catalogPacks, catalogScope, packSearch, projectBU]);
+    const selectedCatalogPack = useMemo(
+        () => catalogPacks.find((pack) => pack.id === selectedTemplateId) ?? null,
+        [catalogPacks, selectedTemplateId],
+    );
+    const selectableFormats = useMemo(
+        () => selectedCatalogPack ? getSelectableFormats(selectedCatalogPack) : [],
+        [selectedCatalogPack],
+    );
 
     // Fetch full template data when user selects a template
     useEffect(() => {
-        if (!selectedTemplateId) { setFullSelectedTemplate(null); return; }
-
-        let fetchId = selectedTemplateId;
-        const vPack = singlePacksRef.current.find(p => p.id === selectedTemplateId);
-        if (vPack && vPack._originalId) {
-            fetchId = vPack._originalId;
-        } else if (selectedTemplateId && !vPack) {
-            // Check if it's already a regular pack ID not mapped to single
-            fetchId = selectedTemplateId;
+        if (!selectedTemplateId) {
+            loadedTemplateIdRef.current = null;
+            queueMicrotask(() => setFullSelectedTemplate(null));
+            return;
         }
+        if (loadedTemplateIdRef.current === selectedTemplateId && fullSelectedTemplate) return;
 
-        const applyExtract = (pack: any) => {
-            if (vPack && vPack._sourceResizeId) {
-                return extractSingleFormatFromPack(pack as TemplatePackV2, vPack._sourceResizeId);
-            }
-            return pack;
+        const fetchId = selectedTemplateId;
+        const setLoadedTemplate = (pack: TemplatePackV2) => {
+            loadedTemplateIdRef.current = fetchId;
+            queueMicrotask(() => setFullSelectedTemplate(pack));
         };
 
         // Check if it's a DEFAULT_PACK (already has full data)
         const defaultPack = DEFAULT_PACKS.find(p => p.id === fetchId || p.data.id === fetchId);
-        if (defaultPack) { setFullSelectedTemplate(applyExtract(defaultPack.data)); return; }
+        if (defaultPack) { setLoadedTemplate(defaultPack.data); return; }
 
         // Check if it's a local pack (has masterComponents)
         const localPack = savedPacks.find(p => p.id === fetchId);
-        if (localPack && localPack.masterComponents?.length > 0) { setFullSelectedTemplate(applyExtract(localPack)); return; }
+        if (localPack && localPack.masterComponents?.length > 0) { setLoadedTemplate(localPack); return; }
 
         // Fetch full data from backend REST endpoint
         let cancelled = false;
-        setTemplateLoadError(null);
+        queueMicrotask(() => setTemplateLoadError(null));
         (async () => {
             try {
                 const res = await fetch(`/api/template/${fetchId}`);
@@ -237,13 +385,13 @@ export function WizardFlow({
                 if (!res.ok) {
                     console.warn(`[Wizard] Template fetch failed: HTTP ${res.status}`);
                     setTemplateLoadError(`Не удалось загрузить шаблон (HTTP ${res.status}). Попробуйте другой шаблон или обновите страницу.`);
-                    const listingPack = allPacksRef.current.find(p => p.id === fetchId);
-                    if (listingPack) setFullSelectedTemplate(applyExtract(listingPack));
+                    const listingPack = allPacks.find(p => p.id === fetchId);
+                    if (listingPack) setLoadedTemplate(listingPack);
                     return;
                 }
                 const template = await res.json();
                 if (template?.data) {
-                    setFullSelectedTemplate(applyExtract(template.data as TemplatePackV2));
+                    setLoadedTemplate(template.data as TemplatePackV2);
                     return;
                 }
                 setTemplateLoadError("Шаблон не содержит данных. Попробуйте другой шаблон.");
@@ -251,30 +399,34 @@ export function WizardFlow({
                 if (!cancelled) {
                     console.warn("[Wizard] Template fetch error:", err);
                     setTemplateLoadError("Ошибка загрузки шаблона. Возможно, он слишком большой.");
-                    const listingPack = allPacksRef.current.find(p => p.id === fetchId);
-                    if (listingPack) setFullSelectedTemplate(applyExtract(listingPack));
+                    const listingPack = allPacks.find(p => p.id === fetchId);
+                    if (listingPack) setLoadedTemplate(listingPack);
                 }
             }
         })();
         return () => { cancelled = true; };
-    }, [selectedTemplateId, savedPacks]);
+    }, [allPacks, fullSelectedTemplate, selectedTemplateId, savedPacks]);
 
-    const selectedTemplate = fullSelectedTemplate;
+    const selectedTemplate = useMemo(
+        () => fullSelectedTemplate
+            ? buildWizardFormatPack(fullSelectedTemplate, selectedFormatIds, { includeHiddenMaster: true, selectedOnly: true })
+            : null,
+        [fullSelectedTemplate, selectedFormatIds],
+    );
 
     useEffect(() => {
-        if (!selectedTemplate) {
-            setWizardArtboardProps(DEFAULT_ARTBOARD_PROPS);
-            return;
-        }
-        setWizardArtboardProps(resolveWizardArtboardProps(selectedTemplate));
+        const nextArtboardProps = selectedTemplate
+            ? resolveWizardArtboardProps(selectedTemplate)
+            : DEFAULT_ARTBOARD_PROPS;
+        queueMicrotask(() => setWizardArtboardProps(nextArtboardProps));
     }, [selectedTemplate]);
 
     const handleApplyAndContinue = useCallback(async () => {
-        if (templateMode !== "manual" && !selectedTemplateId) return;
+        if (catalogScope !== "manual" && !selectedTemplateId) return;
 
         let packToApply: TemplatePackV2;
 
-        if (templateMode === "manual") {
+        if (catalogScope === "manual") {
             if (manualSizes.length === 0) return;
             const masterSize = manualSizes[0];
             
@@ -298,7 +450,9 @@ export function WizardFlow({
             } as unknown as TemplatePackV2;
         } else {
             if (!fullSelectedTemplate) return;
-            packToApply = JSON.parse(JSON.stringify(fullSelectedTemplate));
+            packToApply = JSON.parse(JSON.stringify(
+                buildWizardFormatPack(fullSelectedTemplate, selectedFormatIds, { includeHiddenMaster: true }),
+            ));
         }
 
         const { applyTemplatePack } = await import("@/services/templateService");
@@ -506,16 +660,17 @@ export function WizardFlow({
         manualSizes,
         onSwitchToStudio,
         selectedTemplateId,
-        templateMode,
+        selectedFormatIds,
+        catalogScope,
         textValues,
         wizardArtboardProps,
     ]);
 
     const nextDisabled =
         step === "template"
-            ? templateMode === "manual"
+            ? catalogScope === "manual"
                 ? manualSizes.length === 0
-                : !selectedTemplateId
+                : !selectedTemplateId || (selectableFormats.length > 0 && selectedFormatIds.length === 0)
             : false;
 
     const handleHeaderBack = useCallback(() => {
@@ -526,7 +681,7 @@ export function WizardFlow({
 
     const handleHeaderNext = useCallback(() => {
         if (step === "template") {
-            if (templateMode === "manual") {
+            if (catalogScope === "manual") {
                 void handleApplyAndContinue();
                 return;
             }
@@ -536,7 +691,7 @@ export function WizardFlow({
         }
 
         void handleApplyAndContinue();
-    }, [handleApplyAndContinue, selectedTemplateId, step, templateMode]);
+    }, [catalogScope, handleApplyAndContinue, selectedTemplateId, step]);
 
     const handleHeaderSwitchToStudio = useCallback(() => {
         if (step === "content") {
@@ -549,7 +704,7 @@ export function WizardFlow({
     useEffect(() => {
         onHeaderStateChange?.({
             step,
-            nextLabel: step === "template" && templateMode === "manual" ? "Собрать" : step === "content" ? "Применить" : "Далее",
+            nextLabel: step === "template" && catalogScope === "manual" ? "Собрать" : step === "content" ? "Применить" : "Далее",
             nextDisabled,
             canGoBack: step === "content",
             onBack: handleHeaderBack,
@@ -566,74 +721,119 @@ export function WizardFlow({
         nextDisabled,
         onHeaderStateChange,
         step,
-        templateMode,
+        catalogScope,
     ]);
 
     useEffect(() => {
         return () => onHeaderStateChange?.(null);
     }, [onHeaderStateChange]);
 
-    /* ─── Pack Card (V2 enhanced) ───────────────────────── */
-    const PackCard = ({ pack, color }: { pack: TemplatePackV2 | TemplatePackMeta; color?: string }) => {
-        const isMeta = "data" in pack;
-        const v2 = isMeta ? (pack as TemplatePackMeta).data : (pack as TemplatePackV2);
+    const handleSelectCatalogPack = useCallback((pack: CatalogPack) => {
+        setSelectedTemplateId(pack.id);
+        setSelectedFormatIds(getDefaultSelectedFormatIds(pack));
+        setFullSelectedTemplate(null);
+        loadedTemplateIdRef.current = null;
+        setTemplateLoadError(null);
+    }, []);
 
-        if (!v2) return null;
+    const toggleSelectedFormat = useCallback((formatId: string) => {
+        setSelectedFormatIds((prev) => {
+            if (prev.includes(formatId)) return prev.filter((id) => id !== formatId);
+            return [...prev, formatId];
+        });
+    }, []);
 
-        const selectableId = isMeta ? v2.id : (pack as TemplatePackV2).id;
-        const displayColor = color || (isMeta ? (pack as TemplatePackMeta).thumbnailColor : "#6366F1");
-        const isSelected = selectedTemplateId === selectableId;
+    /* ─── Pack Card (catalog-first) ─────────────────────── */
+    const PackCard = ({ pack }: { pack: CatalogPack }) => {
+        const displayColor = pack._thumbnailColor || DEFAULT_THUMBNAIL_COLOR;
+        const isSelected = selectedTemplateId === pack.id;
+        const formats = getSelectableFormats(pack);
+        const selectedCount = isSelected
+            ? formats.filter((format) => selectedFormatIds.includes(format.id)).length
+            : formats.length;
 
         return (
             <button
                 type="button"
-                onClick={() => setSelectedTemplateId(selectableId)}
+                onClick={() => handleSelectCatalogPack(pack)}
                 aria-pressed={isSelected}
-                className={`relative p-3 rounded-xl border transition-all cursor-pointer group hover:shadow-md text-left
-                    ${isSelected ? "border-accent-primary bg-accent-primary/5 ring-1 ring-accent-primary" : "border-border-primary hover:border-accent-primary/40 bg-bg-primary"}
+                className={`relative grid w-full grid-cols-[116px_minmax(0,1fr)] gap-3 rounded-xl border p-3 text-left transition-all cursor-pointer hover:shadow-md
+                    ${isSelected ? "border-accent-primary bg-accent-primary/5 ring-1 ring-accent-primary" : "border-border-primary bg-bg-primary hover:border-accent-primary/40"}
                 `}
             >
                 <div
-                    className="w-full h-24 rounded-lg mb-3 relative overflow-hidden flex items-center justify-center"
-                    style={{ backgroundColor: displayColor + "15" }}
+                    className="relative flex h-24 items-center justify-center overflow-hidden rounded-lg bg-bg-secondary"
+                    style={!pack.thumbnailUrl ? { backgroundColor: `${displayColor}15` } : undefined}
                 >
-                    <LayoutTemplate size={28} style={{ color: displayColor }} />
-                    {v2.isOfficial && (
-                        <div className="absolute top-1.5 right-1.5 flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-amber-500/15 border border-amber-500/20">
-                            <Star size={8} className="text-amber-500 fill-amber-500" />
-                            <span className="text-[8px] font-semibold text-amber-600">Official</span>
-                        </div>
+                    {pack.thumbnailUrl ? (
+                        <img
+                            src={pack.thumbnailUrl}
+                            alt={pack.name}
+                            className="h-full w-full object-cover"
+                            draggable={false}
+                        />
+                    ) : (
+                        <LayoutTemplate size={28} style={{ color: displayColor }} />
+                    )}
+                    {isSelected && (
+                        <span className="absolute left-2 top-2 flex h-5 w-5 items-center justify-center rounded-full bg-accent-primary text-text-inverse shadow-[var(--shadow-sm)]">
+                            <Check size={12} />
+                        </span>
                     )}
                 </div>
-                <div className="text-xs font-semibold text-text-primary truncate">{v2.name}</div>
-                <div className="text-[10px] text-text-tertiary mt-0.5 line-clamp-1">
-                    {v2.description}
-                </div>
-                <div className="flex items-center justify-between mt-2">
-                    <div className="flex gap-1 flex-wrap">
-                        {(v2.categories || []).slice(0, 2).map((c: string) => (
-                            <span key={c} className="text-[8px] px-1.5 py-0.5 rounded bg-bg-secondary text-text-secondary">
-                                {c}
+                <div className="min-w-0">
+                    <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                            <div className="truncate text-sm font-semibold text-text-primary">{pack.name || "Без названия"}</div>
+                            <div className="mt-0.5 line-clamp-1 text-[11px] text-text-tertiary">{pack.description || "Пакет форматов"}</div>
+                        </div>
+                        <div className="flex shrink-0 items-center gap-1">
+                            {pack.isOfficial && (
+                                <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/20 bg-amber-500/15 px-1.5 py-0.5 text-[9px] font-semibold text-amber-600">
+                                    <Star size={8} className="fill-amber-500 text-amber-500" />
+                                    Official
+                                </span>
+                            )}
+                            <span className="inline-flex items-center gap-1 rounded-full border border-border-primary bg-bg-secondary px-1.5 py-0.5 text-[9px] font-medium text-text-secondary">
+                                {pack._catalogSource === "workspace" ? <Users size={8} /> : <Globe2 size={8} />}
+                                {pack._catalogSource === "workspace" ? "Воркспейс" : "Глобальный"}
+                            </span>
+                        </div>
+                    </div>
+                    <div className="mt-2 flex flex-wrap gap-1">
+                        {(pack.categories || []).slice(0, 3).map((category: string) => (
+                            <span key={category} className="rounded-md bg-bg-secondary px-1.5 py-0.5 text-[9px] text-text-secondary">
+                                {category}
                             </span>
                         ))}
-                    </div>
-                    <span className="text-[9px] text-text-tertiary">
-                        {v2.resizes?.length || 0} фмт
-                    </span>
-                </div>
-                {(v2.tags || []).length > 0 && (
-                    <div className="flex gap-1 mt-1.5 flex-wrap">
-                        {(v2.tags || []).slice(0, 2).map((tag: TemplateTag) => (
+                        {(pack.tags || []).slice(0, 2).map((tag: TemplateTag) => (
                             <span
                                 key={tag.id}
-                                className="text-[8px] px-1 py-0.5 rounded-full border border-border-primary text-text-tertiary"
-                                style={tag.color ? { borderColor: tag.color + "40", color: tag.color } : undefined}
+                                className="rounded-full border border-border-primary px-1.5 py-0.5 text-[9px] text-text-tertiary"
+                                style={tag.color ? { borderColor: `${tag.color}40`, color: tag.color } : undefined}
                             >
                                 #{tag.label}
                             </span>
                         ))}
                     </div>
-                )}
+                    <div className="mt-3 flex items-center justify-between gap-2">
+                        <div className="flex min-w-0 flex-wrap gap-1">
+                            {formats.slice(0, 4).map((format) => (
+                                <span key={format.id} className="rounded-md border border-border-primary bg-bg-surface px-1.5 py-0.5 text-[9px] text-text-secondary">
+                                    {getFormatLabel(format)}
+                                </span>
+                            ))}
+                            {formats.length > 4 && (
+                                <span className="rounded-md bg-bg-secondary px-1.5 py-0.5 text-[9px] text-text-tertiary">
+                                    +{formats.length - 4}
+                                </span>
+                            )}
+                        </div>
+                        <span className="shrink-0 text-[10px] text-text-tertiary">
+                            {isSelected ? `${selectedCount}/${formats.length || 1}` : `${formats.length || 1} фмт`}
+                        </span>
+                    </div>
+                </div>
             </button>
         );
     };
@@ -662,133 +862,32 @@ export function WizardFlow({
                                 <div>
                                     <h2 className="text-lg font-semibold text-text-primary">Выберите основу</h2>
                                     <p className="text-sm text-text-secondary mt-1">
-                                        Начните с готового шаблона или загрузите пакет.
+                                        Выберите пакет и отметьте форматы, которые нужны в этом проекте.
                                     </p>
                                 </div>
                                 <div className="flex bg-bg-secondary rounded-[var(--radius-md)] p-1 border border-border-primary">
                                     <button
-                                        onClick={() => setTemplateMode("single")}
-                                        className={`px-3 py-1 rounded-[var(--radius-sm)] text-xs font-medium transition-all cursor-pointer ${templateMode === "single" ? "bg-bg-surface shadow-[var(--shadow-sm)] text-text-primary" : "text-text-secondary"}`}
+                                        onClick={() => setCatalogScope("workspace")}
+                                        className={`px-3 py-1 rounded-[var(--radius-sm)] text-xs font-medium transition-all cursor-pointer ${catalogScope === "workspace" ? "bg-bg-surface shadow-[var(--shadow-sm)] text-text-primary" : "text-text-secondary"}`}
                                     >
-                                        Шаблоны
+                                        Воркспейс
                                     </button>
                                     <button
-                                        onClick={() => setTemplateMode("pack")}
-                                        className={`px-3 py-1 rounded-[var(--radius-sm)] text-xs font-medium transition-all cursor-pointer ${templateMode === "pack" ? "bg-bg-surface shadow-[var(--shadow-sm)] text-text-primary" : "text-text-secondary"}`}
+                                        onClick={() => setCatalogScope("global")}
+                                        className={`px-3 py-1 rounded-[var(--radius-sm)] text-xs font-medium transition-all cursor-pointer ${catalogScope === "global" ? "bg-bg-surface shadow-[var(--shadow-sm)] text-text-primary" : "text-text-secondary"}`}
                                     >
-                                        Пакеты
+                                        Глобальные
                                     </button>
                                     <button
-                                        onClick={() => setTemplateMode("manual")}
-                                        className={`px-3 py-1 rounded-[var(--radius-sm)] text-xs font-medium transition-all cursor-pointer ${templateMode === "manual" ? "bg-bg-surface shadow-[var(--shadow-sm)] text-text-primary" : "text-text-secondary"}`}
+                                        onClick={() => setCatalogScope("manual")}
+                                        className={`px-3 py-1 rounded-[var(--radius-sm)] text-xs font-medium transition-all cursor-pointer ${catalogScope === "manual" ? "bg-bg-surface shadow-[var(--shadow-sm)] text-text-primary" : "text-text-secondary"}`}
                                     >
                                         Вручную
                                     </button>
                                 </div>
                             </div>
 
-                            {templateMode === "single" ? (
-                                <>
-                                    <div className="grid grid-cols-2 gap-4">
-                                        {singlePacks.map((pack) => (
-                                            <PackCard key={pack.id} pack={pack} />
-                                        ))}
-                                    </div>
-                                    {singlePacks.length === 0 && (
-                                        <div className="text-center py-6 text-xs text-text-tertiary">
-                                            Нет одиночных шаблонов.<br />Используйте вкладку "Пакеты" или редактор для их создания.
-                                        </div>
-                                    )}
-                                </>
-                            ) : templateMode === "pack" ? (
-                                <div className="space-y-5">
-                                    {/* Pack search */}
-                                    <div className="relative">
-                                        <Input
-                                            value={packSearch}
-                                            onChange={(e) => setPackSearch(e.target.value)}
-                                            placeholder="Найти пакет..."
-                                            icon={<Search size={14} />}
-                                            className="h-9 text-xs pr-8"
-                                        />
-                                        {packSearch && (
-                                            <button
-                                                onClick={() => setPackSearch("")}
-                                                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-text-tertiary hover:text-text-primary cursor-pointer"
-                                            >
-                                                <X size={12} />
-                                            </button>
-                                        )}
-                                    </div>
-
-                                    {packSearch && searchResults ? (
-                                        /* Search results */
-                                        <div>
-                                            <h3 className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wider mb-2">
-                                                Результаты ({searchResults.total})
-                                            </h3>
-                                            {searchResults.items.length > 0 ? (
-                                                <div className="grid grid-cols-2 gap-3">
-                                                    {searchResults.items.map(pack => (
-                                                        <PackCard key={pack.id} pack={pack} />
-                                                    ))}
-                                                </div>
-                                            ) : (
-                                                <div className="text-center py-8 text-xs text-text-tertiary">
-                                                    Ничего не найдено по запросу «{packSearch}»
-                                                </div>
-                                            )}
-                                        </div>
-                                    ) : (
-                                        <>
-                                            {/* Recommended for project BU */}
-                                            {recommended.length > 0 && (
-                                                <div>
-                                                    <h3 className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wider mb-2">
-                                                        📌 Рекомендовано для {BU_LABELS[projectBU] || projectBU}
-                                                    </h3>
-                                                    <div className="grid grid-cols-2 gap-3">
-                                                        {recommended.map(pack => (
-                                                            <PackCard key={pack.id} pack={pack} />
-                                                        ))}
-                                                    </div>
-                                                </div>
-                                            )}
-
-                                            {/* Saved Packs */}
-                                            {allPacks.length > 0 && (
-                                                <div>
-                                                    <h3 className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wider mb-2">
-                                                        Мои пакеты
-                                                    </h3>
-                                                    <div className="grid grid-cols-2 gap-3">
-                                                        {allPacks.map((pack) => (
-                                                            <PackCard key={pack.id} pack={pack} />
-                                                        ))}
-                                                    </div>
-                                                </div>
-                                            )}
-
-                                            {/* Default Packs */}
-                                            <div>
-                                                <h3 className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wider mb-2">
-                                                    Готовые пакеты
-                                                </h3>
-                                                <div className="grid grid-cols-2 gap-3">
-                                                    {DEFAULT_PACKS.map((pack) => (
-                                                        <PackCard
-                                                            key={pack.id}
-                                                            pack={pack}
-                                                            color={pack.thumbnailColor}
-                                                        />
-                                                    ))}
-                                                </div>
-                                            </div>
-
-                                        </>
-                                    )}
-                                </div>
-                            ) : (
+                            {catalogScope === "manual" ? (
                                 <div className="space-y-4">
                                      <p className="text-sm text-text-secondary">Укажите список форматов (ширина × высота), для которых вы хотите собрать креативы с нуля.</p>
                                      <div className="flex gap-2 items-center">
@@ -812,6 +911,139 @@ export function WizardFlow({
                                         ))}
                                         {manualSizes.length === 0 && <span className="text-xs text-text-tertiary">Форматы не добавлены. Добавьте хотя бы один.</span>}
                                      </div>
+                                </div>
+                            ) : (
+                                <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
+                                    <div className="space-y-3">
+                                        <div className="relative">
+                                            <Input
+                                                value={packSearch}
+                                                onChange={(e) => setPackSearch(e.target.value)}
+                                                placeholder={catalogScope === "workspace" ? "Найти пакет в воркспейсе..." : "Найти глобальный пакет..."}
+                                                icon={<Search size={14} />}
+                                                className="h-10 text-sm pr-8"
+                                            />
+                                            {packSearch && (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setPackSearch("")}
+                                                    aria-label="Очистить поиск"
+                                                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-text-tertiary hover:text-text-primary cursor-pointer"
+                                                >
+                                                    <X size={14} />
+                                                </button>
+                                            )}
+                                        </div>
+                                        <div className="flex items-center justify-between">
+                                            <div className="flex items-center gap-2 text-[11px] text-text-tertiary">
+                                                <Layers3 size={13} />
+                                                <span>
+                                                    {visibleCatalogPacks.length} пакет(ов), сначала релевантные для {BU_LABELS[projectBU] || projectBU}
+                                                </span>
+                                            </div>
+                                            {packSearch && (
+                                                <span className="rounded-full border border-border-primary bg-bg-secondary px-2 py-0.5 text-[10px] text-text-secondary">
+                                                    Поиск: {packSearch}
+                                                </span>
+                                            )}
+                                        </div>
+                                        <div className="grid gap-3">
+                                            {visibleCatalogPacks.map((pack) => (
+                                                <PackCard key={pack._catalogKey} pack={pack} />
+                                            ))}
+                                        </div>
+                                        {visibleCatalogPacks.length === 0 && (
+                                            <div className="rounded-xl border border-dashed border-border-primary bg-bg-secondary px-4 py-8 text-center text-sm text-text-tertiary">
+                                                Ничего не найдено в этой вкладке.
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    <aside className="rounded-xl border border-border-primary bg-bg-secondary p-4">
+                                        {selectedCatalogPack ? (
+                                            <div className="space-y-4">
+                                                <div>
+                                                    <div className="text-sm font-semibold text-text-primary">{selectedCatalogPack.name}</div>
+                                                    <p className="mt-1 text-xs text-text-secondary">
+                                                        Отметьте форматы, которые попадут в визард и экспорт.
+                                                    </p>
+                                                </div>
+                                                {selectableFormats.length > 0 ? (
+                                                    <>
+                                                        <div className="flex items-center justify-between">
+                                                            <span className="text-[11px] font-medium uppercase text-text-tertiary">
+                                                                Форматы ({selectedFormatIds.length}/{selectableFormats.length})
+                                                            </span>
+                                                            <div className="flex gap-2">
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => setSelectedFormatIds(selectableFormats.map((format) => format.id))}
+                                                                    className="text-[10px] text-accent-primary hover:underline cursor-pointer"
+                                                                >
+                                                                    Все
+                                                                </button>
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => setSelectedFormatIds([])}
+                                                                    className="text-[10px] text-text-tertiary hover:text-text-primary cursor-pointer"
+                                                                >
+                                                                    Снять
+                                                                </button>
+                                                            </div>
+                                                        </div>
+                                                        <div className="space-y-1.5">
+                                                            {selectableFormats.map((format) => {
+                                                                const checked = selectedFormatIds.includes(format.id);
+                                                                return (
+                                                                    <button
+                                                                        key={format.id}
+                                                                        type="button"
+                                                                        onClick={() => toggleSelectedFormat(format.id)}
+                                                                        className={`flex w-full items-center gap-2 rounded-[var(--radius-md)] border px-2.5 py-2 text-left transition-colors cursor-pointer ${
+                                                                            checked
+                                                                                ? "border-accent-primary/30 bg-accent-primary/10"
+                                                                                : "border-border-primary bg-bg-primary hover:border-border-secondary"
+                                                                        }`}
+                                                                    >
+                                                                        <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${
+                                                                            checked ? "border-accent-primary bg-accent-primary text-text-inverse" : "border-border-secondary"
+                                                                        }`}>
+                                                                            {checked && <Check size={10} />}
+                                                                        </span>
+                                                                        <span className="min-w-0 flex-1">
+                                                                            <span className="block truncate text-xs font-medium text-text-primary">{getFormatName(format)}</span>
+                                                                            <span className="block text-[10px] text-text-tertiary">{format.width} × {format.height}</span>
+                                                                        </span>
+                                                                    </button>
+                                                                );
+                                                            })}
+                                                        </div>
+                                                        {(() => {
+                                                            const masterFormat = getMasterFormat(selectedCatalogPack);
+                                                            const addsHiddenMaster = Boolean(masterFormat && !selectedFormatIds.includes(masterFormat.id));
+                                                            return addsHiddenMaster ? (
+                                                                <p className="rounded-lg border border-border-primary bg-bg-primary px-3 py-2 text-[11px] text-text-secondary">
+                                                                    Мастер-формат будет добавлен технически для каскада, но не появится как отдельный выбранный формат.
+                                                                </p>
+                                                            ) : null;
+                                                        })()}
+                                                    </>
+                                                ) : (
+                                                    <p className="rounded-lg border border-border-primary bg-bg-primary px-3 py-2 text-xs text-text-secondary">
+                                                        Это одиночный шаблон без дополнительных форматов.
+                                                    </p>
+                                                )}
+                                            </div>
+                                        ) : (
+                                            <div className="flex h-full min-h-48 flex-col items-center justify-center text-center">
+                                                <LayoutTemplate size={28} className="text-text-tertiary/60" />
+                                                <p className="mt-3 text-sm font-medium text-text-primary">Пакет не выбран</p>
+                                                <p className="mt-1 text-xs text-text-tertiary">
+                                                    Выберите пакет слева, затем отметьте нужные форматы.
+                                                </p>
+                                            </div>
+                                        )}
+                                    </aside>
                                 </div>
                             )}
                         </div>

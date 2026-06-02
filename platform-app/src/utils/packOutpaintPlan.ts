@@ -92,6 +92,13 @@ export interface ComputePackOutpaintPlanOptions {
     bleedPx?: number;
     exportScale?: number;
     aspectCapStrategy?: PackAspectCapStrategy;
+    /**
+     * Optional composition reserve for tall pack formats. When enabled and a
+     * tall format uses a shallow hero image layer, ensure the source image
+     * starts at least this fraction down inside the expanded bitmap. This gives
+     * vertical banners enough generated background above the product.
+     */
+    tallFormatTopReserveRatio?: number;
 }
 
 export interface ComputePackOutpaintPlanInput {
@@ -115,6 +122,8 @@ const GPT_IMAGE2_SIZE_MULTIPLE = 16;
 const DEFAULT_BLEED_PX = 32;
 const DEFAULT_EXPORT_SCALE = 2;
 const DEFAULT_WORKING_RESERVE = 1.15;
+const TALL_FORMAT_MIN_ASPECT = 1.25;
+const TALL_FORMAT_MAX_LAYER_COVERAGE_Y = 0.72;
 
 function cleanSlot(value: string | undefined): string | undefined {
     return value && value !== "none" ? value : undefined;
@@ -196,6 +205,33 @@ function computeDeficits(
 function ceilNonNegative(value: number): number {
     if (!Number.isFinite(value) || value <= 0) return 0;
     return Math.ceil(value);
+}
+
+function clampTopReserveRatio(value: number | undefined): number {
+    if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return 0;
+    return Math.min(0.45, value);
+}
+
+function shouldApplyTallTopReserve(
+    format: PackOutpaintFormat,
+    targetLayer: PackOutpaintRect,
+): boolean {
+    if (format.width <= 0 || format.height <= 0 || targetLayer.height <= 0) return false;
+    if (format.height / format.width < TALL_FORMAT_MIN_ASPECT) return false;
+    return targetLayer.height / format.height <= TALL_FORMAT_MAX_LAYER_COVERAGE_Y;
+}
+
+function applyTallFormatTopReserve(
+    padding: { top: number; right: number; bottom: number; left: number },
+    masterLayer: PackOutpaintRect,
+    reserveRatio: number,
+): { top: number; right: number; bottom: number; left: number } {
+    const ratio = clampTopReserveRatio(reserveRatio);
+    if (ratio <= 0 || masterLayer.height <= 0) return padding;
+
+    const minTop = Math.ceil((ratio * (masterLayer.height + padding.bottom)) / (1 - ratio));
+    if (minTop <= padding.top) return padding;
+    return { ...padding, top: minTop };
 }
 
 function roundMultiple(value: number): number {
@@ -338,6 +374,8 @@ export function computePackOutpaintPlan(input: ComputePackOutpaintPlanInput): Pa
     const masterArtboard = input.masterArtboard;
     const diagnostics: PackOutpaintDiagnostic[] = [];
     const required = { top: 0, right: 0, bottom: 0, left: 0 };
+    const tallTopReserveRatio = clampTopReserveRatio(input.options?.tallFormatTopReserveRatio);
+    let needsTallTopReserve = false;
 
     for (const format of input.formats) {
         if (format.width <= 0 || format.height <= 0) continue;
@@ -377,6 +415,9 @@ export function computePackOutpaintPlan(input: ComputePackOutpaintPlanInput): Pa
         }
 
         const deficits = computeDeficits(targetLayer, format, bleed);
+        if (tallTopReserveRatio > 0 && shouldApplyTallTopReserve(format, targetLayer)) {
+            needsTallTopReserve = true;
+        }
 
         if (mode === "relative_size") {
             addRequirement(required, "left", deficits.left * masterLayer.width / targetLayer.width);
@@ -395,12 +436,15 @@ export function computePackOutpaintPlan(input: ComputePackOutpaintPlanInput): Pa
     }
 
     const aspectCapStrategy: PackAspectCapStrategy = input.options?.aspectCapStrategy ?? "delivery-crop";
-    const rawPadded = {
+    const rawPaddedBase = {
         top: ceilNonNegative(required.top),
         right: ceilNonNegative(required.right),
         bottom: ceilNonNegative(required.bottom),
         left: ceilNonNegative(required.left),
     };
+    const rawPadded = needsTallTopReserve
+        ? applyTallFormatTopReserve(rawPaddedBase, masterLayer, tallTopReserveRatio)
+        : rawPaddedBase;
 
     // Output padding controls the layer rect / nextMasterRect / outputSizePx.
     // Only the legacy "pad" strategy inflates the output to obey the GPT cap.

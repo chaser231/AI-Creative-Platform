@@ -284,6 +284,52 @@ describe("projectExpansionToResize", () => {
         expect(projected[1]).toBe(resizeLayers[1]);
     });
 
+    it("also collapses the master image layer to the artboard for pack-fill previews", () => {
+        const resizeLayers: Layer[] = [{
+            id: "master-image",
+            type: "image",
+            name: "Product",
+            x: 0,
+            y: 0,
+            width: 1192,
+            height: 300,
+            rotation: 0,
+            visible: true,
+            locked: false,
+            src: "image.png",
+            slotId: "image-primary",
+            objectFit: "fill",
+        }];
+
+        const projected = projectExpansionToResize({
+            resizeLayers,
+            resizeArtboard: { width: 1192, height: 300 },
+            masterArtboard: { width: 1192, height: 300 },
+            overrides: {
+                "master-image": {
+                    prev: { x: 0, y: 0, width: 1192, height: 300 },
+                    next: { x: -82, y: -105, width: 1356, height: 899 },
+                    slotId: "image-primary",
+                    masterId: "master-image",
+                    fillInstanceArtboard: true,
+                },
+            },
+            imageViewOverrides: {
+                "master-image": { objectFit: "cover", focusX: 0.84, focusY: 0.117 },
+            },
+        });
+
+        expect(projected[0]).toMatchObject({
+            x: 0,
+            y: 0,
+            width: 1192,
+            height: 300,
+            objectFit: "cover",
+            focusX: 0.84,
+            focusY: 0.117,
+        });
+    });
+
     it("applies image view override even when content-only binding skips geometry", () => {
         const resizeLayers: Layer[] = [{
             id: "resize-image",

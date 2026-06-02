@@ -1,5 +1,10 @@
 import { persistImageToS3, uploadForAI } from "@/utils/imageUpload";
-import type { PackOutpaintDiagnostic, PackOutpaintPlan } from "@/utils/packOutpaintPlan";
+import {
+    computeGptImage2RequestSize,
+    GPT_IMAGE2_MAX_ASPECT,
+    type PackOutpaintDiagnostic,
+    type PackOutpaintPlan,
+} from "@/utils/packOutpaintPlan";
 
 const EDGE_CONTEXT_OPT_OUT_ENV = process.env.NEXT_PUBLIC_WIZARD_OUTPAINT_EDGE_CONTEXT;
 const ASPECT_DRIFT_TOLERANCE = 0.01;
@@ -44,6 +49,99 @@ function pixelPaddingFromPlan(plan: PackOutpaintPlan): { top: number; right: num
         left: p.x,
         right: Math.max(0, plan.outputSizePx.width - p.x - p.width),
         bottom: Math.max(0, plan.outputSizePx.height - p.y - p.height),
+    };
+}
+
+export interface ManualGptOutpaintPlanInput {
+    sourceSizePx: { width: number; height: number };
+    layerSize: { width: number; height: number };
+    canvasPadding: { top: number; right: number; bottom: number; left: number };
+}
+
+export function buildGptImage2ManualOutpaintPlan(input: ManualGptOutpaintPlanInput): PackOutpaintPlan {
+    const sourceW = Math.max(1, Math.round(input.sourceSizePx.width));
+    const sourceH = Math.max(1, Math.round(input.sourceSizePx.height));
+    const layerW = Math.max(1, input.layerSize.width);
+    const layerH = Math.max(1, input.layerSize.height);
+    const scaleX = sourceW / layerW;
+    const scaleY = sourceH / layerH;
+    const padPx = {
+        left: Math.max(0, Math.round(input.canvasPadding.left * scaleX)),
+        right: Math.max(0, Math.round(input.canvasPadding.right * scaleX)),
+        top: Math.max(0, Math.round(input.canvasPadding.top * scaleY)),
+        bottom: Math.max(0, Math.round(input.canvasPadding.bottom * scaleY)),
+    };
+    const outputSizePx = {
+        width: Math.max(1, sourceW + padPx.left + padPx.right),
+        height: Math.max(1, sourceH + padPx.top + padPx.bottom),
+    };
+    const requestExtraPadPx = { left: 0, right: 0, top: 0, bottom: 0 };
+    const diagnostics: PackOutpaintDiagnostic[] = [];
+    const outputAspect = outputSizePx.width / outputSizePx.height;
+    if (outputAspect > GPT_IMAGE2_MAX_ASPECT) {
+        const targetH = Math.ceil(outputSizePx.width / GPT_IMAGE2_MAX_ASPECT);
+        const extraH = Math.max(0, targetH - outputSizePx.height);
+        requestExtraPadPx.top = Math.ceil(extraH / 2);
+        requestExtraPadPx.bottom = extraH - requestExtraPadPx.top;
+        diagnostics.push({
+            code: "aspect-pad-added",
+            message: "Vertical padding was added so the GPT request stays within the 3:1 aspect limit.",
+        });
+    } else if (outputAspect < 1 / GPT_IMAGE2_MAX_ASPECT) {
+        const targetW = Math.ceil(outputSizePx.height / GPT_IMAGE2_MAX_ASPECT);
+        const extraW = Math.max(0, targetW - outputSizePx.width);
+        requestExtraPadPx.left = Math.ceil(extraW / 2);
+        requestExtraPadPx.right = extraW - requestExtraPadPx.left;
+        diagnostics.push({
+            code: "aspect-pad-added",
+            message: "Horizontal padding was added so the GPT request stays within the 3:1 aspect limit.",
+        });
+    }
+
+    const requestRawSize = {
+        width: outputSizePx.width + requestExtraPadPx.left + requestExtraPadPx.right,
+        height: outputSizePx.height + requestExtraPadPx.top + requestExtraPadPx.bottom,
+    };
+    const request = computeGptImage2RequestSize(requestRawSize);
+    diagnostics.push(...request.diagnostics);
+    const reqScaleX = request.size.width / requestRawSize.width;
+    const reqScaleY = request.size.height / requestRawSize.height;
+    const cropRawX = Math.round(requestExtraPadPx.left * reqScaleX);
+    const cropRawY = Math.round(requestExtraPadPx.top * reqScaleY);
+    const cropRawW = Math.max(1, Math.round(outputSizePx.width * reqScaleX));
+    const cropRawH = Math.max(1, Math.round(outputSizePx.height * reqScaleY));
+    const cropX = Math.max(0, Math.min(cropRawX, request.size.width - 1));
+    const cropY = Math.max(0, Math.min(cropRawY, request.size.height - 1));
+
+    return {
+        canvasPadding: input.canvasPadding,
+        nextMasterRect: {
+            x: -input.canvasPadding.left,
+            y: -input.canvasPadding.top,
+            width: layerW + input.canvasPadding.left + input.canvasPadding.right,
+            height: layerH + input.canvasPadding.top + input.canvasPadding.bottom,
+        },
+        outputSizePx,
+        requestSizePx: request.size,
+        sourcePlacementPx: {
+            x: padPx.left,
+            y: padPx.top,
+            width: sourceW,
+            height: sourceH,
+        },
+        requestSourcePlacementPx: {
+            x: Math.round((requestExtraPadPx.left + padPx.left) * reqScaleX),
+            y: Math.round((requestExtraPadPx.top + padPx.top) * reqScaleY),
+            width: Math.max(1, Math.round(sourceW * reqScaleX)),
+            height: Math.max(1, Math.round(sourceH * reqScaleY)),
+        },
+        requestOutputCropPx: {
+            x: cropX,
+            y: cropY,
+            width: Math.max(1, Math.min(cropRawW, request.size.width - cropX)),
+            height: Math.max(1, Math.min(cropRawH, request.size.height - cropY)),
+        },
+        diagnostics,
     };
 }
 

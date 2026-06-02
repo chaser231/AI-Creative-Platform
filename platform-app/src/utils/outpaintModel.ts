@@ -8,8 +8,8 @@
  *
  * Default: "flux-2-pro-outpaint".
  */
-export function getOutpaintModel(): string {
+export function getOutpaintModel(defaultModel = "flux-2-pro-outpaint"): string {
     const fromEnv = process.env.NEXT_PUBLIC_OUTPAINT_MODEL;
     if (fromEnv && fromEnv.trim().length > 0) return fromEnv.trim();
-    return "flux-2-pro-outpaint";
+    return defaultModel;
 }
