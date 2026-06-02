@@ -274,6 +274,7 @@ type ImagePromptMode = "generate" | "edit" | "expand" | "inpaint";
 const EXPAND_SAFETY_BUFFER_PX = 200;
 const TEXT_COLOR_SWATCHES = ["#000000", "#FFFFFF", "#1F2937", "#F9FAFB"];
 const WIZARD_OUTPAINT_BLEED_PX = 32;
+const WIZARD_OUTPAINT_TALL_TOP_RESERVE_RATIO = 0.16;
 const WIZARD_OUTPAINT_ENGINE = process.env.NEXT_PUBLIC_WIZARD_OUTPAINT_ENGINE === "legacy"
     ? "legacy"
     : "gpt-image-2";
@@ -1631,8 +1632,8 @@ export function inferOutpaintProductFocusX(
     if (totalWeight <= 0) return fallback;
 
     const foregroundCenterX = weightedCenter / totalWeight;
-    if (foregroundCenterX <= 0.5) return Math.max(fallback, 0.84);
-    if (foregroundCenterX >= 0.58) return Math.min(fallback, 0.16);
+    if (foregroundCenterX <= 0.5) return Math.max(fallback, 0.88);
+    if (foregroundCenterX >= 0.58) return Math.min(fallback, 0.12);
     return fallback;
 }
 
@@ -2437,6 +2438,7 @@ function WizardLayerPromptBar({
                                     // never letterboxed for ultra-wide /
                                     // ultra-tall packs.
                                     aspectCapStrategy: "delivery-crop",
+                                    tallFormatTopReserveRatio: WIZARD_OUTPAINT_TALL_TOP_RESERVE_RATIO,
                                 },
                             });
                             if (jobSnapshot.outpaintDebug) {

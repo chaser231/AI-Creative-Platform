@@ -274,7 +274,7 @@ describe("inferOutpaintProductFocusX", () => {
                 { width: 1192, height: 300 },
                 0.5,
             ),
-        ).toBeCloseTo(0.84);
+        ).toBeCloseTo(0.88);
     });
 
     it("keeps explicit non-center user focus stronger than layout inference", () => {

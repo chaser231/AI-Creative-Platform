@@ -68,6 +68,52 @@ describe("computePackOutpaintPlan", () => {
         expect(plan.sourcePlacementPx).toEqual({ x: 82, y: 105, width: 1192, height: 300 });
     });
 
+    it("adds a wizard top reserve for tall formats with shallow hero layers", () => {
+        const formats: PackOutpaintFormat[] = [
+            { id: "master", isMaster: true, width: 1192, height: 300 },
+            {
+                id: "vertical",
+                width: 470,
+                height: 762,
+                layers: [
+                    { id: "vertical-image", slotId: "image-primary", x: 0, y: 0, width: 470, height: 300 },
+                ],
+            },
+            {
+                id: "top-banner",
+                width: 853,
+                height: 92,
+                layers: [
+                    { id: "top-image", slotId: "image-primary", x: 0, y: 0, width: 853, height: 92 },
+                ],
+            },
+        ];
+
+        const plan = computePackOutpaintPlan({
+            masterLayer: MASTER,
+            masterArtboard: { width: 1192, height: 300 },
+            formats,
+            sourceSizePx: { width: 1192, height: 300 },
+            options: { bleedPx: 32, tallFormatTopReserveRatio: 0.16 },
+        });
+
+        expect(plan.canvasPadding).toEqual({
+            left: 82,
+            right: 82,
+            top: 152,
+            bottom: 494,
+        });
+        expect(plan.nextMasterRect).toEqual({
+            x: -82,
+            y: -152,
+            width: 1356,
+            height: 946,
+        });
+        expect(plan.outputSizePx).toEqual({ width: 1356, height: 946 });
+        expect(plan.sourcePlacementPx).toEqual({ x: 82, y: 152, width: 1192, height: 300 });
+        expect(plan.sourcePlacementPx.y / plan.outputSizePx.height).toBeGreaterThanOrEqual(0.16);
+    });
+
     it("keeps outputSizePx aspect equal to nextMasterRect aspect for the screenshot pack", () => {
         const formats: PackOutpaintFormat[] = [
             { id: "master", isMaster: true, width: 1192, height: 300 },
