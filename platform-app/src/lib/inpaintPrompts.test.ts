@@ -12,7 +12,9 @@ describe("buildInpaintPrompt", () => {
         });
 
         expect(built.effectiveProfile).toBe("outpaint");
-        expect(built.prompt).toContain("Extend the scene naturally into the masked white areas.");
+        expect(built.prompt).toContain("Extend only the background");
+        expect(built.prompt).toContain("Do not create, copy, move, resize, or continue products");
+        expect(built.prompt).toContain("Leave the unmasked original image unchanged");
         expect(built.prompt).toContain("User context/style hint: футбольный мяч");
         expect(built.prompt).not.toContain("Edit only within the masked area");
     });

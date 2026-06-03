@@ -91,6 +91,7 @@ export function WizardExportModal({
                 resizeLayers: exportSource.layers,
                 resizeBindings: exportSource.layerBindings,
                 resizeArtboard: { width: exportSource.width, height: exportSource.height },
+                resizeFormatId: exportSource.id,
                 masterArtboard: masterCanvasSize,
                 overrides: layerGeometryOverrides,
                 imageViewOverrides,

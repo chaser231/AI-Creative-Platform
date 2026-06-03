@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
     computeGptImage2RequestSize,
+    computeGridUnionOutpaintPlan,
     computePackOutpaintPlan,
     computeWizardWorkingAssetSize,
     GPT_IMAGE2_MAX_ASPECT,
@@ -11,6 +12,7 @@ import {
     type PackOutpaintFormat,
     type PackOutpaintRect,
 } from "./packOutpaintPlan";
+import { computeImageFitProps } from "./imageFitUtils";
 
 const MASTER: PackOutpaintRect = {
     id: "master-image",
@@ -21,6 +23,19 @@ const MASTER: PackOutpaintRect = {
     height: 300,
     type: "image",
 };
+
+function mapOutputRectToArtboard(
+    layerRect: { x: number; y: number; width: number; height: number },
+    outputSize: { width: number; height: number },
+    outputRect: { x: number; y: number; width: number; height: number },
+) {
+    return {
+        x: layerRect.x + outputRect.x * layerRect.width / outputSize.width,
+        y: layerRect.y + outputRect.y * layerRect.height / outputSize.height,
+        width: outputRect.width * layerRect.width / outputSize.width,
+        height: outputRect.height * layerRect.height / outputSize.height,
+    };
+}
 
 describe("computePackOutpaintPlan", () => {
     it("derives per-side master padding from every supported resize", () => {
@@ -384,6 +399,182 @@ describe("computePackOutpaintPlan", () => {
         expect(plan.diagnostics).toContainEqual(
             expect.objectContaining({ code: "content-sync-skipped", formatId: "content-resize" }),
         );
+    });
+});
+
+describe("computeGridUnionOutpaintPlan", () => {
+    it("preserves each format's original source placement after grid-union outpaint", () => {
+        const master = { ...MASTER, objectFit: "fill" as const };
+        const formats: PackOutpaintFormat[] = [
+            { id: "master", isMaster: true, width: 1192, height: 300 },
+            {
+                id: "square",
+                width: 360,
+                height: 360,
+                layers: [
+                    { id: "square-image", slotId: "image-primary", x: 80, y: 40, width: 220, height: 220, objectFit: "fill" },
+                ],
+            },
+            {
+                id: "vertical",
+                width: 470,
+                height: 762,
+                layers: [
+                    { id: "vertical-image", slotId: "image-primary", x: 0, y: 392, width: 470, height: 370, objectFit: "fill" },
+                ],
+            },
+            {
+                id: "wide-banner",
+                width: 853,
+                height: 92,
+                layers: [
+                    { id: "wide-image", slotId: "image-primary", x: 213, y: 0, width: 426, height: 92, objectFit: "fill" },
+                ],
+            },
+        ];
+
+        const { plan } = computeGridUnionOutpaintPlan({
+            masterLayer: master,
+            masterArtboard: { width: 1192, height: 300 },
+            formats,
+            sourceSizePx: { width: 1192, height: 300 },
+            options: { bleedPx: 0 },
+        });
+
+        expect(plan).toBeTruthy();
+        expect(plan?.formatLayerRects).toBeTruthy();
+        for (const format of formats) {
+            const target = format.isMaster ? master : format.layers?.[0];
+            const rect = plan?.formatLayerRects?.[format.id];
+            expect(target).toBeTruthy();
+            expect(rect).toBeTruthy();
+            const mappedSource = mapOutputRectToArtboard(
+                rect!,
+                plan!.outputSizePx,
+                plan!.sourcePlacementPx,
+            );
+            expect(mappedSource.x).toBeCloseTo(target!.x, 2);
+            expect(mappedSource.y).toBeCloseTo(target!.y, 2);
+            expect(mappedSource.width).toBeCloseTo(target!.width, 2);
+            expect(mappedSource.height).toBeCloseTo(target!.height, 2);
+        }
+    });
+
+    it("inverts cover and contain image layouts through computeImageFitProps", () => {
+        const sourceSize = { width: 1000, height: 500 };
+        const master = {
+            id: "master-image",
+            slotId: "image-primary",
+            x: 0,
+            y: 0,
+            width: 500,
+            height: 250,
+            objectFit: "fill" as const,
+        };
+        const coverLayer: PackOutpaintRect = {
+            id: "cover-image",
+            slotId: "image-primary",
+            x: 100,
+            y: 0,
+            width: 200,
+            height: 200,
+            objectFit: "cover",
+            focusX: 1,
+            focusY: 0.5,
+        };
+        const containLayer: PackOutpaintRect = {
+            id: "contain-image",
+            slotId: "image-primary",
+            x: 0,
+            y: 0,
+            width: 300,
+            height: 300,
+            objectFit: "contain",
+        };
+        const formats: PackOutpaintFormat[] = [
+            { id: "master", isMaster: true, width: 500, height: 250 },
+            { id: "cover-format", width: 400, height: 200, layers: [coverLayer] },
+            { id: "contain-format", width: 400, height: 300, layers: [containLayer] },
+        ];
+
+        const { plan } = computeGridUnionOutpaintPlan({
+            masterLayer: master,
+            masterArtboard: { width: 500, height: 250 },
+            formats,
+            sourceSizePx: sourceSize,
+            options: { bleedPx: 0 },
+        });
+
+        expect(plan).toBeTruthy();
+        const coverFit = computeImageFitProps(
+            "cover",
+            sourceSize.width,
+            sourceSize.height,
+            coverLayer.width,
+            coverLayer.height,
+            { focusX: coverLayer.focusX, focusY: coverLayer.focusY },
+        );
+        const coverMappedCrop = mapOutputRectToArtboard(
+            plan!.formatLayerRects!["cover-format"],
+            plan!.outputSizePx,
+            {
+                x: plan!.sourcePlacementPx.x + coverFit.cropX,
+                y: plan!.sourcePlacementPx.y + coverFit.cropY,
+                width: coverFit.cropWidth,
+                height: coverFit.cropHeight,
+            },
+        );
+        expect(coverMappedCrop.x).toBeCloseTo(coverLayer.x, 2);
+        expect(coverMappedCrop.y).toBeCloseTo(coverLayer.y, 2);
+        expect(coverMappedCrop.width).toBeCloseTo(coverLayer.width, 2);
+        expect(coverMappedCrop.height).toBeCloseTo(coverLayer.height, 2);
+
+        const containFit = computeImageFitProps(
+            "contain",
+            sourceSize.width,
+            sourceSize.height,
+            containLayer.width,
+            containLayer.height,
+        );
+        const containMappedSource = mapOutputRectToArtboard(
+            plan!.formatLayerRects!["contain-format"],
+            plan!.outputSizePx,
+            plan!.sourcePlacementPx,
+        );
+        expect(containMappedSource.x).toBeCloseTo(containLayer.x + containFit.drawX, 2);
+        expect(containMappedSource.y).toBeCloseTo(containLayer.y + containFit.drawY, 2);
+        expect(containMappedSource.width).toBeCloseTo(containFit.drawWidth, 2);
+        expect(containMappedSource.height).toBeCloseTo(containFit.drawHeight, 2);
+    });
+
+    it("falls back when a target binding is content-only", () => {
+        const { plan, diagnostics } = computeGridUnionOutpaintPlan({
+            masterLayer: { ...MASTER, objectFit: "fill" },
+            masterArtboard: { width: 1192, height: 300 },
+            formats: [{
+                id: "content-resize",
+                width: 360,
+                height: 360,
+                layers: [
+                    { id: "content-image", slotId: "image-primary", x: 0, y: 0, width: 360, height: 360, objectFit: "fill" },
+                ],
+                layerBindings: [{
+                    masterLayerId: "master-image",
+                    targetLayerId: "content-image",
+                    syncContent: true,
+                    syncStyle: false,
+                    syncSize: false,
+                    syncPosition: false,
+                    imageSyncMode: "content",
+                }],
+            }],
+            sourceSizePx: { width: 1192, height: 300 },
+            options: { bleedPx: 0 },
+        });
+
+        expect(plan).toBeNull();
+        expect(diagnostics).toContainEqual(expect.objectContaining({ code: "content-sync-skipped" }));
+        expect(diagnostics).toContainEqual(expect.objectContaining({ code: "grid-union-fallback" }));
     });
 });
 

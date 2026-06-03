@@ -2,6 +2,15 @@ import type { ImageLayer } from "@/types";
 import { persistImageToS3 } from "@/utils/imageUpload";
 import { computeFeatherMaskData } from "@/utils/imageComposite";
 import { computeStudioOutpaintRasterPlan } from "@/utils/studioOutpaintSource";
+import {
+    fallbackStudioBriaPromptEnhancement,
+    sanitizeStudioBriaEnhancedPrompt,
+    sanitizeStudioBriaPromptText,
+    STUDIO_BRIA_PROMPT_ENHANCEMENT_FALLBACK,
+    type StudioBriaPromptEnhancement,
+} from "@/lib/studioBriaPromptEnhancement";
+
+export type { StudioBriaPromptEnhancement } from "@/lib/studioBriaPromptEnhancement";
 
 export interface StudioBriaPadding {
     top: number;
@@ -34,6 +43,7 @@ export interface StudioBriaOutpaintResult {
     src: string;
     model: string;
     seed?: number;
+    promptEnhancement: StudioBriaPromptEnhancement;
     pixelPadding: StudioBriaPadding;
     sourceSize: { width: number; height: number };
     canvasSize: { width: number; height: number };
@@ -44,6 +54,8 @@ export type StudioBriaOutpaintStage =
     | "source-persist-done"
     | "source-rasterized"
     | "prepared-source-persisted"
+    | "prompt-enhance-start"
+    | "prompt-enhance-done"
     | "outpaint-api-start"
     | "outpaint-api-done"
     | "composite-start"
@@ -54,6 +66,7 @@ export interface RunStudioBriaOutpaintParams {
     layer: ImageLayer;
     canvasPadding: StudioBriaPadding;
     prompt?: string;
+    promptEnhancement?: StudioBriaPromptEnhancement;
     seed?: number;
     projectId: string;
     onProgress?: (stage: StudioBriaOutpaintStage, info?: Record<string, unknown>) => void;
@@ -78,20 +91,15 @@ function loadImage(src: string): Promise<HTMLImageElement> {
     });
 }
 
-function sanitizeBriaPromptText(value: string | undefined): string {
-    if (!value) return "";
-    return value
-        .replace(/[^\x20-\x7E]+/g, " ")
-        .replace(/[^\w\s.,;:!?'"()/-]+/g, " ")
-        .replace(/\s+/g, " ")
-        .trim()
-        .slice(0, 600);
-}
-
-export function buildStudioBriaPrompts(userPrompt?: string): StudioBriaPrompts {
-    const cleaned = sanitizeBriaPromptText(userPrompt);
+export function buildStudioBriaPrompts(
+    userPrompt?: string,
+    enhancement?: StudioBriaPromptEnhancement,
+): StudioBriaPrompts {
+    const cleaned = sanitizeStudioBriaPromptText(userPrompt);
+    const scenePrompt = sanitizeStudioBriaEnhancedPrompt(enhancement?.prompt)
+        || STUDIO_BRIA_PROMPT_ENHANCEMENT_FALLBACK;
     return {
-        prompt: `${STUDIO_BRIA_POSITIVE_PROMPT} User context/style hint: ${cleaned || "Fill seamlessly"}`,
+        prompt: `${STUDIO_BRIA_POSITIVE_PROMPT} Scene prompt: ${scenePrompt}. User context/style hint: ${cleaned || STUDIO_BRIA_PROMPT_ENHANCEMENT_FALLBACK}`,
         negativePrompt: STUDIO_BRIA_NEGATIVE_PROMPT,
     };
 }
@@ -402,6 +410,41 @@ async function persistRequiredStudioBriaImage(
     );
 }
 
+async function requestStudioBriaPromptEnhancement(
+    imageUrl: string,
+    userPrompt?: string,
+): Promise<StudioBriaPromptEnhancement> {
+    try {
+        const response = await fetch("/api/ai/studio-bria-prompt-enhance", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                imageUrl,
+                prompt: userPrompt,
+            }),
+        });
+        if (!response.ok) {
+            throw new Error(`Prompt enhancement failed (${response.status})`);
+        }
+        const data = await response.json() as {
+            enhancement?: Partial<StudioBriaPromptEnhancement>;
+            error?: string;
+        };
+        if (data.error) throw new Error(data.error);
+        const raw = data.enhancement;
+        const prompt = sanitizeStudioBriaEnhancedPrompt(raw?.prompt);
+        if (!prompt) throw new Error("Prompt enhancement returned empty prompt");
+        return {
+            prompt,
+            provider: raw?.provider === "fal-vision" ? "fal-vision" : "fallback",
+            model: typeof raw?.model === "string" ? raw.model : undefined,
+        };
+    } catch (error) {
+        console.error("[StudioBriaOutpaint] Prompt enhancement fallback:", error);
+        return fallbackStudioBriaPromptEnhancement();
+    }
+}
+
 export async function runStudioBriaOutpaint(
     params: RunStudioBriaOutpaintParams,
 ): Promise<StudioBriaOutpaintResult> {
@@ -452,7 +495,25 @@ export async function runStudioBriaOutpaint(
         sourceHost: safeHost(requestSourceUrl),
     });
 
-    const prompts = buildStudioBriaPrompts(params.prompt);
+    let promptEnhancement = params.promptEnhancement;
+    if (promptEnhancement) {
+        params.onProgress?.("prompt-enhance-done", {
+            provider: promptEnhancement.provider,
+            model: promptEnhancement.model,
+            reused: true,
+        });
+    } else {
+        params.onProgress?.("prompt-enhance-start", {
+            sourceHost: safeHost(requestSourceUrl),
+        });
+        promptEnhancement = await requestStudioBriaPromptEnhancement(requestSourceUrl, params.prompt);
+        params.onProgress?.("prompt-enhance-done", {
+            provider: promptEnhancement.provider,
+            model: promptEnhancement.model,
+        });
+    }
+
+    const prompts = buildStudioBriaPrompts(params.prompt, promptEnhancement);
     params.onProgress?.("outpaint-api-start", {
         canvasSize: requestGeometry.canvasSize,
         sourceSize: requestGeometry.sourceSize,
@@ -503,6 +564,7 @@ export async function runStudioBriaOutpaint(
         src: persistedCompositedSrc,
         model: typeof data.model === "string" ? data.model : "bria-expand",
         seed: typeof data.seed === "number" ? data.seed : undefined,
+        promptEnhancement,
         pixelPadding: nativeGeometry.pixelPadding,
         sourceSize: nativeGeometry.sourceSize,
         canvasSize: nativeGeometry.canvasSize,

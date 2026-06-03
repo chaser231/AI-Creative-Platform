@@ -626,6 +626,7 @@ export function WizardFlow({
                         resizeLayers: resize.layerSnapshot,
                         resizeBindings: resize.layerBindings,
                         resizeArtboard: { width: resize.width, height: resize.height },
+                        resizeFormatId: resize.id,
                         masterArtboard,
                         overrides: layerGeometryOverrides,
                         imageViewOverrides,
@@ -636,6 +637,7 @@ export function WizardFlow({
                 dataAny.layers = projectExpansionToResize({
                     resizeLayers: dataAny.layers,
                     resizeArtboard: masterArtboard,
+                    resizeFormatId: masterResize?.id,
                     masterArtboard,
                     overrides: layerGeometryOverrides,
                     imageViewOverrides,

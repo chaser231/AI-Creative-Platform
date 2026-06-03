@@ -5,6 +5,9 @@ import {
     buildFalOutpaintMaskPixels,
     chooseOutpaintObjectFitForRect,
     computeFalOutpaintMaskPixelAt,
+    computeGptOutputCropPx,
+    computeOpenAIOutpaintMaskPixelAt,
+    computeSourceFeatherAlphaAt,
     computeTransparentPaddedInputAlphaAt,
     computeUniformContainRect,
     outpaintWithGptImage2PackPlan,
@@ -22,6 +25,7 @@ interface DrawCall {
     canvas: FakeCanvas;
     image: unknown;
     args: unknown[];
+    imageSmoothingEnabled: boolean;
 }
 
 const drawCalls: DrawCall[] = [];
@@ -47,11 +51,17 @@ class FakeCanvasContext {
     imageSmoothingQuality: ImageSmoothingQuality = "low";
     filter = "none";
     globalAlpha = 1;
+    globalCompositeOperation: GlobalCompositeOperation = "source-over";
 
     constructor(readonly canvas: FakeCanvas) {}
 
     drawImage(image: unknown, ...args: unknown[]) {
-        drawCalls.push({ canvas: this.canvas, image, args });
+        drawCalls.push({
+            canvas: this.canvas,
+            image,
+            args,
+            imageSmoothingEnabled: this.imageSmoothingEnabled,
+        });
     }
 
     createImageData(width: number, height: number): ImageData {
@@ -171,6 +181,21 @@ describe("fal GPT Image 2 outpaint request helpers", () => {
         });
     });
 
+    it("builds an OpenAI alpha mask where padding is transparent/editable and source is opaque/preserved", () => {
+        expect(computeOpenAIOutpaintMaskPixelAt(0, 60, sourceRect)).toEqual({
+            r: 255,
+            g: 255,
+            b: 255,
+            a: 0,
+        });
+        expect(computeOpenAIOutpaintMaskPixelAt(60, 60, sourceRect)).toEqual({
+            r: 0,
+            g: 0,
+            b: 0,
+            a: 255,
+        });
+    });
+
     it("builds fal mask pixels with the requested dimensions", () => {
         const pixels = buildFalOutpaintMaskPixels({ width: 13, height: 7 }, sourceRect);
 
@@ -201,6 +226,18 @@ describe("fal GPT Image 2 outpaint request helpers", () => {
         expect(px(50, 90)).toBe(0); // inside source → preserved
         expect(px(100, 50)).toBe(255); // above the source rect → editable
         expect(px(180, 90)).toBe(255); // right of the source rect → editable
+    });
+
+    it("emits alpha-mode mask pixels for Studio/OpenAI outpaint", () => {
+        const size = { width: 200, height: 120 };
+        const asymmetric = { x: 10, y: 80, width: 150, height: 30 };
+        const pixels = buildFalOutpaintMaskPixels(size, asymmetric, "alpha");
+
+        const alpha = (x: number, y: number) => pixels.data[(y * size.width + x) * 4 + 3];
+        expect(alpha(0, 0)).toBe(0); // top-left padding → editable
+        expect(alpha(50, 90)).toBe(255); // inside source → preserved
+        expect(alpha(100, 50)).toBe(0); // above the source rect → editable
+        expect(alpha(180, 90)).toBe(0); // right of the source rect → editable
     });
 
     it("uses transparent padding for the default GPT input canvas", () => {
@@ -244,12 +281,98 @@ describe("buildGptImage2ManualOutpaintPlan", () => {
     });
 });
 
+describe("computeGptOutputCropPx", () => {
+    it("keeps legacy crop behavior by default", () => {
+        const result = computeGptOutputCropPx({
+            requestSizePx: { width: 100, height: 50 },
+            gptSizePx: { width: 200, height: 100 },
+            requestOutputCropPx: { x: 10, y: 5, width: 80, height: 40 },
+            requestSourcePlacementPx: { x: 13, y: 10, width: 49, height: 24 },
+            outputSizePx: { width: 80, height: 40 },
+            sourcePlacementPx: { x: 10, y: 8, width: 40, height: 20 },
+        });
+
+        expect(result.alignment).toBe("legacy");
+        expect(result.crop).toEqual({ x: 20, y: 10, width: 160, height: 80 });
+    });
+
+    it("anchors the GPT crop so the request source rect maps back to the final source placement", () => {
+        const result = computeGptOutputCropPx({
+            cropAlignment: "source-anchor",
+            requestSizePx: { width: 100, height: 50 },
+            gptSizePx: { width: 200, height: 100 },
+            requestOutputCropPx: { x: 10, y: 5, width: 80, height: 40 },
+            requestSourcePlacementPx: { x: 13, y: 10, width: 49, height: 24 },
+            outputSizePx: { width: 80, height: 40 },
+            sourcePlacementPx: { x: 10, y: 8, width: 40, height: 20 },
+        });
+
+        expect(result.alignment).toBe("source-anchor");
+        const sourceRectInGpt = { x: 13 * 2, y: 10 * 2, width: 49 * 2, height: 24 * 2 };
+        const mapped = {
+            x: (sourceRectInGpt.x - result.crop.x) * (80 / result.crop.width),
+            y: (sourceRectInGpt.y - result.crop.y) * (40 / result.crop.height),
+            width: sourceRectInGpt.width * (80 / result.crop.width),
+            height: sourceRectInGpt.height * (40 / result.crop.height),
+        };
+        expect(mapped.x).toBeCloseTo(10, 0);
+        expect(mapped.y).toBeCloseTo(8, 0);
+        expect(mapped.width).toBeCloseTo(40, 0);
+        expect(mapped.height).toBeCloseTo(20, 0);
+    });
+
+    it("falls back to legacy when source-anchor crop would exceed the GPT bitmap", () => {
+        const result = computeGptOutputCropPx({
+            cropAlignment: "source-anchor",
+            requestSizePx: { width: 100, height: 50 },
+            gptSizePx: { width: 200, height: 100 },
+            requestOutputCropPx: { x: 10, y: 5, width: 80, height: 40 },
+            requestSourcePlacementPx: { x: 15, y: 11, width: 50, height: 25 },
+            outputSizePx: { width: 80, height: 40 },
+            sourcePlacementPx: { x: 10, y: 8, width: 40, height: 20 },
+        });
+
+        expect(result.alignment).toBe("legacy");
+        expect(result.crop).toEqual({ x: 20, y: 10, width: 160, height: 80 });
+    });
+});
+
+describe("computeSourceFeatherAlphaAt", () => {
+    it("keeps the source core fully opaque", () => {
+        expect(computeSourceFeatherAlphaAt(
+            40, 20,
+            { width: 80, height: 40 },
+            { top: 8, right: 30, bottom: 12, left: 10 },
+            16,
+        )).toBe(255);
+    });
+
+    it("fades only edges adjacent to generated padding", () => {
+        const size = { width: 80, height: 40 };
+        const padding = { top: 0, right: 30, bottom: 0, left: 10 };
+
+        expect(computeSourceFeatherAlphaAt(0, 20, size, padding, 16)).toBe(0);
+        expect(computeSourceFeatherAlphaAt(8, 20, size, padding, 16)).toBeGreaterThan(0);
+        expect(computeSourceFeatherAlphaAt(8, 20, size, padding, 16)).toBeLessThan(255);
+        expect(computeSourceFeatherAlphaAt(79, 20, size, padding, 16)).toBe(0);
+    });
+
+    it("does not fade a side with no generated padding", () => {
+        expect(computeSourceFeatherAlphaAt(
+            0, 20,
+            { width: 80, height: 40 },
+            { top: 0, right: 30, bottom: 0, left: 0 },
+            16,
+        )).toBe(255);
+    });
+});
+
 describe("outpaintWithGptImage2PackPlan", () => {
     beforeEach(() => {
         installOutpaintDomMocks();
     });
 
-    it("delivers the cropped GPT bitmap once without re-pasting the source into the final canvas", async () => {
+    it("keeps pack/default behavior model-preserved unless hard-composite is requested", async () => {
         const plan: PackOutpaintPlan = {
             canvasPadding: { top: 8, right: 30, bottom: 12, left: 10 },
             nextMasterRect: { x: -10, y: -8, width: 80, height: 40 },
@@ -277,6 +400,113 @@ describe("outpaintWithGptImage2PackPlan", () => {
             0, 0, 80, 40,
         ]);
         expect(finalDraws.some((call) => (call.image as FakeImage).src === "source://image")).toBe(false);
+        expect(imageUploadMocks.uploadForAI.mock.calls.slice(0, 2).map(([src]) => src)).toEqual([
+            "data:fake-canvas/100x50",
+            "data:fake-canvas/100x50",
+        ]);
+        expect(result).toMatchObject({
+            src: "s3:data:fake-canvas/80x40",
+            outputSizePx: { width: 80, height: 40 },
+        });
+    });
+
+    it("hard-composites the original source back into the Studio manual outpaint rect", async () => {
+        vi.stubGlobal("window", {
+            localStorage: {
+                getItem: vi.fn(() => null),
+            },
+        });
+        const plan: PackOutpaintPlan = {
+            canvasPadding: { top: 8, right: 30, bottom: 12, left: 10 },
+            nextMasterRect: { x: -10, y: -8, width: 80, height: 40 },
+            outputSizePx: { width: 80, height: 40 },
+            requestSizePx: { width: 100, height: 50 },
+            sourcePlacementPx: { x: 10, y: 8, width: 40, height: 20 },
+            requestSourcePlacementPx: { x: 15, y: 11, width: 50, height: 25 },
+            requestOutputCropPx: { x: 10, y: 5, width: 80, height: 40 },
+            diagnostics: [],
+        };
+
+        const result = await outpaintWithGptImage2PackPlan({
+            imageSrc: "source://image",
+            plan,
+            projectId: "project-1",
+            sourcePreservation: "hard-composite",
+            paddingContext: "transparent",
+            maskMode: "alpha",
+        });
+
+        const finalCanvas = canvases.find((canvas) => canvas.width === 80 && canvas.height === 40);
+        expect(finalCanvas).toBeDefined();
+        const finalDraws = drawCalls.filter((call) => call.canvas === finalCanvas);
+        expect(finalDraws).toHaveLength(2);
+        expect((finalDraws[0].image as FakeImage).src).toBe("gpt://persisted");
+        expect(finalDraws[0].args).toEqual([
+            20, 10, 160, 80,
+            0, 0, 80, 40,
+        ]);
+        expect((finalDraws[1].image as FakeImage).src).toBe("source://image");
+        expect(finalDraws[1].args).toEqual([
+            0, 0, 40, 20,
+            10, 8, 40, 20,
+        ]);
+        expect(finalDraws[1].imageSmoothingEnabled).toBe(false);
+
+        const requestDraws = drawCalls.filter((call) => call.canvas.width === 100 && call.canvas.height === 50);
+        expect(requestDraws).toHaveLength(1);
+        expect((requestDraws[0].image as FakeImage).src).toBe("source://image");
+        expect(imageUploadMocks.uploadForAI.mock.calls.slice(0, 2).map(([src]) => src)).toEqual([
+            "data:fake-canvas/100x50",
+            "data:fake-canvas/100x50",
+        ]);
+        expect(result).toMatchObject({
+            src: "s3:data:fake-canvas/80x40",
+            outputSizePx: { width: 80, height: 40 },
+        });
+    });
+
+    it("uses source-anchor crop and a feathered source overlay for Studio single-pass outpaint", async () => {
+        vi.stubGlobal("window", {
+            localStorage: {
+                getItem: vi.fn(() => null),
+            },
+        });
+        const plan: PackOutpaintPlan = {
+            canvasPadding: { top: 8, right: 30, bottom: 12, left: 10 },
+            nextMasterRect: { x: -10, y: -8, width: 80, height: 40 },
+            outputSizePx: { width: 80, height: 40 },
+            requestSizePx: { width: 100, height: 50 },
+            sourcePlacementPx: { x: 10, y: 8, width: 40, height: 20 },
+            requestSourcePlacementPx: { x: 13, y: 10, width: 49, height: 24 },
+            requestOutputCropPx: { x: 10, y: 5, width: 80, height: 40 },
+            diagnostics: [],
+        };
+
+        const result = await outpaintWithGptImage2PackPlan({
+            imageSrc: "source://image",
+            plan,
+            projectId: "project-1",
+            sourcePreservation: "hard-composite",
+            paddingContext: "transparent",
+            maskMode: "alpha",
+            cropAlignment: "source-anchor",
+            sourceFeatherPx: 16,
+        });
+
+        expect(fetch).toHaveBeenCalledTimes(1);
+        const finalCanvas = canvases.find((canvas) => canvas.width === 80 && canvas.height === 40);
+        expect(finalCanvas).toBeDefined();
+        const finalDraws = drawCalls.filter((call) => call.canvas === finalCanvas);
+        expect(finalDraws).toHaveLength(2);
+        expect((finalDraws[0].image as FakeImage).src).toBe("gpt://persisted");
+        expect(finalDraws[0].args).toEqual([
+            2, 1, 196, 96,
+            0, 0, 80, 40,
+        ]);
+        expect(finalDraws[1].image).toBeInstanceOf(FakeCanvas);
+        expect((finalDraws[1].image as FakeCanvas).width).toBe(40);
+        expect((finalDraws[1].image as FakeCanvas).height).toBe(20);
+        expect(finalDraws[1].args).toEqual([10, 8]);
         expect(result).toMatchObject({
             src: "s3:data:fake-canvas/80x40",
             outputSizePx: { width: 80, height: 40 },

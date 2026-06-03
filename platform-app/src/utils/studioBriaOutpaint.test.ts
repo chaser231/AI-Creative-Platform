@@ -167,7 +167,11 @@ describe("studio Bria geometry", () => {
             { width: 320, height: 180 },
             { top: 20, right: 30, bottom: 40, left: 10 },
         );
-        const prompts = buildStudioBriaPrompts("extend the marble table");
+        const prompts = buildStudioBriaPrompts("extend the marble table", {
+            prompt: "Clean premium studio background, soft window light, polished marble surface, shallow depth of field, generous negative space.",
+            provider: "fal-vision",
+            model: "google/gemini-2.5-flash",
+        });
         const body = buildStudioBriaImageEditBody({
             imageUrl: "https://storage.yandexcloud.net/acp/source.png",
             projectId: "project-1",
@@ -184,11 +188,12 @@ describe("studio Bria geometry", () => {
             originalSize: [320, 180],
             originalLocation: [10, 20],
             expandPadding: { top: 20, right: 30, bottom: 40, left: 10 },
-            prompt: expect.stringContaining("User context/style hint: extend the marble table"),
             negativePrompt: "",
             seed: 77,
             disableFallback: true,
         });
+        expect(String(body.prompt)).toContain("Scene prompt: Clean premium studio background");
+        expect(String(body.prompt)).toContain("User context/style hint: extend the marble table");
         expect(body).not.toHaveProperty("aspectRatio");
     });
 
@@ -224,8 +229,17 @@ describe("studio Bria prompts and feather", () => {
 
         const nonEnglish = buildStudioBriaPrompts("расширь фон ✨");
         expect(nonEnglish.prompt).not.toContain("расширь");
+        expect(nonEnglish.prompt).not.toMatch(/[а-яА-ЯёЁ]/);
         expect(nonEnglish.prompt).toContain("Extend only the background");
         expect(nonEnglish.prompt).toContain("User context/style hint: Fill seamlessly");
+
+        const enhanced = buildStudioBriaPrompts("расширь фон ✨", {
+            prompt: "Soft editorial studio background, neutral wall, diffused daylight, matte surface, quiet negative space.",
+            provider: "fal-vision",
+            model: "google/gemini-2.5-flash",
+        });
+        expect(enhanced.prompt).toContain("Scene prompt: Soft editorial studio background");
+        expect(enhanced.prompt).not.toMatch(/[а-яА-ЯёЁ]/);
     });
 
     it("uses a moderate feather and only fades sides that had padding", () => {
@@ -345,9 +359,22 @@ describe("runStudioBriaOutpaint", () => {
         });
 
         let requestBody: Record<string, unknown> | null = null;
-        const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
+        const fetchMock = vi.fn(async (url: string, init: RequestInit) => {
+            if (url === "/api/ai/studio-bria-prompt-enhance") {
+                return {
+                    ok: true,
+                    json: async () => ({
+                        enhancement: {
+                            prompt: "Clean white commercial studio background, soft diffused light, matte surface, shallow depth of field.",
+                            provider: "fal-vision",
+                            model: "google/gemini-2.5-flash",
+                        },
+                    }),
+                } as Response;
+            }
             requestBody = JSON.parse(init.body as string);
             return {
+                ok: true,
                 json: async () => ({
                     content: "https://fal.media/expanded.png",
                     model: "bria-expand",
@@ -364,7 +391,9 @@ describe("runStudioBriaOutpaint", () => {
             projectId: "project-1",
         });
 
-        expect(requestBody).toMatchObject({
+        expect(requestBody).not.toBeNull();
+        const imageEditBody = requestBody as unknown as Record<string, unknown>;
+        expect(imageEditBody).toMatchObject({
             canvasSize: [4998, 357],
             originalSize: [714, 357],
             originalLocation: [2142, 0],
@@ -372,10 +401,17 @@ describe("runStudioBriaOutpaint", () => {
             negativePrompt: "",
             disableFallback: true,
         });
+        expect(String(imageEditBody.prompt)).toContain("Scene prompt: Clean white commercial studio background");
+        expect(String(imageEditBody.prompt)).toContain("User context/style hint: Fill seamlessly");
         expect(result.sourceSize).toEqual({ width: 1000, height: 500 });
         expect(result.canvasSize).toEqual({ width: 7000, height: 500 });
         expect(result.src).toBe("https://storage.yandexcloud.net/acp/7000x500.png");
         expect(result.seed).toBe(123);
+        expect(result.promptEnhancement).toEqual({
+            prompt: "Clean white commercial studio background, soft diffused light, matte surface, shallow depth of field.",
+            provider: "fal-vision",
+            model: "google/gemini-2.5-flash",
+        });
 
         const finalDraws = drawCalls
             .filter((call) => call.canvas.width === 7000 && call.canvas.height === 500)
@@ -407,12 +443,27 @@ describe("runStudioBriaOutpaint", () => {
             }
             return src;
         });
-        vi.stubGlobal("fetch", vi.fn(async () => ({
-            json: async () => ({
-                content: "https://fal.media/expanded.png",
-                model: "bria-expand",
-            }),
-        } as Response)));
+        vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+            if (url === "/api/ai/studio-bria-prompt-enhance") {
+                return {
+                    ok: true,
+                    json: async () => ({
+                        enhancement: {
+                            prompt: "Soft neutral studio wall, natural side light, smooth surface, shallow focus.",
+                            provider: "fal-vision",
+                            model: "google/gemini-2.5-flash",
+                        },
+                    }),
+                } as Response;
+            }
+            return {
+                ok: true,
+                json: async () => ({
+                    content: "https://fal.media/expanded.png",
+                    model: "bria-expand",
+                }),
+            } as Response;
+        }));
 
         const result = await runStudioBriaOutpaint({
             imageSrc: "source://image",
@@ -428,5 +479,63 @@ describe("runStudioBriaOutpaint", () => {
             .map((call) => call.args);
         expect(finalDraws).toContainEqual([0, 0, 1200, 500]);
         expect(finalDraws).toContainEqual([100, 0]);
+    });
+
+    it("reuses a supplied enhanced prompt snapshot without calling the enhancer route", async () => {
+        installDomMocks();
+        imageUploadMocks.persistImageToS3.mockImplementation(async (src: string) => {
+            if (src === "source://image") {
+                const url = "https://storage.yandexcloud.net/acp/source.png";
+                imageSizes.set(url, { width: 1000, height: 500 });
+                return url;
+            }
+            if (src === "https://fal.media/expanded.png") {
+                const url = "https://storage.yandexcloud.net/acp/expanded.png";
+                imageSizes.set(url, { width: 1200, height: 500 });
+                return url;
+            }
+            if (src.startsWith("data:fake-canvas/")) {
+                const url = `https://storage.yandexcloud.net/acp/${src.replace(/[^\d+x]/g, "")}.png`;
+                registerFakeCanvasUrl(url, src);
+                return url;
+            }
+            return src;
+        });
+
+        let requestBody: Record<string, unknown> | null = null;
+        const fetchMock = vi.fn(async (url: string, init: RequestInit) => {
+            if (url === "/api/ai/studio-bria-prompt-enhance") {
+                throw new Error("enhancer route should not be called for retry snapshots");
+            }
+            requestBody = JSON.parse(init.body as string);
+            return {
+                ok: true,
+                json: async () => ({
+                    content: "https://fal.media/expanded.png",
+                    model: "bria-expand",
+                }),
+            } as Response;
+        });
+        vi.stubGlobal("fetch", fetchMock);
+
+        const result = await runStudioBriaOutpaint({
+            imageSrc: "source://image",
+            layer: layer({ width: 1000, height: 500, objectFit: "cover" }),
+            canvasPadding: { top: 0, right: 100, bottom: 0, left: 100 },
+            prompt: "continue the premium tabletop",
+            promptEnhancement: {
+                prompt: "Premium tabletop scene, warm softbox lighting, matte wall, polished surface, shallow depth of field.",
+                provider: "fal-vision",
+                model: "google/gemini-2.5-flash",
+            },
+            projectId: "project-1",
+        });
+
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        expect(requestBody).not.toBeNull();
+        const imageEditBody = requestBody as unknown as Record<string, unknown>;
+        expect(String(imageEditBody.prompt)).toContain("Scene prompt: Premium tabletop scene");
+        expect(String(imageEditBody.prompt)).toContain("User context/style hint: continue the premium tabletop");
+        expect(result.promptEnhancement.provider).toBe("fal-vision");
     });
 });
