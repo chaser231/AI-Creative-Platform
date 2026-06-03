@@ -93,9 +93,11 @@ interface AIChatPanelProps {
     onAddMessages?: (msgs: AIChatMessage[]) => void;
     /** Current project ID */
     projectId?: string;
+    /** Right offset in pixels, used when another studio rail occupies the edge. */
+    rightOffset?: number;
 }
 
-export function AIChatPanel({ open, onClose, messages, onAddMessages, projectId }: AIChatPanelProps) {
+export function AIChatPanel({ open, onClose, messages, onAddMessages, projectId, rightOffset = 12 }: AIChatPanelProps) {
     const { addTextLayer, addImageLayer, layers, updateLayer, canvasWidth, canvasHeight } = useCanvasStore(useShallow((s) => ({
         addTextLayer: s.addTextLayer, addImageLayer: s.addImageLayer,
         layers: s.layers, updateLayer: s.updateLayer,
@@ -578,7 +580,10 @@ export function AIChatPanel({ open, onClose, messages, onAddMessages, projectId 
     if (!open) return null;
 
     return (
-        <div className="absolute top-3 bottom-3 right-3 w-[360px] bg-bg-surface border border-border-primary rounded-[var(--radius-xl)] shadow-xl z-40 flex flex-col overflow-hidden animate-in slide-in-from-right-4 duration-300">
+        <div
+            className="absolute top-3 bottom-3 w-[360px] bg-bg-surface border border-border-primary rounded-[var(--radius-xl)] shadow-xl z-40 flex flex-col overflow-hidden animate-in slide-in-from-right-4 duration-300"
+            style={{ right: rightOffset }}
+        >
             {/* Header */}
             <div className="p-4 border-b border-border-primary flex justify-between items-center bg-bg-secondary/50">
                 <div className="flex items-center gap-2">
@@ -940,4 +945,3 @@ export function AIChatPanel({ open, onClose, messages, onAddMessages, projectId 
         </div>
     );
 }
-

@@ -8,8 +8,9 @@ import { cloneLayerTree } from "@/utils/cloneLayerTree";
 import { BindToMasterModal } from "./BindToMasterModal";
 import { ContextMenu } from "./ContextMenu";
 import type { ContextMenuEntry } from "./ContextMenu";
+import { cn } from "@/lib/cn";
 
-export function ResizePanel() {
+export function ResizePanel({ className }: { className?: string } = {}) {
     const {
         resizes,
         activeResizeId,
@@ -24,7 +25,6 @@ export function ResizePanel() {
         masterComponents,
         promoteFormatToMaster,
         demoteFormatFromMaster,
-        unbindFormat,
     } = useCanvasStore(useShallow((s) => ({
         resizes: s.resizes, activeResizeId: s.activeResizeId,
         setActiveResize: s.setActiveResize, addResize: s.addResize,
@@ -36,7 +36,6 @@ export function ResizePanel() {
         masterComponents: s.masterComponents,
         promoteFormatToMaster: s.promoteFormatToMaster,
         demoteFormatFromMaster: s.demoteFormatFromMaster,
-        unbindFormat: s.unbindFormat,
     })));
     const [showAddForm, setShowAddForm] = useState(false);
     const [customName, setCustomName] = useState("");
@@ -170,7 +169,7 @@ export function ResizePanel() {
     };
 
     return (
-        <div className="w-[240px] min-w-[240px] h-full border border-border-primary rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)] flex flex-col overflow-hidden backdrop-blur-xl bg-bg-surface/85">
+        <div className={cn("w-[240px] min-w-[240px] h-full border border-border-primary rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)] flex flex-col overflow-hidden backdrop-blur-xl bg-bg-surface/85", className)}>
             {/* Header */}
             <div className="p-4 border-b border-border-primary flex items-center justify-between">
                 <h3 className="text-[11px] font-medium text-text-tertiary uppercase tracking-widest">

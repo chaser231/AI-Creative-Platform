@@ -45,12 +45,24 @@ import { useWorkspace } from "@/providers/WorkspaceProvider";
 import { useCreateBannerFromAsset } from "@/hooks/useCreateBannerFromAsset";
 import { useProjectLibrary } from "@/hooks/useProjectLibrary";
 import type { WorkflowScenarioRunResult } from "@/hooks/workflow/useWorkflowScenarioRun";
+import {
+    STUDIO_LEFT_TOP_DEFAULT_RATIO,
+    STUDIO_LEFT_TOP_MIN_HEIGHT,
+    STUDIO_LEFT_LAYERS_MIN_HEIGHT,
+    STUDIO_LEFT_TOP_RATIO_STORAGE_KEY,
+    studioLeftTopRatioFromPointer,
+} from "@/components/editor/studioPanelLayout";
 
 // Dynamic import for Canvas (Konva needs client-only, no SSR)
 const Canvas = dynamic(
     () => import("@/components/editor/canvas").then((mod) => mod.Canvas),
     { ssr: false }
 );
+
+const STUDIO_LEFT_RAIL_WIDTH = 240;
+const STUDIO_RIGHT_RAIL_WIDTH = 340;
+const STUDIO_PANEL_GAP = 12;
+const STUDIO_AI_CHAT_RIGHT_OFFSET = STUDIO_RIGHT_RAIL_WIDTH + STUDIO_PANEL_GAP * 2;
 
 interface EditorPageProps {
     params: Promise<{ id: string }>;
@@ -986,13 +998,16 @@ export default function EditorPage({ params }: EditorPageProps) {
                     {/* Canvas fills the entire area */}
                     <Canvas stageRef={stageRef} projectId={isTemplateMode ? undefined : id} />
 
-                    {/* Floating Layers Panel — left */}
-                    <div className="absolute top-3 left-3 bottom-3 z-10">
-                        <LayersPanel />
-                    </div>
+                    {/* Floating Formats / Palette + Layers rail — left */}
+                    <StudioLeftRail />
 
-                    {/* Floating Properties Panel — top center (Always visible now) */}
-                    <PropertiesPanel />
+                    {/* Floating Properties Panel — right */}
+                    <div
+                        className="absolute top-3 right-3 bottom-3 z-20"
+                        style={{ width: STUDIO_RIGHT_RAIL_WIDTH }}
+                    >
+                        <PropertiesPanel />
+                    </div>
 
                     <EditorStudioChrome
                         aiPanelOpen={aiPanelOpen}
@@ -1043,17 +1058,14 @@ export default function EditorPage({ params }: EditorPageProps) {
                         messages={aiMessages}
                         onAddMessages={addAiMessages}
                         projectId={id}
+                        rightOffset={STUDIO_AI_CHAT_RIGHT_OFFSET}
                     />
 
-                    {/* Floating Formats / Palette Panel — right */}
-                    <div className="absolute top-3 right-3 bottom-3 z-10 flex gap-3 pointer-events-none">
-                        <div className="pointer-events-auto">
-                            <RightTabs />
-                        </div>
-                    </div>
-
-                    {/* Floating Help/Settings — bottom right (Shifted to left of Format panel) */}
-                    <div className="absolute bottom-3 right-[256px] z-10 flex items-center gap-1">
+                    {/* Floating Help/Settings — bottom right (Shifted to left of Properties panel) */}
+                    <div
+                        className="absolute bottom-3 z-10 flex items-center gap-1"
+                        style={{ right: STUDIO_AI_CHAT_RIGHT_OFFSET }}
+                    >
                         <button
                             onClick={() => setHelpOpen(true)}
                             title="Горячие клавиши"
@@ -1337,9 +1349,77 @@ export default function EditorPage({ params }: EditorPageProps) {
     );
 }
 
-// ─── Right Tabs (Formats / Palette) ─────────────────────────────────────
+// ─── Studio Left Rail (Formats / Palette + Layers) ──────────────────────
 
-function RightTabs() {
+function StudioLeftRail() {
+    const railRef = useRef<HTMLDivElement>(null);
+    const [topRatio, setTopRatio] = useState(() => {
+        if (typeof window === "undefined") return STUDIO_LEFT_TOP_DEFAULT_RATIO;
+        const stored = window.localStorage.getItem(STUDIO_LEFT_TOP_RATIO_STORAGE_KEY);
+        const parsed = stored ? Number(stored) : STUDIO_LEFT_TOP_DEFAULT_RATIO;
+        return Number.isFinite(parsed) ? parsed : STUDIO_LEFT_TOP_DEFAULT_RATIO;
+    });
+
+    useEffect(() => {
+        window.localStorage.setItem(STUDIO_LEFT_TOP_RATIO_STORAGE_KEY, String(topRatio));
+    }, [topRatio]);
+
+    const handleSplitterPointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+        const rail = railRef.current;
+        if (!rail) return;
+
+        event.preventDefault();
+        const rect = rail.getBoundingClientRect();
+        setTopRatio(studioLeftTopRatioFromPointer(event.clientY, rect.top, rect.height));
+
+        const handlePointerMove = (moveEvent: PointerEvent) => {
+            setTopRatio(studioLeftTopRatioFromPointer(moveEvent.clientY, rect.top, rect.height));
+        };
+        const handlePointerUp = () => {
+            window.removeEventListener("pointermove", handlePointerMove);
+            window.removeEventListener("pointerup", handlePointerUp);
+        };
+
+        window.addEventListener("pointermove", handlePointerMove);
+        window.addEventListener("pointerup", handlePointerUp, { once: true });
+    }, []);
+
+    return (
+        <div
+            ref={railRef}
+            className="absolute top-3 left-3 bottom-3 z-10 flex flex-col pointer-events-auto"
+            style={{ width: STUDIO_LEFT_RAIL_WIDTH }}
+        >
+            <div
+                className="min-h-0"
+                style={{
+                    flexBasis: `${topRatio * 100}%`,
+                    minHeight: STUDIO_LEFT_TOP_MIN_HEIGHT,
+                }}
+            >
+                <StudioLeftTopTabs />
+            </div>
+            <div
+                role="separator"
+                aria-orientation="horizontal"
+                aria-label="Изменить высоту панелей форматов и слоев"
+                onPointerDown={handleSplitterPointerDown}
+                className="group relative my-1 h-2 shrink-0 cursor-row-resize"
+            >
+                <div className="absolute left-2 right-2 top-1/2 h-px -translate-y-1/2 bg-border-primary transition-colors group-hover:bg-border-secondary" />
+                <div className="absolute left-1/2 top-1/2 h-1.5 w-9 -translate-x-1/2 -translate-y-1/2 rounded-full border border-border-primary bg-bg-surface shadow-[var(--shadow-sm)] transition-colors group-hover:border-border-secondary" />
+            </div>
+            <div
+                className="min-h-0 flex-1"
+                style={{ minHeight: STUDIO_LEFT_LAYERS_MIN_HEIGHT }}
+            >
+                <LayersPanel className="w-full min-w-0" />
+            </div>
+        </div>
+    );
+}
+
+function StudioLeftTopTabs() {
     const [tabRaw, setTab] = useState<"formats" | "palette">("formats");
 
     return (
@@ -1365,7 +1445,9 @@ function RightTabs() {
                 </button>
             </div>
             <div className="flex-1 min-h-0">
-                {tabRaw === "formats" ? <ResizePanel /> : <SwatchesPanel />}
+                {tabRaw === "formats"
+                    ? <ResizePanel className="w-full min-w-0" />
+                    : <SwatchesPanel className="w-full min-w-0" />}
             </div>
         </div>
     );
