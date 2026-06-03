@@ -74,10 +74,12 @@ export interface AIRequestParams {
     guidanceScale?: number;
     /** Sampler steps override; falls back to LoraSpec.defaultSteps when omitted. */
     numInferenceSteps?: number;
-    /** Negative prompt — only honored by Qwen Image Edit LoRA. */
+    /** Negative prompt — honored by Qwen Image Edit LoRA and Bria Expand. */
     negativePrompt?: string;
     /** Throughput knob; mapped to fal `acceleration` enum. */
     acceleration?: "none" | "regular" | "high";
+    /** Disable provider and sibling-model fallback for exact-model workflows. */
+    disableFallback?: boolean;
 }
 
 export interface AIResponse {
@@ -87,6 +89,8 @@ export interface AIResponse {
     format: "text" | "url" | "base64";
     model: string;
     provider: string;
+    /** Provider seed used for reproducible generations, when the model returns it. */
+    seed?: number;
     /** Actual pixel width of the generated image (when available) */
     width?: number;
     /** Actual pixel height of the generated image (when available) */
@@ -928,6 +932,12 @@ class FalProvider implements AIProviderImplementation {
                 outpaintInput.auto_crop = false;
             } else {
                 if (params.prompt) outpaintInput.prompt = params.prompt;
+                if (modelId === "bria-expand" && params.negativePrompt) {
+                    outpaintInput.negative_prompt = params.negativePrompt;
+                }
+                if (modelId === "bria-expand" && typeof params.seed === "number") {
+                    outpaintInput.seed = params.seed;
+                }
 
                 // Convert expandPadding to canvas_size + original_image_location
                 // NOTE: fal.ai bria/expand requires all pixel values to be integers
@@ -972,7 +982,8 @@ class FalProvider implements AIProviderImplementation {
                 console.log(`[fal.ai] Outpaint returned synchronously`);
                 const imageUrl = submitData.images?.[0]?.url ?? submitData.image?.url;
                 if (!imageUrl) throw new Error("fal.ai outpaint returned no image (sync)");
-                return { content: imageUrl, format: "url" as const, model: modelId, provider: "fal.ai" };
+                const seed = typeof submitData.seed === "number" ? submitData.seed : undefined;
+                return { content: imageUrl, format: "url" as const, model: modelId, provider: "fal.ai", seed };
             }
 
             // Use URLs from fal.ai response (may route to different hosts)
@@ -1040,12 +1051,14 @@ class FalProvider implements AIProviderImplementation {
             // flux-2-pro-outpaint → { images: [{ url }] }.
             const imageUrl = result.images?.[0]?.url ?? result.image?.url;
             if (!imageUrl) throw new Error(`fal.ai outpaint returned no image. Response: ${JSON.stringify(result).slice(0, 300)}`);
+            const seed = typeof result.seed === "number" ? result.seed : undefined;
             
             return {
                 content: imageUrl,
                 format: "url",
                 model: modelId,
                 provider: "fal.ai",
+                seed,
             };
         }
 
@@ -1766,6 +1779,7 @@ export function getProvider(modelId: string): AIProviderImplementation {
 export async function generateWithFallback(params: AIRequestParams): Promise<AIResponse> {
     const modelId = params.model || "nano-banana-2";
     const errors: string[] = [];
+    const disableFallback = params.disableFallback === true;
 
     // Determine provider order. Fal-only models (those with no Replicate
     // slug equivalent) skip the Replicate hop entirely — running them
@@ -1774,26 +1788,39 @@ export async function generateWithFallback(params: AIRequestParams): Promise<AIR
     // flux-2-pro-outpaint).
     const useFalPrimary = FAL_PRIMARY_MODELS.has(modelId) && hasFalSupport(modelId);
     const isFalOnly = FAL_ONLY_MODELS.has(modelId);
-    const providers: { impl: AIProviderImplementation; label: string }[] = isFalOnly
-        ? [{ impl: falProvider, label: "fal.ai" }]
-        : useFalPrimary
-            ? [
-                { impl: falProvider, label: "fal.ai" },
-                { impl: replicate, label: "Replicate" },
-              ]
-            : hasFalSupport(modelId)
-                ? [
-                    { impl: replicate, label: "Replicate" },
-                    { impl: falProvider, label: "fal.ai" },
-                  ]
-                : [
-                    { impl: getProvider(modelId), label: "Replicate" },
-                  ];
+    const hasFalEndpoint = !!FAL_MODEL_MAP[modelId] || !!FAL_MODEL_MAP_INPAINT[modelId];
+    let providers: { impl: AIProviderImplementation; label: string }[];
+    if (disableFallback) {
+        providers = [
+            hasFalEndpoint
+                ? { impl: falProvider, label: "fal.ai" }
+                : { impl: getProvider(modelId), label: "Replicate" },
+        ];
+    } else if (isFalOnly) {
+        providers = [{ impl: falProvider, label: "fal.ai" }];
+    } else if (useFalPrimary) {
+        providers = [
+            { impl: falProvider, label: "fal.ai" },
+            { impl: replicate, label: "Replicate" },
+        ];
+    } else if (hasFalSupport(modelId)) {
+        providers = [
+            { impl: replicate, label: "Replicate" },
+            { impl: falProvider, label: "fal.ai" },
+        ];
+    } else {
+        providers = [{ impl: getProvider(modelId), label: "Replicate" }];
+    }
 
     // ── Step 1: Try each provider with retries for the original model ──
     for (const { impl, label } of providers) {
         try {
-            return await tryWithRetry(impl, params, `${label}/${modelId}`);
+            return await tryWithRetry(
+                impl,
+                params,
+                `${label}/${modelId}`,
+                disableFallback ? 1 : 2,
+            );
         } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : String(err);
             errors.push(`${label}: ${msg}`);
@@ -1805,7 +1832,9 @@ export async function generateWithFallback(params: AIRequestParams): Promise<AIR
     // (or nano variants) can add several minutes on top of an already-slow
     // queue job. Prefer surfacing the primary model error to the user.
     const siblings =
-        params.type === "inpainting" ? undefined : MODEL_FALLBACK_CHAIN[modelId];
+        disableFallback || params.type === "inpainting"
+            ? undefined
+            : MODEL_FALLBACK_CHAIN[modelId];
     if (siblings && siblings.length > 0) {
         for (const siblingId of siblings) {
             console.log(`[Provider] Trying sibling model ${siblingId} instead of ${modelId}...`);

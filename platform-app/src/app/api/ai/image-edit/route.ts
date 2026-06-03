@@ -30,7 +30,8 @@ export async function POST(req: NextRequest) {
         const {
             action, prompt, imageBase64, maskBase64, model, aspectRatio,
             canvasSize, originalSize, originalLocation, referenceImages, projectId,
-            expandPadding, upscaleScale, imageSize, recordMessage = true, scale,
+            expandPadding, upscaleScale, imageSize, recordMessage = true, scale, disableFallback,
+            seed,
             // LoRA-aware models accept these on edit endpoints too
             // (qwen-image-edit-lora, flux-lora/image-to-image).
             loras, guidanceScale, numInferenceSteps, negativePrompt, acceleration,
@@ -197,6 +198,9 @@ export async function POST(req: NextRequest) {
                     originalSize,
                     originalLocation,
                     expandPadding,
+                    negativePrompt,
+                    disableFallback,
+                    seed,
                 });
                 if (result.model) usedModel = result.model;
                 break;
@@ -244,6 +248,7 @@ export async function POST(req: NextRequest) {
                     action,
                     model: result.model,
                     provider: result.provider,
+                    seed: result.seed,
                     requestId,
                 });
             }
@@ -292,6 +297,7 @@ export async function POST(req: NextRequest) {
             action,
             model: result.model,
             provider: result.provider,
+            seed: result.seed,
             requestId,
         });
 

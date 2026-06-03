@@ -170,6 +170,12 @@ export async function uploadExternalUrlToS3(
   const cached = uploadCache.get(cacheKey);
   if (cached) return cached;
 
+  const delaysMs = [0, 500, 1500];
+  let lastErr: unknown;
+  for (const delayMs of delaysMs) {
+    if (delayMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
     try {
         const res = await fetch("/api/upload", {
             method: "POST",
@@ -190,9 +196,11 @@ export async function uploadExternalUrlToS3(
         if (url) uploadCache.set(cacheKey, url);
         return url || null;
     } catch (err) {
-        console.warn("[imageUpload] uploadExternalUrlToS3 failed, falling back to original URL:", err);
-        return null;
+        lastErr = err;
     }
+  }
+  console.error("[imageUpload] uploadExternalUrlToS3 failed, falling back to original URL:", lastErr);
+  return null;
 }
 
 /**

@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Sparkles, Wand2, Image as ImageIcon, Send, MessageCircle, Settings2, Ratio, Type, Grip, CheckCircle2, Circle, X, ChevronDown, Eraser, Paintbrush, Expand, Loader2, Sliders } from "lucide-react";
+import { Sparkles, Wand2, Image as ImageIcon, Send, MessageCircle, Settings2, Ratio, Type, Grip, CheckCircle2, Circle, X, ChevronDown, Eraser, Paintbrush, Expand, Loader2, Sliders, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { ReferenceImageInput, ReferenceImagePreviewTray, getReferenceTrayReserveWidth } from "@/components/ui/ReferenceImageInput";
 import { RefAutocompleteTextarea, type RefAutocompleteTextareaHandle } from "@/components/ui/RefAutocompleteTextarea";
@@ -21,11 +21,8 @@ import type { LoraWeight } from "@/lib/ai-providers";
 import { getImagePresetPromptSuffixForModel, getTextPresetInstruction } from "@/lib/stylePresets";
 import { useStylePresets } from "@/hooks/useStylePresets";
 import { persistImageToS3, uploadForAI, uploadManyForAI } from "@/utils/imageUpload";
-import { outpaintImage } from "@/utils/outpaintPipeline";
-import { buildGptImage2ManualOutpaintPlan, outpaintWithGptImage2PackPlan } from "@/utils/gptImageOutpaint";
-import { getOutpaintModel } from "@/utils/outpaintModel";
-import { mapOutpaintStage, type OutpaintProgressState } from "@/utils/outpaintProgress";
-import { computeStudioOutpaintRasterPlan } from "@/utils/studioOutpaintSource";
+import { type OutpaintProgressState } from "@/utils/outpaintProgress";
+import { runStudioBriaOutpaint, type StudioBriaOutpaintStage } from "@/utils/studioBriaOutpaint";
 import { OutpaintProgressIndicator } from "@/components/ui/OutpaintProgressIndicator";
 import { useProjectLibrary } from "@/hooks/useProjectLibrary";
 import { trpc } from "@/lib/trpc";
@@ -89,49 +86,24 @@ const OUTPAINT_RATIOS = [
     { id: "21:9", label: "21:9" },
 ];
 
-async function prepareStudioOutpaintSource(
-    imageSrc: string,
-    layer: ImageLayer,
-): Promise<{ src: string; width: number; height: number; changed: boolean }> {
-    const img = new window.Image();
-    img.crossOrigin = "anonymous";
-    await new Promise<void>((resolve, reject) => {
-        img.onload = () => resolve();
-        img.onerror = reject;
-        img.src = imageSrc;
-    });
-
-    const naturalWidth = img.naturalWidth || layer.width;
-    const naturalHeight = img.naturalHeight || layer.height;
-    const plan = computeStudioOutpaintRasterPlan(
-        { width: naturalWidth, height: naturalHeight },
-        layer,
-    );
-
-    if (!plan.changed) {
-        return { src: imageSrc, width: naturalWidth, height: naturalHeight, changed: false };
+function mapStudioBriaOutpaintStage(stage: StudioBriaOutpaintStage): OutpaintProgressState {
+    switch (stage) {
+        case "source-persist-start":
+        case "source-persist-done":
+            return { label: "Подготавливаем изображение", percent: 10 };
+        case "source-rasterized":
+            return { label: "Собираем видимый растр слоя", percent: 20 };
+        case "prepared-source-persisted":
+            return { label: "Сохраняем подготовленный растр", percent: 30 };
+        case "outpaint-api-start":
+            return { label: "Расширяем фон через Bria Expand", percent: 45 };
+        case "outpaint-api-done":
+            return { label: "Совмещаем с оригиналом", percent: 85 };
+        case "composite-start":
+            return { label: "Сглаживаем швы", percent: 90 };
+        case "composite-done":
+            return { label: "Готово", percent: 100 };
     }
-
-    const canvas = document.createElement("canvas");
-    canvas.width = plan.canvasWidth;
-    canvas.height = plan.canvasHeight;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) {
-        return { src: imageSrc, width: naturalWidth, height: naturalHeight, changed: false };
-    }
-    ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = "high";
-    ctx.drawImage(
-        img,
-        plan.source.x, plan.source.y, plan.source.width, plan.source.height,
-        plan.dest.x, plan.dest.y, plan.dest.width, plan.dest.height,
-    );
-    return {
-        src: canvas.toDataURL("image/png"),
-        width: plan.canvasWidth,
-        height: plan.canvasHeight,
-        changed: true,
-    };
 }
 
 // Aspect ratios and resolutions are now dynamic per model — see ai-models.ts
@@ -144,6 +116,14 @@ export interface AIPromptBarProps {
     onResult: (result: { type: string; content: string; contents?: string[]; prompt: string; model?: string }) => void;
     /** Project ID for S3 image persistence */
     projectId?: string;
+}
+
+interface StudioOutpaintRetryState {
+    layer: ImageLayer;
+    padding: { top: number; right: number; bottom: number; left: number };
+    prompt: string;
+    rawPrompt: string;
+    promptLabel: string;
 }
 
 const S3_PERSIST_HOST = "storage.yandexcloud.net";
@@ -244,6 +224,7 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
     const [variantsByLayer, setVariantsByLayer] = useState<Record<string, GeneratedImageVariant[]>>({});
     const [selectedGeneratedVariantId, setSelectedGeneratedVariantId] = useState<string | undefined>(undefined);
     const [generatedTargetLayerId, setGeneratedTargetLayerId] = useState<string | null>(null);
+    const [lastOutpaintRetry, setLastOutpaintRetry] = useState<StudioOutpaintRetryState | null>(null);
     const enqueueJob = useGenerationQueueStore((s) => s.enqueue);
     const queueCounts = useProjectQueueCounts(projectId);
     // Outpaint pipeline progress (only set during action === "outpaint";
@@ -408,10 +389,17 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
 
     const activeLayerKey = selectedLayerIds[0] ?? generatedTargetLayerId ?? null;
     const activeVariants = activeLayerKey ? (variantsByLayer[activeLayerKey] ?? []) : [];
+    const canRetryActiveOutpaint = Boolean(
+        activeLayerKey
+        && lastOutpaintRetry
+        && lastOutpaintRetry.layer.id === activeLayerKey
+        && projectId,
+    );
+    const hasActiveVariantLoading = activeVariants.some((v) => (v.status ?? (v.url ? "ready" : "loading")) === "loading");
     const showVariantStrip =
         (activeTab === "image" || activeTab === "edit")
         && activeVariants.length > 0
-        && (activeVariants.length > 1 || activeVariants.some((v) => v.status === "loading"));
+        && (activeVariants.length > 1 || hasActiveVariantLoading || canRetryActiveOutpaint);
 
     const queueBadge = formatProjectQueueBadge(queueCounts);
 
@@ -518,6 +506,38 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
         updateLayer(layer.id, { src: persistedSrc } as any);
     }, [projectId, updateLayer]);
 
+    const saveEditedAsset = useCallback(async (
+        layerId: string,
+        content: string,
+        assetPrompt: string,
+        model: string | undefined,
+        source: string,
+    ) => {
+        if (!projectId) return;
+        try {
+            const storeLayer = useCanvasStore
+                .getState()
+                .layers.find((l) => l.id === layerId) as ImageLayer | undefined;
+            let persistedUrl = storeLayer?.src ?? content;
+            if (!persistedUrl.startsWith("https://storage.yandexcloud.net")) {
+                persistedUrl = await persistImageToS3(persistedUrl, projectId);
+            }
+            await saveGeneratedAssetMutation.mutateAsync({
+                projectId,
+                url: persistedUrl,
+                prompt: assetPrompt,
+                model,
+                source,
+            });
+            await Promise.all([
+                trpcUtils.asset.listByProject.invalidate({ projectId }),
+                trpcUtils.asset.listByWorkspace.invalidate().catch(() => undefined),
+            ]);
+        } catch (saveErr) {
+            console.warn("[AIPromptBar] Asset save failed:", saveErr);
+        }
+    }, [projectId, saveGeneratedAssetMutation, trpcUtils]);
+
     // ── Image edit API call (shared by all edit actions) ──
     const callImageEdit = useCallback(async (action: string, editPrompt?: string) => {
         const targetLayer = action === "outpaint"
@@ -547,103 +567,46 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
             const styledPrompt = styleSuffix && rawPrompt ? `${rawPrompt}. Style: ${styleSuffix}` : rawPrompt;
             const resolvedPrompt = resolveRefTags(styledPrompt, selectedModel);
 
-            // ── Outpaint: delegated to the shared pipeline so the wizard
-            // and the studio stay byte-compatible with each other ──
+            // ── Studio manual outpaint: Bria-only, one-pass path.
+            // Wizard expand keeps its own pipeline and is intentionally not
+            // routed through this branch.
             if (action === "outpaint") {
                 const currentExpandPadding = { ...expandPadding };
-                // Reset progress state at the start of each outpaint so
-                // a previous run's "Готово" doesn't briefly flash before
-                // the first stage label lands.
+                const sourceLayerSnapshot = { ...targetLayer, src: targetLayer.src } as ImageLayer;
                 setOutpaintProgress({ label: "Подготавливаем изображение", percent: 5 });
-                const outpaintModel = getOutpaintModel("gpt-image-2");
-                const outpaintResult = outpaintModel === "gpt-image-2"
-                    ? await (async () => {
-                        let sourceForOutpaint = targetLayer.src;
-                        if (!sourceForOutpaint.startsWith("https://storage.yandexcloud.net")) {
-                            try {
-                                sourceForOutpaint = await persistImageToS3(sourceForOutpaint, projectId);
-                            } catch (persistErr) {
-                                console.warn("[Outpaint/GPT] source persist failed, using original src", persistErr);
-                            }
-                        }
-                        let preparedSource = await prepareStudioOutpaintSource(sourceForOutpaint, targetLayer);
-                        if (preparedSource.changed) {
-                            preparedSource = {
-                                ...preparedSource,
-                                src: await persistImageToS3(preparedSource.src, projectId),
-                            };
-                        }
-                        const plan = buildGptImage2ManualOutpaintPlan({
-                            sourceSizePx: { width: preparedSource.width, height: preparedSource.height },
-                            layerSize: { width: targetLayer.width, height: targetLayer.height },
-                            canvasPadding: currentExpandPadding,
-                        });
-                        const result = await outpaintWithGptImage2PackPlan({
-                            imageSrc: preparedSource.src,
-                            plan,
-                            prompt: resolvedPrompt,
-                            projectId,
-                            onProgress: (stage, info) => {
-                                console.log(`[Outpaint/GPT/${stage}]`, info ?? "");
-                                if (stage === "outpaint-canvas-start") {
-                                    setOutpaintProgress({ label: "Собираем canvas и маску", percent: 18 });
-                                } else if (stage === "outpaint-api-start") {
-                                    setOutpaintProgress({ label: "Расширяем фон через GPT Image 2", percent: 42 });
-                                } else if (stage === "outpaint-api-done") {
-                                    setOutpaintProgress({ label: "Сохраняем результат", percent: 88 });
-                                }
-                            },
-                        });
-                        return { src: result.src, model: "gpt-image-2" };
-                    })()
-                    : await outpaintImage({
-                        imageSrc: targetLayer.src,
-                        canvasPadding: currentExpandPadding,
-                        layerSize: { width: targetLayer.width, height: targetLayer.height },
-                        prompt: resolvedPrompt,
-                        projectId,
-                        model: outpaintModel,
-                        onProgress: (stage, info) => {
-                            console.log(`[Outpaint/${stage}]`, info ?? "");
-                            // Internal/diagnostic stages return null —
-                            // keep the previous user-facing label visible
-                            // so the bar doesn't flicker.
-                            const next = mapOutpaintStage(stage);
-                            if (next) setOutpaintProgress(next);
-                        },
-                    });
+                const outpaintResult = await runStudioBriaOutpaint({
+                    imageSrc: sourceLayerSnapshot.src,
+                    layer: sourceLayerSnapshot,
+                    canvasPadding: currentExpandPadding,
+                    prompt: resolvedPrompt,
+                    projectId,
+                    onProgress: (stage, info) => {
+                        console.log(`[Outpaint/StudioBria/${stage}]`, info ?? "");
+                        setOutpaintProgress(mapStudioBriaOutpaintStage(stage));
+                    },
+                });
 
-                await applyEditedImageToLayer(targetLayer, outpaintResult.src, {
+                await applyEditedImageToLayer(sourceLayerSnapshot, outpaintResult.src, {
                     action: "outpaint",
                     padding: currentExpandPadding,
                 });
                 resetExpandMode();
                 setEditAction(null);
+                setLastOutpaintRetry({
+                    layer: sourceLayerSnapshot,
+                    padding: currentExpandPadding,
+                    prompt: resolvedPrompt,
+                    rawPrompt: rawPrompt || action,
+                    promptLabel,
+                });
 
-                if (projectId) {
-                    try {
-                        const storeLayer = useCanvasStore
-                            .getState()
-                            .layers.find((l) => l.id === targetLayer.id) as ImageLayer | undefined;
-                        let persistedUrl = storeLayer?.src ?? outpaintResult.src;
-                        if (!persistedUrl.startsWith("https://storage.yandexcloud.net")) {
-                            persistedUrl = await persistImageToS3(persistedUrl, projectId);
-                        }
-                        await saveGeneratedAssetMutation.mutateAsync({
-                            projectId,
-                            url: persistedUrl,
-                            prompt: rawPrompt || action,
-                            model: outpaintResult.model,
-                            source: "banner-edit-expand",
-                        });
-                        await Promise.all([
-                            trpcUtils.asset.listByProject.invalidate({ projectId }),
-                            trpcUtils.asset.listByWorkspace.invalidate().catch(() => undefined),
-                        ]);
-                    } catch (saveErr) {
-                        console.warn("[AIPromptBar] Asset save failed:", saveErr);
-                    }
-                }
+                await saveEditedAsset(
+                    sourceLayerSnapshot.id,
+                    outpaintResult.src,
+                    rawPrompt || action,
+                    outpaintResult.model,
+                    "banner-edit-expand",
+                );
 
                 onResult({
                     type: "edit",
@@ -823,7 +786,92 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
         }
             },
         );
-    }, [selectedImageLayer, expandTargetLayer, inpaintTargetLayer, selectedModel, scale, imageStyleId, imagePresets, referenceImages, expandPadding, projectId, applyEditedImageToLayer, onResult, resetExpandMode, saveGeneratedAssetMutation, trpcUtils, loraRequestFields, appendLoadingVariants, enqueueJob, resolveBatchVariants]);
+    }, [selectedImageLayer, expandTargetLayer, inpaintTargetLayer, selectedModel, scale, imageStyleId, imagePresets, referenceImages, expandPadding, projectId, applyEditedImageToLayer, saveEditedAsset, onResult, resetExpandMode, saveGeneratedAssetMutation, trpcUtils, loraRequestFields, appendLoadingVariants, enqueueJob, resolveBatchVariants]);
+
+    const handleOutpaintRetry = useCallback(() => {
+        if (!lastOutpaintRetry || !projectId) return;
+
+        const { layer, padding, prompt: retryPrompt, rawPrompt, promptLabel } = lastOutpaintRetry;
+        const batchId = `edit-${Date.now()}`;
+        appendLoadingVariants(layer.id, 1, promptLabel, batchId);
+
+        enqueueJob(
+            {
+                id: batchId,
+                projectId,
+                surface: "studio",
+                layerId: layer.id,
+                prompt: promptLabel,
+                imageCount: 1,
+            },
+            async () => {
+                setEditError(null);
+                setOutpaintProgress({ label: "Подготавливаем изображение", percent: 5 });
+
+                try {
+                    const outpaintResult = await runStudioBriaOutpaint({
+                        imageSrc: layer.src,
+                        layer,
+                        canvasPadding: padding,
+                        prompt: retryPrompt,
+                        projectId,
+                        onProgress: (stage, info) => {
+                            console.log(`[Outpaint/StudioBria/retry/${stage}]`, info ?? "");
+                            setOutpaintProgress(mapStudioBriaOutpaintStage(stage));
+                        },
+                    });
+
+                    await applyEditedImageToLayer(layer, outpaintResult.src, {
+                        action: "outpaint",
+                        padding,
+                    });
+
+                    await saveEditedAsset(
+                        layer.id,
+                        outpaintResult.src,
+                        rawPrompt,
+                        outpaintResult.model,
+                        "banner-edit-expand",
+                    );
+
+                    onResult({
+                        type: "edit",
+                        content: outpaintResult.src,
+                        prompt: rawPrompt,
+                        model: outpaintResult.model,
+                    });
+
+                    const storeLayer = useCanvasStore
+                        .getState()
+                        .layers.find((l) => l.id === layer.id) as ImageLayer | undefined;
+                    resolveBatchVariants(
+                        layer.id,
+                        batchId,
+                        [storeLayer?.src ?? outpaintResult.src],
+                        promptLabel,
+                        "ready",
+                    );
+                } catch (e: unknown) {
+                    const error = e as Error;
+                    console.error("Outpaint retry failed:", error);
+                    setEditError(parseGenerationError(error));
+                    resolveBatchVariants(layer.id, batchId, [], promptLabel, "error");
+                    throw error;
+                } finally {
+                    setOutpaintProgress(null);
+                }
+            },
+        );
+    }, [
+        lastOutpaintRetry,
+        projectId,
+        appendLoadingVariants,
+        enqueueJob,
+        applyEditedImageToLayer,
+        saveEditedAsset,
+        onResult,
+        resolveBatchVariants,
+    ]);
 
     // ── Edit tab handlers ──
     const handleRemoveBg = () => callImageEdit("remove-bg");
@@ -1268,12 +1316,25 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
     return (
         <div className="flex flex-col items-center gap-2">
             {showVariantStrip && (
-                <GeneratedImageStrip
-                    variants={activeVariants}
-                    selectedId={selectedGeneratedVariantId}
-                    onSelect={handleGeneratedVariantSelect}
-                    className="self-center"
-                />
+                <div className="flex items-center justify-center gap-2 self-center">
+                    <GeneratedImageStrip
+                        variants={activeVariants}
+                        selectedId={selectedGeneratedVariantId}
+                        onSelect={handleGeneratedVariantSelect}
+                    />
+                    {canRetryActiveOutpaint && (
+                        <button
+                            type="button"
+                            onClick={handleOutpaintRetry}
+                            disabled={hasActiveVariantLoading}
+                            title="Повторить аутпеинт с теми же параметрами"
+                            aria-label="Повторить аутпеинт с теми же параметрами"
+                            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[14px] border border-border-primary/70 bg-bg-primary/85 text-text-secondary shadow-lg backdrop-blur-md transition-all hover:border-border-secondary hover:text-text-primary disabled:cursor-wait disabled:opacity-50"
+                        >
+                            <RefreshCw size={16} className={hasActiveVariantLoading ? "animate-spin" : ""} />
+                        </button>
+                    )}
+                </div>
             )}
 
             {/* ── MAIN BAR ── */}
