@@ -15,6 +15,11 @@ export interface GptImageOutpaintParams {
     prompt?: string;
     projectId: string;
     debug?: boolean;
+    sourcePreservation?: "model" | "hard-composite";
+    paddingContext?: "edge-extend" | "transparent";
+    maskMode?: "binary" | "alpha";
+    cropAlignment?: "legacy" | "source-anchor";
+    sourceFeatherPx?: number;
     onProgress?: (stage: string, info?: Record<string, unknown>) => void;
 }
 
@@ -30,6 +35,13 @@ export interface RgbaPixel {
     g: number;
     b: number;
     a: number;
+}
+
+interface PixelRect {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
 }
 
 function loadImage(src: string): Promise<HTMLImageElement> {
@@ -157,10 +169,9 @@ function isInsideRect(
 }
 
 /**
- * fal's openai/gpt-image-2/edit endpoint documents mask_url as a black/white
- * PNG: white pixels are editable, black pixels are preserved. The mask is
- * binary on purpose — fal preserves the black region pixel-for-pixel, so we
- * never need to re-paste the source on the client side.
+ * fal's OpenAI-compatible edit endpoint accepts the same mask geometry as the
+ * source image. The default binary variant is kept for the Wizard path:
+ * white pixels are editable, black pixels are preserved.
  */
 export function computeFalOutpaintMaskPixelAt(
     x: number,
@@ -172,15 +183,33 @@ export function computeFalOutpaintMaskPixelAt(
         : { r: 255, g: 255, b: 255, a: 255 };
 }
 
+/**
+ * OpenAI image edits use the mask alpha channel: transparent pixels are
+ * regenerated, opaque pixels are preserved. Studio manual outpaint uses this
+ * stricter variant so the user-dragged frame is the only editable area.
+ */
+export function computeOpenAIOutpaintMaskPixelAt(
+    x: number,
+    y: number,
+    sourceRect: { x: number; y: number; width: number; height: number },
+): RgbaPixel {
+    return isInsideRect(x, y, sourceRect)
+        ? { r: 0, g: 0, b: 0, a: 255 }
+        : { r: 255, g: 255, b: 255, a: 0 };
+}
+
 export function buildFalOutpaintMaskPixels(
     size: { width: number; height: number },
     requestSourceRect: { x: number; y: number; width: number; height: number },
+    mode: "binary" | "alpha" = "binary",
 ): { width: number; height: number; data: Uint8ClampedArray } {
     const data = new Uint8ClampedArray(size.width * size.height * 4);
     for (let y = 0; y < size.height; y++) {
         for (let x = 0; x < size.width; x++) {
             const i = (y * size.width + x) * 4;
-            const pixel = computeFalOutpaintMaskPixelAt(x, y, requestSourceRect);
+            const pixel = mode === "alpha"
+                ? computeOpenAIOutpaintMaskPixelAt(x, y, requestSourceRect)
+                : computeFalOutpaintMaskPixelAt(x, y, requestSourceRect);
             data[i] = pixel.r;
             data[i + 1] = pixel.g;
             data[i + 2] = pixel.b;
@@ -201,6 +230,7 @@ export function computeTransparentPaddedInputAlphaAt(
 function buildFalMaskDataUrl(
     size: { width: number; height: number },
     requestSourceRect: { x: number; y: number; width: number; height: number },
+    mode: "binary" | "alpha" = "binary",
 ): string {
     const canvas = document.createElement("canvas");
     canvas.width = size.width;
@@ -208,7 +238,7 @@ function buildFalMaskDataUrl(
     const ctx = canvas.getContext("2d");
     if (!ctx) throw new Error("Failed to create GPT outpaint mask canvas");
 
-    const pixels = buildFalOutpaintMaskPixels(size, requestSourceRect);
+    const pixels = buildFalOutpaintMaskPixels(size, requestSourceRect, mode);
     const imageData = ctx.createImageData(size.width, size.height);
     imageData.data.set(pixels.data);
     ctx.putImageData(imageData, 0, 0);
@@ -317,10 +347,168 @@ export function computeUniformContainRect(
     };
 }
 
+export interface ComputeGptOutputCropInput {
+    cropAlignment?: "legacy" | "source-anchor";
+    requestSizePx: { width: number; height: number };
+    gptSizePx: { width: number; height: number };
+    requestOutputCropPx: PixelRect;
+    requestSourcePlacementPx: PixelRect;
+    outputSizePx: { width: number; height: number };
+    sourcePlacementPx: PixelRect;
+}
+
+export function computeGptOutputCropPx(input: ComputeGptOutputCropInput): { crop: PixelRect; alignment: "legacy" | "source-anchor" } {
+    const cropScaleX = input.gptSizePx.width / input.requestSizePx.width;
+    const cropScaleY = input.gptSizePx.height / input.requestSizePx.height;
+    const maxCropX = Math.max(0, input.gptSizePx.width - 1);
+    const maxCropY = Math.max(0, input.gptSizePx.height - 1);
+    const legacy = {
+        x: Math.min(maxCropX, Math.max(0, Math.round(input.requestOutputCropPx.x * cropScaleX))),
+        y: Math.min(maxCropY, Math.max(0, Math.round(input.requestOutputCropPx.y * cropScaleY))),
+        width: Math.max(1, Math.round(input.requestOutputCropPx.width * cropScaleX)),
+        height: Math.max(1, Math.round(input.requestOutputCropPx.height * cropScaleY)),
+    };
+    legacy.width = Math.max(1, Math.min(legacy.width, input.gptSizePx.width - legacy.x));
+    legacy.height = Math.max(1, Math.min(legacy.height, input.gptSizePx.height - legacy.y));
+
+    if (input.cropAlignment !== "source-anchor") {
+        return { crop: legacy, alignment: "legacy" };
+    }
+
+    const src = input.requestSourcePlacementPx;
+    const outSrc = input.sourcePlacementPx;
+    if (
+        input.outputSizePx.width <= 0
+        || input.outputSizePx.height <= 0
+        || outSrc.width <= 0
+        || outSrc.height <= 0
+        || src.width <= 0
+        || src.height <= 0
+    ) {
+        return { crop: legacy, alignment: "legacy" };
+    }
+
+    const cropReqWidth = src.width * input.outputSizePx.width / outSrc.width;
+    const cropReqHeight = src.height * input.outputSizePx.height / outSrc.height;
+    const cropReqX = src.x - (outSrc.x * cropReqWidth / input.outputSizePx.width);
+    const cropReqY = src.y - (outSrc.y * cropReqHeight / input.outputSizePx.height);
+    const anchored = {
+        x: Math.round(cropReqX * cropScaleX),
+        y: Math.round(cropReqY * cropScaleY),
+        width: Math.max(1, Math.round(cropReqWidth * cropScaleX)),
+        height: Math.max(1, Math.round(cropReqHeight * cropScaleY)),
+    };
+    const valid = Number.isFinite(anchored.x)
+        && Number.isFinite(anchored.y)
+        && Number.isFinite(anchored.width)
+        && Number.isFinite(anchored.height)
+        && anchored.x >= 0
+        && anchored.y >= 0
+        && anchored.width > 0
+        && anchored.height > 0
+        && anchored.x + anchored.width <= input.gptSizePx.width
+        && anchored.y + anchored.height <= input.gptSizePx.height;
+
+    return valid
+        ? { crop: anchored, alignment: "source-anchor" }
+        : { crop: legacy, alignment: "legacy" };
+}
+
+export function computeSourceFeatherAlphaAt(
+    x: number,
+    y: number,
+    sourceSize: { width: number; height: number },
+    padding: { top: number; right: number; bottom: number; left: number },
+    featherPx: number,
+): number {
+    const width = Math.max(1, Math.round(sourceSize.width));
+    const height = Math.max(1, Math.round(sourceSize.height));
+    if (x < 0 || y < 0 || x >= width || y >= height) return 0;
+    const rawFeather = Math.max(0, Math.round(featherPx));
+    if (rawFeather <= 0) return 255;
+    const featherX = Math.min(rawFeather, Math.max(1, Math.floor(width / 4)));
+    const featherY = Math.min(rawFeather, Math.max(1, Math.floor(height / 4)));
+
+    let alpha = 1;
+    if (padding.left > 0 && featherX > 0) alpha = Math.min(alpha, Math.min(1, x / featherX));
+    if (padding.right > 0 && featherX > 0) alpha = Math.min(alpha, Math.min(1, (width - 1 - x) / featherX));
+    if (padding.top > 0 && featherY > 0) alpha = Math.min(alpha, Math.min(1, y / featherY));
+    if (padding.bottom > 0 && featherY > 0) alpha = Math.min(alpha, Math.min(1, (height - 1 - y) / featherY));
+    return Math.max(0, Math.min(255, Math.round(alpha * 255)));
+}
+
+function buildSourceFeatherMaskCanvas(
+    sourceSize: { width: number; height: number },
+    padding: { top: number; right: number; bottom: number; left: number },
+    featherPx: number,
+): HTMLCanvasElement {
+    const width = Math.max(1, Math.round(sourceSize.width));
+    const height = Math.max(1, Math.round(sourceSize.height));
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("Failed to create GPT outpaint source feather mask canvas");
+    const imageData = ctx.createImageData(width, height);
+    for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+            const i = (y * width + x) * 4;
+            imageData.data[i] = 255;
+            imageData.data[i + 1] = 255;
+            imageData.data[i + 2] = 255;
+            imageData.data[i + 3] = computeSourceFeatherAlphaAt(x, y, { width, height }, padding, featherPx);
+        }
+    }
+    ctx.putImageData(imageData, 0, 0);
+    return canvas;
+}
+
+function buildPreservedSourceCanvas(
+    sourceImg: HTMLImageElement,
+    sourceNaturalW: number,
+    sourceNaturalH: number,
+    placement: PixelRect,
+    padding: { top: number; right: number; bottom: number; left: number },
+    featherPx: number,
+): HTMLCanvasElement {
+    const canvas = document.createElement("canvas");
+    canvas.width = placement.width;
+    canvas.height = placement.height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("Failed to create GPT outpaint preserved source canvas");
+    const exactSourceSize = sourceNaturalW === placement.width && sourceNaturalH === placement.height;
+    ctx.imageSmoothingEnabled = !exactSourceSize;
+    if (!exactSourceSize) ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(
+        sourceImg,
+        0, 0, sourceNaturalW, sourceNaturalH,
+        0, 0, placement.width, placement.height,
+    );
+    if (featherPx > 0) {
+        const mask = buildSourceFeatherMaskCanvas(placement, padding, featherPx);
+        ctx.globalCompositeOperation = "destination-in";
+        ctx.drawImage(mask, 0, 0);
+        ctx.globalCompositeOperation = "source-over";
+    }
+    return canvas;
+}
+
 export async function outpaintWithGptImage2PackPlan(
     params: GptImageOutpaintParams,
 ): Promise<GptImageOutpaintResult> {
-    const { imageSrc, plan, prompt, projectId, debug, onProgress } = params;
+    const {
+        imageSrc,
+        plan,
+        prompt,
+        projectId,
+        debug,
+        onProgress,
+        sourcePreservation = "model",
+        paddingContext = "edge-extend",
+        maskMode = "binary",
+        cropAlignment = "legacy",
+        sourceFeatherPx = 0,
+    } = params;
     const sourceImg = await loadImage(imageSrc);
     const sourceNaturalW = sourceImg.naturalWidth || sourceImg.width;
     const sourceNaturalH = sourceImg.naturalHeight || sourceImg.height;
@@ -348,6 +536,11 @@ export async function outpaintWithGptImage2PackPlan(
         requestH,
         requestSourceRect,
         requestOutputCrop,
+        sourcePreservation,
+        paddingContext,
+        maskMode,
+        cropAlignment,
+        sourceFeatherPx,
     });
 
     const paddedCanvas = document.createElement("canvas");
@@ -357,7 +550,7 @@ export async function outpaintWithGptImage2PackPlan(
     if (!paddedCtx) throw new Error("Failed to create GPT outpaint padded canvas");
     paddedCtx.imageSmoothingEnabled = true;
     paddedCtx.imageSmoothingQuality = "high";
-    if (isEdgeContextEnabled()) {
+    if (paddingContext === "edge-extend" && isEdgeContextEnabled()) {
         const edgeContext = buildEdgeExtendedContext(
             sourceImg,
             requestSourceRect,
@@ -377,7 +570,7 @@ export async function outpaintWithGptImage2PackPlan(
     );
 
     const paddedUrl = await uploadForAI(paddedCanvas.toDataURL("image/png"), projectId);
-    const maskUrl = await uploadForAI(buildFalMaskDataUrl({ width: requestW, height: requestH }, requestSourceRect), projectId);
+    const maskUrl = await uploadForAI(buildFalMaskDataUrl({ width: requestW, height: requestH }, requestSourceRect, maskMode), projectId);
     if (debug) {
         onProgress?.("debug-artifacts-prepared", {
             paddedUrl,
@@ -398,7 +591,7 @@ export async function outpaintWithGptImage2PackPlan(
             intent: "edit",
             prompt: prompt && prompt.trim().length > 0
                 ? prompt
-                : "Extend the image naturally and seamlessly. Preserve the product, text, packaging, and original composition.",
+                : undefined,
             imageBase64: paddedUrl,
             maskBase64: maskUrl,
             model: "gpt-image-2",
@@ -434,6 +627,7 @@ export async function outpaintWithGptImage2PackPlan(
             outputSizePx: { width: outputW, height: outputH },
             aspectDrift,
             requestOutputCrop,
+            cropAlignment,
         });
     }
     if (aspectDrift > ASPECT_DRIFT_TOLERANCE) {
@@ -453,26 +647,63 @@ export async function outpaintWithGptImage2PackPlan(
     finalCtx.imageSmoothingEnabled = true;
     finalCtx.imageSmoothingQuality = "high";
 
-    // Map the request-space crop rect into the actual returned bitmap. When the
-    // GPT response matches the requested aspect (the common case under
-    // delivery-crop), this is just the request crop scaled by gpt/request. When
-    // aspects drift slightly we still crop along the same fractional bounds so
-    // the produced output keeps the pack-required aspect with no letterbox.
-    const cropScaleX = gptW / requestW;
-    const cropScaleY = gptH / requestH;
-    const sourceCrop = {
-        x: Math.max(0, Math.round(requestOutputCrop.x * cropScaleX)),
-        y: Math.max(0, Math.round(requestOutputCrop.y * cropScaleY)),
-        width: Math.max(1, Math.round(requestOutputCrop.width * cropScaleX)),
-        height: Math.max(1, Math.round(requestOutputCrop.height * cropScaleY)),
-    };
-    sourceCrop.width = Math.min(sourceCrop.width, gptW - sourceCrop.x);
-    sourceCrop.height = Math.min(sourceCrop.height, gptH - sourceCrop.y);
+    const { crop: sourceCrop, alignment: usedCropAlignment } = computeGptOutputCropPx({
+        cropAlignment,
+        requestSizePx: { width: requestW, height: requestH },
+        gptSizePx: { width: gptW, height: gptH },
+        requestOutputCropPx: requestOutputCrop,
+        requestSourcePlacementPx: requestSourceRect,
+        outputSizePx: { width: outputW, height: outputH },
+        sourcePlacementPx: plan.sourcePlacementPx,
+    });
+    if (debug) {
+        onProgress?.("debug-output-crop", { sourceCrop, usedCropAlignment });
+    }
     finalCtx.drawImage(
         gptImg,
         sourceCrop.x, sourceCrop.y, sourceCrop.width, sourceCrop.height,
         0, 0, outputW, outputH,
     );
+    if (sourcePreservation === "hard-composite") {
+        const sourcePlacement = {
+            x: Math.round(plan.sourcePlacementPx.x),
+            y: Math.round(plan.sourcePlacementPx.y),
+            width: Math.max(1, Math.round(plan.sourcePlacementPx.width)),
+            height: Math.max(1, Math.round(plan.sourcePlacementPx.height)),
+        };
+        const featherPx = Math.max(0, Math.round(sourceFeatherPx));
+        const exactSourceSize = sourceNaturalW === sourcePlacement.width
+            && sourceNaturalH === sourcePlacement.height;
+        const previousSmoothing = finalCtx.imageSmoothingEnabled;
+        const previousSmoothingQuality = finalCtx.imageSmoothingQuality;
+        if (exactSourceSize || featherPx > 0) {
+            finalCtx.imageSmoothingEnabled = false;
+        }
+        try {
+            if (featherPx > 0) {
+                const preservedSource = buildPreservedSourceCanvas(
+                    sourceImg,
+                    sourceNaturalW,
+                    sourceNaturalH,
+                    sourcePlacement,
+                    pixelPaddingFromPlan(plan),
+                    featherPx,
+                );
+                finalCtx.drawImage(preservedSource, sourcePlacement.x, sourcePlacement.y);
+            } else {
+                finalCtx.drawImage(
+                    sourceImg,
+                    0, 0, sourceNaturalW, sourceNaturalH,
+                    sourcePlacement.x, sourcePlacement.y, sourcePlacement.width, sourcePlacement.height,
+                );
+            }
+        } finally {
+            if (exactSourceSize || featherPx > 0) {
+                finalCtx.imageSmoothingEnabled = previousSmoothing;
+                finalCtx.imageSmoothingQuality = previousSmoothingQuality;
+            }
+        }
+    }
 
     const finalUrl = await persistImageToS3(finalCanvas.toDataURL("image/png"), projectId);
     if (debug) onProgress?.("debug-final-result", { finalUrl });

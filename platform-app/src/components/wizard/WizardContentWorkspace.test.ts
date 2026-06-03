@@ -5,6 +5,7 @@ import {
     getPackOutpaintFormatsFromPreviewSources,
     getPreviewFormatSources,
     inferOutpaintProductFocusX,
+    resolveWizardOutpaintLayoutPlan,
     type EditableLayerEntry,
 } from "./WizardContentWorkspace";
 import type { Layer } from "@/types";
@@ -146,6 +147,19 @@ describe("wizard selected-format preview sources", () => {
             isMaster: true,
             hidden: undefined,
         });
+    });
+});
+
+describe("resolveWizardOutpaintLayoutPlan", () => {
+    it("defaults to the current padding planner", () => {
+        expect(resolveWizardOutpaintLayoutPlan(undefined, undefined)).toBe("padding");
+        expect(resolveWizardOutpaintLayoutPlan("unknown", null)).toBe("padding");
+    });
+
+    it("enables grid-union from env and lets localStorage override it", () => {
+        expect(resolveWizardOutpaintLayoutPlan("grid-union", null)).toBe("grid-union");
+        expect(resolveWizardOutpaintLayoutPlan("grid-union", "padding")).toBe("padding");
+        expect(resolveWizardOutpaintLayoutPlan(undefined, "grid-union")).toBe("grid-union");
     });
 });
 

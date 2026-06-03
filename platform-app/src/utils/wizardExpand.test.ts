@@ -284,6 +284,56 @@ describe("projectExpansionToResize", () => {
         expect(projected[1]).toBe(resizeLayers[1]);
     });
 
+    it("applies exact grid-union format rects before fillInstanceArtboard fallback", () => {
+        const resizeLayers: Layer[] = [{
+            id: "vertical-image",
+            type: "image",
+            name: "Product",
+            x: 0,
+            y: 0,
+            width: 470,
+            height: 300,
+            rotation: 0,
+            visible: true,
+            locked: false,
+            src: "image.png",
+            slotId: "image-primary",
+            objectFit: "cover",
+        }];
+
+        const projected = projectExpansionToResize({
+            resizeLayers,
+            resizeArtboard: { width: 470, height: 762 },
+            resizeFormatId: "vertical",
+            masterArtboard: { width: 1192, height: 300 },
+            overrides: {
+                "master-image": {
+                    prev: { x: 0, y: 0, width: 1192, height: 300 },
+                    next: { x: -82, y: -152, width: 1356, height: 946 },
+                    slotId: "image-primary",
+                    masterId: "master-image",
+                    fillInstanceArtboard: true,
+                    formatRects: {
+                        vertical: { x: -64.25, y: 128.5, width: 598.75, height: 812.25 },
+                    },
+                },
+            },
+            imageViewOverrides: {
+                "master-image": { objectFit: "fill", focusX: 0.5, focusY: 0.5 },
+            },
+        });
+
+        expect(projected[0]).toMatchObject({
+            x: -64.25,
+            y: 128.5,
+            width: 598.75,
+            height: 812.25,
+            objectFit: "fill",
+            focusX: 0.5,
+            focusY: 0.5,
+        });
+    });
+
     it("also collapses the master image layer to the artboard for pack-fill previews", () => {
         const resizeLayers: Layer[] = [{
             id: "master-image",

@@ -22,7 +22,11 @@ import { getImagePresetPromptSuffixForModel, getTextPresetInstruction } from "@/
 import { useStylePresets } from "@/hooks/useStylePresets";
 import { persistImageToS3, uploadForAI, uploadManyForAI } from "@/utils/imageUpload";
 import { type OutpaintProgressState } from "@/utils/outpaintProgress";
-import { runStudioBriaOutpaint, type StudioBriaOutpaintStage } from "@/utils/studioBriaOutpaint";
+import {
+    runStudioBriaOutpaint,
+    type StudioBriaOutpaintStage,
+    type StudioBriaPromptEnhancement,
+} from "@/utils/studioBriaOutpaint";
 import { OutpaintProgressIndicator } from "@/components/ui/OutpaintProgressIndicator";
 import { useProjectLibrary } from "@/hooks/useProjectLibrary";
 import { trpc } from "@/lib/trpc";
@@ -95,6 +99,10 @@ function mapStudioBriaOutpaintStage(stage: StudioBriaOutpaintStage): OutpaintPro
             return { label: "Собираем видимый растр слоя", percent: 20 };
         case "prepared-source-persisted":
             return { label: "Сохраняем подготовленный растр", percent: 30 };
+        case "prompt-enhance-start":
+            return { label: "Анализируем сцену", percent: 35 };
+        case "prompt-enhance-done":
+            return { label: "Анализируем сцену", percent: 40 };
         case "outpaint-api-start":
             return { label: "Расширяем фон через Bria Expand", percent: 45 };
         case "outpaint-api-done":
@@ -124,6 +132,7 @@ interface StudioOutpaintRetryState {
     prompt: string;
     rawPrompt: string;
     promptLabel: string;
+    promptEnhancement: StudioBriaPromptEnhancement;
 }
 
 const S3_PERSIST_HOST = "storage.yandexcloud.net";
@@ -598,6 +607,7 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                     prompt: resolvedPrompt,
                     rawPrompt: rawPrompt || action,
                     promptLabel,
+                    promptEnhancement: outpaintResult.promptEnhancement,
                 });
 
                 await saveEditedAsset(
@@ -791,7 +801,7 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
     const handleOutpaintRetry = useCallback(() => {
         if (!lastOutpaintRetry || !projectId) return;
 
-        const { layer, padding, prompt: retryPrompt, rawPrompt, promptLabel } = lastOutpaintRetry;
+        const { layer, padding, prompt: retryPrompt, rawPrompt, promptLabel, promptEnhancement } = lastOutpaintRetry;
         const batchId = `edit-${Date.now()}`;
         appendLoadingVariants(layer.id, 1, promptLabel, batchId);
 
@@ -814,6 +824,7 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                         layer,
                         canvasPadding: padding,
                         prompt: retryPrompt,
+                        promptEnhancement,
                         projectId,
                         onProgress: (stage, info) => {
                             console.log(`[Outpaint/StudioBria/retry/${stage}]`, info ?? "");

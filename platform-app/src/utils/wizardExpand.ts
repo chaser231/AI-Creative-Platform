@@ -56,6 +56,12 @@ export interface LayerExpansionOverride {
      * artboard in any format.
      */
     fillInstanceArtboard?: boolean;
+    /**
+     * Experimental grid-union outpaint. Exact layer rects keyed by preview
+     * format id; when present, projection preserves each format's original
+     * image placement instead of using a global cover/focus crop.
+     */
+    formatRects?: Record<string, LayerRect>;
 }
 
 export interface LayerImageViewOverride {
@@ -76,6 +82,8 @@ interface ProjectArgs {
     resizeBindings?: LayerBinding[];
     /** Width/height of the resize artboard. */
     resizeArtboard: ArtboardSize;
+    /** Preview/export format id used to resolve exact grid-union rects. */
+    resizeFormatId?: string;
     /** Width/height of the master artboard. */
     masterArtboard: ArtboardSize;
     /** All overrides recorded by the wizard, keyed by anchor id. */
@@ -175,7 +183,7 @@ function resolveModeFor(
  * override are returned untouched.
  */
 export function projectExpansionToResize(args: ProjectArgs): Layer[] {
-    const { resizeLayers, resizeBindings, resizeArtboard, masterArtboard, overrides, imageViewOverrides } = args;
+    const { resizeLayers, resizeBindings, resizeArtboard, resizeFormatId, masterArtboard, overrides, imageViewOverrides } = args;
     const hasViewOverrides = imageViewOverrides ? Object.keys(imageViewOverrides).length > 0 : false;
 
     if (Object.keys(overrides).length === 0 && !hasViewOverrides) return resizeLayers;
@@ -193,6 +201,19 @@ export function projectExpansionToResize(args: ProjectArgs): Layer[] {
 
         const mode = resolveModeFor(layer, override, resizeBindings);
         if (mode === "content") return layerWithView;
+
+        const exactRect = resizeFormatId && override.formatRects
+            ? override.formatRects[resizeFormatId]
+            : undefined;
+        if (exactRect) {
+            return {
+                ...layerWithView,
+                x: round(exactRect.x),
+                y: round(exactRect.y),
+                width: round(exactRect.width),
+                height: round(exactRect.height),
+            } as Layer;
+        }
 
         // Single-pass pack outpaint: every instance image layer becomes
         // the resize artboard so a single bitmap can be `cover`-fitted

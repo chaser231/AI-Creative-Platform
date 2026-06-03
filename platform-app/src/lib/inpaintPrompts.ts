@@ -57,8 +57,9 @@ const REMOVE_BASE = [
 ].join(" ");
 
 const OUTPAINT_BASE = [
-    "Extend the scene naturally into the masked white areas.",
-    "Preserve the original subject, composition, text/logos, and perspective.",
+    "Extend only the background, lighting, texture, and environment into the editable masked areas outside the original image.",
+    "Do not create, copy, move, resize, or continue products, packaging, logos, text, people, or foreground subjects into the new area.",
+    "Leave the unmasked original image unchanged and make the new background seamless at the boundary.",
 ].join(" ");
 
 interface PromptProfile {

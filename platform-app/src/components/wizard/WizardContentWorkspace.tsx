@@ -66,6 +66,7 @@ import { useWorkspace } from "@/providers/WorkspaceProvider";
 import { projectExpansionToResize, type LayerExpansionOverride } from "@/utils/wizardExpand";
 import { computeWizardExpandGeometry } from "@/utils/wizardExpandGeometry";
 import {
+    computeGridUnionOutpaintPlan,
     computePackOutpaintPlan,
     findPackOutpaintTargetLayer,
     type PackOutpaintFormat,
@@ -279,6 +280,8 @@ const WIZARD_OUTPAINT_ENGINE = process.env.NEXT_PUBLIC_WIZARD_OUTPAINT_ENGINE ==
     ? "legacy"
     : "gpt-image-2";
 const WIZARD_OUTPAINT_DEBUG_ENV = process.env.NEXT_PUBLIC_WIZARD_OUTPAINT_DEBUG;
+export type WizardOutpaintLayoutPlan = "padding" | "grid-union";
+const WIZARD_OUTPAINT_LAYOUT_PLAN_ENV = process.env.NEXT_PUBLIC_WIZARD_OUTPAINT_LAYOUT_PLAN;
 /**
  * Asymmetric padding bias for wizard expand. Banner layouts in our
  * design system typically anchor the product bottom-right and place
@@ -488,6 +491,7 @@ export function WizardContentWorkspace({
             resizeLayers: previewSource.layers,
             resizeBindings: previewSource.layerBindings,
             resizeArtboard: { width: previewSource.width, height: previewSource.height },
+            resizeFormatId: previewSource.id,
             masterArtboard: masterCanvasSize,
             overrides: overridesForActive,
             imageViewOverrides,
@@ -1653,6 +1657,9 @@ function layerToPackOutpaintRect(layer: Layer): PackOutpaintRect {
         slotId: layer.slotId,
         masterId: layer.masterId,
         type: layer.type,
+        objectFit: layer.type === "image" ? imageFitProp(layer.objectFit) : undefined,
+        focusX: layer.type === "image" ? optionalNumberProp(layer.focusX) : undefined,
+        focusY: layer.type === "image" ? optionalNumberProp(layer.focusY) : undefined,
     };
 }
 
@@ -1689,6 +1696,9 @@ function entryToPackOutpaintRect(entry: EditableLayerEntry): PackOutpaintRect {
         slotId: entry.slotId,
         masterId: propsMasterId ?? entry.masterComponentId,
         type: entry.type,
+        objectFit: imageFitProp(props.objectFit),
+        focusX: optionalNumberProp(props.focusX),
+        focusY: optionalNumberProp(props.focusY),
     };
 }
 
@@ -1723,6 +1733,33 @@ function collectPackImageUsageSizes(
     return sizes;
 }
 
+function applyPackOutpaintImageViewOverride(
+    formats: PackOutpaintFormat[],
+    masterLayer: PackOutpaintRect,
+    viewOverride: WizardImageViewOverride | undefined,
+): PackOutpaintFormat[] {
+    if (!viewOverride) return formats;
+    return formats.map((format) => {
+        const target = format.isMaster
+            ? masterLayer
+            : findPackOutpaintTargetLayer(masterLayer, format);
+        if (!target || !format.layers || format.layers.length === 0) return format;
+        return {
+            ...format,
+            layers: format.layers.map((layer) => (
+                layer.id === target.id
+                    ? {
+                        ...layer,
+                        objectFit: viewOverride.objectFit ?? layer.objectFit,
+                        focusX: viewOverride.focusX ?? layer.focusX,
+                        focusY: viewOverride.focusY ?? layer.focusY,
+                    }
+                    : layer
+            )),
+        };
+    });
+}
+
 function shouldPrepareWorkingDerivative(model: string, scale: string): boolean {
     return model === "nano-banana-2" && (scale === "2K" || scale === "4K");
 }
@@ -1735,6 +1772,25 @@ function isWizardOutpaintDebugEnabled(): boolean {
             && window.localStorage?.getItem("wizardOutpaintDebug") === "1";
     } catch {
         return false;
+    }
+}
+
+export function resolveWizardOutpaintLayoutPlan(
+    envValue?: string,
+    localValue?: string | null,
+): WizardOutpaintLayoutPlan {
+    if (localValue === "grid-union" || localValue === "padding") return localValue;
+    return envValue === "grid-union" ? "grid-union" : "padding";
+}
+
+function getWizardOutpaintLayoutPlan(): WizardOutpaintLayoutPlan {
+    try {
+        const localValue = typeof window !== "undefined"
+            ? window.localStorage?.getItem("wizardOutpaintLayoutPlan")
+            : undefined;
+        return resolveWizardOutpaintLayoutPlan(WIZARD_OUTPAINT_LAYOUT_PLAN_ENV, localValue);
+    } catch {
+        return resolveWizardOutpaintLayoutPlan(WIZARD_OUTPAINT_LAYOUT_PLAN_ENV);
     }
 }
 
@@ -2242,8 +2298,19 @@ function WizardLayerPromptBar({
                 return;
             }
 
-            const masterLayer = entryToPackOutpaintRect(activeLayer);
-            const usageSizes = collectPackImageUsageSizes(masterLayer, packOutpaintFormats);
+            const masterLayerDraft = entryToPackOutpaintRect(activeLayer);
+            const masterLayer = {
+                ...masterLayerDraft,
+                objectFit: activeImageViewOverride?.objectFit ?? masterLayerDraft.objectFit,
+                focusX: activeImageViewOverride?.focusX ?? masterLayerDraft.focusX,
+                focusY: activeImageViewOverride?.focusY ?? masterLayerDraft.focusY,
+            };
+            const outpaintFormats = applyPackOutpaintImageViewOverride(
+                packOutpaintFormats,
+                masterLayer,
+                activeImageViewOverride,
+            );
+            const usageSizes = collectPackImageUsageSizes(masterLayer, outpaintFormats);
             let legacyPadding: { top: number; right: number; bottom: number; left: number } | undefined;
 
             if (WIZARD_OUTPAINT_ENGINE === "legacy") {
@@ -2283,7 +2350,7 @@ function WizardLayerPromptBar({
                 masterLayer,
                 workingLayer: entryToWorkingImageLayer(activeLayer, activeImageViewOverride),
                 usageSizes,
-                packOutpaintFormats,
+                packOutpaintFormats: outpaintFormats,
                 masterArtboard: masterCanvasSize,
                 legacyPadding,
             };
@@ -2299,11 +2366,16 @@ function WizardLayerPromptBar({
             })()
             : null;
         const outpaintDebug = imageMode === "expand" && isWizardOutpaintDebugEnabled();
+        const outpaintLayoutPlan = imageMode === "expand"
+            ? getWizardOutpaintLayoutPlan()
+            : "padding";
 
         if (imageMode === "expand") {
             console.log("[Wizard/Expand/start]", {
                 engine: WIZARD_OUTPAINT_ENGINE,
+                layoutPlan: outpaintLayoutPlan,
                 env: process.env.NEXT_PUBLIC_WIZARD_OUTPAINT_ENGINE ?? "",
+                layoutEnv: process.env.NEXT_PUBLIC_WIZARD_OUTPAINT_LAYOUT_PLAN ?? "",
                 debug: outpaintDebug,
                 layerId,
                 targetFormats: packOutpaintFormats.map((format) => ({
@@ -2331,6 +2403,7 @@ function WizardLayerPromptBar({
             activeImageViewOverride,
             workingSnapshot,
             outpaintDebug,
+            outpaintLayoutPlan,
         };
 
         enqueueJob(
@@ -2365,6 +2438,8 @@ function WizardLayerPromptBar({
                         let expandUrl: string;
                         let nextRect: { x: number; y: number; width: number; height: number };
                         let nextImageView: WizardImageViewOverride | null = null;
+                        let usedGridUnionPlan = false;
+                        let gridUnionFormatRects: LayerExpansionOverride["formatRects"] | undefined;
 
                         if (WIZARD_OUTPAINT_ENGINE === "legacy") {
                             if (!legacyPadding) {
@@ -2421,29 +2496,53 @@ function WizardLayerPromptBar({
                                 projectId,
                                 registerUrl,
                             });
-                            const plan = computePackOutpaintPlan({
+                            const commonPlanInput = {
                                 masterLayer,
                                 masterArtboard,
                                 formats: outpaintFormats,
                                 sourceSizePx: { width: derivative.width, height: derivative.height },
-                                options: {
-                                    bleedPx: WIZARD_OUTPAINT_BLEED_PX,
-                                    exportScale: 2,
-                                    // delivery-crop keeps outputSizePx and the
-                                    // layer rect exactly equal to the pack
-                                    // requirement. Aspect-cap padding lives
-                                    // only in the GPT request canvas and is
-                                    // cropped out after the call, so the
-                                    // product never moves and the bitmap is
-                                    // never letterboxed for ultra-wide /
-                                    // ultra-tall packs.
-                                    aspectCapStrategy: "delivery-crop",
-                                    tallFormatTopReserveRatio: WIZARD_OUTPAINT_TALL_TOP_RESERVE_RATIO,
-                                },
+                            };
+                            const paddingPlanOptions = {
+                                bleedPx: WIZARD_OUTPAINT_BLEED_PX,
+                                exportScale: 2,
+                                // delivery-crop keeps outputSizePx and the
+                                // layer rect exactly equal to the pack
+                                // requirement. Aspect-cap padding lives
+                                // only in the GPT request canvas and is
+                                // cropped out after the call, so the
+                                // product never moves and the bitmap is
+                                // never letterboxed for ultra-wide /
+                                // ultra-tall packs.
+                                aspectCapStrategy: "delivery-crop" as const,
+                                tallFormatTopReserveRatio: WIZARD_OUTPAINT_TALL_TOP_RESERVE_RATIO,
+                            };
+                            let plan = computePackOutpaintPlan({
+                                ...commonPlanInput,
+                                options: paddingPlanOptions,
                             });
+                            if (jobSnapshot.outpaintLayoutPlan === "grid-union") {
+                                const grid = computeGridUnionOutpaintPlan({
+                                    ...commonPlanInput,
+                                    options: {
+                                        bleedPx: WIZARD_OUTPAINT_BLEED_PX,
+                                        exportScale: 2,
+                                        aspectCapStrategy: "delivery-crop",
+                                    },
+                                });
+                                if (grid.plan) {
+                                    plan = grid.plan;
+                                    usedGridUnionPlan = true;
+                                    gridUnionFormatRects = grid.plan.formatLayerRects;
+                                } else {
+                                    console.warn("[Wizard/GPTOutpaint/grid-union-fallback]", {
+                                        diagnostics: grid.diagnostics,
+                                    });
+                                }
+                            }
                             if (jobSnapshot.outpaintDebug) {
                                 console.log("[Wizard/GPTOutpaint/debug-plan]", {
                                     derivative,
+                                    layoutPlan: usedGridUnionPlan ? "grid-union" : "padding",
                                     plan,
                                     diagnostics: plan.diagnostics,
                                 });
@@ -2493,7 +2592,7 @@ function WizardLayerPromptBar({
                             const plannedAspect = planned.width / planned.height;
                             const aspectDrift = Math.abs(bitmapAspect - plannedAspect)
                                 / Math.max(bitmapAspect, plannedAspect);
-                            if (aspectDrift <= 0.005) {
+                            if (usedGridUnionPlan || aspectDrift <= 0.005) {
                                 nextRect = planned;
                             } else {
                                 const cx = planned.x + planned.width / 2;
@@ -2518,36 +2617,40 @@ function WizardLayerPromptBar({
                                     aspectDrift,
                                 });
                             }
-                            const sourcePlacement = plan.sourcePlacementPx;
-                            const outputW = Math.max(1, plan.outputSizePx.width);
-                            const outputH = Math.max(1, plan.outputSizePx.height);
-                            // Anchor focus so the source product never gets
-                            // cropped off the top of the bitmap when
-                            // `cover` chops vertically (master/top-banner)
-                            // and so the full vertical extension below the
-                            // product remains visible in tall instance
-                            // artboards (Feed, vertical). Horizontally we
-                            // preserve an explicit user focus; otherwise
-                            // infer the product side from foreground layout
-                            // (text/logo on the left usually means product
-                            // on the right).
-                            const sourceFocusX = (sourcePlacement.x + sourcePlacement.width / 2) / outputW;
-                            const explicitFocusX = typeof jobSnapshot.activeImageViewOverride?.focusX === "number"
-                                && Math.abs(jobSnapshot.activeImageViewOverride.focusX - 0.5) > 0.01
-                                ? jobSnapshot.activeImageViewOverride.focusX
-                                : undefined;
-                            const focusX = explicitFocusX ?? inferOutpaintProductFocusX(
-                                masterLayers,
-                                masterLayer,
-                                masterArtboard,
-                                sourceFocusX,
-                            );
-                            const focusY = sourcePlacement.y / outputH;
-                            nextImageView = {
-                                objectFit: "cover",
-                                focusX: clampUnit(focusX),
-                                focusY: clampUnit(focusY),
-                            };
+                            if (usedGridUnionPlan) {
+                                nextImageView = { objectFit: "fill", focusX: 0.5, focusY: 0.5 };
+                            } else {
+                                const sourcePlacement = plan.sourcePlacementPx;
+                                const outputW = Math.max(1, plan.outputSizePx.width);
+                                const outputH = Math.max(1, plan.outputSizePx.height);
+                                // Anchor focus so the source product never gets
+                                // cropped off the top of the bitmap when
+                                // `cover` chops vertically (master/top-banner)
+                                // and so the full vertical extension below the
+                                // product remains visible in tall instance
+                                // artboards (Feed, vertical). Horizontally we
+                                // preserve an explicit user focus; otherwise
+                                // infer the product side from foreground layout
+                                // (text/logo on the left usually means product
+                                // on the right).
+                                const sourceFocusX = (sourcePlacement.x + sourcePlacement.width / 2) / outputW;
+                                const explicitFocusX = typeof jobSnapshot.activeImageViewOverride?.focusX === "number"
+                                    && Math.abs(jobSnapshot.activeImageViewOverride.focusX - 0.5) > 0.01
+                                    ? jobSnapshot.activeImageViewOverride.focusX
+                                    : undefined;
+                                const focusX = explicitFocusX ?? inferOutpaintProductFocusX(
+                                    masterLayers,
+                                    masterLayer,
+                                    masterArtboard,
+                                    sourceFocusX,
+                                );
+                                const focusY = sourcePlacement.y / outputH;
+                                nextImageView = {
+                                    objectFit: "cover",
+                                    focusX: clampUnit(focusX),
+                                    focusY: clampUnit(focusY),
+                                };
+                            }
                         }
 
                         onOutpaintHistorySave(layerId, {
@@ -2570,7 +2673,8 @@ function WizardLayerPromptBar({
                             // vertical extension), the master keeps the
                             // pack-extended rect (cover degenerates to
                             // 1:1 fill since aspects match).
-                            fillInstanceArtboard: true,
+                            fillInstanceArtboard: usedGridUnionPlan ? undefined : true,
+                            formatRects: usedGridUnionPlan ? gridUnionFormatRects : undefined,
                         });
                         resolveBatchVariants(layerId, batchId, [expandUrl], promptLabel, "ready");
                     } else if (jobSnapshot.imageMode === "edit") {
