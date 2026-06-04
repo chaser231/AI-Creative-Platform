@@ -4,13 +4,15 @@ import { applyConstraints } from "@/utils/resizeUtil";
 
 const CONTENT_PROPS = ["text", "src", "label"] as const;
 const STYLE_PROPS = [
-    "fill", "stroke", "strokeWidth", "strokeAlign", "strokeJoin", "fontSize", "fontFamily", "fontWeight",
-    "align", "verticalAlign", "letterSpacing", "lineHeight", "cornerRadius", "objectFit",
+    "fill", "fillMode", "imageFill", "fillEnabled",
+    "stroke", "strokeEnabled", "strokeWidth", "strokeAlign", "strokeJoin",
+    "fontSize", "fontFamily", "fontWeight",
+    "align", "verticalAlign", "letterSpacing", "lineHeight", "cornerRadius", "cornerRadii", "objectFit",
     "focusX", "focusY",
     "textColor", "textAdjust", "truncateText", "verticalTrim", "textTransform",
 ] as const;
 const SIZE_PROPS = ["width", "height"] as const;
-const POSITION_PROPS = ["x", "y", "rotation"] as const;
+const POSITION_PROPS = ["x", "y", "rotation", "flipX", "flipY"] as const;
 const GEOM_KEYS = new Set(["x", "y", "width", "height"]);
 
 export interface ArtboardSize { width: number; height: number }

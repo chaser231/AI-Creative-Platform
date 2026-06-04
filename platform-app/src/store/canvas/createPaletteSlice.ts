@@ -135,16 +135,55 @@ function cascadeLayers(layers: Layer[], swatchId: string, paint: Paint): Layer[]
     return changed ? next : layers;
 }
 
-/** Apply an image-src override to an image layer based on swatchRefs.src. */
-function applyImageRefToLayer(layer: Layer, swatchId: string, src: string): Layer {
-    if (layer.type !== "image" || layer.swatchRefs?.src !== swatchId) return layer;
-    return { ...layer, src } as Layer;
+/** Apply an image-background override to image layers and shape image fills. */
+function applyImageRefToLayer(
+    layer: Layer,
+    swatchId: string,
+    value: Extract<BackgroundSwatchValue, { kind: "image" }>,
+): Layer {
+    let changed = false;
+    let next = layer as Layer & Record<string, unknown>;
+
+    if (layer.type === "image" && layer.swatchRefs?.src === swatchId) {
+        next = {
+            ...next,
+            src: value.src,
+            objectFit: value.fit,
+            focusX: value.focusX,
+            focusY: value.focusY,
+        };
+        changed = true;
+    }
+
+    if (
+        (layer.type === "rectangle" || layer.type === "frame")
+        && layer.imageFill?.swatchRef === swatchId
+    ) {
+        next = {
+            ...next,
+            imageFill: {
+                ...layer.imageFill,
+                src: value.src,
+                fit: value.fit,
+                focusX: value.focusX,
+                focusY: value.focusY,
+                swatchRef: swatchId,
+            },
+        };
+        changed = true;
+    }
+
+    return changed ? next as Layer : layer;
 }
 
-function cascadeImageLayers(layers: Layer[], swatchId: string, src: string): Layer[] {
+function cascadeImageLayers(
+    layers: Layer[],
+    swatchId: string,
+    value: Extract<BackgroundSwatchValue, { kind: "image" }>,
+): Layer[] {
     let changed = false;
     const next = layers.map((l) => {
-        const nl = applyImageRefToLayer(l, swatchId, src);
+        const nl = applyImageRefToLayer(l, swatchId, value);
         if (nl !== l) changed = true;
         return nl;
     });
@@ -264,11 +303,11 @@ export const createPaletteSlice: StateCreator<CanvasStore, [], [], PaletteSlice>
                 && typeof updatedSwatch.value === "object"
                 && (updatedSwatch.value as BackgroundSwatchValue).kind === "image"
             ) {
-                const newSrc = (updatedSwatch.value as Extract<BackgroundSwatchValue, { kind: "image" }>).src;
-                layers = cascadeImageLayers(layers, id, newSrc);
+                const imageValue = updatedSwatch.value as Extract<BackgroundSwatchValue, { kind: "image" }>;
+                layers = cascadeImageLayers(layers, id, imageValue);
                 resizes = resizes.map((r) => {
                     if (!r.layerSnapshot) return r;
-                    const next = cascadeImageLayers(r.layerSnapshot, id, newSrc);
+                    const next = cascadeImageLayers(r.layerSnapshot, id, imageValue);
                     return next === r.layerSnapshot ? r : { ...r, layerSnapshot: next };
                 });
             }
@@ -431,14 +470,14 @@ export const createPaletteSlice: StateCreator<CanvasStore, [], [], PaletteSlice>
             const replacement = findSwatch(nextState.palette, replaceWithId);
             if (replacement) {
                 const paint = resolvePaintFromSwatch(replacement);
-                const newImgSrc =
+                const imageValue =
                     replacement.type === "background"
                     && typeof replacement.value === "object"
                     && (replacement.value as BackgroundSwatchValue).kind === "image"
-                        ? (replacement.value as Extract<BackgroundSwatchValue, { kind: "image" }>).src
+                        ? (replacement.value as Extract<BackgroundSwatchValue, { kind: "image" }>)
                         : undefined;
 
-                if (paint !== undefined || newImgSrc !== undefined) {
+                if (paint !== undefined || imageValue !== undefined) {
                     set((s) => {
                         let layers = s.layers;
                         let masters = s.masterComponents;
@@ -454,11 +493,11 @@ export const createPaletteSlice: StateCreator<CanvasStore, [], [], PaletteSlice>
                                 return next === r.layerSnapshot ? r : { ...r, layerSnapshot: next };
                             });
                         }
-                        if (newImgSrc !== undefined) {
-                            layers = cascadeImageLayers(layers, replaceWithId, newImgSrc);
+                        if (imageValue !== undefined) {
+                            layers = cascadeImageLayers(layers, replaceWithId, imageValue);
                             resizes = resizes.map((r) => {
                                 if (!r.layerSnapshot) return r;
-                                const next = cascadeImageLayers(r.layerSnapshot, replaceWithId, newImgSrc);
+                                const next = cascadeImageLayers(r.layerSnapshot, replaceWithId, imageValue);
                                 return next === r.layerSnapshot ? r : { ...r, layerSnapshot: next };
                             });
                         }

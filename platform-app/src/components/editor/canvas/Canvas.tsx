@@ -1,11 +1,12 @@
 "use client";
 
-import { useRef, useCallback, useEffect, useState, useMemo, Fragment } from "react";
+import { useRef, useCallback, useEffect, useState, useMemo, Fragment, type ReactNode } from "react";
 import { ImageIcon } from "lucide-react";
 import { Stage, Layer, Rect, Text, Image as KonvaImage, Transformer, Group, Line, Circle } from "react-konva";
 import { useCanvasStore } from "@/store/canvasStore";
 import { useShallow } from "zustand/react/shallow";
-import type { Layer as LayerType, TextLayer, BadgeLayer, FrameLayer, ImageLayer, Paint, LayerUpdate } from "@/types";
+import type { CornerRadii, Layer as LayerType, TextLayer, BadgeLayer, FrameLayer, ImageLayer, LayerImageFill, Paint, LayerUpdate } from "@/types";
+import type { CornerRadiusValue } from "@/utils/strokeGeometry";
 import { computeImageFitProps } from "@/utils/imageFitUtils";
 import { ContextMenu, buildLayerContextMenuItems, buildMultiSelectionContextMenuItems } from "../ContextMenu";
 import { useSearchParams } from "next/navigation";
@@ -140,50 +141,60 @@ function CanvasLayer({
                         listening={activeTool === "select"}
                         perfectDrawEnabled={false}
                     />
-                    <AlignedStrokeRect
-                        width={layer.width}
-                        height={layer.height}
-                        cornerRadius={layer.cornerRadius}
-                        fillEnabled={layer.fillEnabled !== false}
-                        {...(layer.fillEnabled === false
-                            ? {}
-                            : paintToKonvaProps(layer.fill, layer.width, layer.height))}
-                        stroke={layer.stroke || undefined}
-                        strokeWidth={layer.strokeWidth}
-                        strokeAlign={layer.strokeAlign}
-                        strokeJoin={layer.strokeJoin}
-                        strokeEnabled={layer.strokeEnabled !== false}
-                    />
+                    <FlipLayerContent layer={layer}>
+                        <StyledBoxFill
+                            width={layer.width}
+                            height={layer.height}
+                            cornerRadius={resolveCornerRadius(layer.cornerRadius, layer.cornerRadii)}
+                            fill={layer.fill}
+                            fillMode={layer.fillMode}
+                            fillEnabled={layer.fillEnabled}
+                            imageFill={layer.imageFill}
+                        />
+                        <StyledBoxStroke
+                            width={layer.width}
+                            height={layer.height}
+                            cornerRadius={resolveCornerRadius(layer.cornerRadius, layer.cornerRadii)}
+                            stroke={layer.stroke}
+                            strokeWidth={layer.strokeWidth}
+                            strokeAlign={layer.strokeAlign}
+                            strokeJoin={layer.strokeJoin}
+                            strokeEnabled={layer.strokeEnabled}
+                        />
+                    </FlipLayerContent>
                 </Group>
             )}
             {layer.type === "text" && !isEditing && (
-                <Text
-                    ref={shapeRef as React.RefObject<Konva.Text | null>}
-                    {...commonProps}
-                    width={layer.textAdjust === "auto_width" ? undefined : layer.width}
-                    height={layer.textAdjust === "auto_width" || layer.textAdjust === "auto_height" ? undefined : layer.height}
-                    text={layer.textTransform === "uppercase" ? layer.text.toUpperCase() : layer.textTransform === "lowercase" ? layer.text.toLowerCase() : layer.text}
-                    fontSize={layer.fontSize}
-                    fontFamily={layer.fontFamily}
-                    fontStyle={layer.fontWeight || "normal"}
-                    fill={layer.fillEnabled === false ? "transparent" : layer.fill}
-                    align={layer.align}
-                    verticalAlign={layer.verticalAlign || "top"}
-                    letterSpacing={layer.letterSpacing}
-                    lineHeight={layer.lineHeight}
-                    wrap={layer.textAdjust === "auto_width" ? "none" : "word"}
-                    ellipsis={layer.textAdjust === "fixed" ? (layer.truncateText || false) : false}
-                    onDblClick={() => {
-                        if (shapeRef.current) {
-                            onDblClickText(layer as LayerType & { type: "text" }, shapeRef.current as Konva.Text);
-                        }
-                    }}
-                    onDblTap={() => {
-                        if (shapeRef.current) {
-                            onDblClickText(layer as LayerType & { type: "text" }, shapeRef.current as Konva.Text);
-                        }
-                    }}
-                />
+                <Group {...commonProps}>
+                    <FlipLayerContent layer={layer}>
+                        <Text
+                            ref={shapeRef as React.RefObject<Konva.Text | null>}
+                            width={layer.textAdjust === "auto_width" ? undefined : layer.width}
+                            height={layer.textAdjust === "auto_width" || layer.textAdjust === "auto_height" ? undefined : layer.height}
+                            text={layer.textTransform === "uppercase" ? layer.text.toUpperCase() : layer.textTransform === "lowercase" ? layer.text.toLowerCase() : layer.text}
+                            fontSize={layer.fontSize}
+                            fontFamily={layer.fontFamily}
+                            fontStyle={layer.fontWeight || "normal"}
+                            fill={layer.fillEnabled === false ? "transparent" : layer.fill}
+                            align={layer.align}
+                            verticalAlign={layer.verticalAlign || "top"}
+                            letterSpacing={layer.letterSpacing}
+                            lineHeight={layer.lineHeight}
+                            wrap={layer.textAdjust === "auto_width" ? "none" : "word"}
+                            ellipsis={layer.textAdjust === "fixed" ? (layer.truncateText || false) : false}
+                            onDblClick={() => {
+                                if (shapeRef.current) {
+                                    onDblClickText(layer as LayerType & { type: "text" }, shapeRef.current as Konva.Text);
+                                }
+                            }}
+                            onDblTap={() => {
+                                if (shapeRef.current) {
+                                    onDblClickText(layer as LayerType & { type: "text" }, shapeRef.current as Konva.Text);
+                                }
+                            }}
+                        />
+                    </FlipLayerContent>
+                </Group>
             )}
             {layer.type === "image" && (
                 <ImageLayerRenderer
@@ -229,45 +240,242 @@ function ImageLayerRenderer({
     commonProps: Record<string, unknown>;
 }) {
     const image = useImage(layer.src);
-    if (!image) return null;
+    const fillMode = layer.fillMode ?? "image";
+    const cornerRadius = resolveCornerRadius(layer.cornerRadius ?? 0, layer.cornerRadii);
 
-    const fitMode = (layer as ImageLayer).objectFit || "cover";
+    return (
+        <Group
+            ref={shapeRef as React.RefObject<Konva.Group | null>}
+            {...commonProps}
+        >
+            <Rect
+                width={layer.width}
+                height={layer.height}
+                fill="rgba(0,0,0,0.001)"
+                listening={commonProps.listening as boolean}
+                perfectDrawEnabled={false}
+            />
+            <FlipLayerContent layer={layer}>
+                {fillMode === "paint" ? (
+                    <StyledBoxFill
+                        width={layer.width}
+                        height={layer.height}
+                        cornerRadius={cornerRadius}
+                        fill={layer.fill ?? "#FFFFFF"}
+                        fillMode="paint"
+                        fillEnabled={layer.fillEnabled}
+                    />
+                ) : image ? (
+                    <ImageFillContent
+                        image={image}
+                        width={layer.width}
+                        height={layer.height}
+                        cornerRadius={cornerRadius}
+                        fitMode={(layer as ImageLayer).objectFit || "cover"}
+                        opacity={layer.fillEnabled === false ? 0 : 1}
+                        focusX={layer.focusX}
+                        focusY={layer.focusY}
+                    />
+                ) : null}
+                <StyledBoxStroke
+                    width={layer.width}
+                    height={layer.height}
+                    cornerRadius={cornerRadius}
+                    stroke={layer.stroke}
+                    strokeWidth={layer.strokeWidth ?? 0}
+                    strokeAlign={layer.strokeAlign}
+                    strokeJoin={layer.strokeJoin}
+                    strokeEnabled={layer.strokeEnabled}
+                />
+            </FlipLayerContent>
+        </Group>
+    );
+}
+
+function FlipLayerContent({ layer, children }: { layer: Pick<LayerType, "width" | "height" | "flipX" | "flipY">; children: ReactNode }) {
+    if (!layer.flipX && !layer.flipY) return <>{children}</>;
+    return (
+        <Group
+            x={layer.flipX ? layer.width : 0}
+            y={layer.flipY ? layer.height : 0}
+            scaleX={layer.flipX ? -1 : 1}
+            scaleY={layer.flipY ? -1 : 1}
+        >
+            {children}
+        </Group>
+    );
+}
+
+function resolveCornerRadius(cornerRadius = 0, cornerRadii?: CornerRadii): CornerRadiusValue {
+    if (!cornerRadii) return cornerRadius;
+    return [
+        cornerRadii.topLeft ?? cornerRadius,
+        cornerRadii.topRight ?? cornerRadius,
+        cornerRadii.bottomRight ?? cornerRadius,
+        cornerRadii.bottomLeft ?? cornerRadius,
+    ];
+}
+
+function roundedRectClipFunc(width: number, height: number, cornerRadius: CornerRadiusValue = 0) {
+    const radii = Array.isArray(cornerRadius) ? cornerRadius : [cornerRadius, cornerRadius, cornerRadius, cornerRadius];
+    const [tl, tr, br, bl] = radii.map((radius) => Math.min(Math.max(0, radius), Math.min(width, height) / 2));
+    if (tl <= 0 && tr <= 0 && br <= 0 && bl <= 0) {
+        return (ctx: Konva.Context) => {
+            ctx.rect(0, 0, width, height);
+        };
+    }
+    return (ctx: Konva.Context) => {
+        ctx.beginPath();
+        ctx.moveTo(tl, 0);
+        ctx.lineTo(width - tr, 0);
+        ctx.arcTo(width, 0, width, tr, tr);
+        ctx.lineTo(width, height - br);
+        ctx.arcTo(width, height, width - br, height, br);
+        ctx.lineTo(bl, height);
+        ctx.arcTo(0, height, 0, height - bl, bl);
+        ctx.lineTo(0, tl);
+        ctx.arcTo(0, 0, tl, 0, tl);
+        ctx.closePath();
+    };
+}
+
+function ImageFillContent({
+    image,
+    width,
+    height,
+    cornerRadius,
+    fitMode,
+    opacity = 1,
+    focusX,
+    focusY,
+}: {
+    image: HTMLImageElement;
+    width: number;
+    height: number;
+    cornerRadius?: CornerRadiusValue;
+    fitMode: ImageLayer["objectFit"];
+    opacity?: number;
+    focusX?: number;
+    focusY?: number;
+}) {
     const naturalW = image.naturalWidth || image.width;
     const naturalH = image.naturalHeight || image.height;
-    const fit = computeImageFitProps(fitMode, naturalW, naturalH, layer.width, layer.height, {
-        focusX: layer.focusX,
-        focusY: layer.focusY,
+    const fit = computeImageFitProps(fitMode || "cover", naturalW, naturalH, width, height, {
+        focusX,
+        focusY,
     });
 
-    // For contain/crop the image may be smaller than container, so we draw within a clipped Group
-    if (fitMode === "contain" || fitMode === "crop") {
+    return (
+        <Group clipFunc={roundedRectClipFunc(width, height, cornerRadius)}>
+            <KonvaImage
+                image={image}
+                x={fit.drawX}
+                y={fit.drawY}
+                width={fit.drawWidth}
+                height={fit.drawHeight}
+                crop={{ x: fit.cropX, y: fit.cropY, width: fit.cropWidth, height: fit.cropHeight }}
+                opacity={opacity}
+            />
+        </Group>
+    );
+}
+
+function ShapeImageFill({
+    imageFill,
+    width,
+    height,
+    cornerRadius,
+}: {
+    imageFill?: LayerImageFill;
+    width: number;
+    height: number;
+    cornerRadius?: CornerRadiusValue;
+}) {
+    const image = useImage(imageFill?.src ?? "");
+    if (!imageFill || !image) return null;
+    return (
+        <ImageFillContent
+            image={image}
+            width={width}
+            height={height}
+            cornerRadius={cornerRadius}
+            fitMode={imageFill.fit}
+            opacity={imageFill.opacity ?? 1}
+            focusX={imageFill.focusX}
+            focusY={imageFill.focusY}
+        />
+    );
+}
+
+function StyledBoxFill({
+    width,
+    height,
+    cornerRadius,
+    fill,
+    fillMode,
+    fillEnabled,
+    imageFill,
+}: {
+    width: number;
+    height: number;
+    cornerRadius?: CornerRadiusValue;
+    fill: Paint;
+    fillMode?: "paint" | "image";
+    fillEnabled?: boolean;
+    imageFill?: LayerImageFill;
+}) {
+    if (fillEnabled === false) return null;
+    if (fillMode === "image" && imageFill?.src) {
         return (
-            <Group
-                ref={shapeRef as React.RefObject<Konva.Group | null>}
-                {...commonProps}
-                clipFunc={(ctx) => {
-                    ctx.rect(0, 0, layer.width, layer.height);
-                }}
-            >
-                <KonvaImage
-                    image={image}
-                    x={fit.drawX}
-                    y={fit.drawY}
-                    width={fit.drawWidth}
-                    height={fit.drawHeight}
-                    crop={{ x: fit.cropX, y: fit.cropY, width: fit.cropWidth, height: fit.cropHeight }}
-                />
-            </Group>
+            <ShapeImageFill
+                imageFill={imageFill}
+                width={width}
+                height={height}
+                cornerRadius={cornerRadius}
+            />
         );
     }
-
-    // For cover and fill — image fills the entire container
     return (
-        <KonvaImage
-            ref={shapeRef as React.RefObject<Konva.Image | null>}
-            {...commonProps}
-            image={image}
-            crop={{ x: fit.cropX, y: fit.cropY, width: fit.cropWidth, height: fit.cropHeight }}
+        <AlignedStrokeRect
+            width={width}
+            height={height}
+            cornerRadius={cornerRadius}
+            {...paintToKonvaProps(fill, width, height)}
+            strokeEnabled={false}
+        />
+    );
+}
+
+function StyledBoxStroke({
+    width,
+    height,
+    cornerRadius,
+    stroke,
+    strokeWidth = 0,
+    strokeAlign,
+    strokeJoin,
+    strokeEnabled,
+}: {
+    width: number;
+    height: number;
+    cornerRadius?: CornerRadiusValue;
+    stroke?: string;
+    strokeWidth?: number;
+    strokeAlign?: ImageLayer["strokeAlign"];
+    strokeJoin?: ImageLayer["strokeJoin"];
+    strokeEnabled?: boolean;
+}) {
+    return (
+        <AlignedStrokeRect
+            width={width}
+            height={height}
+            cornerRadius={cornerRadius}
+            fillEnabled={false}
+            stroke={stroke || undefined}
+            strokeWidth={strokeWidth}
+            strokeAlign={strokeAlign}
+            strokeJoin={strokeJoin}
+            strokeEnabled={strokeEnabled !== false}
         />
     );
 }
@@ -292,25 +500,27 @@ function BadgeLayerRenderer({
             ref={groupRef}
             {...commonProps}
         >
-            <Rect
-                width={layer.width}
-                height={layer.height}
-                {...(layer.fillEnabled === false
-                    ? { fill: "transparent", fillPriority: "color" }
-                    : paintToKonvaProps(layer.fill, layer.width, layer.height))}
-                cornerRadius={radius}
-            />
-            <Text
-                width={layer.width}
-                height={layer.height}
-                text={layer.label}
-                fontSize={layer.fontSize}
-                fontFamily="Inter"
-                fontStyle="600"
-                fill={layer.textColor}
-                align="center"
-                verticalAlign="middle"
-            />
+            <FlipLayerContent layer={layer}>
+                <Rect
+                    width={layer.width}
+                    height={layer.height}
+                    {...(layer.fillEnabled === false
+                        ? { fill: "transparent", fillPriority: "color" }
+                        : paintToKonvaProps(layer.fill, layer.width, layer.height))}
+                    cornerRadius={radius}
+                />
+                <Text
+                    width={layer.width}
+                    height={layer.height}
+                    text={layer.label}
+                    fontSize={layer.fontSize}
+                    fontFamily="Inter"
+                    fontStyle="600"
+                    fill={layer.textColor}
+                    align="center"
+                    verticalAlign="middle"
+                />
+            </FlipLayerContent>
         </Group>
     );
 }
@@ -456,33 +666,19 @@ function FrameLayerRenderer({
                 clipHeight={layer.clipContent ? layer.height : undefined}
             >
                 <Group
-                    clipFunc={(layer.clipContent && layer.cornerRadius > 0) ? (ctx) => {
-                        const r = layer.cornerRadius;
-                        const w = layer.width;
-                        const h = layer.height;
-                        ctx.beginPath();
-                        ctx.moveTo(r, 0);
-                        ctx.arcTo(w, 0, w, h, r);
-                        ctx.arcTo(w, h, 0, h, r);
-                        ctx.arcTo(0, h, 0, 0, r);
-                        ctx.arcTo(0, 0, w, 0, r);
-                        ctx.closePath();
-                    } : undefined}
+                    clipFunc={layer.clipContent ? roundedRectClipFunc(layer.width, layer.height, resolveCornerRadius(layer.cornerRadius, layer.cornerRadii)) : undefined}
                 >
-                    <AlignedStrokeRect
-                        width={layer.width}
-                        height={layer.height}
-                        cornerRadius={layer.cornerRadius}
-                        fillEnabled={layer.fillEnabled !== false}
-                        {...(layer.fillEnabled === false
-                            ? { fill: undefined, fillPriority: "color" }
-                            : paintToKonvaProps(layer.fill, layer.width, layer.height))}
-                        stroke={isHighlighted ? FRAME_HIGHLIGHT_STROKE : (layer.stroke || undefined)}
-                        strokeWidth={isHighlighted ? FRAME_HIGHLIGHT_WIDTH : layer.strokeWidth}
-                        strokeAlign={layer.strokeAlign}
-                        strokeJoin={layer.strokeJoin}
-                        strokeEnabled={isHighlighted || layer.strokeEnabled !== false}
-                    />
+                    <FlipLayerContent layer={layer}>
+                        <StyledBoxFill
+                            width={layer.width}
+                            height={layer.height}
+                            cornerRadius={resolveCornerRadius(layer.cornerRadius, layer.cornerRadii)}
+                            fill={layer.fill}
+                            fillMode={layer.fillMode}
+                            fillEnabled={layer.fillEnabled}
+                            imageFill={layer.imageFill}
+                        />
+                    </FlipLayerContent>
                     {childLayers.map((child) => {
                         // Use STORE's absolute position for the frame, not the prop
                         // (prop may be relative for nested frames).
@@ -506,6 +702,18 @@ function FrameLayerRenderer({
                             />
                         );
                     })}
+                    <FlipLayerContent layer={layer}>
+                        <StyledBoxStroke
+                            width={layer.width}
+                            height={layer.height}
+                            cornerRadius={resolveCornerRadius(layer.cornerRadius, layer.cornerRadii)}
+                            stroke={isHighlighted ? FRAME_HIGHLIGHT_STROKE : layer.stroke}
+                            strokeWidth={isHighlighted ? FRAME_HIGHLIGHT_WIDTH : layer.strokeWidth}
+                            strokeAlign={layer.strokeAlign}
+                            strokeJoin={layer.strokeJoin}
+                            strokeEnabled={isHighlighted || layer.strokeEnabled !== false}
+                        />
+                    </FlipLayerContent>
                 </Group>
             </Group>
             {/* Inner Transformer for selected children — operates in frame-local coords */}
@@ -528,7 +736,7 @@ function GradientDirectionHandles({
     onUpdateArtboard,
 }: {
     target:
-        | { kind: "layer"; layer: Extract<LayerType, { type: "rectangle" | "badge" | "frame" }> }
+        | { kind: "layer"; layer: Extract<LayerType, { type: "rectangle" | "badge" | "frame" | "image" }> }
         | { kind: "artboard"; fill: Paint; width: number; height: number };
     zoom: number;
     onDragStart: () => void;
@@ -539,7 +747,7 @@ function GradientDirectionHandles({
     const bounds = target.kind === "layer"
         ? { x: target.layer.x, y: target.layer.y, width: target.layer.width, height: target.layer.height }
         : { x: 0, y: 0, width: target.width, height: target.height };
-    const fill = target.kind === "layer" ? target.layer.fill : target.fill;
+    const fill = target.kind === "layer" ? target.layer.fill ?? "#FFFFFF" : target.fill;
     const paint = normalizePaint(fill);
     if (paint.kind !== "gradient") return null;
 
@@ -1613,8 +1821,8 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
             const pointer = stage?.getPointerPosition();
             if (!stage || !pointer) return false;
             const layer = layers.find((l) => l.id === activeGradientEditorTarget);
-            if (!layer || !(layer.type === "rectangle" || layer.type === "badge" || layer.type === "frame")) return false;
-            const paint = normalizePaint(layer.fill);
+            if (!layer || !(layer.type === "rectangle" || layer.type === "badge" || layer.type === "frame" || layer.type === "image")) return false;
+            const paint = normalizePaint(layer.type === "image" ? layer.fill ?? "#FFFFFF" : layer.fill);
             if (paint.kind !== "gradient") return false;
 
             const scenePoint = {
@@ -2375,8 +2583,8 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
             if (
                 selected
                 && activeGradientEditorTarget === selected.id
-                && (selected.type === "rectangle" || selected.type === "badge" || selected.type === "frame")
-                && normalizePaint(selected.fill).kind === "gradient"
+                && (selected.type === "rectangle" || selected.type === "badge" || selected.type === "frame" || selected.type === "image")
+                && normalizePaint(selected.type === "image" ? selected.fill ?? "#FFFFFF" : selected.fill).kind === "gradient"
             ) {
                 return { kind: "layer" as const, layer: selected };
             }
@@ -2435,18 +2643,7 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
                             clipX={0} clipY={0} clipWidth={canvasWidth} clipHeight={canvasHeight}
                         >
                             <Group
-                                clipFunc={artboardProps.cornerRadius > 0 ? (ctx) => {
-                                    const r = artboardProps.cornerRadius;
-                                    const w = canvasWidth;
-                                    const h = canvasHeight;
-                                    ctx.beginPath();
-                                    ctx.moveTo(r, 0);
-                                    ctx.arcTo(w, 0, w, h, r);
-                                    ctx.arcTo(w, h, 0, h, r);
-                                    ctx.arcTo(0, h, 0, 0, r);
-                                    ctx.arcTo(0, 0, w, 0, r);
-                                    ctx.closePath();
-                                } : undefined}
+                                clipFunc={roundedRectClipFunc(canvasWidth, canvasHeight, resolveCornerRadius(artboardProps.cornerRadius, artboardProps.cornerRadii))}
                             >
                                 <AlignedStrokeRect
                                     id="__artboard_fill"
@@ -2458,7 +2655,7 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
                                     strokeWidth={artboardProps.strokeWidth}
                                     strokeAlign={artboardProps.strokeAlign}
                                     strokeEnabled={!!artboardProps.strokeWidth && !!artboardProps.stroke}
-                                    cornerRadius={artboardProps.cornerRadius}
+                                    cornerRadius={resolveCornerRadius(artboardProps.cornerRadius, artboardProps.cornerRadii)}
                                     shadowColor="rgba(0,0,0,0.1)"
                                     shadowBlur={20}
                                     listening={false}
@@ -2494,7 +2691,7 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
                                 strokeWidth={artboardProps.strokeWidth}
                                 strokeAlign={artboardProps.strokeAlign}
                                 strokeEnabled={!!artboardProps.strokeWidth && !!artboardProps.stroke}
-                                cornerRadius={artboardProps.cornerRadius}
+                                cornerRadius={resolveCornerRadius(artboardProps.cornerRadius, artboardProps.cornerRadii)}
                                 shadowColor="rgba(0,0,0,0.1)"
                                 shadowBlur={20}
                                 listening={false}
@@ -2573,7 +2770,7 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
                                 rotation={hr}
                                 stroke="#6366F1"
                                 strokeWidth={1.5 / zoom}
-                                cornerRadius={hLayer.type === 'rectangle' ? (hLayer as any).cornerRadius || 0 : hLayer.type === 'frame' ? (hLayer as any).cornerRadius || 0 : 0}
+                                cornerRadius={(hLayer.type === 'rectangle' || hLayer.type === 'frame') ? resolveCornerRadius((hLayer as any).cornerRadius || 0, (hLayer as any).cornerRadii) : 0}
                                 listening={false}
                                 perfectDrawEnabled={false}
                             />

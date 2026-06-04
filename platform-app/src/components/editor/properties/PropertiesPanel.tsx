@@ -6,8 +6,13 @@ import {
     AlignLeft,
     AlignRight,
     Anchor,
+    ArrowDown,
+    ArrowRight,
     Eye,
     EyeOff,
+    FlipHorizontal,
+    FlipVertical,
+    Grid3X3,
     ImageIcon,
     LayoutDashboard,
     Link,
@@ -15,6 +20,7 @@ import {
     Maximize2,
     Move,
     Paintbrush,
+    Plus,
     RotateCw,
     Scissors,
     Type,
@@ -29,20 +35,22 @@ import type {
     BadgeLayer,
     ConstraintH,
     ConstraintV,
+    CornerRadii,
     FrameLayer,
     ImageLayer,
     ImageFitMode,
     Layer,
+    LayerImageFill,
     RectangleLayer,
-    StrokeAlign,
     TemplateSlotRole,
     TextLayer,
 } from "@/types";
-import { DEFAULT_CONSTRAINTS, IMAGE_FIT_MODE_LABELS, STROKE_ALIGN_LABELS } from "@/types";
+import { DEFAULT_CONSTRAINTS, IMAGE_FIT_MODE_LABELS } from "@/types";
 import { cn } from "@/lib/cn";
 import { PREINSTALLED_FONTS, getUserFonts, normalizeFontFamilyName, saveUserFont } from "@/lib/customFonts";
 import { getAvailableFontFamiliesSync } from "@/utils/fontUtils";
 import { uploadForAI } from "@/utils/imageUpload";
+import { normalizePaint } from "@/utils/paint";
 import { useAssetList, useAssetUpload } from "@/hooks/useAssetUpload";
 import { useWorkspace } from "@/providers/WorkspaceProvider";
 import { ArtboardBackgroundControls } from "./ArtboardBackgroundControls";
@@ -61,7 +69,7 @@ const SYSTEM_FONTS = [
     "Georgia",
 ];
 
-const FIELD_CLASS = "w-full h-7 px-2 rounded-[var(--radius-sm)] border border-border-primary bg-bg-secondary text-[11px] text-text-primary text-center focus:outline-none focus:ring-1 focus:ring-border-focus";
+const FIELD_CLASS = "w-full h-8 rounded-[var(--radius-md)] border border-border-primary bg-bg-secondary pl-7 pr-2 text-[11px] text-text-primary text-center focus:outline-none focus:ring-1 focus:ring-border-focus";
 
 export function PropertiesPanel() {
     const {
@@ -183,34 +191,52 @@ export function PropertiesPanel() {
                             </TwoColumn>
                         </InspectorSection>
                         <InspectorSection title="Стиль артборда" icon={<Paintbrush size={13} />}>
-                            <PaintRow label="Фон" value={artboardProps.fill} gradientTargetId="artboard" onChange={(fill) => updateArtboardProps({ fill })} />
-                            <TwoColumn>
-                                <NumberField label="R" value={artboardProps.cornerRadius} min={0} onChange={(value) => updateArtboardProps({ cornerRadius: Math.max(0, value) })} />
-                                <NumberField label="Stroke" value={artboardProps.strokeWidth} min={0} onChange={(value) => updateArtboardProps({ strokeWidth: Math.max(0, value) })} />
-                            </TwoColumn>
-                            <ColorInput value={artboardProps.stroke || "#000000"} onChange={(stroke) => updateArtboardProps({ stroke })} />
-                            <Select
-                                size="xs"
-                                value={artboardProps.strokeAlign ?? "center"}
-                                onChange={(value) => updateArtboardProps({ strokeAlign: value as StrokeAlign })}
-                                options={(Object.entries(STROKE_ALIGN_LABELS) as [StrokeAlign, string][]).map(([value, label]) => ({ value, label }))}
+                            <PaintRow
+                                label="Фон"
+                                value={artboardProps.fill}
+                                gradientTargetId="artboard"
+                                onChange={(fill) => updateArtboardProps({ fill })}
+                                imagePanel={(
+                                    <ArtboardBackgroundControls
+                                        artboardProps={artboardProps}
+                                        onUpdate={updateArtboardProps}
+                                        paletteBackgrounds={palette.backgrounds}
+                                        onApplyBackgroundSwatch={applyBackgroundSwatchToArtboard}
+                                        onCreateSwatchFromBackground={createSwatchFromArtboardBackground}
+                                        onUploadFile={handleBgFilePick}
+                                        variant="sidebar"
+                                    />
+                                )}
+                                imageActive={!!artboardProps.backgroundImage}
+                                onPaintTab={() => updateArtboardProps({ backgroundImage: undefined })}
+                                onImageTab={() => undefined}
+                                opacity={artboardProps.backgroundImage?.opacity}
+                                onOpacityChange={(opacity) => artboardProps.backgroundImage
+                                    ? updateArtboardProps({ backgroundImage: { ...artboardProps.backgroundImage, opacity } })
+                                    : undefined}
                             />
+                            <StrokeControls
+                                value={{
+                                    stroke: artboardProps.stroke || "#000000",
+                                    strokeEnabled: !!artboardProps.strokeWidth && !!artboardProps.stroke,
+                                    strokeWidth: artboardProps.strokeWidth,
+                                    strokeAlign: artboardProps.strokeAlign,
+                                    strokeJoin: artboardProps.strokeJoin,
+                                }}
+                                onChange={updateArtboardProps}
+                            />
+                        </InspectorSection>
+                        <CornerRadiusSection
+                            cornerRadius={artboardProps.cornerRadius}
+                            cornerRadii={artboardProps.cornerRadii}
+                            onChange={updateArtboardProps}
+                        />
+                        <InspectorSection title="Экспорт">
                             <ToggleButton
                                 active={artboardProps.clipContent}
                                 icon={<Scissors size={12} />}
                                 label="Clip content"
                                 onClick={() => updateArtboardProps({ clipContent: !artboardProps.clipContent })}
-                            />
-                        </InspectorSection>
-                        <InspectorSection title="Изображение фона" icon={<ImageIcon size={13} />}>
-                            <ArtboardBackgroundControls
-                                artboardProps={artboardProps}
-                                onUpdate={updateArtboardProps}
-                                paletteBackgrounds={palette.backgrounds}
-                                onApplyBackgroundSwatch={applyBackgroundSwatchToArtboard}
-                                onCreateSwatchFromBackground={createSwatchFromArtboardBackground}
-                                onUploadFile={handleBgFilePick}
-                                variant="sidebar"
                             />
                         </InspectorSection>
                     </div>
@@ -250,6 +276,17 @@ function LayerInspector({
                     icon={<RotateCw size={11} />}
                     onChange={(rotation) => onChange({ rotation } as Partial<Layer>)}
                 />
+                <div className="grid grid-cols-3 overflow-hidden rounded-[var(--radius-md)] border border-border-primary">
+                    <IconButton title="Повернуть на 90 градусов вправо" onClick={() => onChange({ rotation: ((layer.rotation || 0) + 90) % 360 } as Partial<Layer>)}>
+                        <RotateCw size={13} />
+                    </IconButton>
+                    <IconButton title="Отразить по горизонтали" active={!!layer.flipX} onClick={() => onChange({ flipX: !layer.flipX } as Partial<Layer>)}>
+                        <FlipHorizontal size={13} />
+                    </IconButton>
+                    <IconButton title="Отразить по вертикали" active={!!layer.flipY} onClick={() => onChange({ flipY: !layer.flipY } as Partial<Layer>)}>
+                        <FlipVertical size={13} />
+                    </IconButton>
+                </div>
             </InspectorSection>
             <InspectorSection title="Размер" icon={<Maximize2 size={13} />}>
                 <TwoColumn>
@@ -314,42 +351,38 @@ function ConstraintsSection({
     const constraints = layer.constraints ?? DEFAULT_CONSTRAINTS;
     return (
         <InspectorSection title="Constraints" icon={<Anchor size={13} />}>
-            <TwoColumn>
-                <LabeledControl label="Horizontal">
-                    <div className="flex items-center gap-1.5">
-                        <ConstraintGlyph axis="x" value={constraints.horizontal} />
-                        <Select
-                            size="xs"
-                            value={constraints.horizontal}
-                            onChange={(value) => onChange({ constraints: { ...constraints, horizontal: value as ConstraintH } } as Partial<Layer>)}
-                            options={[
-                                { value: "left", label: "Left" },
-                                { value: "right", label: "Right" },
-                                { value: "center", label: "Center" },
-                                { value: "stretch", label: "Stretch" },
-                                { value: "scale", label: "Scale" },
-                            ]}
-                        />
-                    </div>
-                </LabeledControl>
-                <LabeledControl label="Vertical">
-                    <div className="flex items-center gap-1.5">
-                        <ConstraintGlyph axis="y" value={constraints.vertical} />
-                        <Select
-                            size="xs"
-                            value={constraints.vertical}
-                            onChange={(value) => onChange({ constraints: { ...constraints, vertical: value as ConstraintV } } as Partial<Layer>)}
-                            options={[
-                                { value: "top", label: "Top" },
-                                { value: "bottom", label: "Bottom" },
-                                { value: "center", label: "Center" },
-                                { value: "stretch", label: "Stretch" },
-                                { value: "scale", label: "Scale" },
-                            ]}
-                        />
-                    </div>
-                </LabeledControl>
-            </TwoColumn>
+            <div className="grid grid-cols-[72px_1fr] gap-2">
+                <ConstraintsAnchorGrid
+                    constraints={constraints}
+                    onChange={(next) => onChange({ constraints: next } as Partial<Layer>)}
+                />
+                <div className="space-y-1.5">
+                    <Select
+                        size="xs"
+                        value={constraints.horizontal}
+                        onChange={(value) => onChange({ constraints: { ...constraints, horizontal: value as ConstraintH } } as Partial<Layer>)}
+                        options={[
+                            { value: "left", label: "Left" },
+                            { value: "right", label: "Right" },
+                            { value: "center", label: "Center" },
+                            { value: "stretch", label: "Stretch" },
+                            { value: "scale", label: "Scale" },
+                        ]}
+                    />
+                    <Select
+                        size="xs"
+                        value={constraints.vertical}
+                        onChange={(value) => onChange({ constraints: { ...constraints, vertical: value as ConstraintV } } as Partial<Layer>)}
+                        options={[
+                            { value: "top", label: "Top" },
+                            { value: "bottom", label: "Bottom" },
+                            { value: "center", label: "Center" },
+                            { value: "stretch", label: "Stretch" },
+                            { value: "scale", label: "Scale" },
+                        ]}
+                    />
+                </div>
+            </div>
             <Select
                 size="xs"
                 value={layer.slotId || "none"}
@@ -379,20 +412,14 @@ function ConstraintsSection({
 function AutoLayoutChildSection({ layer, onChange }: { layer: Layer; onChange: (updates: Partial<Layer>) => void }) {
     return (
         <InspectorSection title="Размер в Auto Layout" icon={<LayoutDashboard size={13} />}>
-            <TwoColumn>
-                <Select
-                    size="xs"
-                    value={layer.layoutSizingWidth || "fixed"}
-                    onChange={(value) => onChange(resolveLayoutSizingUpdate(layer, "width", value))}
-                    options={layoutSizingOptions(layer)}
-                />
-                <Select
-                    size="xs"
-                    value={layer.layoutSizingHeight || "fixed"}
-                    onChange={(value) => onChange(resolveLayoutSizingUpdate(layer, "height", value))}
-                    options={layoutSizingOptions(layer)}
-                />
-            </TwoColumn>
+            <SizeModePair
+                widthMode={layer.layoutSizingWidth || "fixed"}
+                heightMode={layer.layoutSizingHeight || "fixed"}
+                widthOptions={layoutSizingOptions(layer)}
+                heightOptions={layoutSizingOptions(layer)}
+                onWidthChange={(value) => onChange(resolveLayoutSizingUpdate(layer, "width", value))}
+                onHeightChange={(value) => onChange(resolveLayoutSizingUpdate(layer, "height", value))}
+            />
             <ToggleButton
                 active={!!layer.isAbsolutePositioned}
                 label="Absolute position"
@@ -404,75 +431,93 @@ function AutoLayoutChildSection({ layer, onChange }: { layer: Layer; onChange: (
 
 function FrameLayoutSection({ layer, onChange }: { layer: FrameLayer; onChange: (updates: Partial<FrameLayer>) => void }) {
     const enabled = layer.layoutMode && layer.layoutMode !== "none";
+    const [individualPaddingOpen, setIndividualPaddingOpen] = useState(false);
+    const horizontalPadding = layer.paddingLeft ?? layer.paddingRight ?? 0;
+    const verticalPadding = layer.paddingTop ?? layer.paddingBottom ?? 0;
     return (
         <InspectorSection title="Auto Layout" icon={<LayoutDashboard size={13} />}>
-            <div className="grid grid-cols-3 rounded-[var(--radius-md)] border border-border-primary overflow-hidden">
+            <div className="grid grid-cols-3 overflow-hidden rounded-[var(--radius-md)] border border-border-primary">
                 {(["none", "horizontal", "vertical"] as const).map((mode) => (
                     <button
                         key={mode}
                         onClick={() => onChange({ layoutMode: mode })}
                         className={cn(
-                            "h-8 text-[10px] border-r border-border-primary last:border-r-0 transition-colors cursor-pointer",
+                            "flex h-8 items-center justify-center border-r border-border-primary text-[10px] transition-colors last:border-r-0 cursor-pointer",
                             (layer.layoutMode || "none") === mode
                                 ? "bg-accent-primary/10 text-accent-primary"
                                 : "text-text-tertiary hover:text-text-primary hover:bg-bg-tertiary",
                         )}
+                        title={mode === "none" ? "Auto Layout off" : mode}
                     >
-                        {mode === "none" ? "Off" : mode === "horizontal" ? "H" : "V"}
+                        {mode === "none" ? <Grid3X3 size={13} /> : mode === "horizontal" ? <ArrowRight size={14} /> : <ArrowDown size={14} />}
                     </button>
                 ))}
             </div>
             {enabled && (
                 <>
-                    <TwoColumn>
-                        <NumberField label="Top" value={layer.paddingTop || 0} min={0} onChange={(paddingTop) => onChange({ paddingTop })} />
-                        <NumberField label="Right" value={layer.paddingRight || 0} min={0} onChange={(paddingRight) => onChange({ paddingRight })} />
-                        <NumberField label="Bottom" value={layer.paddingBottom || 0} min={0} onChange={(paddingBottom) => onChange({ paddingBottom })} />
-                        <NumberField label="Left" value={layer.paddingLeft || 0} min={0} onChange={(paddingLeft) => onChange({ paddingLeft })} />
-                    </TwoColumn>
-                    <NumberField label="Spacing" value={layer.spacing || 0} min={0} onChange={(spacing) => onChange({ spacing })} />
-                    <TwoColumn>
-                        <Select
-                            size="xs"
-                            value={layer.primaryAxisAlignItems || "flex-start"}
-                            onChange={(value) => onChange({ primaryAxisAlignItems: value as FrameLayer["primaryAxisAlignItems"] })}
-                            options={[
-                                { value: "flex-start", label: "Start" },
-                                { value: "center", label: "Center" },
-                                { value: "flex-end", label: "End" },
-                                { value: "space-between", label: "Space" },
-                            ]}
-                        />
-                        <Select
-                            size="xs"
-                            value={layer.counterAxisAlignItems || "flex-start"}
-                            onChange={(value) => onChange({ counterAxisAlignItems: value as FrameLayer["counterAxisAlignItems"] })}
-                            options={[
-                                { value: "flex-start", label: "Start" },
-                                { value: "center", label: "Center" },
-                                { value: "flex-end", label: "End" },
-                                { value: "stretch", label: "Stretch" },
-                            ]}
-                        />
-                        <Select
-                            size="xs"
-                            value={layer.primaryAxisSizingMode || "fixed"}
-                            onChange={(value) => onChange({ primaryAxisSizingMode: value as FrameLayer["primaryAxisSizingMode"] })}
-                            options={[
-                                { value: "fixed", label: "Fixed" },
-                                { value: "auto", label: "Hug" },
-                            ]}
-                        />
-                        <Select
-                            size="xs"
-                            value={layer.counterAxisSizingMode || "fixed"}
-                            onChange={(value) => onChange({ counterAxisSizingMode: value as FrameLayer["counterAxisSizingMode"] })}
-                            options={[
-                                { value: "fixed", label: "Fixed" },
-                                { value: "auto", label: "Hug" },
-                            ]}
-                        />
-                    </TwoColumn>
+                    <AutoLayoutAlignmentGrid
+                        primary={layer.primaryAxisAlignItems || "flex-start"}
+                        counter={layer.counterAxisAlignItems || "flex-start"}
+                        onChange={(updates) => onChange(updates)}
+                    />
+                    <div className="grid grid-cols-[1fr_28px] gap-2">
+                        <div className="grid grid-cols-2 gap-2">
+                            <CompactNumberField
+                                label="X"
+                                value={horizontalPadding}
+                                min={0}
+                                onChange={(value) => onChange({ paddingLeft: value, paddingRight: value })}
+                            />
+                            <CompactNumberField
+                                label="Y"
+                                value={verticalPadding}
+                                min={0}
+                                onChange={(value) => onChange({ paddingTop: value, paddingBottom: value })}
+                            />
+                        </div>
+                        <button
+                            type="button"
+                            onClick={() => setIndividualPaddingOpen((open) => !open)}
+                            className={cn(
+                                "flex h-8 items-center justify-center rounded-[var(--radius-md)] border border-border-primary text-text-tertiary transition-colors hover:bg-bg-tertiary hover:text-text-primary",
+                                individualPaddingOpen && "bg-accent-primary/10 text-accent-primary",
+                            )}
+                            title="Individual padding"
+                        >
+                            <Plus size={13} />
+                        </button>
+                    </div>
+                    {individualPaddingOpen && (
+                        <TwoColumn>
+                            <CompactNumberField label="T" value={layer.paddingTop || 0} min={0} onChange={(paddingTop) => onChange({ paddingTop })} />
+                            <CompactNumberField label="R" value={layer.paddingRight || 0} min={0} onChange={(paddingRight) => onChange({ paddingRight })} />
+                            <CompactNumberField label="B" value={layer.paddingBottom || 0} min={0} onChange={(paddingBottom) => onChange({ paddingBottom })} />
+                            <CompactNumberField label="L" value={layer.paddingLeft || 0} min={0} onChange={(paddingLeft) => onChange({ paddingLeft })} />
+                        </TwoColumn>
+                    )}
+                    <CompactNumberField label="Gap" value={layer.spacing || 0} min={0} onChange={(spacing) => onChange({ spacing })} />
+                    <SizeModePair
+                        widthMode={layer.layoutMode === "horizontal"
+                            ? (layer.primaryAxisSizingMode === "auto" ? "hug" : "fixed")
+                            : (layer.counterAxisSizingMode === "auto" ? "hug" : "fixed")}
+                        heightMode={layer.layoutMode === "horizontal"
+                            ? (layer.counterAxisSizingMode === "auto" ? "hug" : "fixed")
+                            : (layer.primaryAxisSizingMode === "auto" ? "hug" : "fixed")}
+                        widthOptions={[
+                            { value: "fixed", label: "Fixed" },
+                            { value: "hug", label: "Hug" },
+                        ]}
+                        heightOptions={[
+                            { value: "fixed", label: "Fixed" },
+                            { value: "hug", label: "Hug" },
+                        ]}
+                        onWidthChange={(value) => onChange(layer.layoutMode === "horizontal"
+                            ? { primaryAxisSizingMode: value === "hug" ? "auto" : "fixed" }
+                            : { counterAxisSizingMode: value === "hug" ? "auto" : "fixed" })}
+                        onHeightChange={(value) => onChange(layer.layoutMode === "horizontal"
+                            ? { counterAxisSizingMode: value === "hug" ? "auto" : "fixed" }
+                            : { primaryAxisSizingMode: value === "hug" ? "auto" : "fixed" })}
+                    />
                 </>
             )}
         </InspectorSection>
@@ -597,21 +642,17 @@ function TextInspectorSection({ layer, onChange }: { layer: TextLayer; onChange:
                 <ToggleButton active={!!layer.verticalTrim} label="Vertical trim" onClick={() => onChange({ verticalTrim: !layer.verticalTrim })} />
                 <ToggleButton active={!!layer.truncateText} label="Truncate" onClick={() => onChange({ truncateText: !layer.truncateText })} />
             </TwoColumn>
-            <LabeledControl label="Text color">
-                <div className="flex items-center gap-2">
-                    <div className={cn("flex-1", layer.fillEnabled === false && "opacity-30 pointer-events-none")}>
-                        <ColorInput value={layer.fill} onChange={(fill) => onChange({ fill })} />
-                    </div>
-                    <button
-                        type="button"
-                        onClick={() => onChange({ fillEnabled: !(layer.fillEnabled !== false) })}
-                        className="p-1 rounded-[var(--radius-sm)] text-text-tertiary hover:text-text-primary hover:bg-bg-tertiary cursor-pointer"
-                        title={layer.fillEnabled !== false ? "Скрыть" : "Показать"}
-                    >
-                        {layer.fillEnabled !== false ? <Eye size={12} /> : <EyeOff size={12} />}
-                    </button>
-                </div>
-            </LabeledControl>
+            <PaintRow
+                label="Fill"
+                value={layer.fill}
+                allowGradient={false}
+                enabled={layer.fillEnabled !== false}
+                onToggleEnabled={() => onChange({ fillEnabled: !(layer.fillEnabled !== false) })}
+                onChange={(fill) => {
+                    const solid = normalizePaint(fill);
+                    if (solid.kind === "solid") onChange({ fill: solid.color });
+                }}
+            />
             <OpacityControl value={layer.opacity ?? 1} onChange={(opacity) => onChange({ opacity })} />
             <label className="flex items-center justify-center gap-1.5 h-8 rounded-[var(--radius-md)] border border-dashed border-border-focus text-[10px] text-text-secondary hover:bg-bg-tertiary cursor-pointer transition-colors">
                 <Upload size={12} />
@@ -661,56 +702,80 @@ function ImageInspectorSection({ layer, onChange }: { layer: ImageLayer; onChang
     const fitModes: ImageFitMode[] = ["cover", "contain", "fill", "crop"];
 
     return (
-        <InspectorSection title="Изображение" icon={<ImageIcon size={13} />}>
-            <button
-                onClick={() => fileRef.current?.click()}
-                disabled={isUploading}
-                className="flex h-8 items-center justify-center gap-1.5 rounded-[var(--radius-md)] border border-border-primary text-[11px] text-text-secondary hover:bg-bg-tertiary hover:text-text-primary disabled:opacity-50 cursor-pointer transition-colors"
-            >
-                <Upload size={12} />
-                {isUploading ? "Загрузка..." : "Заменить"}
-            </button>
-            <input
-                ref={fileRef}
-                type="file"
-                accept="image/*"
-                className="hidden"
-                onChange={(event) => {
-                    const file = event.target.files?.[0];
-                    event.target.value = "";
-                    if (!file) return;
-                    setIsUploading(true);
-                    import("@/utils/imageUpload").then(({ compressImageFile, uploadForAI: uploadImage }) => {
-                        compressImageFile(file).then((compressedBase64) => {
-                            onChange({ src: compressedBase64 });
-                            return uploadImage(compressedBase64, "tmp");
-                        }).then((src) => {
-                            if (src) onChange({ src });
-                        }).finally(() => setIsUploading(false));
-                    }).catch(() => setIsUploading(false));
-                }}
+        <>
+            <InspectorSection title="Изображение" icon={<ImageIcon size={13} />}>
+                <button
+                    onClick={() => fileRef.current?.click()}
+                    disabled={isUploading}
+                    className="flex h-8 items-center justify-center gap-1.5 rounded-[var(--radius-md)] border border-border-primary text-[11px] text-text-secondary transition-colors hover:bg-bg-tertiary hover:text-text-primary disabled:opacity-50 cursor-pointer"
+                >
+                    <Upload size={12} />
+                    {isUploading ? "Загрузка..." : "Заменить source"}
+                </button>
+                <input
+                    ref={fileRef}
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(event) => {
+                        const file = event.target.files?.[0];
+                        event.target.value = "";
+                        if (!file) return;
+                        setIsUploading(true);
+                        import("@/utils/imageUpload").then(({ compressImageFile, uploadForAI: uploadImage }) => {
+                            compressImageFile(file).then((compressedBase64) => {
+                                onChange({ src: compressedBase64, fillMode: "image" });
+                                return uploadImage(compressedBase64, "tmp");
+                            }).then((src) => {
+                                if (src) onChange({ src, fillMode: "image" });
+                            }).finally(() => setIsUploading(false));
+                        }).catch(() => setIsUploading(false));
+                    }}
+                />
+            </InspectorSection>
+            <InspectorSection title="Стиль" icon={<Paintbrush size={13} />}>
+                <OpacityControl value={layer.opacity ?? 1} onChange={(opacity) => onChange({ opacity })} />
+                <PaintRow
+                    label="Fill"
+                    value={layer.fill ?? "#FFFFFF"}
+                    gradientTargetId={layer.id}
+                    enabled={layer.fillEnabled !== false}
+                    onToggleEnabled={() => onChange({ fillEnabled: !(layer.fillEnabled !== false) })}
+                    onChange={(fill) => onChange({ fill, fillMode: "paint" })}
+                    imageActive={(layer.fillMode ?? "image") === "image"}
+                    onPaintTab={() => onChange({ fillMode: "paint", fill: layer.fill ?? "#FFFFFF" })}
+                    onImageTab={() => onChange({ fillMode: "image" })}
+                    opacity={(layer.fillMode ?? "image") === "image"
+                        ? undefined
+                        : solidPaintOpacity(layer.fill ?? "#FFFFFF")}
+                    imagePanel={(
+                        <ImageSourceStylePanel
+                            fitModes={fitModes}
+                            fit={layer.objectFit || "cover"}
+                            focusX={layer.focusX}
+                            focusY={layer.focusY}
+                            onFitChange={(objectFit) => onChange({ objectFit })}
+                            onFocusChange={(updates) => onChange(updates)}
+                        />
+                    )}
+                />
+                <StrokeControls
+                    value={{
+                        stroke: layer.stroke || "#000000",
+                        strokeEnabled: layer.strokeEnabled ?? false,
+                        strokeWidth: layer.strokeWidth ?? 0,
+                        strokeAlign: layer.strokeAlign,
+                        strokeJoin: layer.strokeJoin,
+                    }}
+                    onChange={onChange}
+                />
+            </InspectorSection>
+            <CornerRadiusSection
+                cornerRadius={layer.cornerRadius ?? 0}
+                cornerRadii={layer.cornerRadii}
+                onChange={onChange}
             />
-            <div className="grid grid-cols-4 rounded-[var(--radius-md)] border border-border-primary overflow-hidden">
-                {fitModes.map((mode) => (
-                    <button
-                        key={mode}
-                        onClick={() => onChange({ objectFit: mode })}
-                        className={cn(
-                            "h-8 text-[10px] border-r border-border-primary last:border-r-0 transition-colors cursor-pointer",
-                            (layer.objectFit || "cover") === mode
-                                ? "bg-accent-primary/10 text-accent-primary"
-                                : "text-text-tertiary hover:text-text-primary hover:bg-bg-tertiary",
-                        )}
-                    >
-                        {IMAGE_FIT_MODE_LABELS[mode]}
-                    </button>
-                ))}
-            </div>
-            <TwoColumn>
-                <NumberField label="Focus X" value={Math.round((layer.focusX ?? 0.5) * 100)} min={0} max={100} onChange={(value) => onChange({ focusX: value / 100 })} />
-                <NumberField label="Focus Y" value={Math.round((layer.focusY ?? 0.5) * 100)} min={0} max={100} onChange={(value) => onChange({ focusY: value / 100 })} />
-            </TwoColumn>
-        </InspectorSection>
+        </>
     );
 }
 
@@ -724,37 +789,59 @@ function ShapeStyleSection({
     showClip?: boolean;
 }) {
     const fillEnabled = layer.fillEnabled !== false;
+    const fillMode = layer.fillMode ?? "paint";
     return (
-        <InspectorSection title="Стиль" icon={<Paintbrush size={13} />}>
-            <OpacityControl value={layer.opacity ?? 1} onChange={(opacity) => onChange({ opacity })} />
-            <PaintRow
-                label="Заливка"
-                value={layer.fill}
-                gradientTargetId={layer.id}
-                enabled={fillEnabled}
-                onToggleEnabled={() => onChange({ fillEnabled: !fillEnabled })}
-                onChange={(fill) => onChange({ fill })}
-            />
-            <StrokeControls
-                value={{
-                    stroke: layer.stroke || "#000000",
-                    strokeEnabled: layer.strokeEnabled,
-                    strokeWidth: layer.strokeWidth,
-                    strokeAlign: layer.strokeAlign,
-                    strokeJoin: layer.strokeJoin,
-                }}
+        <>
+            <InspectorSection title="Стиль" icon={<Paintbrush size={13} />}>
+                <OpacityControl value={layer.opacity ?? 1} onChange={(opacity) => onChange({ opacity })} />
+                <PaintRow
+                    label="Заливка"
+                    value={layer.fill}
+                    gradientTargetId={layer.id}
+                    enabled={fillEnabled}
+                    onToggleEnabled={() => onChange({ fillEnabled: !fillEnabled })}
+                    onChange={(fill) => onChange({ fill, fillMode: "paint" })}
+                    imageActive={fillMode === "image"}
+                    onPaintTab={() => onChange({ fillMode: "paint" })}
+                    onImageTab={() => onChange({ fillMode: "image" })}
+                opacity={fillMode === "image" ? layer.imageFill?.opacity : solidPaintOpacity(layer.fill)}
+                    onOpacityChange={(opacity) => fillMode === "image" && layer.imageFill
+                        ? onChange({ imageFill: { ...layer.imageFill, opacity } })
+                        : undefined}
+                    imagePanel={(
+                        <LayerImageFillPanel
+                            imageFill={layer.imageFill}
+                            onChange={(imageFill) => onChange(imageFill
+                                ? { imageFill, fillMode: "image" }
+                                : { imageFill: undefined, fillMode: "paint" })}
+                        />
+                    )}
+                />
+                <StrokeControls
+                    value={{
+                        stroke: layer.stroke || "#000000",
+                        strokeEnabled: layer.strokeEnabled,
+                        strokeWidth: layer.strokeWidth,
+                        strokeAlign: layer.strokeAlign,
+                        strokeJoin: layer.strokeJoin,
+                    }}
+                    onChange={onChange}
+                />
+                {showClip && layer.type === "frame" && (
+                    <ToggleButton
+                        active={layer.clipContent}
+                        icon={<Scissors size={12} />}
+                        label="Clip content"
+                        onClick={() => onChange({ clipContent: !layer.clipContent })}
+                    />
+                )}
+            </InspectorSection>
+            <CornerRadiusSection
+                cornerRadius={layer.cornerRadius}
+                cornerRadii={layer.cornerRadii}
                 onChange={onChange}
             />
-            <NumberField label="Radius" value={layer.cornerRadius} min={0} onChange={(cornerRadius) => onChange({ cornerRadius: Math.max(0, cornerRadius) })} />
-            {showClip && layer.type === "frame" && (
-                <ToggleButton
-                    active={layer.clipContent}
-                    icon={<Scissors size={12} />}
-                    label="Clip content"
-                    onClick={() => onChange({ clipContent: !layer.clipContent })}
-                />
-            )}
-        </InspectorSection>
+        </>
     );
 }
 
@@ -793,16 +880,116 @@ function BadgeInspectorSection({ layer, onChange }: { layer: BadgeLayer; onChang
     );
 }
 
-function InspectorSection({ title, icon, children }: { title: string; icon?: ReactNode; children: ReactNode }) {
+function CornerRadiusSection({
+    cornerRadius,
+    cornerRadii,
+    onChange,
+}: {
+    cornerRadius: number;
+    cornerRadii?: CornerRadii;
+    onChange: (updates: { cornerRadius?: number; cornerRadii?: CornerRadii }) => void;
+}) {
+    const topLeft = cornerRadii?.topLeft ?? cornerRadius;
+    const topRight = cornerRadii?.topRight ?? cornerRadius;
+    const bottomRight = cornerRadii?.bottomRight ?? cornerRadius;
+    const bottomLeft = cornerRadii?.bottomLeft ?? cornerRadius;
+    const allEqual = topLeft === topRight && topRight === bottomRight && bottomRight === bottomLeft;
+
+    const updateAll = (value: number) => {
+        const next = Math.max(0, value);
+        onChange({
+            cornerRadius: next,
+            cornerRadii: allEqual ? undefined : {
+                topLeft: next,
+                topRight: next,
+                bottomRight: next,
+                bottomLeft: next,
+            },
+        });
+    };
+
+    const updateCorner = (corner: keyof CornerRadii, value: number) => {
+        const nextRadii = {
+            topLeft,
+            topRight,
+            bottomRight,
+            bottomLeft,
+            [corner]: Math.max(0, value),
+        };
+        const values = [nextRadii.topLeft, nextRadii.topRight, nextRadii.bottomRight, nextRadii.bottomLeft];
+        const nextAllEqual = values.every((radius) => radius === values[0]);
+        onChange({
+            cornerRadius: nextAllEqual ? values[0] : cornerRadius,
+            cornerRadii: nextAllEqual ? undefined : nextRadii,
+        });
+    };
+
+    return (
+        <InspectorSection title="Скругления">
+            <TwoColumn>
+                <NumberField
+                    label="R"
+                    value={cornerRadius}
+                    min={0}
+                    onChange={updateAll}
+                    icon={<CornerGlyph corner="all" />}
+                />
+                <div className="flex h-8 items-center justify-center rounded-[var(--radius-md)] border border-border-primary bg-bg-secondary text-[10px] text-text-tertiary">
+                    {allEqual ? "All corners" : "Mixed"}
+                </div>
+                <NumberField
+                    label="TL"
+                    value={topLeft}
+                    min={0}
+                    onChange={(value) => updateCorner("topLeft", value)}
+                    icon={<CornerGlyph corner="topLeft" />}
+                />
+                <NumberField
+                    label="TR"
+                    value={topRight}
+                    min={0}
+                    onChange={(value) => updateCorner("topRight", value)}
+                    icon={<CornerGlyph corner="topRight" />}
+                />
+                <NumberField
+                    label="BL"
+                    value={bottomLeft}
+                    min={0}
+                    onChange={(value) => updateCorner("bottomLeft", value)}
+                    icon={<CornerGlyph corner="bottomLeft" />}
+                />
+                <NumberField
+                    label="BR"
+                    value={bottomRight}
+                    min={0}
+                    onChange={(value) => updateCorner("bottomRight", value)}
+                    icon={<CornerGlyph corner="bottomRight" />}
+                />
+            </TwoColumn>
+        </InspectorSection>
+    );
+}
+
+function InspectorSection({ title, children }: { title: string; icon?: ReactNode; children: ReactNode }) {
     return (
         <section className="border-b border-border-primary pb-3 last:border-b-0 last:pb-0">
-            <div className="mb-2 flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wider text-text-tertiary">
-                {icon}
+            <div className="mb-2 text-[12px] font-semibold text-text-primary">
                 {title}
             </div>
             <div className="space-y-2">{children}</div>
         </section>
     );
+}
+
+function CornerGlyph({ corner }: { corner: "all" | keyof CornerRadii }) {
+    const borderClasses = {
+        all: "rounded-[4px]",
+        topLeft: "rounded-tl-[5px]",
+        topRight: "rounded-tr-[5px]",
+        bottomRight: "rounded-br-[5px]",
+        bottomLeft: "rounded-bl-[5px]",
+    }[corner];
+    return <span className={cn("block h-3.5 w-3.5 border border-current", borderClasses)} />;
 }
 
 function LabeledControl({ label, children }: { label: string; children: ReactNode }) {
@@ -832,19 +1019,19 @@ function NumberField({
     icon?: ReactNode;
 }) {
     return (
-        <LabeledControl label={label}>
-            <div className="relative">
-                {icon && <span className="absolute left-2 top-1/2 -translate-y-1/2 text-text-tertiary">{icon}</span>}
-                <SmartNumberInput
-                    value={value}
-                    min={min}
-                    max={max}
-                    step={step}
-                    onChange={onChange}
-                    className={cn(FIELD_CLASS, icon && "pl-7")}
-                />
-            </div>
-        </LabeledControl>
+        <div className="relative">
+            <span className="pointer-events-none absolute left-2 top-1/2 flex -translate-y-1/2 items-center text-[11px] font-medium text-text-tertiary">
+                {icon ?? label}
+            </span>
+            <SmartNumberInput
+                value={value}
+                min={min}
+                max={max}
+                step={step}
+                onChange={onChange}
+                className={FIELD_CLASS}
+            />
+        </div>
     );
 }
 
@@ -857,27 +1044,63 @@ function PaintRow({
     value,
     onChange,
     gradientTargetId,
+    allowGradient = true,
     enabled = true,
     onToggleEnabled,
+    imagePanel,
+    imageActive = false,
+    onPaintTab,
+    onImageTab,
+    opacity,
+    onOpacityChange,
 }: {
     label: string;
     value: Parameters<typeof PaintInput>[0]["value"];
     onChange: Parameters<typeof PaintInput>[0]["onChange"];
     gradientTargetId?: string;
+    allowGradient?: boolean;
     enabled?: boolean;
     onToggleEnabled?: () => void;
+    imagePanel?: ReactNode;
+    imageActive?: boolean;
+    onPaintTab?: () => void;
+    onImageTab?: () => void;
+    opacity?: number;
+    onOpacityChange?: (opacity: number) => void;
 }) {
+    const normalized = normalizePaint(value);
+    const currentOpacity = opacity ?? (normalized.kind === "solid" ? normalized.opacity : 1);
+    const handleOpacityChange = (nextOpacity: number) => {
+        if (onOpacityChange) {
+            onOpacityChange(nextOpacity);
+            return;
+        }
+        if (normalized.kind === "solid") {
+            onChange({ ...normalized, opacity: nextOpacity });
+        }
+    };
+
     return (
         <LabeledControl label={label}>
             <div className="flex items-center gap-2">
-                <div className={cn("flex-1", !enabled && "opacity-30 pointer-events-none")}>
-                    <PaintInput value={value} gradientTargetId={gradientTargetId} onChange={onChange} />
+                <div className={cn("min-w-0 flex-1", !enabled && "opacity-30 pointer-events-none")}>
+                    <PaintInput
+                        value={value}
+                        gradientTargetId={gradientTargetId}
+                        allowGradient={allowGradient}
+                        onChange={onChange}
+                        imagePanel={imagePanel}
+                        imageActive={imageActive}
+                        onPaintTab={onPaintTab}
+                        onImageTab={onImageTab}
+                    />
                 </div>
+                <PercentField value={currentOpacity} onChange={handleOpacityChange} disabled={!enabled} />
                 {onToggleEnabled && (
                     <button
                         type="button"
                         onClick={onToggleEnabled}
-                        className="p-1 rounded-[var(--radius-sm)] text-text-tertiary hover:text-text-primary hover:bg-bg-tertiary cursor-pointer"
+                        className="flex h-8 w-7 items-center justify-center rounded-[var(--radius-sm)] text-text-tertiary hover:text-text-primary hover:bg-bg-tertiary cursor-pointer"
                         title={enabled ? "Скрыть" : "Показать"}
                     >
                         {enabled ? <Eye size={12} /> : <EyeOff size={12} />}
@@ -885,6 +1108,327 @@ function PaintRow({
                 )}
             </div>
         </LabeledControl>
+    );
+}
+
+function ImageSourceStylePanel({
+    fitModes,
+    fit,
+    focusX,
+    focusY,
+    onFitChange,
+    onFocusChange,
+}: {
+    fitModes: ImageFitMode[];
+    fit: ImageFitMode;
+    focusX?: number;
+    focusY?: number;
+    onFitChange: (fit: ImageFitMode) => void;
+    onFocusChange: (updates: Partial<ImageLayer>) => void;
+}) {
+    return (
+        <div className="space-y-2">
+            <div className="grid grid-cols-4 overflow-hidden rounded-[var(--radius-md)] border border-border-primary">
+                {fitModes.map((mode) => (
+                    <button
+                        key={mode}
+                        type="button"
+                        onClick={() => onFitChange(mode)}
+                        className={cn(
+                            "h-8 border-r border-border-primary text-[9px] transition-colors last:border-r-0 cursor-pointer",
+                            fit === mode
+                                ? "bg-accent-primary/10 text-accent-primary"
+                                : "text-text-tertiary hover:bg-bg-tertiary hover:text-text-primary",
+                        )}
+                    >
+                        {IMAGE_FIT_MODE_LABELS[mode]}
+                    </button>
+                ))}
+            </div>
+            <TwoColumn>
+                <CompactNumberField
+                    label="X"
+                    value={Math.round((focusX ?? 0.5) * 100)}
+                    min={0}
+                    max={100}
+                    onChange={(value) => onFocusChange({ focusX: value / 100 })}
+                />
+                <CompactNumberField
+                    label="Y"
+                    value={Math.round((focusY ?? 0.5) * 100)}
+                    min={0}
+                    max={100}
+                    onChange={(value) => onFocusChange({ focusY: value / 100 })}
+                />
+            </TwoColumn>
+        </div>
+    );
+}
+
+function LayerImageFillPanel({
+    imageFill,
+    onChange,
+}: {
+    imageFill?: LayerImageFill;
+    onChange: (imageFill?: LayerImageFill) => void;
+}) {
+    const inputRef = useRef<HTMLInputElement>(null);
+    const [isUploading, setIsUploading] = useState(false);
+    const nextImageFill = (updates: Partial<LayerImageFill>): LayerImageFill => ({
+        src: imageFill?.src ?? "",
+        fit: imageFill?.fit ?? "cover",
+        opacity: imageFill?.opacity ?? 1,
+        focusX: imageFill?.focusX ?? 0.5,
+        focusY: imageFill?.focusY ?? 0.5,
+        ...updates,
+    });
+
+    return (
+        <div className="space-y-2">
+            <input
+                ref={inputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={async (event) => {
+                    const file = event.target.files?.[0];
+                    event.target.value = "";
+                    if (!file) return;
+                    setIsUploading(true);
+                    try {
+                        const src = await uploadImageFile(file, "layer-fill");
+                        onChange(nextImageFill({ src }));
+                    } finally {
+                        setIsUploading(false);
+                    }
+                }}
+            />
+            {imageFill?.src && (
+                <div
+                    className="h-20 w-full rounded-[var(--radius-md)] border border-border-primary bg-cover bg-center"
+                    style={{ backgroundImage: `url(${imageFill.src})` }}
+                />
+            )}
+            <button
+                type="button"
+                onClick={() => inputRef.current?.click()}
+                disabled={isUploading}
+                className="flex h-8 w-full items-center justify-center gap-1.5 rounded-[var(--radius-md)] border border-border-primary bg-bg-secondary text-[10px] font-medium text-text-secondary transition-colors hover:bg-bg-tertiary hover:text-text-primary disabled:opacity-50 cursor-pointer"
+            >
+                <Upload size={12} />
+                {isUploading ? "Загрузка..." : imageFill?.src ? "Заменить image fill" : "Загрузить image fill"}
+            </button>
+            {imageFill?.src && (
+                <>
+                    <ImageSourceStylePanel
+                        fitModes={["cover", "contain", "fill", "crop"]}
+                        fit={imageFill.fit}
+                        focusX={imageFill.focusX}
+                        focusY={imageFill.focusY}
+                        onFitChange={(fit) => onChange(nextImageFill({ fit }))}
+                        onFocusChange={(updates) => onChange(nextImageFill(updates as Partial<LayerImageFill>))}
+                    />
+                    <button
+                        type="button"
+                        onClick={() => onChange(undefined)}
+                        className="flex h-8 w-full items-center justify-center rounded-[var(--radius-md)] border border-border-primary text-[10px] text-text-tertiary transition-colors hover:bg-red-500/10 hover:text-red-500 cursor-pointer"
+                    >
+                        Убрать image fill
+                    </button>
+                </>
+            )}
+        </div>
+    );
+}
+
+async function uploadImageFile(file: File, tag: string) {
+    const base64: string = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = () => reject(reader.error);
+        reader.readAsDataURL(file);
+    });
+    return uploadForAI(base64, tag);
+}
+
+function solidPaintOpacity(value: Parameters<typeof PaintInput>[0]["value"]) {
+    const normalized = normalizePaint(value);
+    return normalized.kind === "solid" ? normalized.opacity : 1;
+}
+
+function CompactNumberField({
+    label,
+    value,
+    onChange,
+    min,
+    max,
+}: {
+    label: string;
+    value: number;
+    onChange: (value: number) => void;
+    min?: number;
+    max?: number;
+}) {
+    return (
+        <div className="relative">
+            <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-[10px] text-text-tertiary">
+                {label}
+            </span>
+            <SmartNumberInput
+                value={value}
+                min={min}
+                max={max}
+                onChange={(next) => {
+                    const clamped = Math.max(min ?? -Infinity, Math.min(max ?? Infinity, next));
+                    onChange(clamped);
+                }}
+                className="h-8 w-full rounded-[var(--radius-md)] border border-border-primary bg-bg-secondary pl-7 pr-2 text-center text-[11px] text-text-primary focus:outline-none focus:ring-1 focus:ring-border-focus"
+            />
+        </div>
+    );
+}
+
+function PercentField({ value, onChange, disabled }: { value: number; onChange: (value: number) => void; disabled?: boolean }) {
+    return (
+        <div className={cn("relative w-[62px]", disabled && "opacity-40 pointer-events-none")}>
+            <SmartNumberInput
+                min={0}
+                max={100}
+                value={Math.round(value * 100)}
+                onChange={(next) => onChange(Math.max(0, Math.min(100, next)) / 100)}
+                className="h-8 w-full rounded-[var(--radius-md)] border border-border-primary bg-bg-secondary pl-2 pr-5 text-center text-[11px] text-text-primary focus:outline-none focus:ring-1 focus:ring-border-focus"
+            />
+            <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-text-tertiary">%</span>
+        </div>
+    );
+}
+
+function SizeModePair({
+    widthMode,
+    heightMode,
+    widthOptions,
+    heightOptions,
+    onWidthChange,
+    onHeightChange,
+}: {
+    widthMode: string;
+    heightMode: string;
+    widthOptions: Array<{ value: string; label: string }>;
+    heightOptions: Array<{ value: string; label: string }>;
+    onWidthChange: (value: string) => void;
+    onHeightChange: (value: string) => void;
+}) {
+    return (
+        <TwoColumn>
+            <div className="grid grid-cols-[28px_1fr] overflow-hidden rounded-[var(--radius-md)] border border-border-primary">
+                <div className="flex h-8 items-center justify-center border-r border-border-primary text-[10px] text-text-tertiary">W</div>
+                <Select
+                    size="xs"
+                    value={widthMode}
+                    onChange={onWidthChange}
+                    options={widthOptions}
+                    triggerClassName="h-8 border-0 rounded-none bg-bg-secondary"
+                />
+            </div>
+            <div className="grid grid-cols-[28px_1fr] overflow-hidden rounded-[var(--radius-md)] border border-border-primary">
+                <div className="flex h-8 items-center justify-center border-r border-border-primary text-[10px] text-text-tertiary">H</div>
+                <Select
+                    size="xs"
+                    value={heightMode}
+                    onChange={onHeightChange}
+                    options={heightOptions}
+                    triggerClassName="h-8 border-0 rounded-none bg-bg-secondary"
+                />
+            </div>
+        </TwoColumn>
+    );
+}
+
+function AutoLayoutAlignmentGrid({
+    primary,
+    counter,
+    onChange,
+}: {
+    primary: NonNullable<FrameLayer["primaryAxisAlignItems"]>;
+    counter: NonNullable<FrameLayer["counterAxisAlignItems"]>;
+    onChange: (updates: Partial<FrameLayer>) => void;
+}) {
+    const rows: Array<NonNullable<FrameLayer["counterAxisAlignItems"]>> = ["flex-start", "center", "flex-end"];
+    const cols: Array<Exclude<NonNullable<FrameLayer["primaryAxisAlignItems"]>, "space-between">> = ["flex-start", "center", "flex-end"];
+    return (
+        <div className="grid grid-cols-[72px_1fr] gap-2">
+            <div className="grid h-[72px] grid-cols-3 grid-rows-3 gap-1 rounded-[var(--radius-md)] bg-bg-secondary p-2">
+                {rows.map((row) => cols.map((col) => {
+                    const active = counter === row && primary === col;
+                    return (
+                        <button
+                            key={`${row}-${col}`}
+                            type="button"
+                            onClick={() => onChange({ primaryAxisAlignItems: col, counterAxisAlignItems: row })}
+                            className={cn(
+                                "rounded-[3px] border border-border-primary transition-colors",
+                                active ? "border-accent-primary bg-accent-primary" : "bg-bg-tertiary hover:border-border-secondary",
+                            )}
+                            title={`${col} / ${row}`}
+                        />
+                    );
+                }))}
+            </div>
+            <div className="space-y-1.5">
+                <Select
+                    size="xs"
+                    value={primary}
+                    onChange={(value) => onChange({ primaryAxisAlignItems: value as FrameLayer["primaryAxisAlignItems"] })}
+                    options={[
+                        { value: "flex-start", label: "Start" },
+                        { value: "center", label: "Center" },
+                        { value: "flex-end", label: "End" },
+                        { value: "space-between", label: "Space" },
+                    ]}
+                />
+                <Select
+                    size="xs"
+                    value={counter}
+                    onChange={(value) => onChange({ counterAxisAlignItems: value as FrameLayer["counterAxisAlignItems"] })}
+                    options={[
+                        { value: "flex-start", label: "Start" },
+                        { value: "center", label: "Center" },
+                        { value: "flex-end", label: "End" },
+                        { value: "stretch", label: "Stretch" },
+                    ]}
+                />
+            </div>
+        </div>
+    );
+}
+
+function ConstraintsAnchorGrid({
+    constraints,
+    onChange,
+}: {
+    constraints: { horizontal: ConstraintH; vertical: ConstraintV };
+    onChange: (constraints: { horizontal: ConstraintH; vertical: ConstraintV }) => void;
+}) {
+    const rows: ConstraintV[] = ["top", "center", "bottom"];
+    const cols: ConstraintH[] = ["left", "center", "right"];
+    return (
+        <div className="grid h-[72px] grid-cols-3 grid-rows-3 gap-1 rounded-[var(--radius-md)] bg-bg-secondary p-2">
+            {rows.map((row) => cols.map((col) => {
+                const active = constraints.horizontal === col && constraints.vertical === row;
+                return (
+                    <button
+                        key={`${row}-${col}`}
+                        type="button"
+                        onClick={() => onChange({ horizontal: col, vertical: row })}
+                        className={cn(
+                            "rounded-[3px] border border-border-primary transition-colors",
+                            active ? "border-accent-primary bg-accent-primary" : "bg-bg-tertiary hover:border-border-secondary",
+                        )}
+                        title={`${col} / ${row}`}
+                    />
+                );
+            }))}
+        </div>
     );
 }
 
@@ -935,7 +1479,7 @@ function ToggleButton({ active, label, icon, onClick }: { active: boolean; label
             type="button"
             onClick={onClick}
             className={cn(
-                "flex h-8 items-center justify-center gap-1.5 rounded-[var(--radius-md)] border text-[10px] transition-colors cursor-pointer",
+                "flex h-8 items-center justify-center gap-1.5 rounded-[var(--radius-md)] border px-3 text-[10px] transition-colors cursor-pointer",
                 active
                     ? "border-accent-primary/30 bg-accent-primary/10 text-accent-primary"
                     : "border-border-primary text-text-tertiary hover:text-text-primary hover:bg-bg-tertiary",
@@ -971,25 +1515,6 @@ function MasterPill({ isMaster }: { isMaster: boolean }) {
             <Link2 size={10} />
             {isMaster ? "Мастер" : "Инстанс"}
         </div>
-    );
-}
-
-function ConstraintGlyph({ axis, value }: { axis: "x" | "y"; value: string }) {
-    return (
-        <span className="relative block h-7 w-7 shrink-0 rounded-[var(--radius-sm)] border border-border-primary bg-bg-secondary text-text-tertiary">
-            <span className="absolute inset-[5px] rounded-[2px] border border-current opacity-50" />
-            <span className={cn(
-                "absolute rounded-full bg-current",
-                axis === "x" ? "top-1/2 h-1 w-1 -translate-y-1/2" : "left-1/2 h-1 w-1 -translate-x-1/2",
-                value === "left" && "left-[4px]",
-                value === "right" && "right-[4px]",
-                value === "top" && "top-[4px]",
-                value === "bottom" && "bottom-[4px]",
-                value === "center" && (axis === "x" ? "left-1/2 -translate-x-1/2" : "top-1/2 -translate-y-1/2"),
-                value === "stretch" && (axis === "x" ? "left-[4px] right-[4px] w-auto" : "top-[4px] bottom-[4px] h-auto"),
-                value === "scale" && "left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 ring-2 ring-current",
-            )} />
-        </span>
     );
 }
 

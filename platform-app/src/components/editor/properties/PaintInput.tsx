@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { FlipHorizontal, Plus, RotateCw, Trash2, X } from "lucide-react";
 import type { GradientPaint, GradientType, Paint, PaintStop } from "@/types";
 import { useCanvasStore } from "@/store/canvasStore";
@@ -45,18 +46,28 @@ export function PaintInput({
     onChange,
     allowGradient = true,
     gradientTargetId,
+    imagePanel,
+    imageActive = false,
+    onImageTab,
+    onPaintTab,
 }: {
     value: Paint;
     onChange: (value: Paint) => void;
     allowGradient?: boolean;
     gradientTargetId?: string;
+    imagePanel?: ReactNode;
+    imageActive?: boolean;
+    onImageTab?: () => void;
+    onPaintTab?: () => void;
 }) {
     const [open, setOpen] = useState(false);
+    const [popoverPosition, setPopoverPosition] = useState<{ top: number; left: number } | null>(null);
     const normalized = normalizePaint(value);
     const gradient = normalized.kind === "gradient" ? normalized : null;
     const [selectedStopId, setSelectedStopId] = useState<string | null>(gradient?.stops[0]?.id ?? null);
     const barRef = useRef<HTMLDivElement>(null);
     const rootRef = useRef<HTMLDivElement>(null);
+    const popoverRef = useRef<HTMLDivElement>(null);
     const draggingStopId = useRef<string | null>(null);
     const suppressNextBarClick = useRef(false);
     const setActiveGradientEditorTarget = useCanvasStore((s) => s.setActiveGradientEditorTarget);
@@ -148,12 +159,28 @@ export function PaintInput({
         if (gradientTargetId) setActiveGradientEditorTarget(null);
     }, [gradientTargetId, setActiveGradientEditorTarget]);
 
+    const updatePopoverPosition = useCallback(() => {
+        const rect = rootRef.current?.getBoundingClientRect();
+        if (!rect || typeof window === "undefined") return;
+        const popoverWidth = imageActive ? 300 : 320;
+        setPopoverPosition({
+            top: Math.min(rect.bottom + 6, window.innerHeight - 24),
+            left: Math.max(12, Math.min(rect.left, window.innerWidth - popoverWidth - 12)),
+        });
+    }, [imageActive]);
+
+    const openPopover = () => {
+        updatePopoverPosition();
+        setOpen((prev) => !prev);
+    };
+
     useEffect(() => {
         if (!open) {
             if (gradientTargetId) setActiveGradientEditorTarget(null);
             return;
         }
 
+        updatePopoverPosition();
         if (gradientTargetId && gradient) {
             setActiveGradientEditorTarget(gradientTargetId);
         }
@@ -163,17 +190,21 @@ export function PaintInput({
             const isCanvasInteraction = target instanceof HTMLCanvasElement || !!target?.closest(".konvajs-content");
             if (isCanvasInteraction) return;
 
-            if (!rootRef.current?.contains(event.target as Node)) {
+            if (!rootRef.current?.contains(event.target as Node) && !popoverRef.current?.contains(event.target as Node)) {
                 closePopover();
             }
         };
 
+        window.addEventListener("resize", updatePopoverPosition);
+        window.addEventListener("scroll", updatePopoverPosition, true);
         document.addEventListener("pointerdown", onPointerDown);
         return () => {
+            window.removeEventListener("resize", updatePopoverPosition);
+            window.removeEventListener("scroll", updatePopoverPosition, true);
             document.removeEventListener("pointerdown", onPointerDown);
             if (gradientTargetId) setActiveGradientEditorTarget(null);
         };
-    }, [open, gradientTargetId, gradient, setActiveGradientEditorTarget, closePopover]);
+    }, [open, gradientTargetId, gradient, setActiveGradientEditorTarget, closePopover, updatePopoverPosition]);
 
     const stopBarBackground = gradient
         ? `linear-gradient(90deg, ${gradient.stops.map((stop) => `${stop.color} ${Math.round(stop.offset * 100)}%`).join(", ")})`
@@ -183,23 +214,30 @@ export function PaintInput({
         <div ref={rootRef} className="relative">
             <button
                 type="button"
-                onClick={() => setOpen((prev) => !prev)}
+                onClick={openPopover}
                 className="flex h-7 min-w-[118px] items-center gap-1.5 rounded-[var(--radius-sm)] border border-border-primary bg-bg-secondary px-1.5 text-left text-[10px] text-text-primary hover:bg-bg-tertiary"
             >
                 <span className="relative h-5 w-5 shrink-0 overflow-hidden rounded-[var(--radius-sm)] border border-border-primary" style={checkerboardStyle()}>
-                    <span className="absolute inset-0" style={{ background: paintToCssBackground(value) }} />
+                    <span className="absolute inset-0" style={{ background: imageActive ? "#D1D5DB" : paintToCssBackground(value) }} />
                 </span>
-                <span className="truncate">{gradientLabel(value)}</span>
+                <span className="truncate">{imageActive ? "Image" : gradientLabel(value)}</span>
             </button>
 
-            {open && (
-                <div className="absolute left-0 top-8 z-50 w-[320px] rounded-[var(--radius-xl)] border border-border-primary bg-bg-surface p-3 shadow-[var(--shadow-xl)]">
+            {open && popoverPosition && typeof document !== "undefined" && createPortal((
+                <div
+                    ref={popoverRef}
+                    className="fixed z-[9999] rounded-[var(--radius-xl)] border border-border-primary bg-bg-surface p-3 shadow-[var(--shadow-xl)]"
+                    style={{ top: popoverPosition.top, left: popoverPosition.left, width: imageActive ? 300 : 320 }}
+                >
                     <div className="mb-3 flex items-center justify-between gap-2">
                         <div className="flex rounded-[var(--radius-md)] bg-bg-secondary p-0.5">
                             <button
                                 type="button"
-                                onClick={() => onChange(makeSolidPaint(normalized.kind === "solid" ? normalized.color : "#FFFFFF", normalized.kind === "solid" ? normalized.opacity : 1))}
-                                className={`h-7 rounded-[var(--radius-sm)] px-2 text-[11px] ${normalized.kind === "solid" ? "bg-bg-surface text-text-primary shadow-[var(--shadow-sm)]" : "text-text-tertiary hover:text-text-primary"}`}
+                                onClick={() => {
+                                    onPaintTab?.();
+                                    onChange(makeSolidPaint(normalized.kind === "solid" ? normalized.color : "#FFFFFF", normalized.kind === "solid" ? normalized.opacity : 1));
+                                }}
+                                className={`h-7 rounded-[var(--radius-sm)] px-2 text-[11px] ${!imageActive && normalized.kind === "solid" ? "bg-bg-surface text-text-primary shadow-[var(--shadow-sm)]" : "text-text-tertiary hover:text-text-primary"}`}
                             >
                                 Solid
                             </button>
@@ -207,14 +245,24 @@ export function PaintInput({
                                 <button
                                     type="button"
                                     onClick={() => {
+                                        onPaintTab?.();
                                         const next = asGradient(value);
                                         onChange(next);
                                         setSelectedStopId(next.stops[0]?.id ?? null);
                                         if (gradientTargetId) setActiveGradientEditorTarget(gradientTargetId);
                                     }}
-                                    className={`h-7 rounded-[var(--radius-sm)] px-2 text-[11px] ${normalized.kind === "gradient" ? "bg-bg-surface text-text-primary shadow-[var(--shadow-sm)]" : "text-text-tertiary hover:text-text-primary"}`}
+                                    className={`h-7 rounded-[var(--radius-sm)] px-2 text-[11px] ${!imageActive && normalized.kind === "gradient" ? "bg-bg-surface text-text-primary shadow-[var(--shadow-sm)]" : "text-text-tertiary hover:text-text-primary"}`}
                                 >
                                     Gradient
+                                </button>
+                            )}
+                            {imagePanel && (
+                                <button
+                                    type="button"
+                                    onClick={() => onImageTab?.()}
+                                    className={`h-7 rounded-[var(--radius-sm)] px-2 text-[11px] ${imageActive ? "bg-bg-surface text-text-primary shadow-[var(--shadow-sm)]" : "text-text-tertiary hover:text-text-primary"}`}
+                                >
+                                    Image
                                 </button>
                             )}
                         </div>
@@ -227,7 +275,9 @@ export function PaintInput({
                         </button>
                     </div>
 
-                    {normalized.kind === "solid" && (
+                    {imageActive && imagePanel}
+
+                    {!imageActive && normalized.kind === "solid" && (
                         <div className="space-y-3">
                             <div className="flex items-center gap-2">
                                 <input
@@ -249,7 +299,7 @@ export function PaintInput({
                         </div>
                     )}
 
-                    {gradient && (
+                    {!imageActive && gradient && (
                         <div className="space-y-3">
                             <div className="flex items-center gap-2">
                                 <select
@@ -389,7 +439,7 @@ export function PaintInput({
                         </div>
                     )}
                 </div>
-            )}
+            ), document.body)}
         </div>
     );
 }
