@@ -14,6 +14,9 @@ import { DEFAULT_PACKS } from "@/constants/defaultPacks";
 import { type TemplatePackV2 } from "@/services/templateService";
 import type { BusinessUnit, ResizeFormat, TemplateTag } from "@/types";
 import {
+    createWizardLayerEntryResolver,
+    getEditableLayerEntries,
+    getPreviewFormatSources,
     WizardContentWorkspace,
     type WizardImageViewOverride,
     type WizardLayerStyleOverride,
@@ -457,42 +460,63 @@ export function WizardFlow({
 
         const { applyTemplatePack } = await import("@/services/templateService");
 
-        // Build contentOverrides map: slotId → value
-        const contentOverrides: Record<string, string> = {};
-
-        // Source 1: masterComponents (for legacy + post-fix templates where MC IDs match layer IDs)
-        for (const mc of packToApply.masterComponents) {
-            const sid = mc.slotId || (mc.props as any).slotId;
-            if (!sid) continue;
-
-            if ((mc.type === "text" || mc.type === "badge") && textValues[mc.id] !== undefined) {
-                contentOverrides[sid] = textValues[mc.id];
-            }
-            if (mc.type === "image" && imageValues[mc.id] !== undefined) {
-                contentOverrides[sid] = imageValues[mc.id];
-            }
+        const dataAny = packToApply as any;
+        const previewSources = getPreviewFormatSources(packToApply);
+        const masterPreviewSource = previewSources.find((format) => format.isMaster) ?? previewSources[0];
+        const editableEntries = getEditableLayerEntries(packToApply, masterPreviewSource?.layers ?? []);
+        const editableSlotCounts = new Map<string, number>();
+        for (const entry of editableEntries) {
+            if (!entry.slotId || entry.slotId === "none") continue;
+            const key = `${entry.type}:${entry.slotId}`;
+            editableSlotCounts.set(key, (editableSlotCounts.get(key) ?? 0) + 1);
         }
 
-        const findDraft = <T,>(layer: any, drafts: Record<string, T>): T | undefined => {
-            const ids = [layer.id, layer.masterId].filter(Boolean) as string[];
-            const slotId = layer.slotId || layer.props?.slotId;
-            if (slotId && slotId !== "none") {
-                const mc = packToApply.masterComponents.find((candidate) => {
-                    const candidateSlot = candidate.slotId || (candidate.props as any).slotId;
-                    return candidateSlot === slotId;
-                });
-                if (mc) ids.push(mc.id);
-            }
+        // Legacy fallback: unique slotId → value. Duplicated slots must be
+        // applied directly to layers/snapshots so one field cannot overwrite
+        // every layer with the same semantic slot.
+        const contentOverrides: Record<string, string> = {};
+
+        const layerSlotId = (layer: any): string | undefined => layer.slotId || layer.props?.slotId;
+        const layerDraftTarget = (layer: any) => ({
+            id: typeof layer.id === "string" ? layer.id : undefined,
+            masterId: typeof layer.masterId === "string"
+                ? layer.masterId
+                : typeof layer.masterComponentId === "string"
+                    ? layer.masterComponentId
+                    : undefined,
+            type: typeof layer.type === "string" ? layer.type : undefined,
+            slotId: layerSlotId(layer),
+        });
+        const canUseSlotOverride = (layer: any): boolean => {
+            const slotId = layerSlotId(layer);
+            if (!slotId || slotId === "none" || typeof layer.type !== "string") return false;
+            return editableSlotCounts.get(`${layer.type}:${slotId}`) === 1;
+        };
+        const rememberContentOverride = (layer: any, value: string) => {
+            const slotId = layerSlotId(layer);
+            if (!slotId || !canUseSlotOverride(layer)) return;
+            contentOverrides[slotId] = value;
+        };
+        const findDraft = <T,>(
+            layer: any,
+            drafts: Record<string, T>,
+            resolver: ReturnType<typeof createWizardLayerEntryResolver>,
+        ): T | undefined => {
+            const ids = resolver.getCandidateIds(layerDraftTarget(layer));
             return ids.map((id) => drafts[id]).find((value) => value !== undefined);
         };
-        const findExpansionDraft = (layer: any): LayerExpansionOverride | undefined => {
-            const ids = [layer.id, layer.masterId, layer.masterComponentId].filter(Boolean) as string[];
+
+        const findExpansionDraft = (
+            layer: any,
+            resolver: ReturnType<typeof createWizardLayerEntryResolver>,
+        ): LayerExpansionOverride | undefined => {
+            const ids = resolver.getCandidateIds(layerDraftTarget(layer));
             for (const id of ids) {
                 const direct = layerGeometryOverrides[id];
                 if (direct) return direct;
             }
-            const slotId = layer.slotId || layer.props?.slotId;
-            if (slotId && slotId !== "none") {
+            const slotId = layerSlotId(layer);
+            if (slotId && canUseSlotOverride(layer)) {
                 const bySlot = Object.values(layerGeometryOverrides).find((override) => override.slotId === slotId);
                 if (bySlot) return bySlot;
             }
@@ -502,55 +526,123 @@ export function WizardFlow({
             return undefined;
         };
 
-        const applyVisualDraftsToLayer = (layer: any) => {
+        const getContentDraftValue = (
+            layer: any,
+            resolver: ReturnType<typeof createWizardLayerEntryResolver>,
+        ): string | undefined => {
+            if (layer.type === "text" || layer.type === "badge") {
+                return findDraft(layer, textValues, resolver);
+            }
             if (layer.type === "image" && !layer.isFixedAsset) {
-                const viewDraft = findDraft(layer, imageViewOverrides);
+                return findDraft(layer, imageValues, resolver);
+            }
+            return undefined;
+        };
+
+        const applyContentDraftToLayer = (
+            layer: any,
+            resolver: ReturnType<typeof createWizardLayerEntryResolver>,
+        ) => {
+            const value = getContentDraftValue(layer, resolver);
+            if (value === undefined) return;
+            if (layer.type === "text") layer.text = value;
+            else if (layer.type === "badge") layer.label = value;
+            else if (layer.type === "image" && !layer.isFixedAsset) layer.src = value;
+            rememberContentOverride(layer, value);
+        };
+
+        const applyVisualDraftsToLayer = (
+            layer: any,
+            resolver: ReturnType<typeof createWizardLayerEntryResolver>,
+        ) => {
+            if (layer.type === "image" && !layer.isFixedAsset) {
+                const viewDraft = findDraft(layer, imageViewOverrides, resolver);
                 if (viewDraft) {
                     if (viewDraft.objectFit !== undefined) layer.objectFit = viewDraft.objectFit;
                     if (viewDraft.focusX !== undefined) layer.focusX = viewDraft.focusX;
                     if (viewDraft.focusY !== undefined) layer.focusY = viewDraft.focusY;
                 }
             }
-            const styleDraft = findDraft(layer, layerStyleOverrides);
+            const styleDraft = findDraft(layer, layerStyleOverrides, resolver);
             if (!styleDraft) return;
             if (layer.type === "text" && styleDraft.fill) layer.fill = styleDraft.fill;
             if (layer.type === "badge" && styleDraft.textColor) layer.textColor = styleDraft.textColor;
         };
 
-        const applyDraftsFromLayers = (layers: any[]) => {
+        const applyDraftsFromLayers = (layers: any[], layerBindings?: any[]) => {
+            const resolver = createWizardLayerEntryResolver(editableEntries, layers.map(layerDraftTarget), layerBindings);
             for (const layer of layers) {
-                const sid = layer.slotId;
-                if (sid && sid !== "none") {
-                    if ((layer.type === "text" || layer.type === "badge") && textValues[layer.id] !== undefined) {
-                        contentOverrides[sid] = textValues[layer.id];
-                        layer[layer.type === "text" ? "text" : "label"] = textValues[layer.id];
-                    }
-                    if (layer.type === "image" && imageValues[layer.id] !== undefined && !layer.isFixedAsset) {
-                        contentOverrides[sid] = imageValues[layer.id];
-                        layer.src = imageValues[layer.id];
-                    }
-                }
-                applyVisualDraftsToLayer(layer);
+                applyContentDraftToLayer(layer, resolver);
+                applyVisualDraftsToLayer(layer, resolver);
             }
         };
 
-        const applyOverridesToSnapshot = (layers: any[]) => {
+        const applyOverridesToSnapshot = (layers: any[], layerBindings?: any[]) => {
+            const resolver = createWizardLayerEntryResolver(editableEntries, layers.map(layerDraftTarget), layerBindings);
             for (const layer of layers) {
                 if (layer.isFixedAsset) continue;
                 const sid = layer.slotId;
-                if (sid && sid !== "none" && contentOverrides[sid]) {
+                if (sid && sid !== "none" && canUseSlotOverride(layer) && contentOverrides[sid]) {
                     const val = contentOverrides[sid];
                     if (layer.type === "text") layer.text = val;
                     else if (layer.type === "image") layer.src = val;
                     else if (layer.type === "badge") layer.label = val;
                 }
-                applyVisualDraftsToLayer(layer);
+                applyVisualDraftsToLayer(layer, resolver);
             }
         };
 
+        const masterComponentLayers = packToApply.masterComponents.map((mc) => ({
+            ...(mc.props as unknown as Record<string, unknown>),
+            id: mc.id,
+            type: mc.type,
+            name: mc.name,
+            slotId: mc.slotId || (mc.props as any).slotId,
+        }));
+        const masterComponentResolver = createWizardLayerEntryResolver(editableEntries, masterComponentLayers);
+
+        // Apply content by concrete master component or matching editable layer
+        // directly to masterComponents for the legacy hydration path.
+        packToApply.masterComponents = packToApply.masterComponents.map(mc => {
+            const target = {
+                ...(mc.props as unknown as Record<string, unknown>),
+                id: mc.id,
+                type: mc.type,
+                name: mc.name,
+                slotId: mc.slotId || (mc.props as any).slotId,
+            };
+            const override = findExpansionDraft(target, masterComponentResolver);
+            const viewDraft = findDraft(target, imageViewOverrides, masterComponentResolver);
+            const styleDraft = findDraft(target, layerStyleOverrides, masterComponentResolver);
+            const contentDraft = getContentDraftValue(target, masterComponentResolver);
+            if (contentDraft !== undefined) rememberContentOverride(target, contentDraft);
+
+            const baseProps = {
+                ...(override ? { ...mc.props, ...override.next } : mc.props),
+                ...(mc.type === "image" && viewDraft ? viewDraft : {}),
+                ...(mc.type === "text" && styleDraft?.fill ? { fill: styleDraft.fill } : {}),
+                ...(mc.type === "badge" && styleDraft?.textColor ? { textColor: styleDraft.textColor } : {}),
+            };
+            if ((mc.type === "text" || mc.type === "badge") && contentDraft !== undefined) {
+                return {
+                    ...mc,
+                    props: {
+                        ...baseProps,
+                        [mc.type === "text" ? "text" : "label"]: contentDraft,
+                    },
+                };
+            }
+            if (mc.type === "image" && contentDraft !== undefined && !(mc.props as any).isFixedAsset) {
+                return { ...mc, props: { ...baseProps, src: contentDraft } };
+            }
+            if (override || viewDraft || styleDraft) {
+                return { ...mc, props: baseProps };
+            }
+            return mc;
+        });
+
         // Source 2: Scan layers[] and layerSnapshot[] directly for raw canvas state
         // where MC IDs may not match, and ensures snapshots get overrides applied.
-        const dataAny = packToApply as any;
         if (dataAny.layers && Array.isArray(dataAny.layers)) {
             applyDraftsFromLayers(dataAny.layers);
         }
@@ -558,7 +650,7 @@ export function WizardFlow({
         if (dataAny.resizes && Array.isArray(dataAny.resizes)) {
             for (const resize of dataAny.resizes) {
                 if (resize.layerSnapshot && Array.isArray(resize.layerSnapshot)) {
-                    applyDraftsFromLayers(resize.layerSnapshot);
+                    applyDraftsFromLayers(resize.layerSnapshot, resize.layerBindings);
                 }
             }
         }
@@ -566,39 +658,10 @@ export function WizardFlow({
         if (dataAny.resizes && Array.isArray(dataAny.resizes)) {
             for (const resize of dataAny.resizes) {
                 if (resize.layerSnapshot && Array.isArray(resize.layerSnapshot)) {
-                    applyOverridesToSnapshot(resize.layerSnapshot);
+                    applyOverridesToSnapshot(resize.layerSnapshot, resize.layerBindings);
                 }
             }
         }
-
-        // Also apply content by mc.id directly to masterComponents (for hydration path)
-        packToApply.masterComponents = packToApply.masterComponents.map(mc => {
-            const override = findExpansionDraft(mc);
-            const viewDraft = findDraft(mc, imageViewOverrides);
-            const styleDraft = layerStyleOverrides[mc.id];
-            const baseProps = {
-                ...(override ? { ...mc.props, ...override.next } : mc.props),
-                ...(mc.type === "image" && viewDraft ? viewDraft : {}),
-                ...(mc.type === "text" && styleDraft?.fill ? { fill: styleDraft.fill } : {}),
-                ...(mc.type === "badge" && styleDraft?.textColor ? { textColor: styleDraft.textColor } : {}),
-            };
-            if ((mc.type === "text" || mc.type === "badge") && textValues[mc.id] !== undefined) {
-                return {
-                    ...mc,
-                    props: {
-                        ...baseProps,
-                        [mc.type === "text" ? "text" : "label"]: textValues[mc.id]
-                    }
-                };
-            }
-            if (mc.type === "image" && imageValues[mc.id] !== undefined && !(mc.props as any).isFixedAsset) {
-                return { ...mc, props: { ...baseProps, src: imageValues[mc.id] } };
-            }
-            if (override || viewDraft || styleDraft) {
-                return { ...mc, props: baseProps };
-            }
-            return mc;
-        });
 
         // Apply expand overrides to every snapshot in the pack:
         //   - master snapshot gets `next` directly (it's where the wizard

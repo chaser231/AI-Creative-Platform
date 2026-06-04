@@ -284,6 +284,62 @@ describe("projectExpansionToResize", () => {
         expect(projected[1]).toBe(resizeLayers[1]);
     });
 
+    it("keeps duplicate image-slot expansion scoped to the selected occurrence", () => {
+        const resizeLayers: Layer[] = [
+            {
+                id: "first-image",
+                type: "image",
+                name: "First image",
+                x: 10,
+                y: 20,
+                width: 180,
+                height: 120,
+                rotation: 0,
+                visible: true,
+                locked: false,
+                src: "first.png",
+                slotId: "image-primary",
+            },
+            {
+                id: "second-image",
+                type: "image",
+                name: "Second image",
+                x: 30,
+                y: 40,
+                width: 160,
+                height: 100,
+                rotation: 0,
+                visible: true,
+                locked: false,
+                src: "second.png",
+                slotId: "image-primary",
+            },
+        ];
+
+        const projected = projectExpansionToResize({
+            resizeLayers,
+            resizeArtboard: { width: 500, height: 500 },
+            masterArtboard: { width: 500, height: 500 },
+            overrides: {
+                "selected-image": {
+                    prev: { x: 30, y: 40, width: 160, height: 100 },
+                    next: { x: 0, y: 0, width: 500, height: 500 },
+                    slotId: "image-primary",
+                    slotOccurrence: 1,
+                    fillInstanceArtboard: true,
+                },
+            },
+        });
+
+        expect(projected[0]).toBe(resizeLayers[0]);
+        expect(projected[1]).toMatchObject({
+            x: 0,
+            y: 0,
+            width: 500,
+            height: 500,
+        });
+    });
+
     it("applies exact grid-union format rects before fillInstanceArtboard fallback", () => {
         const resizeLayers: Layer[] = [{
             id: "vertical-image",

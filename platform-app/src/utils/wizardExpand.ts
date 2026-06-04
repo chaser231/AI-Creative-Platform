@@ -43,6 +43,8 @@ export interface LayerExpansionOverride {
     next: LayerRect;
     /** Slot the expanded layer is bound to (most reliable cross-format key). */
     slotId?: string;
+    /** Zero-based occurrence within layers that share the same type + slotId. */
+    slotOccurrence?: number;
     /** Master component id, if the source layer had one. */
     masterId?: string;
     /**
@@ -97,17 +99,16 @@ const round = (value: number): number => Math.round(value * GEOM_DECIMALS) / GEO
 
 /**
  * Find the override that matches a given layer in a non-master snapshot.
- * Match priority: slotId (most stable) → masterId → direct id equality.
+ * Match priority: direct id → masterId → occurrence-aware slot fallback.
  */
 function findOverrideEntryForLayer(
     layer: Layer,
     overrides: Record<string, LayerExpansionOverride>,
+    layerSlotOccurrences: Map<string, number>,
 ): { key: string; override: LayerExpansionOverride } | undefined {
-    if (layer.slotId && layer.slotId !== "none") {
-        for (const [key, value] of Object.entries(overrides)) {
-            if (value.slotId && value.slotId === layer.slotId) return { key, override: value };
-        }
-    }
+    const directLayer = overrides[layer.id];
+    if (directLayer) return { key: layer.id, override: directLayer };
+
     if (layer.masterId) {
         const direct = overrides[layer.masterId];
         if (direct) return { key: layer.masterId, override: direct };
@@ -115,8 +116,22 @@ function findOverrideEntryForLayer(
             if (value.masterId && value.masterId === layer.masterId) return { key, override: value };
         }
     }
-    const direct = overrides[layer.id];
-    return direct ? { key: layer.id, override: direct } : undefined;
+
+    if (layer.slotId && layer.slotId !== "none") {
+        const occurrence = layerSlotOccurrences.get(layer.id);
+        for (const [key, value] of Object.entries(overrides)) {
+            if (!value.slotId || value.slotId !== layer.slotId) continue;
+            if (
+                value.slotOccurrence === undefined
+                || occurrence === undefined
+                || value.slotOccurrence === occurrence
+            ) {
+                return { key, override: value };
+            }
+        }
+    }
+
+    return undefined;
 }
 
 function findViewOverrideForLayer(
@@ -154,6 +169,23 @@ function applyViewOverride(layer: Layer, view: LayerImageViewOverride | undefine
     } as Layer;
 }
 
+function layerSlotKey(layer: Layer): string | undefined {
+    return layer.slotId && layer.slotId !== "none" ? `${layer.type}:${layer.slotId}` : undefined;
+}
+
+function computeLayerSlotOccurrences(layers: Layer[]): Map<string, number> {
+    const counts = new Map<string, number>();
+    const result = new Map<string, number>();
+    for (const layer of layers) {
+        const key = layerSlotKey(layer);
+        if (!key) continue;
+        const occurrence = counts.get(key) ?? 0;
+        counts.set(key, occurrence + 1);
+        result.set(layer.id, occurrence);
+    }
+    return result;
+}
+
 /**
  * Resolve the imageSyncMode for a target layer based on this resize's
  * bindings. Falls back to `relative_size` (the studio default for image
@@ -189,11 +221,13 @@ export function projectExpansionToResize(args: ProjectArgs): Layer[] {
     if (Object.keys(overrides).length === 0 && !hasViewOverrides) return resizeLayers;
     if (resizeLayers.length === 0) return resizeLayers;
 
+    const layerSlotOccurrences = computeLayerSlotOccurrences(resizeLayers);
+
     return resizeLayers.map((layer) => {
         if (layer.type !== "image") return layer;
         if ((layer as { isFixedAsset?: boolean }).isFixedAsset) return layer;
 
-        const overrideEntry = findOverrideEntryForLayer(layer, overrides);
+        const overrideEntry = findOverrideEntryForLayer(layer, overrides, layerSlotOccurrences);
         const viewOverride = findViewOverrideForLayer(layer, imageViewOverrides, overrideEntry);
         const layerWithView = applyViewOverride(layer, viewOverride);
         const override = overrideEntry?.override;

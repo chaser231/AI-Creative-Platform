@@ -183,17 +183,20 @@ export function findPackOutpaintTargetLayer(
     const layers = format.layers ?? [];
     if (layers.length === 0) return undefined;
 
+    const masterIds = new Set([masterLayer.id, masterLayer.masterId].filter(Boolean));
+    const byExactId = layers.find((layer) => layer.id === masterLayer.id);
+    if (byExactId) return byExactId;
+
+    const byMaster = layers.find((layer) => layer.masterId && masterIds.has(layer.masterId));
+    if (byMaster) return byMaster;
+
     const masterSlot = cleanSlot(masterLayer.slotId);
     if (masterSlot) {
         const bySlot = layers.find((layer) => cleanSlot(layer.slotId) === masterSlot);
         if (bySlot) return bySlot;
     }
 
-    const masterIds = new Set([masterLayer.id, masterLayer.masterId].filter(Boolean));
-    const byMaster = layers.find((layer) => layer.masterId && masterIds.has(layer.masterId));
-    if (byMaster) return byMaster;
-
-    return layers.find((layer) => layer.id === masterLayer.id);
+    return undefined;
 }
 
 function addRequirement(

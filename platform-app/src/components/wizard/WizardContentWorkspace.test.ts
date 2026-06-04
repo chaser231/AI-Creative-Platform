@@ -3,12 +3,13 @@ import { describe, expect, it } from "vitest";
 import {
     buildDraftPreviewLayers,
     getPackOutpaintFormatsFromPreviewSources,
+    getEditableLayerEntries,
     getPreviewFormatSources,
     inferOutpaintProductFocusX,
     resolveWizardOutpaintLayoutPlan,
     type EditableLayerEntry,
 } from "./WizardContentWorkspace";
-import type { Layer } from "@/types";
+import type { Layer, LayerBinding } from "@/types";
 import type { TemplatePackV2 } from "@/services/templateService";
 
 const entries: EditableLayerEntry[] = [
@@ -164,6 +165,58 @@ describe("resolveWizardOutpaintLayoutPlan", () => {
 });
 
 describe("buildDraftPreviewLayers", () => {
+    it("creates separate editable entries for duplicated text and image slots", () => {
+        const layers = [
+            {
+                id: "cta-primary",
+                type: "text",
+                name: "CTA primary",
+                slotId: "cta",
+                text: "Old primary",
+            },
+            {
+                id: "cta-secondary",
+                type: "text",
+                name: "CTA secondary",
+                slotId: "cta",
+                text: "Old secondary",
+            },
+            {
+                id: "hero-photo",
+                type: "image",
+                name: "Hero photo",
+                slotId: "image-primary",
+                src: "hero.png",
+            },
+            {
+                id: "detail-photo",
+                type: "image",
+                name: "Detail photo",
+                slotId: "image-primary",
+                src: "detail.png",
+            },
+        ] as unknown as Layer[];
+        const template = {
+            id: "duplicate-slots",
+            name: "Duplicate slots",
+            baseWidth: 1080,
+            baseHeight: 1080,
+            masterComponents: [],
+            resizes: [],
+        } as unknown as TemplatePackV2;
+
+        const result = getEditableLayerEntries(template, layers);
+
+        expect(result.map((entry) => entry.id)).toEqual([
+            "cta-primary",
+            "cta-secondary",
+            "hero-photo",
+            "detail-photo",
+        ]);
+        expect(result.filter((entry) => entry.type === "text").map((entry) => entry.slotOccurrence)).toEqual([0, 1]);
+        expect(result.filter((entry) => entry.type === "image").map((entry) => entry.slotOccurrence)).toEqual([0, 1]);
+    });
+
     it("applies text and badge color drafts", () => {
         const layers = [
             {
@@ -200,6 +253,189 @@ describe("buildDraftPreviewLayers", () => {
 
         expect(result[0]).toMatchObject({ text: "New", fill: "#ffffff" });
         expect(result[1]).toMatchObject({ label: "New badge", textColor: "#000000" });
+    });
+
+    it("applies independent drafts to layers that share the same slot", () => {
+        const layers = [
+            {
+                id: "cta-primary",
+                type: "text",
+                name: "CTA primary",
+                slotId: "cta",
+                text: "Old primary",
+                width: 160,
+                height: 32,
+            },
+            {
+                id: "cta-secondary",
+                type: "text",
+                name: "CTA secondary",
+                slotId: "cta",
+                text: "Old secondary",
+                width: 160,
+                height: 32,
+            },
+            {
+                id: "hero-photo",
+                type: "image",
+                name: "Hero photo",
+                slotId: "image-primary",
+                src: "old-hero.png",
+                width: 300,
+                height: 200,
+            },
+            {
+                id: "detail-photo",
+                type: "image",
+                name: "Detail photo",
+                slotId: "image-primary",
+                src: "old-detail.png",
+                width: 300,
+                height: 200,
+            },
+        ] as unknown as Layer[];
+        const duplicateEntries = getEditableLayerEntries(
+            {
+                id: "duplicate-slots",
+                name: "Duplicate slots",
+                baseWidth: 1080,
+                baseHeight: 1080,
+                masterComponents: [],
+                resizes: [],
+            } as unknown as TemplatePackV2,
+            layers,
+        );
+
+        const result = buildDraftPreviewLayers(
+            layers,
+            duplicateEntries,
+            {
+                "cta-primary": "Buy now",
+                "cta-secondary": "Learn more",
+            },
+            {
+                "hero-photo": "new-hero.png",
+                "detail-photo": "new-detail.png",
+            },
+        );
+
+        expect(result[0]).toMatchObject({ text: "Buy now" });
+        expect(result[1]).toMatchObject({ text: "Learn more" });
+        expect(result[2]).toMatchObject({ src: "new-hero.png" });
+        expect(result[3]).toMatchObject({ src: "new-detail.png" });
+    });
+
+    it("matches duplicated slots in resize snapshots through masterId and layer bindings", () => {
+        const masterLayers = [
+            {
+                id: "master-cta-primary",
+                type: "text",
+                name: "CTA primary",
+                slotId: "cta",
+                text: "Old primary",
+                width: 160,
+                height: 32,
+            },
+            {
+                id: "master-cta-secondary",
+                type: "text",
+                name: "CTA secondary",
+                slotId: "cta",
+                text: "Old secondary",
+                width: 160,
+                height: 32,
+            },
+        ] as unknown as Layer[];
+        const duplicateEntries = getEditableLayerEntries(
+            {
+                id: "duplicate-slots",
+                name: "Duplicate slots",
+                baseWidth: 1080,
+                baseHeight: 1080,
+                masterComponents: [],
+                resizes: [],
+            } as unknown as TemplatePackV2,
+            masterLayers,
+        );
+        const resizeLayers = [
+            {
+                id: "resize-cta-primary",
+                type: "text",
+                name: "CTA primary",
+                slotId: "cta",
+                masterId: "master-cta-primary",
+                text: "Old primary",
+                width: 140,
+                height: 28,
+            },
+            {
+                id: "resize-cta-secondary",
+                type: "text",
+                name: "CTA secondary",
+                slotId: "cta",
+                text: "Old secondary",
+                width: 140,
+                height: 28,
+            },
+        ] as unknown as Layer[];
+        const bindings = [
+            {
+                masterLayerId: "master-cta-secondary",
+                targetLayerId: "resize-cta-secondary",
+                syncContent: true,
+                syncStyle: true,
+                syncSize: false,
+                syncPosition: false,
+            },
+        ] as LayerBinding[];
+
+        const result = buildDraftPreviewLayers(
+            resizeLayers,
+            duplicateEntries,
+            {
+                "master-cta-primary": "Primary CTA",
+                "master-cta-secondary": "Secondary CTA",
+            },
+            {},
+            {},
+            {},
+            undefined,
+            bindings,
+        );
+
+        expect(result[0]).toMatchObject({ text: "Primary CTA" });
+        expect(result[1]).toMatchObject({ text: "Secondary CTA" });
+    });
+
+    it("keeps unique-slot fallback for legacy snapshots without ids or bindings", () => {
+        const result = buildDraftPreviewLayers(
+            [
+                {
+                    id: "resize-headline",
+                    type: "text",
+                    name: "Headline",
+                    slotId: "headline",
+                    text: "Old headline",
+                    width: 200,
+                    height: 40,
+                },
+            ] as unknown as Layer[],
+            [
+                {
+                    id: "headline-entry",
+                    type: "text",
+                    name: "Headline",
+                    slotId: "headline",
+                    layerId: "master-headline",
+                    source: "layer",
+                    props: {},
+                },
+            ],
+            { "headline-entry": "Fallback headline" },
+            {},
+        );
+
+        expect(result[0]).toMatchObject({ text: "Fallback headline" });
     });
 
     it("applies image focus drafts and geometry override together", () => {
