@@ -103,12 +103,19 @@ function useResolvedCanvasAppearance(): "light" | "dark" {
 
 type EditableLayerType = "text" | "image" | "badge";
 type SidebarTab = "layers" | "assets";
+type WizardResolvableLayer = {
+    id?: string;
+    type?: string;
+    slotId?: string;
+    masterId?: string;
+};
 
 export interface EditableLayerEntry {
     id: string;
     type: EditableLayerType;
     name: string;
     slotId?: string;
+    slotOccurrence?: number;
     layerId?: string;
     masterComponentId?: string;
     source: "masterComponent" | "layer";
@@ -484,6 +491,8 @@ export function WizardContentWorkspace({
                 imageValues,
                 imageViewOverrides,
                 layerStyleOverrides,
+                undefined,
+                previewSource.layerBindings,
             );
         }
 
@@ -504,6 +513,8 @@ export function WizardContentWorkspace({
             imageValues,
             imageViewOverrides,
             layerStyleOverrides,
+            undefined,
+            previewSource.layerBindings,
         );
     }, [
         previewSource.id,
@@ -2666,6 +2677,7 @@ function WizardLayerPromptBar({
                             prev: { x: layerX, y: layerY, width: layerWidth, height: layerHeight },
                             next: nextRect,
                             slotId,
+                            slotOccurrence: activeLayer.slotOccurrence,
                             masterId,
                             // Single-pass pack outpaint: instance image
                             // layers are forced to the resize artboard
@@ -3241,44 +3253,63 @@ function resizeToPreviewSource(
     };
 }
 
+function editableSlotKey(type: unknown, slotId: unknown): string | null {
+    if (typeof type !== "string" || typeof slotId !== "string" || slotId === "none") return null;
+    if (!CONTENT_TYPES.includes(type as EditableLayerType)) return null;
+    return `${type}:${slotId}`;
+}
+
+function assignSlotOccurrences(entries: EditableLayerEntry[]): EditableLayerEntry[] {
+    const counts = new Map<string, number>();
+    return entries.map((entry) => {
+        const key = editableSlotKey(entry.type, entry.slotId);
+        if (!key) return entry;
+        const slotOccurrence = counts.get(key) ?? 0;
+        counts.set(key, slotOccurrence + 1);
+        return { ...entry, slotOccurrence };
+    });
+}
+
 export function getEditableLayerEntries(template: TemplatePackV2, masterLayers: Layer[]): EditableLayerEntry[] {
-    const rawEntries = new Map<string, EditableLayerEntry>();
+    const masterById = new Map(template.masterComponents.map((mc) => [mc.id, mc]));
+    const layerEntries: EditableLayerEntry[] = [];
 
     for (const layer of masterLayers) {
         if (!CONTENT_TYPES.includes(layer.type as EditableLayerType)) continue;
         if (layer.type === "image" && layer.isFixedAsset) continue;
         if (!layer.slotId || layer.slotId === "none") continue;
 
-        rawEntries.set(`${layer.type}:${layer.slotId}`, {
+        const matchingMaster = layer.masterId ? masterById.get(layer.masterId) : masterById.get(layer.id);
+        layerEntries.push({
             id: layer.id,
             type: layer.type as EditableLayerType,
             name: layer.name,
             slotId: layer.slotId,
             layerId: layer.id,
+            masterComponentId: matchingMaster?.id ?? layer.masterId,
             source: "layer",
-            props: layer as unknown as Record<string, unknown>,
+            props: {
+                ...(matchingMaster?.props as unknown as Record<string, unknown> | undefined),
+                ...(layer as unknown as Record<string, unknown>),
+            },
         });
     }
 
-    const entries = new Map(rawEntries);
+    if (layerEntries.length > 0) {
+        return assignSlotOccurrences(layerEntries);
+    }
 
+    const legacyEntries: EditableLayerEntry[] = [];
     for (const mc of template.masterComponents) {
         if (!CONTENT_TYPES.includes(mc.type as EditableLayerType)) continue;
         if (((mc.props as unknown as Record<string, unknown>).isFixedAsset) && mc.type === "image") continue;
 
         const entry = masterComponentToEntry(mc);
         if (!entry.slotId || entry.slotId === "none") continue;
-
-        const key = `${entry.type}:${entry.slotId}`;
-        const matchingLayer = rawEntries.get(key);
-        entries.set(key, {
-            ...entry,
-            layerId: matchingLayer?.layerId,
-            props: { ...(matchingLayer?.props ?? {}), ...entry.props },
-        });
+        legacyEntries.push(entry);
     }
 
-    return [...entries.values()];
+    return assignSlotOccurrences(legacyEntries);
 }
 
 function masterComponentToEntry(mc: MasterComponent): EditableLayerEntry {
@@ -3313,17 +3344,11 @@ export function buildDraftPreviewLayers(
     imageViewOverrides: Record<string, WizardImageViewOverride> = {},
     layerStyleOverrides: Record<string, WizardLayerStyleOverride> = {},
     layerGeometryOverrides?: Record<string, LayerExpansionOverride>,
+    layerBindings?: LayerBinding[],
 ): Layer[] {
-    const entryBySlot = new Map(entries.filter((entry) => entry.slotId).map((entry) => [entry.slotId, entry]));
+    const resolver = createWizardLayerEntryResolver(entries, layers, layerBindings);
     const nextLayers = layers.map((layer) => {
-        const slotEntry = layer.slotId ? entryBySlot.get(layer.slotId) : undefined;
-        const candidateIds = [
-            layer.id,
-            layer.masterId,
-            slotEntry?.id,
-            slotEntry?.layerId,
-            slotEntry?.masterComponentId,
-        ].filter(Boolean) as string[];
+        const candidateIds = resolver.getCandidateIds(layer);
         const textValue = candidateIds.map((id) => textValues[id]).find((value) => value !== undefined);
         const imageValue = candidateIds.map((id) => imageValues[id]).find((value) => value !== undefined);
         const imageViewOverride = candidateIds.map((id) => imageViewOverrides[id]).find((value) => value !== undefined);
@@ -3364,4 +3389,91 @@ export function buildDraftPreviewLayers(
     });
 
     return applyAllAutoLayouts(nextLayers);
+}
+
+export function createWizardLayerEntryResolver(
+    entries: EditableLayerEntry[],
+    layers: WizardResolvableLayer[],
+    layerBindings?: LayerBinding[],
+): {
+    getEntryForLayer: (layer: WizardResolvableLayer) => EditableLayerEntry | undefined;
+    getCandidateIds: (layer: WizardResolvableLayer) => string[];
+} {
+    const entryById = new Map<string, EditableLayerEntry>();
+    const entriesByGroup = new Map<string, EditableLayerEntry[]>();
+    for (const entry of entries) {
+        for (const id of [entry.id, entry.layerId, entry.masterComponentId]) {
+            if (id && !entryById.has(id)) entryById.set(id, entry);
+        }
+
+        const key = editableSlotKey(entry.type, entry.slotId);
+        if (!key) continue;
+        const group = entriesByGroup.get(key) ?? [];
+        group.push(entry);
+        entriesByGroup.set(key, group);
+    }
+
+    const layerOccurrenceById = new Map<string, number>();
+    const layerOccurrenceCounts = new Map<string, number>();
+    for (const layer of layers) {
+        const key = editableSlotKey(layer.type, layer.slotId);
+        const id = typeof layer.id === "string" ? layer.id : undefined;
+        if (!key || !id) continue;
+        const occurrence = layerOccurrenceCounts.get(key) ?? 0;
+        layerOccurrenceCounts.set(key, occurrence + 1);
+        layerOccurrenceById.set(id, occurrence);
+    }
+
+    const bindingByTargetId = new Map(
+        (layerBindings ?? []).map((binding) => [binding.targetLayerId, binding]),
+    );
+
+    const getEntryForLayer = (layer: WizardResolvableLayer): EditableLayerEntry | undefined => {
+        const id = typeof layer.id === "string" ? layer.id : undefined;
+        const masterId = typeof layer.masterId === "string" ? layer.masterId : undefined;
+
+        if (id) {
+            const direct = entryById.get(id);
+            if (direct) return direct;
+        }
+
+        if (masterId) {
+            const byMaster = entryById.get(masterId);
+            if (byMaster) return byMaster;
+        }
+
+        if (id) {
+            const binding = bindingByTargetId.get(id);
+            if (binding) {
+                const byBinding = entryById.get(binding.masterLayerId);
+                if (byBinding) return byBinding;
+            }
+        }
+
+        const key = editableSlotKey(layer.type, layer.slotId);
+        const group = key ? entriesByGroup.get(key) : undefined;
+        if (!group || group.length === 0) return undefined;
+        if (group.length === 1) return group[0];
+
+        const occurrence = id ? layerOccurrenceById.get(id) : undefined;
+        if (occurrence !== undefined) {
+            return group.find((entry) => entry.slotOccurrence === occurrence);
+        }
+
+        return undefined;
+    };
+
+    const getCandidateIds = (layer: WizardResolvableLayer): string[] => {
+        const entry = getEntryForLayer(layer);
+        const ids = [
+            typeof layer.id === "string" ? layer.id : undefined,
+            typeof layer.masterId === "string" ? layer.masterId : undefined,
+            entry?.id,
+            entry?.layerId,
+            entry?.masterComponentId,
+        ].filter((id): id is string => Boolean(id));
+        return Array.from(new Set(ids));
+    };
+
+    return { getEntryForLayer, getCandidateIds };
 }
