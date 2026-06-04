@@ -1,6 +1,8 @@
 "use client";
 
-import { Eye, EyeOff } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { Eye, EyeOff, Minus, Settings2 } from "lucide-react";
 import { Select } from "@/components/ui/Select";
 import { SmartNumberInput } from "@/components/ui/SmartNumberInput";
 import { ColorInput } from "./ColorInput";
@@ -29,9 +31,28 @@ export function StrokeControls({
     value: StrokeControlsValue;
     onChange: (updates: Partial<StrokeControlsValue>) => void;
 }) {
+    const [settingsOpen, setSettingsOpen] = useState(false);
+    const [popoverPosition, setPopoverPosition] = useState<{ top: number; left: number } | null>(null);
+    const rootRef = useRef<HTMLDivElement>(null);
+    const popoverRef = useRef<HTMLDivElement>(null);
     const strokeEnabled = value.strokeEnabled !== false;
     const strokeAlign = value.strokeAlign ?? "center";
     const strokeJoin = value.strokeJoin ?? "miter";
+
+    const updatePopoverPosition = useCallback(() => {
+        const rect = rootRef.current?.getBoundingClientRect();
+        if (!rect || typeof window === "undefined") return;
+        const width = 236;
+        setPopoverPosition({
+            top: Math.min(rect.bottom + 6, window.innerHeight - 24),
+            left: Math.max(12, Math.min(rect.left, window.innerWidth - width - 12)),
+        });
+    }, []);
+
+    const toggleSettings = () => {
+        updatePopoverPosition();
+        setSettingsOpen((open) => !open);
+    };
 
     const handleToggleVisibility = () => {
         const nextEnabled = !strokeEnabled;
@@ -42,14 +63,32 @@ export function StrokeControls({
         onChange(updates);
     };
 
+    useEffect(() => {
+        if (!settingsOpen) return;
+        updatePopoverPosition();
+        const onPointerDown = (event: PointerEvent) => {
+            if (!rootRef.current?.contains(event.target as Node) && !popoverRef.current?.contains(event.target as Node)) {
+                setSettingsOpen(false);
+            }
+        };
+        window.addEventListener("resize", updatePopoverPosition);
+        window.addEventListener("scroll", updatePopoverPosition, true);
+        document.addEventListener("pointerdown", onPointerDown);
+        return () => {
+            window.removeEventListener("resize", updatePopoverPosition);
+            window.removeEventListener("scroll", updatePopoverPosition, true);
+            document.removeEventListener("pointerdown", onPointerDown);
+        };
+    }, [settingsOpen, updatePopoverPosition]);
+
     return (
-        <div className="space-y-1.5">
-            <div className="flex items-center gap-1.5">
-                <div className={`flex-1 transition-opacity ${strokeEnabled ? "" : "opacity-30 pointer-events-none"}`}>
+        <div ref={rootRef} className="space-y-2">
+            <div className={cn("flex items-center gap-2", !strokeEnabled && "opacity-55")}>
+                <div className="min-w-0 flex-1">
                     <ColorInput
                         value={value.stroke || "#000000"}
-                        onChange={(v) => {
-                            const updates: Partial<StrokeControlsValue> = { stroke: v };
+                        onChange={(stroke) => {
+                            const updates: Partial<StrokeControlsValue> = { stroke };
                             if (strokeEnabled && value.strokeWidth <= 0) {
                                 updates.strokeWidth = 1;
                             }
@@ -60,55 +99,85 @@ export function StrokeControls({
                 <button
                     type="button"
                     onClick={handleToggleVisibility}
-                    className={`p-1 rounded-[var(--radius-sm)] transition-colors cursor-pointer ${strokeEnabled ? "text-text-secondary hover:text-text-primary" : "text-text-tertiary/40 hover:text-text-tertiary"}`}
+                    className="flex h-8 w-7 items-center justify-center rounded-[var(--radius-sm)] text-text-tertiary transition-colors hover:bg-bg-tertiary hover:text-text-primary"
                     title={strokeEnabled ? "Скрыть обводку" : "Показать обводку"}
                 >
                     {strokeEnabled ? <Eye size={12} /> : <EyeOff size={12} />}
                 </button>
             </div>
-            <div className={`flex items-center gap-1.5 ${strokeEnabled ? "" : "opacity-30 pointer-events-none"}`}>
+            <div className={cn("grid grid-cols-[1fr_74px_28px] gap-2", !strokeEnabled && "opacity-55")}>
                 <Select
                     size="xs"
                     value={strokeAlign}
                     onChange={(val) => onChange({ strokeAlign: val as StrokeAlign })}
                     options={STROKE_ALIGN_OPTIONS}
-                    className="flex-1 min-w-0"
+                    triggerClassName="h-8 rounded-[var(--radius-md)] text-[11px]"
                 />
-                <SmartNumberInput
-                    min={0}
-                    value={value.strokeWidth}
-                    onChange={(v) => onChange({ strokeWidth: Math.max(0, v) })}
-                    className="w-12 h-7 px-1 rounded-[var(--radius-sm)] border border-border-primary bg-bg-secondary text-[10px] text-text-primary text-center focus:outline-none focus:ring-1 focus:ring-border-focus"
-                />
-                <span className="text-[10px] text-text-tertiary shrink-0">px</span>
-            </div>
-            <div className={strokeEnabled ? "" : "opacity-30 pointer-events-none"}>
-                <label className="text-[9px] text-text-tertiary uppercase tracking-wider font-medium mb-1 block">
-                    Углы обводки
-                </label>
-                <div
-                    className="flex rounded-[var(--radius-sm)] border border-border-primary overflow-hidden"
-                    role="group"
-                    aria-label="Стиль углов обводки"
-                >
-                    {STROKE_JOIN_OPTIONS.map((join) => (
-                        <button
-                            key={join}
-                            type="button"
-                            onClick={() => onChange({ strokeJoin: join })}
-                            title={STROKE_JOIN_LABELS[join]}
-                            className={cn(
-                                "flex-1 h-7 text-[9px] font-medium transition-colors cursor-pointer border-r border-border-primary last:border-r-0",
-                                strokeJoin === join
-                                    ? "bg-accent-primary/10 text-accent-primary"
-                                    : "bg-bg-secondary text-text-tertiary hover:text-text-primary hover:bg-bg-tertiary",
-                            )}
-                        >
-                            {STROKE_JOIN_LABELS[join]}
-                        </button>
-                    ))}
+                <div className="relative">
+                    <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-text-tertiary">
+                        <StrokeWidthIcon />
+                    </span>
+                    <SmartNumberInput
+                        min={0}
+                        value={value.strokeWidth}
+                        onChange={(strokeWidth) => onChange({ strokeWidth: Math.max(0, strokeWidth) })}
+                        className="h-8 w-full rounded-[var(--radius-md)] border border-border-primary bg-bg-secondary pl-7 pr-2 text-center text-[11px] text-text-primary focus:outline-none focus:ring-1 focus:ring-border-focus"
+                    />
                 </div>
+                <button
+                    type="button"
+                    onClick={toggleSettings}
+                    className={cn(
+                        "flex h-8 items-center justify-center rounded-[var(--radius-md)] text-text-tertiary transition-colors hover:bg-bg-tertiary hover:text-text-primary",
+                        settingsOpen && "bg-accent-primary/10 text-accent-primary",
+                    )}
+                    title="Настройки обводки"
+                >
+                    <Settings2 size={14} />
+                </button>
             </div>
+
+            {settingsOpen && popoverPosition && typeof document !== "undefined" && createPortal((
+                <div
+                    ref={popoverRef}
+                    className="fixed z-[9999] w-[236px] space-y-3 rounded-[var(--radius-xl)] border border-border-primary bg-bg-surface p-3 shadow-[var(--shadow-xl)]"
+                    style={{ top: popoverPosition.top, left: popoverPosition.left }}
+                >
+                    <div className="text-[11px] font-semibold text-text-primary">Stroke</div>
+                    <div
+                        className="grid grid-cols-3 overflow-hidden rounded-[var(--radius-md)] border border-border-primary"
+                        role="group"
+                        aria-label="Стиль углов обводки"
+                    >
+                        {STROKE_JOIN_OPTIONS.map((join) => (
+                            <button
+                                key={join}
+                                type="button"
+                                onClick={() => onChange({ strokeJoin: join })}
+                                title={STROKE_JOIN_LABELS[join]}
+                                className={cn(
+                                    "flex h-8 items-center justify-center border-r border-border-primary text-[9px] font-medium transition-colors last:border-r-0",
+                                    strokeJoin === join
+                                        ? "bg-accent-primary/10 text-accent-primary"
+                                        : "bg-bg-secondary text-text-tertiary hover:bg-bg-tertiary hover:text-text-primary",
+                                )}
+                            >
+                                {join === "miter" ? <Minus size={12} /> : STROKE_JOIN_LABELS[join]}
+                            </button>
+                        ))}
+                    </div>
+                </div>
+            ), document.body)}
         </div>
+    );
+}
+
+function StrokeWidthIcon() {
+    return (
+        <span className="flex h-3.5 w-3.5 flex-col justify-center gap-[2px]">
+            <span className="block h-px w-full bg-current" />
+            <span className="block h-[2px] w-full bg-current" />
+            <span className="block h-[3px] w-full bg-current" />
+        </span>
     );
 }

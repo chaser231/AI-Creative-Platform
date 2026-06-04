@@ -29,6 +29,7 @@ import type {
     Paint,
     StrokeAlign,
     StrokeJoin,
+    CornerRadii,
 } from "@/types";
 import type { SnapConfig } from "@/services/snapService";
 import type { SlotMapping } from "@/services/slotMappingService";
@@ -69,6 +70,7 @@ export interface ArtboardProps {
     /** If the artboard fill was applied from a swatch, keep a backlink for cascade updates. */
     fillSwatchRef?: string;
     cornerRadius: number;
+    cornerRadii?: CornerRadii;
     clipContent: boolean;
     stroke: string;
     strokeWidth: number;

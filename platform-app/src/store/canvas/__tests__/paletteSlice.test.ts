@@ -79,12 +79,37 @@ describe("canvas palette slice", () => {
             focusY: 0.5,
             swatchRefs: { src: "bg-1" },
         };
+        const imageFillLayer: RectangleLayer = {
+            id: "rect-image-fill-1",
+            type: "rectangle",
+            name: "Image Fill Rect",
+            x: 120,
+            y: 0,
+            width: 100,
+            height: 100,
+            rotation: 0,
+            visible: true,
+            locked: false,
+            fill: "#FFFFFF",
+            fillMode: "image",
+            imageFill: {
+                src: oldUrl,
+                fit: "cover",
+                opacity: 0.8,
+                focusX: 0.5,
+                focusY: 0.5,
+                swatchRef: "bg-1",
+            },
+            stroke: "",
+            strokeWidth: 0,
+            cornerRadius: 0,
+        };
         const resize: ResizeFormat = {
             ...DEFAULT_RESIZE,
-            layerSnapshot: [layer],
+            layerSnapshot: [layer, imageFillLayer],
         };
         useCanvasStore.setState({
-            layers: [layer],
+            layers: [layer, imageFillLayer],
             resizes: [resize],
             artboardProps: {
                 ...DEFAULT_ARTBOARD_PROPS,
@@ -117,6 +142,22 @@ describe("canvas palette slice", () => {
         const state = useCanvasStore.getState();
         expect((state.layers[0] as ImageLayer).src).toBe(nextUrl);
         expect((state.resizes[0].layerSnapshot?.[0] as ImageLayer).src).toBe(nextUrl);
+        expect((state.layers[1] as RectangleLayer).imageFill).toMatchObject({
+            src: nextUrl,
+            fit: "contain",
+            focusX: 0.25,
+            focusY: 0.75,
+            opacity: 0.8,
+            swatchRef: "bg-1",
+        });
+        expect((state.resizes[0].layerSnapshot?.[1] as RectangleLayer).imageFill).toMatchObject({
+            src: nextUrl,
+            fit: "contain",
+            focusX: 0.25,
+            focusY: 0.75,
+            opacity: 0.8,
+            swatchRef: "bg-1",
+        });
         expect(state.artboardProps.backgroundImage).toEqual({
             src: nextUrl,
             fit: "contain",

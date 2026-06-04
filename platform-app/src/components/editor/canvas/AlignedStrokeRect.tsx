@@ -3,6 +3,8 @@
 import { Group, Rect } from "react-konva";
 import type { StrokeAlign, StrokeJoin } from "@/types";
 import {
+    capCornerRadiusValue,
+    type CornerRadiusValue,
     getInsideStrokePath,
     getOutsideStrokePath,
     resolveStrokeAlign,
@@ -12,7 +14,7 @@ import {
 export interface AlignedStrokeRectProps {
     width: number;
     height: number;
-    cornerRadius?: number;
+    cornerRadius?: CornerRadiusValue;
     fill?: string;
     fillEnabled?: boolean;
     fillPriority?: string;
@@ -109,12 +111,14 @@ export function AlignedStrokeRect(props: AlignedStrokeRectProps) {
     // Visual only — parent Group owns hit area and drag (see CanvasLayer).
     const shapeListening = listening ?? false;
 
+    const resolvedCornerRadius = capCornerRadiusValue(cornerRadius, width, height);
+
     const fillRectProps = {
         x: 0,
         y: 0,
         width,
         height,
-        cornerRadius,
+        cornerRadius: resolvedCornerRadius,
         listening: shapeListening,
         ...(id !== undefined ? { id } : {}),
         ...(name !== undefined ? { name } : {}),

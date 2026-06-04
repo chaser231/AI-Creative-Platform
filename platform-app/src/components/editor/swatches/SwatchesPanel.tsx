@@ -7,6 +7,7 @@ import { useShallow } from "zustand/react/shallow";
 import { uploadForAI } from "@/utils/imageUpload";
 import type { Swatch, BackgroundSwatchValue, Paint } from "@/types";
 import { makeGradientPaint, paintToCssBackground } from "@/utils/paint";
+import { cn } from "@/lib/cn";
 
 type Tab = "colors" | "backgrounds";
 
@@ -18,7 +19,7 @@ type Tab = "colors" | "backgrounds";
  * Clicking a swatch applies it to the current selection (or artboard when
  * nothing is selected). Hovering exposes rename/delete affordances.
  */
-export function SwatchesPanel() {
+export function SwatchesPanel({ className }: { className?: string } = {}) {
     const {
         palette,
         selectedLayerIds,
@@ -231,7 +232,7 @@ export function SwatchesPanel() {
     const gridCols = tab === "colors" ? "grid-cols-8" : "grid-cols-4";
 
     return (
-        <div className="w-[240px] min-w-[240px] h-full border border-border-primary rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)] flex flex-col overflow-hidden backdrop-blur-xl bg-bg-surface/85">
+        <div className={cn("w-[240px] min-w-[240px] h-full border border-border-primary rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)] flex flex-col overflow-hidden backdrop-blur-xl bg-bg-surface/85", className)}>
             <div className="p-3 border-b border-border-primary flex items-center gap-1">
                 <button
                     onClick={() => setTab("colors")}
@@ -584,4 +585,3 @@ function DeleteSwatchModal({ swatch, otherSwatches, onClose, onConfirm }: Delete
         </div>
     );
 }
-

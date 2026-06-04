@@ -443,7 +443,7 @@ function LayerRow({
     );
 }
 
-export function LayersPanel() {
+export function LayersPanel({ className }: { className?: string } = {}) {
     const { layers, selectedLayerIds, removeLayerFromFrame } = useCanvasStore(useShallow((s) => ({
         layers: s.layers, selectedLayerIds: s.selectedLayerIds, removeLayerFromFrame: s.removeLayerFromFrame,
     })));
@@ -498,7 +498,7 @@ export function LayersPanel() {
     };
 
     return (
-        <div className="w-[220px] min-w-[220px] h-full border border-border-primary rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)] flex flex-col overflow-hidden backdrop-blur-xl bg-bg-surface/85">
+        <div className={cn("w-[220px] min-w-[220px] h-full border border-border-primary rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)] flex flex-col overflow-hidden backdrop-blur-xl bg-bg-surface/85", className)}>
             {/* Header */}
             <div className="px-4 py-3 border-b border-border-primary">
                 <h3 className="text-[11px] font-medium text-text-tertiary uppercase tracking-widest">

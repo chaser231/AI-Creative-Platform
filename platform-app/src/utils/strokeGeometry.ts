@@ -20,6 +20,38 @@ export function capCornerRadius(radius: number, width: number, height: number): 
     return Math.min(radius, width / 2, height / 2);
 }
 
+export type CornerRadiusValue = number | [number, number, number, number];
+
+function toCornerArray(cornerRadius: CornerRadiusValue): [number, number, number, number] {
+    return Array.isArray(cornerRadius)
+        ? cornerRadius
+        : [cornerRadius, cornerRadius, cornerRadius, cornerRadius];
+}
+
+export function hasRoundedCorners(cornerRadius: CornerRadiusValue = 0): boolean {
+    return toCornerArray(cornerRadius).some((radius) => radius > 0);
+}
+
+export function capCornerRadiusValue(
+    cornerRadius: CornerRadiusValue = 0,
+    width: number,
+    height: number,
+): CornerRadiusValue {
+    const capped = toCornerArray(cornerRadius).map((radius) => capCornerRadius(radius, width, height)) as [number, number, number, number];
+    return capped.every((radius) => radius === capped[0]) ? capped[0] : capped;
+}
+
+function offsetCornerRadius(
+    cornerRadius: CornerRadiusValue = 0,
+    delta: number,
+    width: number,
+    height: number,
+): CornerRadiusValue {
+    const offset = toCornerArray(cornerRadius)
+        .map((radius) => radius > 0 ? capCornerRadius(radius + delta, width, height) : 0) as [number, number, number, number];
+    return offset.every((radius) => radius === offset[0]) ? offset[0] : offset;
+}
+
 /**
  * Inset stroke path so the stroke sits inside the layer box.
  * Path radius = layer radius − strokeWidth/2 so the inner stroke edge follows the fill outline.
@@ -28,18 +60,17 @@ export function getInsideStrokePath(
     width: number,
     height: number,
     strokeWidth: number,
-    cornerRadius = 0,
-): { x: number; y: number; width: number; height: number; cornerRadius: number } {
+    cornerRadius: CornerRadiusValue = 0,
+): { x: number; y: number; width: number; height: number; cornerRadius: CornerRadiusValue } {
     const half = strokeWidth / 2;
     const pathW = Math.max(0, width - strokeWidth);
     const pathH = Math.max(0, height - strokeWidth);
-    const pathRadius = cornerRadius > 0 ? cornerRadius - half : 0;
     return {
         x: half,
         y: half,
         width: pathW,
         height: pathH,
-        cornerRadius: capCornerRadius(pathRadius, pathW, pathH),
+        cornerRadius: offsetCornerRadius(cornerRadius, -half, pathW, pathH),
     };
 }
 
@@ -51,18 +82,17 @@ export function getOutsideStrokePath(
     width: number,
     height: number,
     strokeWidth: number,
-    cornerRadius = 0,
-): { x: number; y: number; width: number; height: number; cornerRadius: number } {
+    cornerRadius: CornerRadiusValue = 0,
+): { x: number; y: number; width: number; height: number; cornerRadius: CornerRadiusValue } {
     const half = strokeWidth / 2;
     const pathW = width + strokeWidth;
     const pathH = height + strokeWidth;
-    const pathRadius = cornerRadius > 0 ? cornerRadius + half : 0;
     return {
         x: -half,
         y: -half,
         width: pathW,
         height: pathH,
-        cornerRadius: capCornerRadius(pathRadius, pathW, pathH),
+        cornerRadius: offsetCornerRadius(cornerRadius, half, pathW, pathH),
     };
 }
 
@@ -163,18 +193,22 @@ export function roundedRectClipPath(
     ctx: CanvasRenderingContext2D,
     width: number,
     height: number,
-    cornerRadius: number,
+    cornerRadius: CornerRadiusValue,
 ): void {
-    const r = Math.min(cornerRadius, width / 2, height / 2);
-    if (r <= 0) {
+    const [tl, tr, br, bl] = toCornerArray(capCornerRadiusValue(cornerRadius, width, height));
+    if (tl <= 0 && tr <= 0 && br <= 0 && bl <= 0) {
         ctx.rect(0, 0, width, height);
         return;
     }
     ctx.beginPath();
-    ctx.moveTo(r, 0);
-    ctx.arcTo(width, 0, width, height, r);
-    ctx.arcTo(width, height, 0, height, r);
-    ctx.arcTo(0, height, 0, 0, r);
-    ctx.arcTo(0, 0, width, 0, r);
+    ctx.moveTo(tl, 0);
+    ctx.lineTo(width - tr, 0);
+    ctx.arcTo(width, 0, width, tr, tr);
+    ctx.lineTo(width, height - br);
+    ctx.arcTo(width, height, width - br, height, br);
+    ctx.lineTo(bl, height);
+    ctx.arcTo(0, height, 0, height - bl, bl);
+    ctx.lineTo(0, tl);
+    ctx.arcTo(0, 0, tl, 0, tl);
     ctx.closePath();
 }

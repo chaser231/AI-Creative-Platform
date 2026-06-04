@@ -5,7 +5,16 @@ import { useCanvasStore } from "@/store/canvasStore";
 import { useShallow } from "zustand/react/shallow";
 import { computeImageFitProps } from "@/utils/imageFitUtils";
 import { useImage } from "./useImage";
-import type { ImageFitMode } from "@/types";
+import type { CornerRadii, ImageFitMode } from "@/types";
+
+function resolveCornerRadius(cornerRadius = 0, cornerRadii?: CornerRadii): [number, number, number, number] {
+    return [
+        cornerRadii?.topLeft ?? cornerRadius,
+        cornerRadii?.topRight ?? cornerRadius,
+        cornerRadii?.bottomRight ?? cornerRadius,
+        cornerRadii?.bottomLeft ?? cornerRadius,
+    ];
+}
 
 /**
  * Renders the artboard's global background image (if any) inside the
@@ -16,12 +25,13 @@ import type { ImageFitMode } from "@/types";
  * (so the image doesn't bleed past the rounded artboard corners).
  */
 export function ArtboardBackgroundRenderer() {
-    const { backgroundImage, canvasWidth, canvasHeight, cornerRadius } = useCanvasStore(
+    const { backgroundImage, canvasWidth, canvasHeight, cornerRadius, cornerRadii } = useCanvasStore(
         useShallow((s) => ({
             backgroundImage: s.artboardProps.backgroundImage,
             canvasWidth: s.canvasWidth,
             canvasHeight: s.canvasHeight,
             cornerRadius: s.artboardProps.cornerRadius || 0,
+            cornerRadii: s.artboardProps.cornerRadii,
         }))
     );
 
@@ -62,19 +72,24 @@ export function ArtboardBackgroundRenderer() {
 
     // If the artboard has rounded corners, clip the background to match — even
     // when the parent doesn't clip (e.g. clipContent === false).
-    if (cornerRadius > 0) {
-        const r = Math.min(cornerRadius, Math.min(canvasWidth, canvasHeight) / 2);
+    const [tl, tr, br, bl] = resolveCornerRadius(cornerRadius, cornerRadii)
+        .map((radius) => Math.min(Math.max(0, radius), Math.min(canvasWidth, canvasHeight) / 2)) as [number, number, number, number];
+    if (tl > 0 || tr > 0 || br > 0 || bl > 0) {
         return (
             <Group
                 name="export-artboard-background"
                 listening={false}
                 clipFunc={(ctx) => {
                     ctx.beginPath();
-                    ctx.moveTo(r, 0);
-                    ctx.arcTo(canvasWidth, 0, canvasWidth, canvasHeight, r);
-                    ctx.arcTo(canvasWidth, canvasHeight, 0, canvasHeight, r);
-                    ctx.arcTo(0, canvasHeight, 0, 0, r);
-                    ctx.arcTo(0, 0, canvasWidth, 0, r);
+                    ctx.moveTo(tl, 0);
+                    ctx.lineTo(canvasWidth - tr, 0);
+                    ctx.arcTo(canvasWidth, 0, canvasWidth, tr, tr);
+                    ctx.lineTo(canvasWidth, canvasHeight - br);
+                    ctx.arcTo(canvasWidth, canvasHeight, canvasWidth - br, canvasHeight, br);
+                    ctx.lineTo(bl, canvasHeight);
+                    ctx.arcTo(0, canvasHeight, 0, canvasHeight - bl, bl);
+                    ctx.lineTo(0, tl);
+                    ctx.arcTo(0, 0, tl, 0, tl);
                     ctx.closePath();
                 }}
             >

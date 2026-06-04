@@ -160,6 +160,8 @@ export interface BaseComponentProps {
     width: number;
     height: number;
     rotation: number;
+    flipX?: boolean;
+    flipY?: boolean;
     visible: boolean;
     locked: boolean;
     opacity?: number; // 0–1, default 1
@@ -215,6 +217,17 @@ export interface GradientPaint {
  */
 export type Paint = string | SolidPaint | GradientPaint;
 
+export type FillMode = "paint" | "image";
+
+export interface LayerImageFill {
+    src: string;
+    fit: ImageFitMode;
+    opacity?: number;
+    focusX?: number;
+    focusY?: number;
+    swatchRef?: string;
+}
+
 export interface TextComponentProps extends BaseComponentProps {
     type: "text";
     text: string;
@@ -251,9 +264,18 @@ export const STROKE_JOIN_LABELS: Record<StrokeJoin, string> = {
     bevel: "Скошенный",
 };
 
+export interface CornerRadii {
+    topLeft?: number;
+    topRight?: number;
+    bottomRight?: number;
+    bottomLeft?: number;
+}
+
 export interface RectangleComponentProps extends BaseComponentProps {
     type: "rectangle";
     fill: Paint;
+    fillMode?: FillMode;
+    imageFill?: LayerImageFill;
     fillEnabled?: boolean; // default true
     stroke: string;
     strokeEnabled?: boolean; // default true
@@ -261,6 +283,7 @@ export interface RectangleComponentProps extends BaseComponentProps {
     strokeAlign?: StrokeAlign;
     strokeJoin?: StrokeJoin;
     cornerRadius: number;
+    cornerRadii?: CornerRadii;
 }
 
 export type ImageFitMode = "cover" | "contain" | "fill" | "crop";
@@ -285,6 +308,16 @@ export interface ImageComponentProps extends BaseComponentProps, ImageViewIntent
     type: "image";
     src: string;
     objectFit: ImageFitMode;
+    fill?: Paint;
+    fillMode?: FillMode;
+    fillEnabled?: boolean; // default true
+    stroke?: string;
+    strokeEnabled?: boolean; // default false
+    strokeWidth?: number;
+    strokeAlign?: StrokeAlign;
+    strokeJoin?: StrokeJoin;
+    cornerRadius?: number;
+    cornerRadii?: CornerRadii;
 }
 
 export interface BadgeComponentProps extends BaseComponentProps {
@@ -300,6 +333,8 @@ export interface BadgeComponentProps extends BaseComponentProps {
 export interface FrameComponentProps extends BaseComponentProps {
     type: "frame";
     fill: Paint;
+    fillMode?: FillMode;
+    imageFill?: LayerImageFill;
     fillEnabled?: boolean; // default true
     stroke: string;
     strokeEnabled?: boolean; // default true
@@ -307,6 +342,7 @@ export interface FrameComponentProps extends BaseComponentProps {
     strokeAlign?: StrokeAlign;
     strokeJoin?: StrokeJoin;
     cornerRadius: number;
+    cornerRadii?: CornerRadii;
     clipContent: boolean;
     childIds: string[];
     layoutMode?: "none" | "horizontal" | "vertical";
@@ -442,6 +478,8 @@ export interface BaseLayer {
     width: number;
     height: number;
     rotation: number;
+    flipX?: boolean;
+    flipY?: boolean;
     visible: boolean;
     locked: boolean;
     opacity?: number; // 0–1, default 1
@@ -481,6 +519,8 @@ export interface TextLayer extends BaseLayer {
 export interface RectangleLayer extends BaseLayer {
     type: "rectangle";
     fill: Paint;
+    fillMode?: FillMode;
+    imageFill?: LayerImageFill;
     fillEnabled?: boolean; // default true
     stroke: string;
     strokeEnabled?: boolean; // default true
@@ -488,12 +528,23 @@ export interface RectangleLayer extends BaseLayer {
     strokeAlign?: StrokeAlign;
     strokeJoin?: StrokeJoin;
     cornerRadius: number;
+    cornerRadii?: CornerRadii;
 }
 
 export interface ImageLayer extends BaseLayer, ImageViewIntent {
     type: "image";
     src: string;
     objectFit?: ImageFitMode;
+    fill?: Paint;
+    fillMode?: FillMode;
+    fillEnabled?: boolean; // default true
+    stroke?: string;
+    strokeEnabled?: boolean; // default false
+    strokeWidth?: number;
+    strokeAlign?: StrokeAlign;
+    strokeJoin?: StrokeJoin;
+    cornerRadius?: number;
+    cornerRadii?: CornerRadii;
 }
 
 export interface BadgeLayer extends BaseLayer {
@@ -509,6 +560,8 @@ export interface BadgeLayer extends BaseLayer {
 export interface FrameLayer extends BaseLayer {
     type: "frame";
     fill: Paint;
+    fillMode?: FillMode;
+    imageFill?: LayerImageFill;
     fillEnabled?: boolean; // default true
     stroke: string;
     strokeEnabled?: boolean; // default true
@@ -516,6 +569,7 @@ export interface FrameLayer extends BaseLayer {
     strokeAlign?: StrokeAlign;
     strokeJoin?: StrokeJoin;
     cornerRadius: number;
+    cornerRadii?: CornerRadii;
     clipContent: boolean;
     childIds: string[];
     layoutMode?: "none" | "horizontal" | "vertical";
