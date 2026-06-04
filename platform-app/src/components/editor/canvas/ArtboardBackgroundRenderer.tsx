@@ -25,9 +25,10 @@ function resolveCornerRadius(cornerRadius = 0, cornerRadii?: CornerRadii): [numb
  * (so the image doesn't bleed past the rounded artboard corners).
  */
 export function ArtboardBackgroundRenderer() {
-    const { backgroundImage, canvasWidth, canvasHeight, cornerRadius, cornerRadii } = useCanvasStore(
+    const { backgroundImage, fillEnabled, canvasWidth, canvasHeight, cornerRadius, cornerRadii } = useCanvasStore(
         useShallow((s) => ({
             backgroundImage: s.artboardProps.backgroundImage,
+            fillEnabled: s.artboardProps.fillEnabled !== false,
             canvasWidth: s.canvasWidth,
             canvasHeight: s.canvasHeight,
             cornerRadius: s.artboardProps.cornerRadius || 0,
@@ -37,7 +38,7 @@ export function ArtboardBackgroundRenderer() {
 
     const img = useImage(backgroundImage?.src ?? "");
 
-    if (!backgroundImage?.src || !img) return null;
+    if (!fillEnabled || !backgroundImage?.src || !img) return null;
 
     // ArtboardBackgroundFit is a strict subset of ImageFitMode ("cover" | "contain" | "fill"),
     // so the cast below is safe at runtime.

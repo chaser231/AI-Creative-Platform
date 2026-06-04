@@ -277,7 +277,9 @@ export interface RectangleComponentProps extends BaseComponentProps {
     fillMode?: FillMode;
     imageFill?: LayerImageFill;
     fillEnabled?: boolean; // default true
-    stroke: string;
+    stroke: Paint;
+    strokeMode?: FillMode;
+    strokeImage?: LayerImageFill;
     strokeEnabled?: boolean; // default true
     strokeWidth: number;
     strokeAlign?: StrokeAlign;
@@ -311,7 +313,9 @@ export interface ImageComponentProps extends BaseComponentProps, ImageViewIntent
     fill?: Paint;
     fillMode?: FillMode;
     fillEnabled?: boolean; // default true
-    stroke?: string;
+    stroke?: Paint;
+    strokeMode?: FillMode;
+    strokeImage?: LayerImageFill;
     strokeEnabled?: boolean; // default false
     strokeWidth?: number;
     strokeAlign?: StrokeAlign;
@@ -336,7 +340,9 @@ export interface FrameComponentProps extends BaseComponentProps {
     fillMode?: FillMode;
     imageFill?: LayerImageFill;
     fillEnabled?: boolean; // default true
-    stroke: string;
+    stroke: Paint;
+    strokeMode?: FillMode;
+    strokeImage?: LayerImageFill;
     strokeEnabled?: boolean; // default true
     strokeWidth: number;
     strokeAlign?: StrokeAlign;
@@ -522,7 +528,9 @@ export interface RectangleLayer extends BaseLayer {
     fillMode?: FillMode;
     imageFill?: LayerImageFill;
     fillEnabled?: boolean; // default true
-    stroke: string;
+    stroke: Paint;
+    strokeMode?: FillMode;
+    strokeImage?: LayerImageFill;
     strokeEnabled?: boolean; // default true
     strokeWidth: number;
     strokeAlign?: StrokeAlign;
@@ -538,7 +546,9 @@ export interface ImageLayer extends BaseLayer, ImageViewIntent {
     fill?: Paint;
     fillMode?: FillMode;
     fillEnabled?: boolean; // default true
-    stroke?: string;
+    stroke?: Paint;
+    strokeMode?: FillMode;
+    strokeImage?: LayerImageFill;
     strokeEnabled?: boolean; // default false
     strokeWidth?: number;
     strokeAlign?: StrokeAlign;
@@ -563,7 +573,9 @@ export interface FrameLayer extends BaseLayer {
     fillMode?: FillMode;
     imageFill?: LayerImageFill;
     fillEnabled?: boolean; // default true
-    stroke: string;
+    stroke: Paint;
+    strokeMode?: FillMode;
+    strokeImage?: LayerImageFill;
     strokeEnabled?: boolean; // default true
     strokeWidth: number;
     strokeAlign?: StrokeAlign;

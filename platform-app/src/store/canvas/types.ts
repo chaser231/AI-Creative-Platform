@@ -27,6 +27,8 @@ import type {
     Swatch,
     SwatchType,
     Paint,
+    FillMode,
+    LayerImageFill,
     StrokeAlign,
     StrokeJoin,
     CornerRadii,
@@ -67,12 +69,15 @@ export type {
 
 export interface ArtboardProps {
     fill: Paint;
+    fillEnabled?: boolean;
     /** If the artboard fill was applied from a swatch, keep a backlink for cascade updates. */
     fillSwatchRef?: string;
     cornerRadius: number;
     cornerRadii?: CornerRadii;
     clipContent: boolean;
-    stroke: string;
+    stroke: Paint;
+    strokeMode?: FillMode;
+    strokeImage?: LayerImageFill;
     strokeWidth: number;
     strokeAlign?: StrokeAlign;
     strokeJoin?: StrokeJoin;
@@ -101,6 +106,7 @@ export const DEFAULT_EXPAND_PADDING: ExpandPadding = {
 
 export const DEFAULT_ARTBOARD_PROPS: ArtboardProps = {
     fill: "#FFFFFF",
+    fillEnabled: true,
     cornerRadius: 0,
     clipContent: true,
     stroke: "",

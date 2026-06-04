@@ -63,6 +63,9 @@ function PreviewLayer({ layer, allLayers, loadedImages, imageStatuses, renderX, 
                             height={layer.height}
                             cornerRadius={resolveCornerRadius(layer.cornerRadius, layer.cornerRadii)}
                             stroke={layer.stroke}
+                            strokeMode={layer.strokeMode}
+                            strokeImageFill={layer.strokeImage}
+                            loadedImages={loadedImages}
                             strokeWidth={layer.strokeWidth}
                             strokeAlign={layer.strokeAlign}
                             strokeJoin={layer.strokeJoin}
@@ -153,6 +156,9 @@ function PreviewLayer({ layer, allLayers, loadedImages, imageStatuses, renderX, 
                             height={layer.height}
                             cornerRadius={resolveCornerRadius(layer.cornerRadius ?? 0, layer.cornerRadii)}
                             stroke={layer.stroke}
+                            strokeMode={layer.strokeMode}
+                            strokeImageFill={layer.strokeImage}
+                            loadedImages={loadedImages}
                             strokeWidth={layer.strokeWidth ?? 0}
                             strokeAlign={layer.strokeAlign}
                             strokeJoin={layer.strokeJoin}
@@ -230,6 +236,9 @@ function PreviewLayer({ layer, allLayers, loadedImages, imageStatuses, renderX, 
                             height={layer.height}
                             cornerRadius={resolveCornerRadius(layer.cornerRadius, layer.cornerRadii)}
                             stroke={layer.stroke}
+                            strokeMode={layer.strokeMode}
+                            strokeImageFill={layer.strokeImage}
+                            loadedImages={loadedImages}
                             strokeWidth={layer.strokeWidth}
                             strokeAlign={layer.strokeAlign}
                             strokeJoin={layer.strokeJoin}
@@ -383,6 +392,9 @@ function StyledBoxStroke({
     height,
     cornerRadius,
     stroke,
+    strokeMode,
+    strokeImageFill,
+    loadedImages,
     strokeWidth = 0,
     strokeAlign,
     strokeJoin,
@@ -391,19 +403,26 @@ function StyledBoxStroke({
     width: number;
     height: number;
     cornerRadius?: CornerRadiusValue;
-    stroke?: string;
+    stroke?: Paint;
+    strokeMode?: "paint" | "image";
+    strokeImageFill?: LayerImageFill;
+    loadedImages: Map<string, HTMLImageElement>;
     strokeWidth?: number;
     strokeAlign?: ImageLayer["strokeAlign"];
     strokeJoin?: ImageLayer["strokeJoin"];
     strokeEnabled?: boolean;
 }) {
+    const image = strokeMode === "image" && strokeImageFill?.src ? loadedImages.get(strokeImageFill.src) : undefined;
     return (
         <AlignedStrokeRect
             width={width}
             height={height}
             cornerRadius={cornerRadius}
             fillEnabled={false}
-            stroke={stroke || undefined}
+            stroke={typeof stroke === "string" ? stroke || undefined : undefined}
+            strokePaint={strokeMode === "image" ? undefined : stroke}
+            strokeImage={image}
+            strokeImageFill={strokeImageFill}
             strokeWidth={strokeWidth}
             strokeAlign={strokeAlign}
             strokeJoin={strokeJoin}
@@ -430,37 +449,59 @@ function PreviewArtboardBackground({
     width,
     height,
     fill,
+    fillEnabled = true,
     backgroundImage,
     cornerRadius = 0,
+    stroke,
+    strokeMode,
+    strokeImageFill,
+    strokeWidth = 0,
+    strokeAlign,
+    strokeJoin,
     loadedImages,
 }: {
     width: number;
     height: number;
     fill?: Paint;
+    fillEnabled?: boolean;
     backgroundImage?: ArtboardBackgroundImage;
     cornerRadius?: number;
+    stroke?: Paint;
+    strokeMode?: "paint" | "image";
+    strokeImageFill?: LayerImageFill;
+    strokeWidth?: number;
+    strokeAlign?: ImageLayer["strokeAlign"];
+    strokeJoin?: ImageLayer["strokeJoin"];
     loadedImages: Map<string, HTMLImageElement>;
 }) {
     const fillProps = paintToKonvaProps(fill ?? normalizePaint(undefined), width, height);
     const clipFunc = artboardClipFunc(width, height, cornerRadius);
     const bgSrc = backgroundImage?.src;
     const bgImg = bgSrc ? loadedImages.get(bgSrc) : undefined;
+    const strokeImage = strokeMode === "image" && strokeImageFill?.src ? loadedImages.get(strokeImageFill.src) : undefined;
 
     const fillRect = (
-        <Rect
+        <AlignedStrokeRect
             name="export-artboard-fill"
-            x={0}
-            y={0}
             width={width}
             height={height}
             cornerRadius={cornerRadius}
             listening={false}
+            stroke={typeof stroke === "string" ? stroke || undefined : undefined}
+            strokePaint={strokeMode === "image" ? undefined : stroke}
+            strokeImage={strokeImage}
+            strokeImageFill={strokeImageFill}
+            strokeWidth={strokeWidth}
+            strokeAlign={strokeAlign}
+            strokeJoin={strokeJoin}
+            strokeEnabled={!!strokeWidth && (!!stroke || !!strokeImageFill?.src)}
+            fillEnabled={fillEnabled}
             {...fillProps}
         />
     );
 
     let bgNode: ReactNode = null;
-    if (bgImg && backgroundImage) {
+    if (fillEnabled && bgImg && backgroundImage) {
         const fit = (backgroundImage.fit ?? "cover") as ImageFitMode;
         const nw = bgImg.naturalWidth || bgImg.width;
         const nh = bgImg.naturalHeight || bgImg.height;
@@ -522,8 +563,15 @@ interface PreviewCanvasProps {
     /** `artboard` renders a clean 1:1 stage for PNG export. */
     renderMode?: "preview" | "artboard";
     artboardFill?: Paint;
+    artboardFillEnabled?: boolean;
     artboardBackgroundImage?: ArtboardBackgroundImage;
     artboardCornerRadius?: number;
+    artboardStroke?: Paint;
+    artboardStrokeMode?: "paint" | "image";
+    artboardStrokeImage?: LayerImageFill;
+    artboardStrokeWidth?: number;
+    artboardStrokeAlign?: ImageLayer["strokeAlign"];
+    artboardStrokeJoin?: ImageLayer["strokeJoin"];
     onImagesReadyChange?: (ready: boolean) => void;
     onImageLoadStateChange?: (state: { pending: number; failed: number }) => void;
 }
@@ -538,8 +586,15 @@ export const PreviewCanvas = forwardRef<Konva.Stage, PreviewCanvasProps>(functio
     appearance = "light",
     renderMode = "preview",
     artboardFill,
+    artboardFillEnabled = true,
     artboardBackgroundImage,
     artboardCornerRadius = 0,
+    artboardStroke,
+    artboardStrokeMode,
+    artboardStrokeImage,
+    artboardStrokeWidth = 0,
+    artboardStrokeAlign,
+    artboardStrokeJoin,
     onImagesReadyChange,
     onImageLoadStateChange,
 }, forwardedRef) {
@@ -564,10 +619,19 @@ export const PreviewCanvas = forwardRef<Konva.Stage, PreviewCanvasProps>(functio
             ) {
                 sources.push(layer.imageFill.src);
             }
+            if (
+                (layer.type === "rectangle" || layer.type === "frame" || layer.type === "image")
+                && layer.visible !== false
+                && layer.strokeMode === "image"
+                && layer.strokeImage?.src
+            ) {
+                sources.push(layer.strokeImage.src);
+            }
         });
         if (artboardBackgroundImage?.src) sources.push(artboardBackgroundImage.src);
+        if (artboardStrokeMode === "image" && artboardStrokeImage?.src) sources.push(artboardStrokeImage.src);
         return Array.from(new Set(sources));
-    }, [artboardBackgroundImage?.src, layers]);
+    }, [artboardBackgroundImage, artboardStrokeImage, artboardStrokeMode, layers]);
 
     useEffect(() => {
         let disposed = false;
@@ -692,8 +756,15 @@ export const PreviewCanvas = forwardRef<Konva.Stage, PreviewCanvasProps>(functio
                             width={artboardWidth}
                             height={artboardHeight}
                             fill={artboardFill}
+                            fillEnabled={artboardFillEnabled}
                             backgroundImage={artboardBackgroundImage}
                             cornerRadius={artboardCornerRadius}
+                            stroke={artboardStroke}
+                            strokeMode={artboardStrokeMode}
+                            strokeImageFill={artboardStrokeImage}
+                            strokeWidth={artboardStrokeWidth}
+                            strokeAlign={artboardStrokeAlign}
+                            strokeJoin={artboardStrokeJoin}
                             loadedImages={activeLoadedImages}
                         />
                         {topLevelLayers.map((layer) => (
@@ -741,8 +812,15 @@ export const PreviewCanvas = forwardRef<Konva.Stage, PreviewCanvasProps>(functio
                             width={artboardWidth}
                             height={artboardHeight}
                             fill={artboardFill}
+                            fillEnabled={artboardFillEnabled}
                             backgroundImage={artboardBackgroundImage}
                             cornerRadius={artboardCornerRadius}
+                            stroke={artboardStroke}
+                            strokeMode={artboardStrokeMode}
+                            strokeImageFill={artboardStrokeImage}
+                            strokeWidth={artboardStrokeWidth}
+                            strokeAlign={artboardStrokeAlign}
+                            strokeJoin={artboardStrokeJoin}
                             loadedImages={activeLoadedImages}
                         />
                         {topLevelLayers.map((layer) => (
