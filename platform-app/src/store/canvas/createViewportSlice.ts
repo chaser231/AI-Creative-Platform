@@ -151,6 +151,7 @@ export const createViewportSlice: StateCreator<CanvasStore, [], [], ViewportSlic
     },
 
     setActiveGradientEditorTarget: (target) => {
+        if (get().activeGradientEditorTarget === target) return;
         set({ activeGradientEditorTarget: target });
     },
 

@@ -97,15 +97,15 @@ function applyPaintRefsToLayer<T extends { swatchRefs?: Layer["swatchRefs"] } & 
     if (!layer.swatchRefs) return layer;
     let changed = false;
     const next = { ...layer } as T & Record<string, unknown>;
-    if (layer.swatchRefs.fill === swatchId && (next as { fill?: string }).fill !== undefined) {
+    if (layer.swatchRefs.fill === swatchId && (next as { fill?: Paint }).fill !== undefined) {
         (next as { fill?: Paint }).fill = paint;
         changed = true;
     }
-    if (layer.swatchRefs.stroke === swatchId && (next as { stroke?: string }).stroke !== undefined) {
+    if (layer.swatchRefs.stroke === swatchId && (next as { stroke?: Paint }).stroke !== undefined) {
         const normalized = typeof paint === "string" ? undefined : normalizePaint(paint);
         const color = typeof paint === "string" ? paint : normalized?.kind === "solid" ? normalized.color : undefined;
         if (color) {
-            (next as { stroke?: string }).stroke = color;
+            (next as { stroke?: Paint }).stroke = color;
             changed = true;
         }
     }
@@ -549,7 +549,7 @@ export const createPaletteSlice: StateCreator<CanvasStore, [], [], PaletteSlice>
                 if (target === "fill") {
                     if ("fill" in next) (next as { fill: Paint }).fill = paint!;
                 } else if (target === "stroke") {
-                    if ("stroke" in next) (next as { stroke: string }).stroke = color!;
+                    if ("stroke" in next) (next as { stroke: Paint }).stroke = color!;
                 }
                 return next as Layer;
             };

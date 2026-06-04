@@ -156,6 +156,8 @@ function CanvasLayer({
                             height={layer.height}
                             cornerRadius={resolveCornerRadius(layer.cornerRadius, layer.cornerRadii)}
                             stroke={layer.stroke}
+                            strokeMode={layer.strokeMode}
+                            strokeImageFill={layer.strokeImage}
                             strokeWidth={layer.strokeWidth}
                             strokeAlign={layer.strokeAlign}
                             strokeJoin={layer.strokeJoin}
@@ -282,6 +284,8 @@ function ImageLayerRenderer({
                     height={layer.height}
                     cornerRadius={cornerRadius}
                     stroke={layer.stroke}
+                    strokeMode={layer.strokeMode}
+                    strokeImageFill={layer.strokeImage}
                     strokeWidth={layer.strokeWidth ?? 0}
                     strokeAlign={layer.strokeAlign}
                     strokeJoin={layer.strokeJoin}
@@ -451,6 +455,8 @@ function StyledBoxStroke({
     height,
     cornerRadius,
     stroke,
+    strokeMode,
+    strokeImageFill,
     strokeWidth = 0,
     strokeAlign,
     strokeJoin,
@@ -459,19 +465,26 @@ function StyledBoxStroke({
     width: number;
     height: number;
     cornerRadius?: CornerRadiusValue;
-    stroke?: string;
+    stroke?: Paint;
+    strokeMode?: "paint" | "image";
+    strokeImageFill?: LayerImageFill;
     strokeWidth?: number;
     strokeAlign?: ImageLayer["strokeAlign"];
     strokeJoin?: ImageLayer["strokeJoin"];
     strokeEnabled?: boolean;
 }) {
+    const image = useImage(strokeMode === "image" ? strokeImageFill?.src ?? "" : "");
+    const strokeIsImage = strokeMode === "image" && !!strokeImageFill?.src;
     return (
         <AlignedStrokeRect
             width={width}
             height={height}
             cornerRadius={cornerRadius}
             fillEnabled={false}
-            stroke={stroke || undefined}
+            stroke={typeof stroke === "string" ? stroke || undefined : undefined}
+            strokePaint={strokeIsImage ? undefined : stroke}
+            strokeImage={strokeIsImage ? image ?? undefined : undefined}
+            strokeImageFill={strokeImageFill}
             strokeWidth={strokeWidth}
             strokeAlign={strokeAlign}
             strokeJoin={strokeJoin}
@@ -708,6 +721,8 @@ function FrameLayerRenderer({
                             height={layer.height}
                             cornerRadius={resolveCornerRadius(layer.cornerRadius, layer.cornerRadii)}
                             stroke={isHighlighted ? FRAME_HIGHLIGHT_STROKE : layer.stroke}
+                            strokeMode={isHighlighted ? "paint" : layer.strokeMode}
+                            strokeImageFill={isHighlighted ? undefined : layer.strokeImage}
                             strokeWidth={isHighlighted ? FRAME_HIGHLIGHT_WIDTH : layer.strokeWidth}
                             strokeAlign={layer.strokeAlign}
                             strokeJoin={layer.strokeJoin}
@@ -1087,6 +1102,7 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
     const sharedInpaintMask = useOptionalSharedInpaintMask();
 
     const isDrawingTool = activeTool === "text" || activeTool === "rectangle" || activeTool === "frame";
+    const artboardStrokeImage = useImage(artboardProps.strokeMode === "image" ? artboardProps.strokeImage?.src ?? "" : "");
 
     // Prevent stage pan from competing with expand handles or inpaint brush.
     useEffect(() => {
@@ -2580,16 +2596,23 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
         if (!activeGradientEditorTarget) return null;
         if (selectedLayerIds.length === 1) {
             const selected = layers.find((l) => l.id === selectedLayerIds[0]);
+            const selectedFillMode = selected?.type === "image"
+                ? selected.fillMode ?? "image"
+                : selected?.type === "rectangle" || selected?.type === "frame"
+                    ? selected.fillMode ?? "paint"
+                    : "paint";
             if (
                 selected
                 && activeGradientEditorTarget === selected.id
                 && (selected.type === "rectangle" || selected.type === "badge" || selected.type === "frame" || selected.type === "image")
+                && selected.fillEnabled !== false
+                && selectedFillMode === "paint"
                 && normalizePaint(selected.type === "image" ? selected.fill ?? "#FFFFFF" : selected.fill).kind === "gradient"
             ) {
                 return { kind: "layer" as const, layer: selected };
             }
         }
-        if (activeGradientEditorTarget === "artboard" && selectedLayerIds.length === 0 && normalizePaint(artboardProps.fill).kind === "gradient") {
+        if (activeGradientEditorTarget === "artboard" && selectedLayerIds.length === 0 && artboardProps.fillEnabled !== false && normalizePaint(artboardProps.fill).kind === "gradient") {
             return { kind: "artboard" as const, fill: artboardProps.fill, width: canvasWidth, height: canvasHeight };
         }
         return null;
@@ -2651,16 +2674,20 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
                                     width={canvasWidth}
                                     height={canvasHeight}
                                     {...paintToKonvaProps(artboardProps.fill, canvasWidth, canvasHeight)}
-                                    stroke={artboardProps.stroke || undefined}
+                                    fillEnabled={artboardProps.fillEnabled !== false}
+                                    stroke={typeof artboardProps.stroke === "string" ? artboardProps.stroke || undefined : undefined}
+                                    strokePaint={artboardProps.strokeMode === "image" ? undefined : artboardProps.stroke}
+                                    strokeImage={artboardProps.strokeMode === "image" ? artboardStrokeImage ?? undefined : undefined}
+                                    strokeImageFill={artboardProps.strokeImage}
                                     strokeWidth={artboardProps.strokeWidth}
                                     strokeAlign={artboardProps.strokeAlign}
-                                    strokeEnabled={!!artboardProps.strokeWidth && !!artboardProps.stroke}
+                                    strokeEnabled={!!artboardProps.strokeWidth && (!!artboardProps.stroke || !!artboardProps.strokeImage?.src)}
                                     cornerRadius={resolveCornerRadius(artboardProps.cornerRadius, artboardProps.cornerRadii)}
                                     shadowColor="rgba(0,0,0,0.1)"
                                     shadowBlur={20}
                                     listening={false}
                                 />
-                                <ArtboardBackgroundRenderer />
+                                {artboardProps.fillEnabled !== false && <ArtboardBackgroundRenderer />}
                                 {topLevelLayers.map(layer => (
                                     <CanvasLayer
                                         key={layer.id}
@@ -2687,16 +2714,20 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
                                 width={canvasWidth}
                                 height={canvasHeight}
                                 {...paintToKonvaProps(artboardProps.fill, canvasWidth, canvasHeight)}
-                                stroke={artboardProps.stroke || undefined}
+                                fillEnabled={artboardProps.fillEnabled !== false}
+                                stroke={typeof artboardProps.stroke === "string" ? artboardProps.stroke || undefined : undefined}
+                                strokePaint={artboardProps.strokeMode === "image" ? undefined : artboardProps.stroke}
+                                strokeImage={artboardProps.strokeMode === "image" ? artboardStrokeImage ?? undefined : undefined}
+                                strokeImageFill={artboardProps.strokeImage}
                                 strokeWidth={artboardProps.strokeWidth}
                                 strokeAlign={artboardProps.strokeAlign}
-                                strokeEnabled={!!artboardProps.strokeWidth && !!artboardProps.stroke}
+                                strokeEnabled={!!artboardProps.strokeWidth && (!!artboardProps.stroke || !!artboardProps.strokeImage?.src)}
                                 cornerRadius={resolveCornerRadius(artboardProps.cornerRadius, artboardProps.cornerRadii)}
                                 shadowColor="rgba(0,0,0,0.1)"
                                 shadowBlur={20}
                                 listening={false}
                             />
-                            <ArtboardBackgroundRenderer />
+                            {artboardProps.fillEnabled !== false && <ArtboardBackgroundRenderer />}
                             {topLevelLayers.map(layer => (
                                 <CanvasLayer
                                     key={layer.id}

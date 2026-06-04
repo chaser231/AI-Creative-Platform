@@ -316,6 +316,53 @@ export function paintToKonvaProps(
     };
 }
 
+export function paintToCanvasStyle(
+    ctx: CanvasRenderingContext2D,
+    value: Paint | undefined,
+    width: number,
+    height: number,
+): string | CanvasGradient | CanvasPattern {
+    const paint = normalizePaint(value);
+    if (paint.kind === "solid") return colorToCss(paint.color, paint.opacity);
+
+    const stops = normalizeStops(paint.stops);
+    if (paint.gradientType === "linear") {
+        const { start, end } = linearPoints(paint, width, height);
+        const gradient = ctx.createLinearGradient(start.x, start.y, end.x, end.y);
+        stops.forEach((stop) => gradient.addColorStop(stop.offset, colorToCss(stop.color, stop.opacity)));
+        return gradient;
+    }
+
+    if (paint.gradientType === "radial") {
+        const center = paint.center ?? { x: 0.5, y: 0.5 };
+        const gradient = ctx.createRadialGradient(
+            center.x * width,
+            center.y * height,
+            0,
+            center.x * width,
+            center.y * height,
+            Math.max(width, height) * (paint.radius ?? 0.7),
+        );
+        stops.forEach((stop) => gradient.addColorStop(stop.offset, colorToCss(stop.color, stop.opacity)));
+        return gradient;
+    }
+
+    if (paint.gradientType === "angular" && "createConicGradient" in ctx) {
+        const center = paint.center ?? { x: 0.5, y: 0.5 };
+        const gradient = ctx.createConicGradient(
+            (paint.angle * Math.PI) / 180,
+            center.x * width,
+            center.y * height,
+        );
+        stops.forEach((stop) => gradient.addColorStop(stop.offset, colorToCss(stop.color, stop.opacity)));
+        return gradient;
+    }
+
+    const patternCanvas = createPatternCanvas(paint, width, height);
+    const pattern = patternCanvas ? ctx.createPattern(patternCanvas, "no-repeat") : null;
+    return pattern ?? paintToCssBackground(paint);
+}
+
 export function flipGradientPaint(value: Paint): GradientPaint {
     const paint = normalizePaint(value).kind === "gradient" ? normalizePaint(value) as GradientPaint : makeGradientPaint();
     return {

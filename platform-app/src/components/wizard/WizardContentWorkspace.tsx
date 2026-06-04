@@ -951,8 +951,15 @@ export function WizardContentWorkspace({
                                     zoom={previewZoom}
                                     appearance={canvasAppearance}
                                     artboardFill={artboardProps.fill}
+                                    artboardFillEnabled={artboardProps.fillEnabled !== false}
                                     artboardBackgroundImage={artboardProps.backgroundImage}
                                     artboardCornerRadius={artboardProps.cornerRadius}
+                                    artboardStroke={artboardProps.stroke}
+                                    artboardStrokeMode={artboardProps.strokeMode}
+                                    artboardStrokeImage={artboardProps.strokeImage}
+                                    artboardStrokeWidth={artboardProps.strokeWidth}
+                                    artboardStrokeAlign={artboardProps.strokeAlign}
+                                    artboardStrokeJoin={artboardProps.strokeJoin}
                                 />
                                 {wizardImageMode === "inpaint" && activePreviewImageLayer && (
                                     <WizardPreviewInpaintOverlay

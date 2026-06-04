@@ -360,8 +360,15 @@ export function WizardExportModal({
                         containerHeight={exportSource.height}
                         renderMode="artboard"
                         artboardFill={artboardProps.fill}
+                        artboardFillEnabled={artboardProps.fillEnabled !== false}
                         artboardBackgroundImage={artboardProps.backgroundImage}
                         artboardCornerRadius={artboardProps.cornerRadius}
+                        artboardStroke={artboardProps.stroke}
+                        artboardStrokeMode={artboardProps.strokeMode}
+                        artboardStrokeImage={artboardProps.strokeImage}
+                        artboardStrokeWidth={artboardProps.strokeWidth}
+                        artboardStrokeAlign={artboardProps.strokeAlign}
+                        artboardStrokeJoin={artboardProps.strokeJoin}
                         onImagesReadyChange={(ready) => {
                             readyRef.current = ready;
                         }}

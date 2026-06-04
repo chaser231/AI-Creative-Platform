@@ -15,7 +15,7 @@ const selectTriggerVariants = cva(
             size: {
                 md: "h-10 px-3 text-sm rounded-[var(--radius-lg)] gap-2",
                 sm: "h-8 px-2 text-[11px] rounded-[var(--radius-md)] gap-1.5",
-                xs: "h-7 px-1.5 text-[10px] rounded-[var(--radius-sm)] gap-1",
+                xs: "h-8 px-2 text-[11px] rounded-[var(--radius-md)] gap-1.5",
             },
         },
         defaultVariants: {

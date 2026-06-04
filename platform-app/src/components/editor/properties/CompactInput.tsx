@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
+import { useNumberScrub } from "@/components/ui/SmartNumberInput";
 
 export function CompactInput({
     label,
@@ -17,12 +18,7 @@ export function CompactInput({
 }) {
     const [localValue, setLocalValue] = useState(String(value));
     const [isFocused, setIsFocused] = useState(false);
-
-    useEffect(() => {
-        if (!isFocused) {
-            setLocalValue(String(value));
-        }
-    }, [value, isFocused]);
+    const displayValue = isFocused ? localValue : String(value);
 
     const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const val = e.target.value;
@@ -48,14 +44,29 @@ export function CompactInput({
         }
     };
 
+    const scrub = useNumberScrub({
+        value: Number(value) || 0,
+        min,
+        onChange: (next) => onChange(String(min !== undefined ? Math.max(min, next) : next)),
+    });
+
     return (
         <div className="flex items-center gap-1">
-            <span className="text-[10px] text-text-tertiary font-light select-none">{label}</span>
+            <span
+                {...scrub}
+                className="cursor-ew-resize select-none text-[10px] font-light text-text-tertiary hover:text-text-primary"
+                title="Drag to adjust"
+            >
+                {label}
+            </span>
             <input
-                type="number"
-                value={localValue}
-                min={min}
-                onFocus={() => setIsFocused(true)}
+                type="text"
+                inputMode="decimal"
+                value={displayValue}
+                onFocus={() => {
+                    setLocalValue(String(value));
+                    setIsFocused(true);
+                }}
                 onBlur={handleBlur}
                 onChange={handleChange}
                 onKeyDown={(e) => {

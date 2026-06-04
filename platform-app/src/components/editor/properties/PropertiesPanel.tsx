@@ -1,35 +1,45 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
+    ALargeSmall,
     AlignCenter,
     AlignLeft,
     AlignRight,
     Anchor,
     ArrowDown,
     ArrowRight,
+    BetweenHorizontalStart,
+    BetweenVerticalStart,
     Eye,
     EyeOff,
     FlipHorizontal,
     FlipVertical,
     Grid3X3,
-    ImageIcon,
     LayoutDashboard,
     Link,
     Link2,
     Maximize2,
     Move,
+    MoveHorizontal,
+    MoveVertical,
     Paintbrush,
+    PanelBottom,
+    PanelLeft,
+    PanelRight,
+    PanelTop,
     Plus,
     RotateCw,
     Scissors,
+    StretchHorizontal,
+    StretchVertical,
     Type,
     Unlink,
     Upload,
 } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
 import { Select } from "@/components/ui/Select";
-import { SmartNumberInput } from "@/components/ui/SmartNumberInput";
+import { SmartNumberInput, useNumberScrub } from "@/components/ui/SmartNumberInput";
 import { useCanvasStore } from "@/store/canvasStore";
 import type {
     BadgeLayer,
@@ -56,7 +66,7 @@ import { useWorkspace } from "@/providers/WorkspaceProvider";
 import { ArtboardBackgroundControls } from "./ArtboardBackgroundControls";
 import { ColorInput } from "./ColorInput";
 import { PaintInput } from "./PaintInput";
-import { StrokeControls } from "./StrokeControls";
+import { StrokeControls, type StrokeControlsValue } from "./StrokeControls";
 
 const SYSTEM_FONTS = [
     "Inter",
@@ -70,6 +80,12 @@ const SYSTEM_FONTS = [
 ];
 
 const FIELD_CLASS = "w-full h-8 rounded-[var(--radius-md)] border border-border-primary bg-bg-secondary pl-7 pr-2 text-[11px] text-text-primary text-center focus:outline-none focus:ring-1 focus:ring-border-focus";
+type SizeModeOption = { value: string; label: string };
+type LayerSizeModeConfig = {
+    value: string;
+    options: SizeModeOption[];
+    toUpdates: (value: string) => Partial<Layer>;
+};
 
 export function PropertiesPanel() {
     const {
@@ -137,6 +153,35 @@ export function PropertiesPanel() {
     };
 
     const activeFormat = resizes.find((resize) => resize.id === activeResizeId);
+    const [artboardFillTab, setArtboardFillTab] = useState<"paint" | "image">("paint");
+    const artboardFillImageActive = artboardFillTab === "image" || !!artboardProps.backgroundImage;
+
+    const handleArtboardStrokeChange = useCallback((updates: Partial<StrokeControlsValue>) => {
+        const next: Partial<typeof artboardProps> = {};
+
+        if (updates.stroke !== undefined) next.stroke = updates.stroke;
+        if (updates.strokeMode !== undefined) next.strokeMode = updates.strokeMode;
+        if (updates.strokeImage !== undefined) next.strokeImage = updates.strokeImage;
+        if (updates.strokeWidth !== undefined) next.strokeWidth = updates.strokeWidth;
+        if (updates.strokeAlign !== undefined) next.strokeAlign = updates.strokeAlign;
+        if (updates.strokeJoin !== undefined) next.strokeJoin = updates.strokeJoin;
+
+        if (updates.strokeEnabled !== undefined) {
+            next.strokeWidth = updates.strokeEnabled
+                ? Math.max(1, updates.strokeWidth ?? artboardProps.strokeWidth)
+                : 0;
+            if (updates.strokeEnabled && !updates.stroke && !artboardProps.stroke) {
+                next.stroke = "#000000";
+            }
+        } else if (
+            (updates.stroke !== undefined || updates.strokeMode !== undefined || updates.strokeImage !== undefined)
+            && (updates.strokeWidth ?? artboardProps.strokeWidth) <= 0
+        ) {
+            next.strokeWidth = 1;
+        }
+
+        updateArtboardProps(next);
+    }, [artboardProps, updateArtboardProps]);
 
     return (
         <aside className="h-full w-full border border-border-primary rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)] flex flex-col overflow-hidden backdrop-blur-xl bg-bg-surface/85">
@@ -196,6 +241,8 @@ export function PropertiesPanel() {
                                 value={artboardProps.fill}
                                 gradientTargetId="artboard"
                                 onChange={(fill) => updateArtboardProps({ fill })}
+                                enabled={artboardProps.fillEnabled !== false}
+                                onToggleEnabled={() => updateArtboardProps({ fillEnabled: !(artboardProps.fillEnabled !== false) })}
                                 imagePanel={(
                                     <ArtboardBackgroundControls
                                         artboardProps={artboardProps}
@@ -207,9 +254,13 @@ export function PropertiesPanel() {
                                         variant="sidebar"
                                     />
                                 )}
-                                imageActive={!!artboardProps.backgroundImage}
-                                onPaintTab={() => updateArtboardProps({ backgroundImage: undefined })}
-                                onImageTab={() => undefined}
+                                imageActive={artboardFillImageActive}
+                                imagePreviewSrc={artboardProps.backgroundImage?.src}
+                                onPaintTab={() => {
+                                    setArtboardFillTab("paint");
+                                    updateArtboardProps({ backgroundImage: undefined });
+                                }}
+                                onImageTab={() => setArtboardFillTab("image")}
                                 opacity={artboardProps.backgroundImage?.opacity}
                                 onOpacityChange={(opacity) => artboardProps.backgroundImage
                                     ? updateArtboardProps({ backgroundImage: { ...artboardProps.backgroundImage, opacity } })
@@ -218,27 +269,31 @@ export function PropertiesPanel() {
                             <StrokeControls
                                 value={{
                                     stroke: artboardProps.stroke || "#000000",
-                                    strokeEnabled: !!artboardProps.strokeWidth && !!artboardProps.stroke,
+                                    strokeEnabled: !!artboardProps.strokeWidth && (!!artboardProps.stroke || !!artboardProps.strokeImage?.src),
+                                    strokeMode: artboardProps.strokeMode,
+                                    strokeImage: artboardProps.strokeImage,
                                     strokeWidth: artboardProps.strokeWidth,
                                     strokeAlign: artboardProps.strokeAlign,
                                     strokeJoin: artboardProps.strokeJoin,
                                 }}
-                                onChange={updateArtboardProps}
+                                onChange={handleArtboardStrokeChange}
+                                imagePanel={(
+                                    <LayerImageFillPanel
+                                        imageFill={artboardProps.strokeImage}
+                                        onChange={(strokeImage) => updateArtboardProps(strokeImage
+                                            ? { strokeImage, strokeMode: "image" }
+                                            : { strokeImage: undefined, strokeMode: "paint" })}
+                                    />
+                                )}
                             />
                         </InspectorSection>
                         <CornerRadiusSection
                             cornerRadius={artboardProps.cornerRadius}
                             cornerRadii={artboardProps.cornerRadii}
                             onChange={updateArtboardProps}
+                            clipContent={artboardProps.clipContent}
+                            onClipChange={(clipContent) => updateArtboardProps({ clipContent })}
                         />
-                        <InspectorSection title="Экспорт">
-                            <ToggleButton
-                                active={artboardProps.clipContent}
-                                icon={<Scissors size={12} />}
-                                label="Clip content"
-                                onClick={() => updateArtboardProps({ clipContent: !artboardProps.clipContent })}
-                            />
-                        </InspectorSection>
                     </div>
                 )}
             </div>
@@ -261,6 +316,8 @@ function LayerInspector({
 }) {
     const parentFrame = findParentFrame(layers, layer.id);
     const isInsideAutoLayout = !!parentFrame?.layoutMode && parentFrame.layoutMode !== "none";
+    const widthModeConfig = getLayerSizeModeConfig(layer, "width", isInsideAutoLayout);
+    const heightModeConfig = getLayerSizeModeConfig(layer, "height", isInsideAutoLayout);
 
     return (
         <div className="space-y-3">
@@ -290,8 +347,22 @@ function LayerInspector({
             </InspectorSection>
             <InspectorSection title="Размер" icon={<Maximize2 size={13} />}>
                 <TwoColumn>
-                    <NumberField label="W" value={Math.round(layer.width)} min={1} onChange={(width) => onChange({ width } as Partial<Layer>)} />
-                    <NumberField label="H" value={Math.round(layer.height)} min={1} onChange={(height) => onChange({ height } as Partial<Layer>)} />
+                    <SizeField
+                        label="W"
+                        value={Math.round(layer.width)}
+                        min={1}
+                        modeConfig={widthModeConfig}
+                        onModeChange={(mode) => widthModeConfig && onChange(widthModeConfig.toUpdates(mode))}
+                        onChange={(width) => onChange(resolveManualSizeUpdate(layer, "width", width, widthModeConfig))}
+                    />
+                    <SizeField
+                        label="H"
+                        value={Math.round(layer.height)}
+                        min={1}
+                        modeConfig={heightModeConfig}
+                        onModeChange={(mode) => heightModeConfig && onChange(heightModeConfig.toUpdates(mode))}
+                        onChange={(height) => onChange(resolveManualSizeUpdate(layer, "height", height, heightModeConfig))}
+                    />
                 </TwoColumn>
                 {activeResizeId !== "master" && layer.masterId && layer.type === "image" && (
                     <IconToggle
@@ -402,7 +473,7 @@ function ConstraintsSection({
                     value={(layer as FrameLayer).groupSlotId || ""}
                     onChange={(event) => onChange({ groupSlotId: event.target.value || undefined } as Partial<Layer>)}
                     placeholder="Group slot ID"
-                    className="w-full h-7 px-2 rounded-[var(--radius-sm)] border border-border-primary bg-bg-secondary text-[11px] text-text-primary focus:outline-none focus:ring-1 focus:ring-border-focus placeholder:text-text-tertiary"
+                    className="w-full h-8 px-2 rounded-[var(--radius-md)] border border-border-primary bg-bg-secondary text-[11px] text-text-primary focus:outline-none focus:ring-1 focus:ring-border-focus placeholder:text-text-tertiary"
                 />
             )}
         </InspectorSection>
@@ -411,15 +482,7 @@ function ConstraintsSection({
 
 function AutoLayoutChildSection({ layer, onChange }: { layer: Layer; onChange: (updates: Partial<Layer>) => void }) {
     return (
-        <InspectorSection title="Размер в Auto Layout" icon={<LayoutDashboard size={13} />}>
-            <SizeModePair
-                widthMode={layer.layoutSizingWidth || "fixed"}
-                heightMode={layer.layoutSizingHeight || "fixed"}
-                widthOptions={layoutSizingOptions(layer)}
-                heightOptions={layoutSizingOptions(layer)}
-                onWidthChange={(value) => onChange(resolveLayoutSizingUpdate(layer, "width", value))}
-                onHeightChange={(value) => onChange(resolveLayoutSizingUpdate(layer, "height", value))}
-            />
+        <InspectorSection title="Auto Layout" icon={<LayoutDashboard size={13} />}>
             <ToggleButton
                 active={!!layer.isAbsolutePositioned}
                 label="Absolute position"
@@ -463,13 +526,15 @@ function FrameLayoutSection({ layer, onChange }: { layer: FrameLayer; onChange: 
                     <div className="grid grid-cols-[1fr_28px] gap-2">
                         <div className="grid grid-cols-2 gap-2">
                             <CompactNumberField
-                                label="X"
+                                label="Horizontal padding"
+                                icon={<MoveHorizontal size={12} />}
                                 value={horizontalPadding}
                                 min={0}
                                 onChange={(value) => onChange({ paddingLeft: value, paddingRight: value })}
                             />
                             <CompactNumberField
-                                label="Y"
+                                label="Vertical padding"
+                                icon={<MoveVertical size={12} />}
                                 value={verticalPadding}
                                 min={0}
                                 onChange={(value) => onChange({ paddingTop: value, paddingBottom: value })}
@@ -489,34 +554,18 @@ function FrameLayoutSection({ layer, onChange }: { layer: FrameLayer; onChange: 
                     </div>
                     {individualPaddingOpen && (
                         <TwoColumn>
-                            <CompactNumberField label="T" value={layer.paddingTop || 0} min={0} onChange={(paddingTop) => onChange({ paddingTop })} />
-                            <CompactNumberField label="R" value={layer.paddingRight || 0} min={0} onChange={(paddingRight) => onChange({ paddingRight })} />
-                            <CompactNumberField label="B" value={layer.paddingBottom || 0} min={0} onChange={(paddingBottom) => onChange({ paddingBottom })} />
-                            <CompactNumberField label="L" value={layer.paddingLeft || 0} min={0} onChange={(paddingLeft) => onChange({ paddingLeft })} />
+                            <CompactNumberField label="Top padding" icon={<PanelTop size={12} />} value={layer.paddingTop || 0} min={0} onChange={(paddingTop) => onChange({ paddingTop })} />
+                            <CompactNumberField label="Right padding" icon={<PanelRight size={12} />} value={layer.paddingRight || 0} min={0} onChange={(paddingRight) => onChange({ paddingRight })} />
+                            <CompactNumberField label="Bottom padding" icon={<PanelBottom size={12} />} value={layer.paddingBottom || 0} min={0} onChange={(paddingBottom) => onChange({ paddingBottom })} />
+                            <CompactNumberField label="Left padding" icon={<PanelLeft size={12} />} value={layer.paddingLeft || 0} min={0} onChange={(paddingLeft) => onChange({ paddingLeft })} />
                         </TwoColumn>
                     )}
-                    <CompactNumberField label="Gap" value={layer.spacing || 0} min={0} onChange={(spacing) => onChange({ spacing })} />
-                    <SizeModePair
-                        widthMode={layer.layoutMode === "horizontal"
-                            ? (layer.primaryAxisSizingMode === "auto" ? "hug" : "fixed")
-                            : (layer.counterAxisSizingMode === "auto" ? "hug" : "fixed")}
-                        heightMode={layer.layoutMode === "horizontal"
-                            ? (layer.counterAxisSizingMode === "auto" ? "hug" : "fixed")
-                            : (layer.primaryAxisSizingMode === "auto" ? "hug" : "fixed")}
-                        widthOptions={[
-                            { value: "fixed", label: "Fixed" },
-                            { value: "hug", label: "Hug" },
-                        ]}
-                        heightOptions={[
-                            { value: "fixed", label: "Fixed" },
-                            { value: "hug", label: "Hug" },
-                        ]}
-                        onWidthChange={(value) => onChange(layer.layoutMode === "horizontal"
-                            ? { primaryAxisSizingMode: value === "hug" ? "auto" : "fixed" }
-                            : { counterAxisSizingMode: value === "hug" ? "auto" : "fixed" })}
-                        onHeightChange={(value) => onChange(layer.layoutMode === "horizontal"
-                            ? { counterAxisSizingMode: value === "hug" ? "auto" : "fixed" }
-                            : { primaryAxisSizingMode: value === "hug" ? "auto" : "fixed" })}
+                    <CompactNumberField
+                        label="Gap"
+                        icon={layer.layoutMode === "horizontal" ? <BetweenHorizontalStart size={12} /> : <BetweenVerticalStart size={12} />}
+                        value={layer.spacing || 0}
+                        min={0}
+                        onChange={(spacing) => onChange({ spacing })}
                     />
                 </>
             )}
@@ -595,13 +644,12 @@ function TextInspectorSection({ layer, onChange }: { layer: TextLayer; onChange:
                     onChange={(fontWeight) => onChange({ fontWeight })}
                     options={availableWeights.map((weight) => ({ value: weight, label: weight }))}
                 />
-                <NumberField label="Size" value={layer.fontSize} min={1} onChange={(fontSize) => onChange({ fontSize })} />
-                <NumberField label="Line" value={Math.round((layer.lineHeight || 1.2) * 100)} min={1} onChange={(lineHeight) => onChange({ lineHeight: lineHeight / 100 })} />
-                <NumberField label="Track" value={layer.letterSpacing} step={0.1} onChange={(letterSpacing) => onChange({ letterSpacing })} />
+                <NumberField label="Size" icon={<ALargeSmall size={13} />} value={layer.fontSize} min={1} onChange={(fontSize) => onChange({ fontSize })} />
+                <NumberField label="Line" icon={<BetweenVerticalStart size={13} />} value={Math.round((layer.lineHeight || 1.2) * 100)} min={1} onChange={(lineHeight) => onChange({ lineHeight: lineHeight / 100 })} />
+                <NumberField label="Track" icon={<MoveHorizontal size={13} />} value={layer.letterSpacing} step={0.1} onChange={(letterSpacing) => onChange({ letterSpacing })} />
             </TwoColumn>
             <TwoColumn>
-                <Select
-                    size="xs"
+                <TextAdjustSwitcher
                     value={layer.textAdjust || "auto_width"}
                     onChange={(value) => {
                         const updates: Partial<TextLayer> = { textAdjust: value as TextLayer["textAdjust"] };
@@ -609,11 +657,6 @@ function TextInspectorSection({ layer, onChange }: { layer: TextLayer; onChange:
                         if (value === "auto_height" && layer.layoutSizingHeight === "fill") updates.layoutSizingHeight = "fixed";
                         onChange(updates);
                     }}
-                    options={[
-                        { value: "auto_width", label: "Auto W" },
-                        { value: "auto_height", label: "Auto H" },
-                        { value: "fixed", label: "Fixed" },
-                    ]}
                 />
                 <Select
                     size="xs"
@@ -703,36 +746,26 @@ function ImageInspectorSection({ layer, onChange }: { layer: ImageLayer; onChang
 
     return (
         <>
-            <InspectorSection title="Изображение" icon={<ImageIcon size={13} />}>
-                <button
-                    onClick={() => fileRef.current?.click()}
-                    disabled={isUploading}
-                    className="flex h-8 items-center justify-center gap-1.5 rounded-[var(--radius-md)] border border-border-primary text-[11px] text-text-secondary transition-colors hover:bg-bg-tertiary hover:text-text-primary disabled:opacity-50 cursor-pointer"
-                >
-                    <Upload size={12} />
-                    {isUploading ? "Загрузка..." : "Заменить source"}
-                </button>
-                <input
-                    ref={fileRef}
-                    type="file"
-                    accept="image/*"
-                    className="hidden"
-                    onChange={(event) => {
-                        const file = event.target.files?.[0];
-                        event.target.value = "";
-                        if (!file) return;
-                        setIsUploading(true);
-                        import("@/utils/imageUpload").then(({ compressImageFile, uploadForAI: uploadImage }) => {
-                            compressImageFile(file).then((compressedBase64) => {
-                                onChange({ src: compressedBase64, fillMode: "image" });
-                                return uploadImage(compressedBase64, "tmp");
-                            }).then((src) => {
-                                if (src) onChange({ src, fillMode: "image" });
-                            }).finally(() => setIsUploading(false));
-                        }).catch(() => setIsUploading(false));
-                    }}
-                />
-            </InspectorSection>
+            <input
+                ref={fileRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(event) => {
+                    const file = event.target.files?.[0];
+                    event.target.value = "";
+                    if (!file) return;
+                    setIsUploading(true);
+                    import("@/utils/imageUpload").then(({ compressImageFile, uploadForAI: uploadImage }) => {
+                        compressImageFile(file).then((compressedBase64) => {
+                            onChange({ src: compressedBase64, fillMode: "image" });
+                            return uploadImage(compressedBase64, "tmp");
+                        }).then((src) => {
+                            if (src) onChange({ src, fillMode: "image" });
+                        }).finally(() => setIsUploading(false));
+                    }).catch(() => setIsUploading(false));
+                }}
+            />
             <InspectorSection title="Стиль" icon={<Paintbrush size={13} />}>
                 <OpacityControl value={layer.opacity ?? 1} onChange={(opacity) => onChange({ opacity })} />
                 <PaintRow
@@ -745,9 +778,10 @@ function ImageInspectorSection({ layer, onChange }: { layer: ImageLayer; onChang
                     imageActive={(layer.fillMode ?? "image") === "image"}
                     onPaintTab={() => onChange({ fillMode: "paint", fill: layer.fill ?? "#FFFFFF" })}
                     onImageTab={() => onChange({ fillMode: "image" })}
+                    imagePreviewSrc={layer.src}
                     opacity={(layer.fillMode ?? "image") === "image"
                         ? undefined
-                        : solidPaintOpacity(layer.fill ?? "#FFFFFF")}
+                        : paintOpacity(layer.fill ?? "#FFFFFF")}
                     imagePanel={(
                         <ImageSourceStylePanel
                             fitModes={fitModes}
@@ -756,6 +790,9 @@ function ImageInspectorSection({ layer, onChange }: { layer: ImageLayer; onChang
                             focusY={layer.focusY}
                             onFitChange={(objectFit) => onChange({ objectFit })}
                             onFocusChange={(updates) => onChange(updates)}
+                            onReplaceImage={() => fileRef.current?.click()}
+                            isReplacingImage={isUploading}
+                            replaceImageLabel={isUploading ? "Загрузка..." : "Заменить image"}
                         />
                     )}
                 />
@@ -763,11 +800,21 @@ function ImageInspectorSection({ layer, onChange }: { layer: ImageLayer; onChang
                     value={{
                         stroke: layer.stroke || "#000000",
                         strokeEnabled: layer.strokeEnabled ?? false,
+                        strokeMode: layer.strokeMode,
+                        strokeImage: layer.strokeImage,
                         strokeWidth: layer.strokeWidth ?? 0,
                         strokeAlign: layer.strokeAlign,
                         strokeJoin: layer.strokeJoin,
                     }}
                     onChange={onChange}
+                    imagePanel={(
+                        <LayerImageFillPanel
+                            imageFill={layer.strokeImage}
+                            onChange={(strokeImage) => onChange(strokeImage
+                                ? { strokeImage, strokeMode: "image" }
+                                : { strokeImage: undefined, strokeMode: "paint" })}
+                        />
+                    )}
                 />
             </InspectorSection>
             <CornerRadiusSection
@@ -802,9 +849,10 @@ function ShapeStyleSection({
                     onToggleEnabled={() => onChange({ fillEnabled: !fillEnabled })}
                     onChange={(fill) => onChange({ fill, fillMode: "paint" })}
                     imageActive={fillMode === "image"}
+                    imagePreviewSrc={layer.imageFill?.src}
                     onPaintTab={() => onChange({ fillMode: "paint" })}
                     onImageTab={() => onChange({ fillMode: "image" })}
-                opacity={fillMode === "image" ? layer.imageFill?.opacity : solidPaintOpacity(layer.fill)}
+                    opacity={fillMode === "image" ? layer.imageFill?.opacity : paintOpacity(layer.fill)}
                     onOpacityChange={(opacity) => fillMode === "image" && layer.imageFill
                         ? onChange({ imageFill: { ...layer.imageFill, opacity } })
                         : undefined}
@@ -821,25 +869,31 @@ function ShapeStyleSection({
                     value={{
                         stroke: layer.stroke || "#000000",
                         strokeEnabled: layer.strokeEnabled,
+                        strokeMode: layer.strokeMode,
+                        strokeImage: layer.strokeImage,
                         strokeWidth: layer.strokeWidth,
                         strokeAlign: layer.strokeAlign,
                         strokeJoin: layer.strokeJoin,
                     }}
                     onChange={onChange}
+                    imagePanel={(
+                        <LayerImageFillPanel
+                            imageFill={layer.strokeImage}
+                            onChange={(strokeImage) => onChange(strokeImage
+                                ? { strokeImage, strokeMode: "image" }
+                                : { strokeImage: undefined, strokeMode: "paint" })}
+                        />
+                    )}
                 />
-                {showClip && layer.type === "frame" && (
-                    <ToggleButton
-                        active={layer.clipContent}
-                        icon={<Scissors size={12} />}
-                        label="Clip content"
-                        onClick={() => onChange({ clipContent: !layer.clipContent })}
-                    />
-                )}
             </InspectorSection>
             <CornerRadiusSection
                 cornerRadius={layer.cornerRadius}
                 cornerRadii={layer.cornerRadii}
                 onChange={onChange}
+                clipContent={showClip && layer.type === "frame" ? layer.clipContent : undefined}
+                onClipChange={showClip && layer.type === "frame"
+                    ? (clipContent) => onChange({ clipContent })
+                    : undefined}
             />
         </>
     );
@@ -884,11 +938,16 @@ function CornerRadiusSection({
     cornerRadius,
     cornerRadii,
     onChange,
+    clipContent,
+    onClipChange,
 }: {
     cornerRadius: number;
     cornerRadii?: CornerRadii;
     onChange: (updates: { cornerRadius?: number; cornerRadii?: CornerRadii }) => void;
+    clipContent?: boolean;
+    onClipChange?: (clipContent: boolean) => void;
 }) {
+    const [individualCornersOpen, setIndividualCornersOpen] = useState(false);
     const topLeft = cornerRadii?.topLeft ?? cornerRadius;
     const topRight = cornerRadii?.topRight ?? cornerRadius;
     const bottomRight = cornerRadii?.bottomRight ?? cornerRadius;
@@ -926,7 +985,7 @@ function CornerRadiusSection({
 
     return (
         <InspectorSection title="Скругления">
-            <TwoColumn>
+            <div className="grid grid-cols-[1fr_28px] gap-2">
                 <NumberField
                     label="R"
                     value={cornerRadius}
@@ -934,38 +993,59 @@ function CornerRadiusSection({
                     onChange={updateAll}
                     icon={<CornerGlyph corner="all" />}
                 />
-                <div className="flex h-8 items-center justify-center rounded-[var(--radius-md)] border border-border-primary bg-bg-secondary text-[10px] text-text-tertiary">
-                    {allEqual ? "All corners" : "Mixed"}
-                </div>
-                <NumberField
-                    label="TL"
-                    value={topLeft}
-                    min={0}
-                    onChange={(value) => updateCorner("topLeft", value)}
-                    icon={<CornerGlyph corner="topLeft" />}
+                <button
+                    type="button"
+                    onClick={() => setIndividualCornersOpen((open) => !open)}
+                    className={cn(
+                        "flex h-8 items-center justify-center rounded-[var(--radius-md)] border border-border-primary text-text-tertiary transition-colors hover:bg-bg-tertiary hover:text-text-primary",
+                        individualCornersOpen && "bg-accent-primary/10 text-accent-primary",
+                        !allEqual && "border-accent-primary/30 text-accent-primary",
+                    )}
+                    title={allEqual ? "Individual corners" : "Mixed corners"}
+                >
+                    <Grid3X3 size={13} />
+                </button>
+            </div>
+            {individualCornersOpen && (
+                <TwoColumn>
+                    <NumberField
+                        label="TL"
+                        value={topLeft}
+                        min={0}
+                        onChange={(value) => updateCorner("topLeft", value)}
+                        icon={<CornerGlyph corner="topLeft" />}
+                    />
+                    <NumberField
+                        label="TR"
+                        value={topRight}
+                        min={0}
+                        onChange={(value) => updateCorner("topRight", value)}
+                        icon={<CornerGlyph corner="topRight" />}
+                    />
+                    <NumberField
+                        label="BL"
+                        value={bottomLeft}
+                        min={0}
+                        onChange={(value) => updateCorner("bottomLeft", value)}
+                        icon={<CornerGlyph corner="bottomLeft" />}
+                    />
+                    <NumberField
+                        label="BR"
+                        value={bottomRight}
+                        min={0}
+                        onChange={(value) => updateCorner("bottomRight", value)}
+                        icon={<CornerGlyph corner="bottomRight" />}
+                    />
+                </TwoColumn>
+            )}
+            {onClipChange && clipContent !== undefined && (
+                <ToggleButton
+                    active={clipContent}
+                    icon={<Scissors size={12} />}
+                    label="Clip content"
+                    onClick={() => onClipChange(!clipContent)}
                 />
-                <NumberField
-                    label="TR"
-                    value={topRight}
-                    min={0}
-                    onChange={(value) => updateCorner("topRight", value)}
-                    icon={<CornerGlyph corner="topRight" />}
-                />
-                <NumberField
-                    label="BL"
-                    value={bottomLeft}
-                    min={0}
-                    onChange={(value) => updateCorner("bottomLeft", value)}
-                    icon={<CornerGlyph corner="bottomLeft" />}
-                />
-                <NumberField
-                    label="BR"
-                    value={bottomRight}
-                    min={0}
-                    onChange={(value) => updateCorner("bottomRight", value)}
-                    icon={<CornerGlyph corner="bottomRight" />}
-                />
-            </TwoColumn>
+            )}
         </InspectorSection>
     );
 }
@@ -1018,9 +1098,14 @@ function NumberField({
     step?: number;
     icon?: ReactNode;
 }) {
+    const scrub = useNumberScrub({ value, onChange, min, max, step });
     return (
         <div className="relative">
-            <span className="pointer-events-none absolute left-2 top-1/2 flex -translate-y-1/2 items-center text-[11px] font-medium text-text-tertiary">
+            <span
+                {...scrub}
+                className="absolute left-2 top-1/2 z-10 flex -translate-y-1/2 cursor-ew-resize items-center text-[11px] font-medium text-text-tertiary hover:text-text-primary"
+                title="Drag to adjust"
+            >
                 {icon ?? label}
             </span>
             <SmartNumberInput
@@ -1035,8 +1120,97 @@ function NumberField({
     );
 }
 
+function SizeField({
+    label,
+    value,
+    onChange,
+    onModeChange,
+    modeConfig,
+    min,
+    max,
+    step,
+}: {
+    label: string;
+    value: number;
+    onChange: (value: number) => void;
+    onModeChange?: (value: string) => void;
+    modeConfig?: LayerSizeModeConfig;
+    min?: number;
+    max?: number;
+    step?: number;
+}) {
+    const scrub = useNumberScrub({ value, onChange, min, max, step });
+    if (!modeConfig) {
+        return <NumberField label={label} value={value} min={min} max={max} step={step} onChange={onChange} />;
+    }
+
+    return (
+        <div className="grid grid-cols-[28px_minmax(42px,1fr)_62px] overflow-hidden rounded-[var(--radius-md)] border border-border-primary bg-bg-secondary">
+            <span
+                {...scrub}
+                className="flex h-8 cursor-ew-resize select-none items-center justify-center border-r border-border-primary text-[11px] font-medium text-text-tertiary hover:text-text-primary"
+                title="Drag to adjust"
+            >
+                {label}
+            </span>
+            <SmartNumberInput
+                value={value}
+                min={min}
+                max={max}
+                step={step}
+                onChange={onChange}
+                className={cn(
+                    "h-8 min-w-0 border-0 bg-transparent px-1 text-center text-[11px] text-text-primary focus:outline-none focus:ring-1 focus:ring-border-focus",
+                    modeConfig.value !== "fixed" && "text-text-secondary",
+                )}
+            />
+            <Select
+                size="xs"
+                value={modeConfig.value}
+                onChange={onModeChange ?? (() => undefined)}
+                options={modeConfig.options}
+                triggerClassName="h-8 rounded-none border-0 border-l border-border-primary bg-bg-secondary px-1.5 text-[10px]"
+            />
+        </div>
+    );
+}
+
 function TwoColumn({ children }: { children: ReactNode }) {
     return <div className="grid grid-cols-2 gap-2">{children}</div>;
+}
+
+function TextAdjustSwitcher({
+    value,
+    onChange,
+}: {
+    value: NonNullable<TextLayer["textAdjust"]>;
+    onChange: (value: NonNullable<TextLayer["textAdjust"]>) => void;
+}) {
+    const options: Array<{ value: NonNullable<TextLayer["textAdjust"]>; title: string; icon: ReactNode }> = [
+        { value: "auto_width", title: "Auto width", icon: <StretchHorizontal size={13} /> },
+        { value: "auto_height", title: "Auto height", icon: <StretchVertical size={13} /> },
+        { value: "fixed", title: "Fixed size", icon: <Maximize2 size={13} /> },
+    ];
+
+    return (
+        <div className="grid grid-cols-3 overflow-hidden rounded-[var(--radius-md)] border border-border-primary bg-bg-secondary">
+            {options.map((option) => (
+                <button
+                    key={option.value}
+                    type="button"
+                    title={option.title}
+                    aria-label={option.title}
+                    onClick={() => onChange(option.value)}
+                    className={cn(
+                        "flex h-8 items-center justify-center border-r border-border-primary text-text-tertiary transition-colors last:border-r-0 hover:bg-bg-tertiary hover:text-text-primary",
+                        value === option.value && "bg-accent-primary/10 text-accent-primary",
+                    )}
+                >
+                    {option.icon}
+                </button>
+            ))}
+        </div>
+    );
 }
 
 function PaintRow({
@@ -1049,6 +1223,7 @@ function PaintRow({
     onToggleEnabled,
     imagePanel,
     imageActive = false,
+    imagePreviewSrc,
     onPaintTab,
     onImageTab,
     opacity,
@@ -1063,27 +1238,25 @@ function PaintRow({
     onToggleEnabled?: () => void;
     imagePanel?: ReactNode;
     imageActive?: boolean;
+    imagePreviewSrc?: string;
     onPaintTab?: () => void;
     onImageTab?: () => void;
     opacity?: number;
     onOpacityChange?: (opacity: number) => void;
 }) {
-    const normalized = normalizePaint(value);
-    const currentOpacity = opacity ?? (normalized.kind === "solid" ? normalized.opacity : 1);
+    const currentOpacity = opacity ?? paintOpacity(value);
     const handleOpacityChange = (nextOpacity: number) => {
         if (onOpacityChange) {
             onOpacityChange(nextOpacity);
             return;
         }
-        if (normalized.kind === "solid") {
-            onChange({ ...normalized, opacity: nextOpacity });
-        }
+        onChange(applyPaintOpacity(value, nextOpacity));
     };
 
     return (
         <LabeledControl label={label}>
-            <div className="flex items-center gap-2">
-                <div className={cn("min-w-0 flex-1", !enabled && "opacity-30 pointer-events-none")}>
+            <div className="flex items-center gap-1.5">
+                <div className={cn("min-w-0", !enabled && "opacity-30 pointer-events-none")}>
                     <PaintInput
                         value={value}
                         gradientTargetId={gradientTargetId}
@@ -1091,6 +1264,7 @@ function PaintRow({
                         onChange={onChange}
                         imagePanel={imagePanel}
                         imageActive={imageActive}
+                        imagePreviewSrc={imagePreviewSrc}
                         onPaintTab={onPaintTab}
                         onImageTab={onImageTab}
                     />
@@ -1100,7 +1274,7 @@ function PaintRow({
                     <button
                         type="button"
                         onClick={onToggleEnabled}
-                        className="flex h-8 w-7 items-center justify-center rounded-[var(--radius-sm)] text-text-tertiary hover:text-text-primary hover:bg-bg-tertiary cursor-pointer"
+                        className="flex h-8 w-7 items-center justify-center rounded-[var(--radius-md)] text-text-tertiary hover:text-text-primary hover:bg-bg-tertiary cursor-pointer"
                         title={enabled ? "Скрыть" : "Показать"}
                     >
                         {enabled ? <Eye size={12} /> : <EyeOff size={12} />}
@@ -1118,6 +1292,9 @@ function ImageSourceStylePanel({
     focusY,
     onFitChange,
     onFocusChange,
+    onReplaceImage,
+    isReplacingImage = false,
+    replaceImageLabel = "Заменить image",
 }: {
     fitModes: ImageFitMode[];
     fit: ImageFitMode;
@@ -1125,9 +1302,23 @@ function ImageSourceStylePanel({
     focusY?: number;
     onFitChange: (fit: ImageFitMode) => void;
     onFocusChange: (updates: Partial<ImageLayer>) => void;
+    onReplaceImage?: () => void;
+    isReplacingImage?: boolean;
+    replaceImageLabel?: string;
 }) {
     return (
         <div className="space-y-2">
+            {onReplaceImage && (
+                <button
+                    type="button"
+                    onClick={onReplaceImage}
+                    disabled={isReplacingImage}
+                    className="flex h-8 w-full items-center justify-center gap-1.5 rounded-[var(--radius-md)] border border-border-primary bg-bg-secondary text-[10px] font-medium text-text-secondary transition-colors hover:bg-bg-tertiary hover:text-text-primary disabled:opacity-50 cursor-pointer"
+                >
+                    <Upload size={12} />
+                    {replaceImageLabel}
+                </button>
+            )}
             <div className="grid grid-cols-4 overflow-hidden rounded-[var(--radius-md)] border border-border-primary">
                 {fitModes.map((mode) => (
                     <button
@@ -1251,28 +1442,54 @@ async function uploadImageFile(file: File, tag: string) {
     return uploadForAI(base64, tag);
 }
 
-function solidPaintOpacity(value: Parameters<typeof PaintInput>[0]["value"]) {
+function paintOpacity(value: Parameters<typeof PaintInput>[0]["value"]) {
     const normalized = normalizePaint(value);
-    return normalized.kind === "solid" ? normalized.opacity : 1;
+    if (normalized.kind === "solid") return normalized.opacity;
+    const first = normalized.stops[0]?.opacity ?? 1;
+    return normalized.stops.every((stop) => stop.opacity === first) ? first : 1;
+}
+
+function applyPaintOpacity(value: Parameters<typeof PaintInput>[0]["value"], opacity: number) {
+    const normalized = normalizePaint(value);
+    if (normalized.kind === "solid") return { ...normalized, opacity };
+    return {
+        ...normalized,
+        stops: normalized.stops.map((stop) => ({ ...stop, opacity })),
+    };
 }
 
 function CompactNumberField({
     label,
+    icon,
     value,
     onChange,
     min,
     max,
 }: {
     label: string;
+    icon?: ReactNode;
     value: number;
     onChange: (value: number) => void;
     min?: number;
     max?: number;
 }) {
+    const scrub = useNumberScrub({
+        value,
+        onChange: (next) => {
+            const clamped = Math.max(min ?? -Infinity, Math.min(max ?? Infinity, next));
+            onChange(clamped);
+        },
+        min,
+        max,
+    });
     return (
         <div className="relative">
-            <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-[10px] text-text-tertiary">
-                {label}
+            <span
+                {...scrub}
+                className="absolute left-2 top-1/2 z-10 flex -translate-y-1/2 cursor-ew-resize items-center text-[10px] text-text-tertiary hover:text-text-primary"
+                title={label}
+            >
+                {icon ?? label}
             </span>
             <SmartNumberInput
                 value={value}
@@ -1289,58 +1506,29 @@ function CompactNumberField({
 }
 
 function PercentField({ value, onChange, disabled }: { value: number; onChange: (value: number) => void; disabled?: boolean }) {
+    const percent = Math.round(value * 100);
+    const scrub = useNumberScrub({
+        value: percent,
+        min: 0,
+        max: 100,
+        onChange: (next) => onChange(Math.max(0, Math.min(100, next)) / 100),
+    });
     return (
-        <div className={cn("relative w-[62px]", disabled && "opacity-40 pointer-events-none")}>
+        <div className={cn("relative w-[64px]", disabled && "opacity-40 pointer-events-none")}>
+            <span
+                {...scrub}
+                className="absolute left-2 top-1/2 z-10 h-px w-2 -translate-y-1/2 cursor-ew-resize rounded-full bg-text-tertiary hover:bg-text-primary"
+                title="Drag to adjust opacity"
+            />
             <SmartNumberInput
                 min={0}
                 max={100}
-                value={Math.round(value * 100)}
+                value={percent}
                 onChange={(next) => onChange(Math.max(0, Math.min(100, next)) / 100)}
-                className="h-8 w-full rounded-[var(--radius-md)] border border-border-primary bg-bg-secondary pl-2 pr-5 text-center text-[11px] text-text-primary focus:outline-none focus:ring-1 focus:ring-border-focus"
+                className="h-8 w-full rounded-[var(--radius-md)] border border-border-primary bg-bg-secondary pl-4 pr-5 text-center text-[11px] text-text-primary focus:outline-none focus:ring-1 focus:ring-border-focus"
             />
             <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-text-tertiary">%</span>
         </div>
-    );
-}
-
-function SizeModePair({
-    widthMode,
-    heightMode,
-    widthOptions,
-    heightOptions,
-    onWidthChange,
-    onHeightChange,
-}: {
-    widthMode: string;
-    heightMode: string;
-    widthOptions: Array<{ value: string; label: string }>;
-    heightOptions: Array<{ value: string; label: string }>;
-    onWidthChange: (value: string) => void;
-    onHeightChange: (value: string) => void;
-}) {
-    return (
-        <TwoColumn>
-            <div className="grid grid-cols-[28px_1fr] overflow-hidden rounded-[var(--radius-md)] border border-border-primary">
-                <div className="flex h-8 items-center justify-center border-r border-border-primary text-[10px] text-text-tertiary">W</div>
-                <Select
-                    size="xs"
-                    value={widthMode}
-                    onChange={onWidthChange}
-                    options={widthOptions}
-                    triggerClassName="h-8 border-0 rounded-none bg-bg-secondary"
-                />
-            </div>
-            <div className="grid grid-cols-[28px_1fr] overflow-hidden rounded-[var(--radius-md)] border border-border-primary">
-                <div className="flex h-8 items-center justify-center border-r border-border-primary text-[10px] text-text-tertiary">H</div>
-                <Select
-                    size="xs"
-                    value={heightMode}
-                    onChange={onHeightChange}
-                    options={heightOptions}
-                    triggerClassName="h-8 border-0 rounded-none bg-bg-secondary"
-                />
-            </div>
-        </TwoColumn>
     );
 }
 
@@ -1434,6 +1622,12 @@ function ConstraintsAnchorGrid({
 
 function OpacityControl({ value, onChange }: { value: number; onChange: (opacity: number) => void }) {
     const percent = Math.round(value * 100);
+    const scrub = useNumberScrub({
+        value: percent,
+        min: 0,
+        max: 100,
+        onChange: (next) => onChange(Math.max(0, Math.min(100, next)) / 100),
+    });
     return (
         <LabeledControl label="Opacity">
             <div className="flex items-center gap-2">
@@ -1445,13 +1639,20 @@ function OpacityControl({ value, onChange }: { value: number; onChange: (opacity
                     onChange={(event) => onChange(Number(event.target.value) / 100)}
                     className="flex-1 h-1.5 accent-accent-primary cursor-pointer"
                 />
-                <SmartNumberInput
-                    min={0}
-                    max={100}
-                    value={percent}
-                    onChange={(next) => onChange(Math.max(0, Math.min(100, next)) / 100)}
-                    className="w-12 h-7 px-1 rounded-[var(--radius-sm)] border border-border-primary bg-bg-secondary text-[10px] text-text-primary text-center focus:outline-none focus:ring-1 focus:ring-border-focus"
-                />
+                <div className="relative w-[54px]">
+                    <span
+                        {...scrub}
+                        className="absolute left-2 top-1/2 z-10 h-px w-2 -translate-y-1/2 cursor-ew-resize rounded-full bg-text-tertiary hover:bg-text-primary"
+                        title="Drag to adjust opacity"
+                    />
+                    <SmartNumberInput
+                        min={0}
+                        max={100}
+                        value={percent}
+                        onChange={(next) => onChange(Math.max(0, Math.min(100, next)) / 100)}
+                        className="h-8 w-full rounded-[var(--radius-md)] border border-border-primary bg-bg-secondary pl-4 pr-1 text-center text-[11px] text-text-primary focus:outline-none focus:ring-1 focus:ring-border-focus"
+                    />
+                </div>
             </div>
         </LabeledControl>
     );
@@ -1539,6 +1740,55 @@ function layoutSizingOptions(layer: Layer) {
         { value: "fill", label: "Fill" },
         ...(layer.type === "frame" || layer.type === "text" ? [{ value: "hug", label: "Hug" }] : []),
     ];
+}
+
+function getLayerSizeModeConfig(layer: Layer, axis: "width" | "height", isInsideAutoLayout: boolean): LayerSizeModeConfig | undefined {
+    if (isInsideAutoLayout) {
+        return {
+            value: axis === "width" ? layer.layoutSizingWidth || "fixed" : layer.layoutSizingHeight || "fixed",
+            options: layoutSizingOptions(layer),
+            toUpdates: (value) => resolveLayoutSizingUpdate(layer, axis, value),
+        };
+    }
+
+    if (layer.type !== "frame" || !layer.layoutMode || layer.layoutMode === "none") {
+        return undefined;
+    }
+
+    const axisUsesPrimarySizing = axis === "width"
+        ? layer.layoutMode === "horizontal"
+        : layer.layoutMode === "vertical";
+    const mode = axisUsesPrimarySizing ? layer.primaryAxisSizingMode : layer.counterAxisSizingMode;
+
+    return {
+        value: mode === "auto" ? "hug" : "fixed",
+        options: [
+            { value: "fixed", label: "Fixed" },
+            { value: "hug", label: "Hug" },
+        ],
+        toUpdates: (value) => (axisUsesPrimarySizing
+            ? { primaryAxisSizingMode: value === "hug" ? "auto" : "fixed" }
+            : { counterAxisSizingMode: value === "hug" ? "auto" : "fixed" }) as Partial<Layer>,
+    };
+}
+
+function resolveManualSizeUpdate(
+    layer: Layer,
+    axis: "width" | "height",
+    value: number,
+    modeConfig?: LayerSizeModeConfig,
+): Partial<Layer> {
+    const updates: Partial<Layer> = axis === "width" ? { width: value } : { height: value };
+
+    if (modeConfig && modeConfig.value !== "fixed") {
+        Object.assign(updates, modeConfig.toUpdates("fixed"));
+    }
+
+    if (layer.type === "text" && layer.textAdjust !== "fixed") {
+        (updates as Partial<TextLayer>).textAdjust = "fixed";
+    }
+
+    return updates;
 }
 
 function resolveLayoutSizingUpdate(layer: Layer, axis: "width" | "height", value: string): Partial<Layer> {

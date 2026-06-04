@@ -1,14 +1,15 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Eye, EyeOff, Minus, Settings2 } from "lucide-react";
 import { Select } from "@/components/ui/Select";
-import { SmartNumberInput } from "@/components/ui/SmartNumberInput";
-import { ColorInput } from "./ColorInput";
-import type { StrokeAlign, StrokeJoin } from "@/types";
+import { SmartNumberInput, useNumberScrub } from "@/components/ui/SmartNumberInput";
+import { PaintInput } from "./PaintInput";
+import type { FillMode, LayerImageFill, Paint, StrokeAlign, StrokeJoin } from "@/types";
 import { STROKE_ALIGN_LABELS, STROKE_JOIN_LABELS } from "@/types";
 import { cn } from "@/lib/cn";
+import { normalizePaint } from "@/utils/paint";
 
 const STROKE_ALIGN_OPTIONS: { value: StrokeAlign; label: string }[] = (
     Object.entries(STROKE_ALIGN_LABELS) as [StrokeAlign, string][]
@@ -17,7 +18,9 @@ const STROKE_ALIGN_OPTIONS: { value: StrokeAlign; label: string }[] = (
 const STROKE_JOIN_OPTIONS: StrokeJoin[] = ["miter", "round", "bevel"];
 
 export interface StrokeControlsValue {
-    stroke: string;
+    stroke: Paint;
+    strokeMode?: FillMode;
+    strokeImage?: LayerImageFill;
     strokeEnabled?: boolean;
     strokeWidth: number;
     strokeAlign?: StrokeAlign;
@@ -27,9 +30,11 @@ export interface StrokeControlsValue {
 export function StrokeControls({
     value,
     onChange,
+    imagePanel,
 }: {
     value: StrokeControlsValue;
     onChange: (updates: Partial<StrokeControlsValue>) => void;
+    imagePanel?: ReactNode;
 }) {
     const [settingsOpen, setSettingsOpen] = useState(false);
     const [popoverPosition, setPopoverPosition] = useState<{ top: number; left: number } | null>(null);
@@ -38,6 +43,11 @@ export function StrokeControls({
     const strokeEnabled = value.strokeEnabled !== false;
     const strokeAlign = value.strokeAlign ?? "center";
     const strokeJoin = value.strokeJoin ?? "miter";
+    const strokeMode = value.strokeMode ?? "paint";
+    const strokeIsImage = strokeMode === "image";
+    const currentOpacity = strokeIsImage
+        ? value.strokeImage?.opacity ?? 1
+        : readPaintOpacity(value.stroke);
 
     const updatePopoverPosition = useCallback(() => {
         const rect = rootRef.current?.getBoundingClientRect();
@@ -63,6 +73,31 @@ export function StrokeControls({
         onChange(updates);
     };
 
+    const handleStrokeChange = (stroke: Paint) => {
+        const updates: Partial<StrokeControlsValue> = { stroke, strokeMode: "paint", strokeEnabled: true };
+        if (value.strokeWidth <= 0) {
+            updates.strokeWidth = 1;
+        }
+        onChange(updates);
+    };
+
+    const handleOpacityChange = (opacity: number) => {
+        if (strokeIsImage && value.strokeImage) {
+            onChange({
+                strokeImage: { ...value.strokeImage, opacity },
+                strokeEnabled: true,
+                strokeWidth: value.strokeWidth <= 0 ? 1 : value.strokeWidth,
+            });
+            return;
+        }
+        onChange({
+            stroke: applyPaintOpacity(value.stroke, opacity),
+            strokeMode: "paint",
+            strokeEnabled: true,
+            strokeWidth: value.strokeWidth <= 0 ? 1 : value.strokeWidth,
+        });
+    };
+
     useEffect(() => {
         if (!settingsOpen) return;
         updatePopoverPosition();
@@ -84,18 +119,22 @@ export function StrokeControls({
     return (
         <div ref={rootRef} className="space-y-2">
             <div className={cn("flex items-center gap-2", !strokeEnabled && "opacity-55")}>
-                <div className="min-w-0 flex-1">
-                    <ColorInput
+                <div className={cn("min-w-0", !strokeEnabled && "pointer-events-none opacity-30")}>
+                    <PaintInput
                         value={value.stroke || "#000000"}
-                        onChange={(stroke) => {
-                            const updates: Partial<StrokeControlsValue> = { stroke };
-                            if (strokeEnabled && value.strokeWidth <= 0) {
-                                updates.strokeWidth = 1;
-                            }
-                            onChange(updates);
-                        }}
+                        onChange={handleStrokeChange}
+                        imagePanel={imagePanel}
+                        imageActive={strokeIsImage}
+                        imagePreviewSrc={value.strokeImage?.src}
+                        onPaintTab={() => onChange({ strokeMode: "paint" })}
+                        onImageTab={() => onChange({ strokeMode: "image", strokeEnabled: true, strokeWidth: value.strokeWidth <= 0 ? 1 : value.strokeWidth })}
                     />
                 </div>
+                <StrokePercentField
+                    value={currentOpacity}
+                    onChange={handleOpacityChange}
+                    disabled={!strokeEnabled}
+                />
                 <button
                     type="button"
                     onClick={handleToggleVisibility}
@@ -114,8 +153,11 @@ export function StrokeControls({
                     triggerClassName="h-8 rounded-[var(--radius-md)] text-[11px]"
                 />
                 <div className="relative">
-                    <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-text-tertiary">
-                        <StrokeWidthIcon />
+                    <span className="absolute left-2 top-1/2 -translate-y-1/2 text-text-tertiary">
+                        <StrokeWidthIconHandle
+                            value={value.strokeWidth}
+                            onChange={(strokeWidth) => onChange({ strokeWidth: Math.max(0, strokeWidth) })}
+                        />
                     </span>
                     <SmartNumberInput
                         min={0}
@@ -169,6 +211,73 @@ export function StrokeControls({
                 </div>
             ), document.body)}
         </div>
+    );
+}
+
+function readPaintOpacity(value: Paint) {
+    const paint = normalizePaint(value);
+    if (paint.kind === "solid") return paint.opacity;
+    const first = paint.stops[0]?.opacity ?? 1;
+    return paint.stops.every((stop) => stop.opacity === first) ? first : 1;
+}
+
+function applyPaintOpacity(value: Paint, opacity: number): Paint {
+    const paint = normalizePaint(value);
+    if (paint.kind === "solid") return { ...paint, opacity };
+    return {
+        ...paint,
+        stops: paint.stops.map((stop) => ({ ...stop, opacity })),
+    };
+}
+
+function StrokePercentField({
+    value,
+    onChange,
+    disabled,
+}: {
+    value: number;
+    onChange: (value: number) => void;
+    disabled?: boolean;
+}) {
+    const percent = Math.round(value * 100);
+    const scrub = useNumberScrub({
+        value: percent,
+        min: 0,
+        max: 100,
+        onChange: (next) => onChange(Math.max(0, Math.min(100, next)) / 100),
+    });
+
+    return (
+        <div className={cn("relative w-[64px]", disabled && "pointer-events-none opacity-40")}>
+            <span
+                {...scrub}
+                className="absolute left-2 top-1/2 z-10 h-px w-2 -translate-y-1/2 cursor-ew-resize rounded-full bg-text-tertiary hover:bg-text-primary"
+                title="Drag to adjust opacity"
+            />
+            <SmartNumberInput
+                min={0}
+                max={100}
+                value={percent}
+                onChange={(next) => onChange(Math.max(0, Math.min(100, next)) / 100)}
+                className="h-8 w-full rounded-[var(--radius-md)] border border-border-primary bg-bg-secondary pl-4 pr-5 text-center text-[11px] text-text-primary focus:outline-none focus:ring-1 focus:ring-border-focus"
+            />
+            <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-text-tertiary">%</span>
+        </div>
+    );
+}
+
+function StrokeWidthIconHandle({
+    value,
+    onChange,
+}: {
+    value: number;
+    onChange: (value: number) => void;
+}) {
+    const scrub = useNumberScrub({ value, min: 0, onChange });
+    return (
+        <span {...scrub} className="cursor-ew-resize" title="Drag to adjust stroke width">
+            <StrokeWidthIcon />
+        </span>
     );
 }
 

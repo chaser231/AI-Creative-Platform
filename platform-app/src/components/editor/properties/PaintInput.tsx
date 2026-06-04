@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { createPortal } from "react-dom";
 import { FlipHorizontal, Plus, RotateCw, Trash2, X } from "lucide-react";
 import type { GradientPaint, GradientType, Paint, PaintStop } from "@/types";
+import { SmartNumberInput } from "@/components/ui/SmartNumberInput";
 import { useCanvasStore } from "@/store/canvasStore";
 import {
     flipGradientPaint,
@@ -48,6 +49,7 @@ export function PaintInput({
     gradientTargetId,
     imagePanel,
     imageActive = false,
+    imagePreviewSrc,
     onImageTab,
     onPaintTab,
 }: {
@@ -57,6 +59,7 @@ export function PaintInput({
     gradientTargetId?: string;
     imagePanel?: ReactNode;
     imageActive?: boolean;
+    imagePreviewSrc?: string;
     onImageTab?: () => void;
     onPaintTab?: () => void;
 }) {
@@ -64,6 +67,7 @@ export function PaintInput({
     const [popoverPosition, setPopoverPosition] = useState<{ top: number; left: number } | null>(null);
     const normalized = normalizePaint(value);
     const gradient = normalized.kind === "gradient" ? normalized : null;
+    const isGradient = normalized.kind === "gradient";
     const [selectedStopId, setSelectedStopId] = useState<string | null>(gradient?.stops[0]?.id ?? null);
     const barRef = useRef<HTMLDivElement>(null);
     const rootRef = useRef<HTMLDivElement>(null);
@@ -181,8 +185,10 @@ export function PaintInput({
         }
 
         updatePopoverPosition();
-        if (gradientTargetId && gradient) {
+        if (gradientTargetId && isGradient && !imageActive) {
             setActiveGradientEditorTarget(gradientTargetId);
+        } else if (gradientTargetId) {
+            setActiveGradientEditorTarget(null);
         }
 
         const onPointerDown = (event: PointerEvent) => {
@@ -204,21 +210,28 @@ export function PaintInput({
             document.removeEventListener("pointerdown", onPointerDown);
             if (gradientTargetId) setActiveGradientEditorTarget(null);
         };
-    }, [open, gradientTargetId, gradient, setActiveGradientEditorTarget, closePopover, updatePopoverPosition]);
+    }, [open, gradientTargetId, imageActive, isGradient, setActiveGradientEditorTarget, closePopover, updatePopoverPosition]);
 
     const stopBarBackground = gradient
         ? `linear-gradient(90deg, ${gradient.stops.map((stop) => `${stop.color} ${Math.round(stop.offset * 100)}%`).join(", ")})`
         : undefined;
+    const imagePreviewStyle = imageActive && imagePreviewSrc
+        ? {
+            backgroundImage: `url(${imagePreviewSrc})`,
+            backgroundSize: "cover",
+            backgroundPosition: "center",
+        }
+        : { background: imageActive ? "#D1D5DB" : paintToCssBackground(value) };
 
     return (
         <div ref={rootRef} className="relative">
             <button
                 type="button"
                 onClick={openPopover}
-                className="flex h-7 min-w-[118px] items-center gap-1.5 rounded-[var(--radius-sm)] border border-border-primary bg-bg-secondary px-1.5 text-left text-[10px] text-text-primary hover:bg-bg-tertiary"
+                className="flex h-8 min-w-[128px] items-center gap-1.5 rounded-[var(--radius-md)] border border-border-primary bg-bg-secondary px-1.5 text-left text-[11px] text-text-primary hover:bg-bg-tertiary"
             >
                 <span className="relative h-5 w-5 shrink-0 overflow-hidden rounded-[var(--radius-sm)] border border-border-primary" style={checkerboardStyle()}>
-                    <span className="absolute inset-0" style={{ background: imageActive ? "#D1D5DB" : paintToCssBackground(value) }} />
+                    <span className="absolute inset-0" style={imagePreviewStyle} />
                 </span>
                 <span className="truncate">{imageActive ? "Image" : gradientLabel(value)}</span>
             </button>
@@ -237,7 +250,7 @@ export function PaintInput({
                                     onPaintTab?.();
                                     onChange(makeSolidPaint(normalized.kind === "solid" ? normalized.color : "#FFFFFF", normalized.kind === "solid" ? normalized.opacity : 1));
                                 }}
-                                className={`h-7 rounded-[var(--radius-sm)] px-2 text-[11px] ${!imageActive && normalized.kind === "solid" ? "bg-bg-surface text-text-primary shadow-[var(--shadow-sm)]" : "text-text-tertiary hover:text-text-primary"}`}
+                                className={`h-8 rounded-[var(--radius-md)] px-2 text-[11px] ${!imageActive && normalized.kind === "solid" ? "bg-bg-surface text-text-primary shadow-[var(--shadow-sm)]" : "text-text-tertiary hover:text-text-primary"}`}
                             >
                                 Solid
                             </button>
@@ -251,7 +264,7 @@ export function PaintInput({
                                         setSelectedStopId(next.stops[0]?.id ?? null);
                                         if (gradientTargetId) setActiveGradientEditorTarget(gradientTargetId);
                                     }}
-                                    className={`h-7 rounded-[var(--radius-sm)] px-2 text-[11px] ${!imageActive && normalized.kind === "gradient" ? "bg-bg-surface text-text-primary shadow-[var(--shadow-sm)]" : "text-text-tertiary hover:text-text-primary"}`}
+                                    className={`h-8 rounded-[var(--radius-md)] px-2 text-[11px] ${!imageActive && normalized.kind === "gradient" ? "bg-bg-surface text-text-primary shadow-[var(--shadow-sm)]" : "text-text-tertiary hover:text-text-primary"}`}
                                 >
                                     Gradient
                                 </button>
@@ -260,7 +273,7 @@ export function PaintInput({
                                 <button
                                     type="button"
                                     onClick={() => onImageTab?.()}
-                                    className={`h-7 rounded-[var(--radius-sm)] px-2 text-[11px] ${imageActive ? "bg-bg-surface text-text-primary shadow-[var(--shadow-sm)]" : "text-text-tertiary hover:text-text-primary"}`}
+                                    className={`h-8 rounded-[var(--radius-md)] px-2 text-[11px] ${imageActive ? "bg-bg-surface text-text-primary shadow-[var(--shadow-sm)]" : "text-text-tertiary hover:text-text-primary"}`}
                                 >
                                     Image
                                 </button>
@@ -370,12 +383,11 @@ export function PaintInput({
                             {selectedStop && (
                                 <div className="space-y-2 rounded-[var(--radius-lg)] bg-bg-secondary p-2">
                                     <div className="grid grid-cols-[58px_1fr_64px_28px] items-center gap-2">
-                                        <input
-                                            type="number"
+                                        <SmartNumberInput
                                             min={0}
                                             max={100}
                                             value={Math.round(selectedStop.offset * 100)}
-                                            onChange={(event) => updateStop(selectedStop.id, { offset: Math.min(1, Math.max(0, Number(event.target.value) / 100)) })}
+                                            onChange={(value) => updateStop(selectedStop.id, { offset: Math.min(1, Math.max(0, value / 100)) })}
                                             className="h-8 rounded-[var(--radius-sm)] border border-border-primary bg-bg-primary px-1 text-center text-[11px] text-text-primary"
                                         />
                                         <input
@@ -409,11 +421,9 @@ export function PaintInput({
                                 {(gradient.gradientType === "linear" || gradient.gradientType === "angular") && (
                                     <label className="text-[10px] text-text-tertiary">
                                         Angle
-                                        <input
-                                            type="number"
+                                        <SmartNumberInput
                                             value={Math.round(gradient.angle)}
-                                            onChange={(event) => {
-                                                const angle = Number(event.target.value);
+                                            onChange={(angle) => {
                                                 updateGradient(gradient.gradientType === "linear"
                                                     ? { angle, ...gradientEndpointsFromAngle(angle) }
                                                     : { angle });
@@ -425,12 +435,11 @@ export function PaintInput({
                                 {(gradient.gradientType === "radial" || gradient.gradientType === "diamond") && (
                                     <label className="text-[10px] text-text-tertiary">
                                         Radius
-                                        <input
-                                            type="number"
+                                        <SmartNumberInput
                                             min={0}
                                             max={100}
                                             value={Math.round((gradient.radius ?? 0.7) * 100)}
-                                            onChange={(event) => updateGradient({ radius: Math.min(1, Math.max(0, Number(event.target.value) / 100)) })}
+                                            onChange={(value) => updateGradient({ radius: Math.min(1, Math.max(0, value / 100)) })}
                                             className="mt-1 h-8 w-full rounded-[var(--radius-sm)] border border-border-primary bg-bg-secondary px-2 text-[11px] text-text-primary"
                                         />
                                     </label>
@@ -455,12 +464,11 @@ function OpacityControl({ value, onChange }: { value: number; onChange: (value: 
                 onChange={(event) => onChange(Math.min(1, Math.max(0, Number(event.target.value) / 100)))}
                 className="flex-1 accent-accent-primary"
             />
-            <input
-                type="number"
+            <SmartNumberInput
                 min={0}
                 max={100}
                 value={Math.round(value * 100)}
-                onChange={(event) => onChange(Math.min(1, Math.max(0, Number(event.target.value) / 100)))}
+                onChange={(next) => onChange(Math.min(1, Math.max(0, next / 100)))}
                 className="h-8 w-14 rounded-[var(--radius-sm)] border border-border-primary bg-bg-secondary px-1 text-center text-[11px] text-text-primary"
             />
             <span className="text-[10px] text-text-tertiary">%</span>
