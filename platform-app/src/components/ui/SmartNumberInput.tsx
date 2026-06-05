@@ -30,14 +30,36 @@ export function useNumberScrub({
     step?: number;
 }) {
     const dragRef = useRef<{ pointerId: number; startX: number; startValue: number } | null>(null);
+    // Coalesce pointermove → onChange to one call per animation frame so a scrub
+    // doesn't fire a full store update (and layout/re-render) on every pixel.
+    const rafRef = useRef<number | null>(null);
+    const pendingRef = useRef<number | null>(null);
+
+    const flush = useCallback(() => {
+        rafRef.current = null;
+        if (pendingRef.current !== null) {
+            onChange(pendingRef.current);
+            pendingRef.current = null;
+        }
+    }, [onChange]);
+
+    const cancelRaf = useCallback(() => {
+        if (rafRef.current !== null) {
+            cancelAnimationFrame(rafRef.current);
+            rafRef.current = null;
+        }
+    }, []);
 
     const applyDelta = useCallback((event: React.PointerEvent<HTMLElement>) => {
         const drag = dragRef.current;
         if (!drag) return;
         const multiplier = event.shiftKey ? 10 : event.altKey ? 0.1 : 1;
         const next = drag.startValue + (event.clientX - drag.startX) * step * multiplier;
-        onChange(roundToStep(clampNumber(next, min, max), step));
-    }, [max, min, onChange, step]);
+        pendingRef.current = roundToStep(clampNumber(next, min, max), step);
+        if (rafRef.current === null) {
+            rafRef.current = requestAnimationFrame(flush);
+        }
+    }, [max, min, step, flush]);
 
     return {
         onPointerDown: useCallback((event: React.PointerEvent<HTMLElement>) => {
@@ -56,14 +78,18 @@ export function useNumberScrub({
         onPointerUp: useCallback((event: React.PointerEvent<HTMLElement>) => {
             if (dragRef.current?.pointerId !== event.pointerId) return;
             applyDelta(event);
+            cancelRaf();
+            flush(); // commit the final value synchronously
             dragRef.current = null;
             event.currentTarget.releasePointerCapture(event.pointerId);
-        }, [applyDelta]),
+        }, [applyDelta, cancelRaf, flush]),
         onPointerCancel: useCallback((event: React.PointerEvent<HTMLElement>) => {
             if (dragRef.current?.pointerId !== event.pointerId) return;
+            cancelRaf();
+            pendingRef.current = null;
             dragRef.current = null;
             event.currentTarget.releasePointerCapture(event.pointerId);
-        }, []),
+        }, [cancelRaf]),
     };
 }
 

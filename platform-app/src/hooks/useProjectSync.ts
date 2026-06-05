@@ -502,6 +502,45 @@ export function useCanvasAutoSave(
     let prev: PersistedSnapshot = snapshotPersisted(useCanvasStore.getState());
     let actionCount = 0;
 
+    // Local IDB draft: throttle writes to at most one per LOCAL_DRAFT_DEBOUNCE_MS
+    // instead of serializing the whole project on every keystroke/scrub. Crash
+    // safety is preserved by (a) a bounded staleness window and (b) a synchronous
+    // flush on visibilitychange(hidden)/pagehide and on every server save.
+    const LOCAL_DRAFT_DEBOUNCE_MS = 500;
+    let localDraftTimer: ReturnType<typeof setTimeout> | null = null;
+    let latestStateForDraft: ReturnType<typeof useCanvasStore.getState> | null = null;
+
+    const writeLocalDraftNow = () => {
+      if (localDraftTimer) {
+        clearTimeout(localDraftTimer);
+        localDraftTimer = null;
+      }
+      const s = latestStateForDraft;
+      latestStateForDraft = null;
+      if (!s) return;
+      if (projectId === TEMPLATE_MODE_PROJECT_ID) return;
+      const snapshot = getCanvasStateForSave(s);
+      const draft: CanvasLocalDraft = {
+        projectId,
+        snapshot,
+        baseVersion: lastKnownVersionRef.current,
+        ts: Date.now(),
+      };
+      void saveLocalDraft(draft);
+    };
+
+    const scheduleLocalDraft = (s: ReturnType<typeof useCanvasStore.getState>) => {
+      latestStateForDraft = s;
+      // Arm-once (throttle): the first change in a burst guarantees a write
+      // within the debounce window; subsequent changes just refresh the payload.
+      if (localDraftTimer) return;
+      localDraftTimer = setTimeout(writeLocalDraftNow, LOCAL_DRAFT_DEBOUNCE_MS);
+    };
+
+    const handleVisibilityFlush = () => {
+      if (document.visibilityState === "hidden") writeLocalDraftNow();
+    };
+
     const scheduleIdleFlush = () => {
       if (timeoutRef.current) clearTimeout(timeoutRef.current);
       timeoutRef.current = setTimeout(() => {
@@ -530,20 +569,12 @@ export function useCanvasAutoSave(
       prev = snapshotPersisted(state);
       actionCount += 1;
 
-      // Local IDB buffer — write IMMEDIATELY on every meaningful change so
-      // that even if the page is killed before the next debounced server
-      // save fires (browser crash, OOM, hard refresh, accidental Cmd+W),
-      // the draft survives. Fire-and-forget; failures are logged inside
-      // the buffer module and must not affect the editor.
+      // Local IDB buffer — coalesced so we don't serialize the whole project on
+      // every keystroke/scrub. The draft still survives a kill (crash, OOM, hard
+      // refresh, Cmd+W) thanks to the bounded throttle window plus the
+      // visibilitychange/pagehide flushes below. Fire-and-forget.
       if (projectId !== TEMPLATE_MODE_PROJECT_ID) {
-        const snapshot = getCanvasStateForSave(state);
-        const draft: CanvasLocalDraft = {
-          projectId,
-          snapshot,
-          baseVersion: lastKnownVersionRef.current,
-          ts: Date.now(),
-        };
-        void saveLocalDraft(draft);
+        scheduleLocalDraft(state);
       }
 
       if (actionCount >= SAVE_ACTION_THRESHOLD) {
@@ -552,14 +583,23 @@ export function useCanvasAutoSave(
           clearTimeout(timeoutRef.current);
           timeoutRef.current = null;
         }
+        // Persist the local draft alongside the server flush.
+        writeLocalDraftNow();
         saveNow();
       } else {
         scheduleIdleFlush();
       }
     });
 
+    document.addEventListener("visibilitychange", handleVisibilityFlush);
+    window.addEventListener("pagehide", writeLocalDraftNow);
+
     return () => {
       unsubscribe();
+      document.removeEventListener("visibilitychange", handleVisibilityFlush);
+      window.removeEventListener("pagehide", writeLocalDraftNow);
+      // Persist any buffered local draft before tearing down.
+      writeLocalDraftNow();
       if (timeoutRef.current) {
         clearTimeout(timeoutRef.current);
         timeoutRef.current = null;

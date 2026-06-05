@@ -43,6 +43,49 @@ export function InlineTextEditor({
     const isCommitted = useRef(false);
     const lastReportedDims = useRef<{ w: number; h: number }>({ w: 0, h: 0 });
 
+    // ── Debounced store writes ──────────────────────────────────
+    // The Konva text node is hidden while editing (the <textarea> renders the
+    // live text), so writing to the store on every keystroke is invisible work
+    // that triggers a full auto-layout pass + re-render + IndexedDB save. We
+    // buffer text/dimension updates and flush them on a short trailing timer,
+    // with a guaranteed flush on commit/blur and a hard cancel on Escape.
+    const STORE_FLUSH_MS = 120;
+    const flushTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const pendingText = useRef<string | null>(null);
+    const pendingDims = useRef<{ width?: number; height?: number } | null>(null);
+
+    const flushPending = useCallback(() => {
+        if (flushTimer.current) {
+            clearTimeout(flushTimer.current);
+            flushTimer.current = null;
+        }
+        if (pendingText.current !== null) {
+            onUpdate?.(pendingText.current);
+            pendingText.current = null;
+        }
+        if (pendingDims.current !== null) {
+            onDimensionsChange?.(pendingDims.current);
+            pendingDims.current = null;
+        }
+    }, [onUpdate, onDimensionsChange]);
+
+    const scheduleFlush = useCallback(() => {
+        if (flushTimer.current) clearTimeout(flushTimer.current);
+        flushTimer.current = setTimeout(flushPending, STORE_FLUSH_MS);
+    }, [flushPending]);
+
+    const cancelPending = useCallback(() => {
+        if (flushTimer.current) {
+            clearTimeout(flushTimer.current);
+            flushTimer.current = null;
+        }
+        pendingText.current = null;
+        pendingDims.current = null;
+    }, []);
+
+    // Flush any buffered write if the editor unmounts unexpectedly.
+    useEffect(() => () => { flushPending(); }, [flushPending]);
+
     // Calculate the screen position — layer.x/y comes from store (absolute)
     const screenX = layer.x * zoom + stageX;
     const screenY = layer.y * zoom + stageY;
@@ -96,10 +139,11 @@ export function InlineTextEditor({
             }
             if (dims.width !== undefined || dims.height !== undefined) {
                 lastReportedDims.current = { w: newW || lastReportedDims.current.w, h: newH || lastReportedDims.current.h };
-                onDimensionsChange(dims);
+                pendingDims.current = { ...pendingDims.current, ...dims };
+                scheduleFlush();
             }
         }
-    }, [isAutoWidth, isAutoHeight, fontSizeScaled, layer.lineHeight, zoom, onDimensionsChange]);
+    }, [isAutoWidth, isAutoHeight, fontSizeScaled, layer.lineHeight, zoom, onDimensionsChange, scheduleFlush]);
 
     // Auto-focus, select all text, and initial resize on mount
     useEffect(() => {
@@ -123,21 +167,25 @@ export function InlineTextEditor({
     const doCommit = useCallback((text: string) => {
         if (isCommitted.current) return;
         isCommitted.current = true;
+        // Drop any buffered keystroke writes; onCommit is the source of truth.
+        cancelPending();
         onCommit(text);
-    }, [onCommit]);
+    }, [onCommit, cancelPending]);
 
-    // Handle text changes — real-time sync + auto-resize
+    // Handle text changes — buffered store sync + auto-resize
     const handleChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
         const newText = e.target.value;
         setValue(newText);
-        onUpdate?.(newText);
+        pendingText.current = newText;
+        scheduleFlush();
         // Auto-resize after React processes the value change
         requestAnimationFrame(() => autoResize());
-    }, [onUpdate, autoResize]);
+    }, [scheduleFlush, autoResize]);
 
     const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
         if (e.key === "Escape") {
-            // Revert to original text
+            // Revert to original text — discard buffered edits first.
+            cancelPending();
             onUpdate?.(originalText.current);
             doCommit(originalText.current);
         }
@@ -147,7 +195,7 @@ export function InlineTextEditor({
             e.preventDefault();
             doCommit(value);
         }
-    }, [doCommit, value, onUpdate]);
+    }, [doCommit, value, onUpdate, cancelPending]);
 
     const handleBlur = useCallback(() => {
         doCommit(value);

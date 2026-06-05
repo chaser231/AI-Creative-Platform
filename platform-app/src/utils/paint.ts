@@ -395,10 +395,10 @@ export function gradientLabel(value: Paint | undefined): string {
     const paint = normalizePaint(value);
     if (paint.kind === "solid") return paint.opacity < 1 ? `${Math.round(paint.opacity * 100)}%` : paint.color;
     const labels: Record<GradientType, string> = {
-        linear: "Linear",
-        radial: "Radial",
-        angular: "Angular",
-        diamond: "Diamond",
+        linear: "Линейный",
+        radial: "Радиальный",
+        angular: "Угловой",
+        diamond: "Ромб",
     };
     return labels[paint.gradientType];
 }

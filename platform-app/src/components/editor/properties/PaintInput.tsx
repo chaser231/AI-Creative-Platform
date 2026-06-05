@@ -18,11 +18,13 @@ import {
 } from "@/utils/paint";
 
 const GRADIENT_TYPES: Array<{ value: GradientType; label: string }> = [
-    { value: "linear", label: "Linear" },
-    { value: "radial", label: "Radial" },
-    { value: "angular", label: "Angular" },
-    { value: "diamond", label: "Diamond" },
+    { value: "linear", label: "Линейный" },
+    { value: "radial", label: "Радиальный" },
+    { value: "angular", label: "Угловой" },
+    { value: "diamond", label: "Ромб" },
 ];
+
+type PopoverPosition = { top: number; left: number; maxHeight: number };
 
 function checkerboardStyle() {
     return {
@@ -64,7 +66,7 @@ export function PaintInput({
     onPaintTab?: () => void;
 }) {
     const [open, setOpen] = useState(false);
-    const [popoverPosition, setPopoverPosition] = useState<{ top: number; left: number } | null>(null);
+    const [popoverPosition, setPopoverPosition] = useState<PopoverPosition | null>(null);
     const normalized = normalizePaint(value);
     const gradient = normalized.kind === "gradient" ? normalized : null;
     const isGradient = normalized.kind === "gradient";
@@ -167,9 +169,22 @@ export function PaintInput({
         const rect = rootRef.current?.getBoundingClientRect();
         if (!rect || typeof window === "undefined") return;
         const popoverWidth = imageActive ? 300 : 320;
+        const viewportPadding = 12;
+        const gap = 6;
+        const preferredMaxHeight = Math.min(520, window.innerHeight - viewportPadding * 2);
+        const spaceBelow = window.innerHeight - rect.bottom - viewportPadding;
+        const spaceAbove = rect.top - viewportPadding;
+        const openBelow = spaceBelow >= Math.min(280, preferredMaxHeight) || spaceBelow >= spaceAbove;
+        const availableHeight = Math.max(120, (openBelow ? spaceBelow : spaceAbove) - gap);
+        const maxHeight = Math.min(preferredMaxHeight, availableHeight);
+        const top = openBelow
+            ? Math.max(viewportPadding, Math.min(rect.bottom + gap, window.innerHeight - viewportPadding - maxHeight))
+            : Math.max(viewportPadding, rect.top - gap - maxHeight);
+
         setPopoverPosition({
-            top: Math.min(rect.bottom + 6, window.innerHeight - 24),
-            left: Math.max(12, Math.min(rect.left, window.innerWidth - popoverWidth - 12)),
+            top,
+            left: Math.max(viewportPadding, Math.min(rect.left, window.innerWidth - popoverWidth - viewportPadding)),
+            maxHeight,
         });
     }, [imageActive]);
 
@@ -233,14 +248,14 @@ export function PaintInput({
                 <span className="relative h-5 w-5 shrink-0 overflow-hidden rounded-[var(--radius-sm)] border border-border-primary" style={checkerboardStyle()}>
                     <span className="absolute inset-0" style={imagePreviewStyle} />
                 </span>
-                <span className="truncate">{imageActive ? "Image" : gradientLabel(value)}</span>
+                <span className="truncate">{imageActive ? "Изображение" : gradientLabel(value)}</span>
             </button>
 
             {open && popoverPosition && typeof document !== "undefined" && createPortal((
                 <div
                     ref={popoverRef}
-                    className="fixed z-[9999] rounded-[var(--radius-xl)] border border-border-primary bg-bg-surface p-3 shadow-[var(--shadow-xl)]"
-                    style={{ top: popoverPosition.top, left: popoverPosition.left, width: imageActive ? 300 : 320 }}
+                    className="fixed z-[9999] overflow-y-auto rounded-[var(--radius-xl)] border border-border-primary bg-bg-surface p-3 shadow-[var(--shadow-xl)]"
+                    style={{ top: popoverPosition.top, left: popoverPosition.left, width: imageActive ? 300 : 320, maxHeight: popoverPosition.maxHeight }}
                 >
                     <div className="mb-3 flex items-center justify-between gap-2">
                         <div className="flex rounded-[var(--radius-md)] bg-bg-secondary p-0.5">
@@ -252,7 +267,7 @@ export function PaintInput({
                                 }}
                                 className={`h-8 rounded-[var(--radius-md)] px-2 text-[11px] ${!imageActive && normalized.kind === "solid" ? "bg-bg-surface text-text-primary shadow-[var(--shadow-sm)]" : "text-text-tertiary hover:text-text-primary"}`}
                             >
-                                Solid
+                                Цвет
                             </button>
                             {allowGradient && (
                                 <button
@@ -266,7 +281,7 @@ export function PaintInput({
                                     }}
                                     className={`h-8 rounded-[var(--radius-md)] px-2 text-[11px] ${!imageActive && normalized.kind === "gradient" ? "bg-bg-surface text-text-primary shadow-[var(--shadow-sm)]" : "text-text-tertiary hover:text-text-primary"}`}
                                 >
-                                    Gradient
+                                    Градиент
                                 </button>
                             )}
                             {imagePanel && (
@@ -275,7 +290,7 @@ export function PaintInput({
                                     onClick={() => onImageTab?.()}
                                     className={`h-8 rounded-[var(--radius-md)] px-2 text-[11px] ${imageActive ? "bg-bg-surface text-text-primary shadow-[var(--shadow-sm)]" : "text-text-tertiary hover:text-text-primary"}`}
                                 >
-                                    Image
+                                    Изображение
                                 </button>
                             )}
                         </div>
@@ -328,7 +343,7 @@ export function PaintInput({
                                     type="button"
                                     onClick={() => onChange(flipGradientPaint(value))}
                                     className="h-8 rounded-[var(--radius-sm)] border border-border-primary px-2 text-text-secondary hover:bg-bg-tertiary hover:text-text-primary"
-                                    title="Flip gradient"
+                                    title="Отразить градиент"
                                 >
                                     <FlipHorizontal size={13} />
                                 </button>
@@ -336,7 +351,7 @@ export function PaintInput({
                                     type="button"
                                     onClick={() => onChange(rotateGradientPaint(value, 45))}
                                     className="h-8 rounded-[var(--radius-sm)] border border-border-primary px-2 text-text-secondary hover:bg-bg-tertiary hover:text-text-primary"
-                                    title="Rotate gradient"
+                                    title="Повернуть градиент"
                                 >
                                     <RotateCw size={13} />
                                 </button>
@@ -368,14 +383,14 @@ export function PaintInput({
                                     ))}
                                 </div>
                                 <div className="mt-2 flex items-center justify-between">
-                                    <span className="text-[10px] text-text-tertiary">Stops</span>
+                                    <span className="text-[10px] text-text-tertiary">Точки</span>
                                     <button
                                         type="button"
                                         onClick={() => addStop()}
                                         className="flex items-center gap-1 rounded-[var(--radius-sm)] px-1.5 py-1 text-[10px] text-text-secondary hover:bg-bg-tertiary hover:text-text-primary"
                                     >
                                         <Plus size={11} />
-                                        Add
+                                        Добавить
                                     </button>
                                 </div>
                             </div>
@@ -420,7 +435,7 @@ export function PaintInput({
                             <div className="grid grid-cols-2 gap-2">
                                 {(gradient.gradientType === "linear" || gradient.gradientType === "angular") && (
                                     <label className="text-[10px] text-text-tertiary">
-                                        Angle
+                                        Угол
                                         <SmartNumberInput
                                             value={Math.round(gradient.angle)}
                                             onChange={(angle) => {
@@ -434,7 +449,7 @@ export function PaintInput({
                                 )}
                                 {(gradient.gradientType === "radial" || gradient.gradientType === "diamond") && (
                                     <label className="text-[10px] text-text-tertiary">
-                                        Radius
+                                        Радиус
                                         <SmartNumberInput
                                             min={0}
                                             max={100}

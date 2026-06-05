@@ -16,6 +16,7 @@ const STROKE_ALIGN_OPTIONS: { value: StrokeAlign; label: string }[] = (
 ).map(([value, label]) => ({ value, label }));
 
 const STROKE_JOIN_OPTIONS: StrokeJoin[] = ["miter", "round", "bevel"];
+type PopoverPosition = { top: number; left: number; maxHeight: number };
 
 export interface StrokeControlsValue {
     stroke: Paint;
@@ -31,13 +32,15 @@ export function StrokeControls({
     value,
     onChange,
     imagePanel,
+    showLabel = true,
 }: {
     value: StrokeControlsValue;
     onChange: (updates: Partial<StrokeControlsValue>) => void;
     imagePanel?: ReactNode;
+    showLabel?: boolean;
 }) {
     const [settingsOpen, setSettingsOpen] = useState(false);
-    const [popoverPosition, setPopoverPosition] = useState<{ top: number; left: number } | null>(null);
+    const [popoverPosition, setPopoverPosition] = useState<PopoverPosition | null>(null);
     const rootRef = useRef<HTMLDivElement>(null);
     const popoverRef = useRef<HTMLDivElement>(null);
     const strokeEnabled = value.strokeEnabled !== false;
@@ -53,9 +56,22 @@ export function StrokeControls({
         const rect = rootRef.current?.getBoundingClientRect();
         if (!rect || typeof window === "undefined") return;
         const width = 236;
+        const viewportPadding = 12;
+        const gap = 6;
+        const preferredMaxHeight = Math.min(320, window.innerHeight - viewportPadding * 2);
+        const spaceBelow = window.innerHeight - rect.bottom - viewportPadding;
+        const spaceAbove = rect.top - viewportPadding;
+        const openBelow = spaceBelow >= Math.min(180, preferredMaxHeight) || spaceBelow >= spaceAbove;
+        const availableHeight = Math.max(120, (openBelow ? spaceBelow : spaceAbove) - gap);
+        const maxHeight = Math.min(preferredMaxHeight, availableHeight);
+        const top = openBelow
+            ? Math.max(viewportPadding, Math.min(rect.bottom + gap, window.innerHeight - viewportPadding - maxHeight))
+            : Math.max(viewportPadding, rect.top - gap - maxHeight);
+
         setPopoverPosition({
-            top: Math.min(rect.bottom + 6, window.innerHeight - 24),
-            left: Math.max(12, Math.min(rect.left, window.innerWidth - width - 12)),
+            top,
+            left: Math.max(viewportPadding, Math.min(rect.left, window.innerWidth - width - viewportPadding)),
+            maxHeight,
         });
     }, []);
 
@@ -118,6 +134,9 @@ export function StrokeControls({
 
     return (
         <div ref={rootRef} className="space-y-2">
+            {showLabel && (
+                <div className="text-[9px] font-medium uppercase tracking-wider text-text-tertiary">Обводка</div>
+            )}
             <div className={cn("flex items-center gap-2", !strokeEnabled && "opacity-55")}>
                 <div className={cn("min-w-0", !strokeEnabled && "pointer-events-none opacity-30")}>
                     <PaintInput
@@ -182,10 +201,10 @@ export function StrokeControls({
             {settingsOpen && popoverPosition && typeof document !== "undefined" && createPortal((
                 <div
                     ref={popoverRef}
-                    className="fixed z-[9999] w-[236px] space-y-3 rounded-[var(--radius-xl)] border border-border-primary bg-bg-surface p-3 shadow-[var(--shadow-xl)]"
-                    style={{ top: popoverPosition.top, left: popoverPosition.left }}
+                    className="fixed z-[9999] w-[236px] space-y-3 overflow-y-auto rounded-[var(--radius-xl)] border border-border-primary bg-bg-surface p-3 shadow-[var(--shadow-xl)]"
+                    style={{ top: popoverPosition.top, left: popoverPosition.left, maxHeight: popoverPosition.maxHeight }}
                 >
-                    <div className="text-[11px] font-semibold text-text-primary">Stroke</div>
+                    <div className="text-[11px] font-semibold text-text-primary">Обводка</div>
                     <div
                         className="grid grid-cols-3 overflow-hidden rounded-[var(--radius-md)] border border-border-primary"
                         role="group"
@@ -252,7 +271,7 @@ function StrokePercentField({
             <span
                 {...scrub}
                 className="absolute left-2 top-1/2 z-10 h-px w-2 -translate-y-1/2 cursor-ew-resize rounded-full bg-text-tertiary hover:bg-text-primary"
-                title="Drag to adjust opacity"
+                title="Изменить непрозрачность"
             />
             <SmartNumberInput
                 min={0}

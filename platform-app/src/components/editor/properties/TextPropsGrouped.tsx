@@ -111,14 +111,14 @@ export function TextPropsGrouped({
 
     return (
         <div className="flex items-center gap-1 relative">
-            {/* Typography — figma-like single text properties popover */}
+            {/* Text properties — figma-like single popover */}
             <div className="relative">
                 <PopoverButton
                     icon={isFontMissing
                         ? <AlertTriangle size={12} className="text-amber-500" />
                         : <Type size={12} />
                     }
-                    label={isFontMissing ? "Typography ⚠" : "Typography"}
+                    label={isFontMissing ? "Текст ⚠" : "Текст"}
                     isActive={activePopover === "typography"}
                     onClick={() => togglePopover("typography")}
                 />
@@ -132,7 +132,7 @@ export function TextPropsGrouped({
                 >
                     <div className="space-y-4">
                         <div className="flex items-center justify-between">
-                            <h3 className="text-[15px] font-semibold text-text-primary">Typography</h3>
+                            <h3 className="text-[15px] font-semibold text-text-primary">Текст</h3>
                             <Type size={14} className="text-text-tertiary" />
                         </div>
 
@@ -164,15 +164,15 @@ export function TextPropsGrouped({
                                 value={layer.fontWeight}
                                 onChange={(val) => onChange({ fontWeight: val })}
                                 options={[
-                                    ...(availableWeights.includes("100") ? [{ value: "100", label: "Thin" }] : []),
-                                    ...(availableWeights.includes("200") ? [{ value: "200", label: "ExtraLight" }] : []),
-                                    ...(availableWeights.includes("300") ? [{ value: "300", label: "Light" }] : []),
-                                    ...(availableWeights.includes("400") || availableWeights.length === 0 ? [{ value: "400", label: "Regular" }] : []),
-                                    ...(availableWeights.includes("500") ? [{ value: "500", label: "Medium" }] : []),
-                                    ...(availableWeights.includes("600") ? [{ value: "600", label: "SemiBold" }] : []),
-                                    ...(availableWeights.includes("700") || availableWeights.length === 0 ? [{ value: "700", label: "Bold" }] : []),
-                                    ...(availableWeights.includes("800") ? [{ value: "800", label: "ExtraBold / Heavy" }] : []),
-                                    ...(availableWeights.includes("900") ? [{ value: "900", label: "Black" }] : []),
+                                    ...(availableWeights.includes("100") ? [{ value: "100", label: "100 Тонкий" }] : []),
+                                    ...(availableWeights.includes("200") ? [{ value: "200", label: "200 Очень светлый" }] : []),
+                                    ...(availableWeights.includes("300") ? [{ value: "300", label: "300 Светлый" }] : []),
+                                    ...(availableWeights.includes("400") || availableWeights.length === 0 ? [{ value: "400", label: "400 Обычный" }] : []),
+                                    ...(availableWeights.includes("500") ? [{ value: "500", label: "500 Средний" }] : []),
+                                    ...(availableWeights.includes("600") ? [{ value: "600", label: "600 Полужирный" }] : []),
+                                    ...(availableWeights.includes("700") || availableWeights.length === 0 ? [{ value: "700", label: "700 Жирный" }] : []),
+                                    ...(availableWeights.includes("800") ? [{ value: "800", label: "800 Очень жирный" }] : []),
+                                    ...(availableWeights.includes("900") ? [{ value: "900", label: "900 Чёрный" }] : []),
                                 ]}
                                 triggerClassName="h-12 text-[15px] rounded-[var(--radius-lg)] bg-bg-primary"
                             />
@@ -287,12 +287,12 @@ export function TextPropsGrouped({
                         <div className="grid grid-cols-2 gap-2">
                             <ToggleRow
                                 checked={!!layer.verticalTrim}
-                                label="Vertical Trim"
+                                label="Вертикальная обрезка"
                                 onChange={(checked) => onChange({ verticalTrim: checked })}
                             />
                             <ToggleRow
                                 checked={!!layer.truncateText}
-                                label="Truncate"
+                                label="Обрезать текст"
                                 onChange={(checked) => onChange({ truncateText: checked })}
                             />
                         </div>
@@ -305,7 +305,7 @@ export function TextPropsGrouped({
                             </div>
                             <div>
                                 <div className="text-[11px] font-medium text-text-primary">Цвет текста</div>
-                                <div className="text-[10px] text-text-tertiary">Сохранено из прежнего Style-поповера</div>
+                                <div className="text-[10px] text-text-tertiary">Сохранено из прежнего поповера стиля</div>
                             </div>
                             <button
                                 onClick={() => onChange({ fillEnabled: !(layer.fillEnabled !== false) })}
@@ -317,7 +317,7 @@ export function TextPropsGrouped({
                         </div>
 
                         <div className="flex items-center gap-3">
-                            <span className="w-16 text-[10px] text-text-tertiary">Opacity</span>
+                            <span className="w-16 text-[10px] text-text-tertiary">Непрозрачность</span>
                             <input
                                 type="range"
                                 min={0}

@@ -178,6 +178,8 @@ export interface BaseComponentProps {
     isFixedAsset?: boolean;
     /** Links to palette swatches. When set, `fill`/`stroke`/text fill are driven by the referenced swatch. */
     swatchRefs?: SwatchRefs;
+    /** Optional authoring hints for generated custom resize formats. */
+    responsive?: LayerResponsiveSettings;
 }
 
 export type GradientType = "linear" | "radial" | "angular" | "diamond";
@@ -291,10 +293,10 @@ export interface RectangleComponentProps extends BaseComponentProps {
 export type ImageFitMode = "cover" | "contain" | "fill" | "crop";
 
 export const IMAGE_FIT_MODE_LABELS: Record<ImageFitMode, string> = {
-    cover: "Cover",
-    contain: "Contain",
-    fill: "Fill",
-    crop: "Crop",
+    cover: "Заполнить",
+    contain: "Вместить",
+    fill: "Растянуть",
+    crop: "Кадрировать",
 };
 
 /**
@@ -458,6 +460,17 @@ export interface LayerConstraints {
 
 export const DEFAULT_CONSTRAINTS: LayerConstraints = { horizontal: "left", vertical: "top" };
 
+export type LayerResponsiveBehavior = "auto" | "fixed" | "fluid" | "background" | "decorative";
+
+export interface LayerResponsiveSettings {
+    role?: string;
+    behavior?: LayerResponsiveBehavior;
+    priority?: number;
+    canHide?: boolean;
+    minFontSize?: number;
+    maxFontSize?: number;
+}
+
 /**
  * Auxiliary metadata attached to a layer.
  * Currently used for Figma round-trip: preserving the original Figma node ID
@@ -500,6 +513,8 @@ export interface BaseLayer {
     isFixedAsset?: boolean;
     /** Links to palette swatches. When set, `fill`/`stroke`/text fill are driven by the referenced swatch. */
     swatchRefs?: SwatchRefs;
+    /** Optional authoring hints for generated custom resize formats. */
+    responsive?: LayerResponsiveSettings;
     /** Opaque integration metadata (Figma, future Sketch/XD, etc.) */
     metadata?: LayerMetadata;
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useCallback, useEffect, useState, useMemo, Fragment, type ReactNode } from "react";
+import { useRef, useCallback, useEffect, useState, useMemo, memo, Fragment, type ReactNode } from "react";
 import { ImageIcon } from "lucide-react";
 import { Stage, Layer, Rect, Text, Image as KonvaImage, Transformer, Group, Line, Circle } from "react-konva";
 import { useCanvasStore } from "@/store/canvasStore";
@@ -29,6 +29,13 @@ import { canLayerFitInFrame, collectAncestorFrameIds } from "@/utils/frameDropUt
 import { installLayerBoxGetClientRect } from "@/utils/strokeGeometry";
 import { AlignedStrokeRect } from "./AlignedStrokeRect";
 import { resolveKonvaLayerId } from "./resolveKonvaLayerId";
+import {
+    FLIP_LAYER_CONTENT_NAME,
+    normalizeLiveTextTransform,
+    syncTextTransformNodes,
+    TEXT_LAYER_BOUNDS_NAME,
+    TEXT_LAYER_CONTENT_NAME,
+} from "./textTransformUtils";
 /* ─── Constants ───────────────────────────────────── */
 const FRAME_HIGHLIGHT_STROKE = "#6366F1";
 const FRAME_HIGHLIGHT_WIDTH = 2;
@@ -57,7 +64,7 @@ interface CanvasLayerProps {
     onHover?: (layerId: string | null) => void;
 }
 
-function CanvasLayer({
+const CanvasLayer = memo(function CanvasLayer({
     layer,
     isSelected,
     onSelect,
@@ -168,8 +175,16 @@ function CanvasLayer({
             )}
             {layer.type === "text" && !isEditing && (
                 <Group {...commonProps}>
+                    <Rect
+                        name={TEXT_LAYER_BOUNDS_NAME}
+                        width={layer.width}
+                        height={layer.height}
+                        fill="transparent"
+                        listening={false}
+                    />
                     <FlipLayerContent layer={layer}>
                         <Text
+                            name={TEXT_LAYER_CONTENT_NAME}
                             ref={shapeRef as React.RefObject<Konva.Text | null>}
                             width={layer.textAdjust === "auto_width" ? undefined : layer.width}
                             height={layer.textAdjust === "auto_width" || layer.textAdjust === "auto_height" ? undefined : layer.height}
@@ -230,7 +245,7 @@ function CanvasLayer({
             )}
         </>
     );
-}
+});
 
 function ImageLayerRenderer({
     shapeRef,
@@ -300,6 +315,7 @@ function FlipLayerContent({ layer, children }: { layer: Pick<LayerType, "width" 
     if (!layer.flipX && !layer.flipY) return <>{children}</>;
     return (
         <Group
+            name={FLIP_LAYER_CONTENT_NAME}
             x={layer.flipX ? layer.width : 0}
             y={layer.flipY ? layer.height : 0}
             scaleX={layer.flipX ? -1 : 1}
@@ -570,16 +586,28 @@ function FrameLayerRenderer({
     isEditing: boolean;
     onHover?: (layerId: string | null) => void;
 }) {
-    const layers = useCanvasStore((s) => s.layers);
+    // Subscribe only to this frame's children (shallow-compared) instead of the
+    // whole `layers` array, so unrelated layer edits elsewhere in the document
+    // don't re-render every frame.
+    const childLayers = useCanvasStore(
+        useShallow((s) => layer.childIds
+            .map((id) => s.layers.find((l) => l.id === id))
+            .filter(Boolean) as LayerType[])
+    );
+    // The frame's own absolute store position (the `layer` prop may carry
+    // frame-local coords for nested frames).
+    const frameStorePos = useCanvasStore(
+        useShallow((s) => {
+            const f = s.layers.find((l) => l.id === layer.id);
+            return { x: f?.x ?? layer.x, y: f?.y ?? layer.y };
+        })
+    );
     const selectedLayerIds = useCanvasStore((s) => s.selectedLayerIds);
     const updateLayer = useCanvasStore((s) => s.updateLayer);
     const highlightedFrameId = useCanvasStore((s) => s.highlightedFrameId);
     const isEditingText = useCanvasStore((s) => s.isEditingText);
     const editingLayerId = useCanvasStore((s) => s.editingLayerId);
     const clipGroupRef = useRef<Konva.Group>(null);
-    const childLayers = layer.childIds
-        .map((id) => layers.find((l) => l.id === id))
-        .filter(Boolean) as LayerType[];
 
     const isHighlighted = highlightedFrameId === layer.id;
 
@@ -592,6 +620,8 @@ function FrameLayerRenderer({
     const handleChildTransformEnd = useCallback((e: Konva.KonvaEventObject<Event>) => {
         const node = e.target;
         const id = node.id();
+        const allLayers = useCanvasStore.getState().layers;
+        const childLayer = allLayers.find(l => l.id === id);
 
         const scaleX = node.scaleX();
         const scaleY = node.scaleY();
@@ -601,14 +631,19 @@ function FrameLayerRenderer({
         node.scaleX(1);
         node.scaleY(1);
 
-        const width = node.width() * scaleX;
-        const height = node.height() * scaleY;
+        let width = node.width() * scaleX;
+        let height = node.height() * scaleY;
 
-        const childLayer = layers.find(l => l.id === id);
+        if (childLayer?.type === "text") {
+            const synced = syncTextTransformNodes(node, childLayer as TextLayer, width, height);
+            width = synced.width;
+            height = synced.height;
+        }
+
         const isAutoLayout = layer.layoutMode && layer.layoutMode !== "none" && childLayer && !childLayer.isAbsolutePositioned;
 
         // Get absolute frame position from store (layer.x prop may be relative for nested frames)
-        const storeFrame = layers.find(l => l.id === layer.id);
+        const storeFrame = allLayers.find(l => l.id === layer.id);
         const frameAbsX = storeFrame?.x ?? layer.x;
         const frameAbsY = storeFrame?.y ?? layer.y;
 
@@ -655,7 +690,7 @@ function FrameLayerRenderer({
             const newY = node.y() + frameAbsY;
             updateLayer(id, { x: newX, y: newY, width, height, rotation, ...extraProps });
         }
-    }, [updateLayer, layer.x, layer.y, layer.layoutMode, layer.id, layers]);
+    }, [updateLayer, layer.x, layer.y, layer.layoutMode, layer.id]);
 
     return (
         <Group
@@ -695,9 +730,8 @@ function FrameLayerRenderer({
                     {childLayers.map((child) => {
                         // Use STORE's absolute position for the frame, not the prop
                         // (prop may be relative for nested frames).
-                        const storeFrame = layers.find(l => l.id === layer.id);
-                        const frameAbsX = storeFrame?.x ?? layer.x;
-                        const frameAbsY = storeFrame?.y ?? layer.y;
+                        const frameAbsX = frameStorePos.x;
+                        const frameAbsY = frameStorePos.y;
                         return (
                             <CanvasLayer
                                 key={child.id}
@@ -1659,12 +1693,18 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
         node.scaleX(1);
         node.scaleY(1);
 
-        const width = node.width() * scaleX;
-        const height = node.height() * scaleY;
+        let width = node.width() * scaleX;
+        let height = node.height() * scaleY;
 
         let extraProps: any = {};
         const layer = layers.find(l => l.id === id);
         if (layer) {
+            if (layer.type === "text") {
+                const synced = syncTextTransformNodes(node, layer as TextLayer, width, height);
+                width = synced.width;
+                height = synced.height;
+            }
+
             // NOTE: For text nodes, handleTransform already resets scale to 1
             // during the live transform. Compare dimensions instead of scale.
             const hasSizedX = Math.abs(width - layer.width) > 0.5;
@@ -1719,16 +1759,7 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
         // This prevents the visual "stretching" effect — text re-wraps in real-time.
         const layer = layers.find(l => l.id === id);
         if (layer?.type === "text") {
-            const scaleX = node.scaleX();
-            const scaleY = node.scaleY();
-            if (Math.abs(scaleX - 1) > 0.001 || Math.abs(scaleY - 1) > 0.001) {
-                const newWidth = Math.max(node.width() * scaleX, 10);
-                const newHeight = Math.max(node.height() * scaleY, 10);
-                node.scaleX(1);
-                node.scaleY(1);
-                node.width(newWidth);
-                node.height(newHeight);
-            }
+            normalizeLiveTextTransform(node, layer as TextLayer);
         }
 
         const { snapConfig } = useCanvasStore.getState();
@@ -1781,10 +1812,16 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
 
         // Apply snapped dimensions back to the Konva node
         if (snapResult.guides.length > 0) {
-            const newScaleX = snapResult.width / node.width();
-            const newScaleY = snapResult.height / node.height();
-            node.scaleX(newScaleX);
-            node.scaleY(newScaleY);
+            if (layer?.type === "text") {
+                node.scaleX(1);
+                node.scaleY(1);
+                syncTextTransformNodes(node, layer as TextLayer, snapResult.width, snapResult.height, { fixedPreview: true });
+            } else {
+                const newScaleX = snapResult.width / node.width();
+                const newScaleY = snapResult.height / node.height();
+                node.scaleX(newScaleX);
+                node.scaleY(newScaleY);
+            }
 
             // Update position if left or top edges were snapped
             if (activeEdges.includes('left') || activeEdges.includes('top')) {

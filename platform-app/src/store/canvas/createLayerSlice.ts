@@ -27,6 +27,34 @@ import { getEditModeExitPatchesForRemovedLayers } from "./editModeHelpers";
 let _updateHistoryTimer: ReturnType<typeof setTimeout> | null = null;
 let _updateHistoryPushed = false;
 
+// Keys whose change can affect auto-layout geometry (frame packing, text
+// measurement, constraint cascade). Updates that touch ONLY non-layout keys
+// (fill, opacity, stroke, cornerRadius, swatchRefs, name, locked, …) can skip
+// the full `applyAllAutoLayouts` pass entirely — a major hot-path win for
+// color scrubs and other style-only edits.
+const LAYOUT_AFFECTING_KEYS: ReadonlySet<string> = new Set<string>([
+    // geometry
+    "x", "y", "width", "height", "rotation", "visible",
+    // text metrics that change measured size
+    "text", "fontSize", "fontFamily", "fontWeight", "letterSpacing",
+    "lineHeight", "textAdjust", "textTransform",
+    // auto-layout frame config
+    "layoutMode", "paddingTop", "paddingRight", "paddingBottom", "paddingLeft",
+    "spacing", "primaryAxisAlignItems", "counterAxisAlignItems",
+    "primaryAxisSizingMode", "counterAxisSizingMode",
+    // auto-layout child config
+    "layoutSizingWidth", "layoutSizingHeight", "isAbsolutePositioned", "childIds",
+    // parent-resize behaviour
+    "constraints",
+]);
+
+function updateAffectsLayout(updates: LayerUpdate): boolean {
+    for (const key in updates) {
+        if (LAYOUT_AFFECTING_KEYS.has(key)) return true;
+    }
+    return false;
+}
+
 function getDefaultTextFontFamily() {
     return useBrandKitStore.getState().brandKit.fonts[0]?.name || "Inter";
 }
@@ -93,27 +121,6 @@ function syncSnapshotFormats(
 
     const masterArtboard = { width: activeResize.width, height: activeResize.height };
 
-    // Diagnostic: flag when an image src mutation happens on master — helps
-    // track down cascade regressions in Generative Expand.
-    const srcChanged = (() => {
-        if (!prevLayers) return false;
-        const prevMap = new Map(prevLayers.map(l => [l.id, l]));
-        return nextLayers.some(l => {
-            if (l.type !== "image") return false;
-            const prev = prevMap.get(l.id);
-            return prev?.type === "image" && (prev as { src?: string }).src !== (l as { src?: string }).src;
-        });
-    })();
-    if (srcChanged) {
-        console.log("[cascade] syncSnapshotFormats: image src changed", {
-            activeResizeId,
-            activeIsMaster: activeResize.isMaster ?? false,
-            boundFormats: resizes
-                .filter(r => r.id !== activeResizeId && r.layerSnapshot && r.layerBindings?.length)
-                .map(r => ({ id: r.id, bindings: r.layerBindings?.length ?? 0 })),
-        });
-    }
-
     let changed = false;
 
     const nextResizes = resizes.map((resize) => {
@@ -124,13 +131,6 @@ function syncSnapshotFormats(
         }
 
         if (!activeResize.isMaster || !resize.layerSnapshot || !resize.layerBindings?.length) {
-            if (srcChanged) {
-                console.log("[cascade] skip format", resize.id, {
-                    activeIsMaster: activeResize.isMaster ?? false,
-                    hasSnapshot: !!resize.layerSnapshot,
-                    bindings: resize.layerBindings?.length ?? 0,
-                });
-            }
             return resize;
         }
 
@@ -142,11 +142,8 @@ function syncSnapshotFormats(
             resize.layerSnapshot, nextLayers, resize.layerBindings, context, prevLayers,
         );
         if (cascadedSnapshot === resize.layerSnapshot) {
-            if (srcChanged) console.log("[cascade] applyCascade produced no change for", resize.id);
             return resize;
         }
-
-        if (srcChanged) console.log("[cascade] applyCascade updated snapshot for", resize.id);
 
         changed = true;
         return { ...resize, layerSnapshot: applyAllAutoLayouts(cascadedSnapshot, resize.layerSnapshot) };
@@ -413,7 +410,9 @@ export const createLayerSlice: StateCreator<CanvasStore, [], [], LayerSlice> = (
             };
 
             const updatedLayers = computeUpdatedLayers(state.layers, id, updates);
-            const newLayers = applyAllAutoLayouts(updatedLayers, state.layers);
+            const newLayers = updateAffectsLayout(updates)
+                ? applyAllAutoLayouts(updatedLayers, state.layers)
+                : updatedLayers;
             const layer = newLayers.find((l) => l.id === id);
             const snapshotAwareResizes = syncSnapshotFormats(state.resizes, state.activeResizeId, newLayers, state.layers);
             const fontSyncUpdates = Object.fromEntries(

@@ -305,9 +305,9 @@ function BackgroundFitSelect({
                 backgroundImage: { ...bg, fit: val as ArtboardBackgroundFit },
             })}
             options={[
-                { value: "cover", label: "Cover" },
-                { value: "contain", label: "Contain" },
-                { value: "fill", label: "Fill" },
+                { value: "cover", label: "Заполнить" },
+                { value: "contain", label: "Вместить" },
+                { value: "fill", label: "Растянуть" },
             ]}
         />
     );
@@ -340,4 +340,3 @@ function BackgroundOpacitySlider({
         </div>
     );
 }
-
