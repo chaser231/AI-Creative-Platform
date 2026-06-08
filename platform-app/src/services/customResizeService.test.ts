@@ -412,6 +412,98 @@ describe("generateCustomResize", () => {
         expect(result.resize.layerSnapshot?.[0]?.name).toBe("PortLayer");
     });
 
+    it("stretches a fill auto-layout frame to fill the artboard (keeping margins)", () => {
+        const fillFrame = frame({
+            id: "fill-frame",
+            name: "FillFrame",
+            x: 10, y: 10, width: 80, height: 80,
+            layoutMode: "horizontal",
+            layoutSizingWidth: "fill",
+            layoutSizingHeight: "fill",
+        });
+
+        const result = generateCustomResize(
+            {
+                layers: [fillFrame],
+                activeResizeId: "master",
+                canvasWidth: 100,
+                canvasHeight: 100,
+                resizes: [resize({ id: "master", width: 100, height: 100, isMaster: true })],
+            },
+            { id: "target", name: "Target", width: 200, height: 200 },
+        );
+
+        // fill -> stretch keeps the 10px margins and grows the box to fill.
+        expect(result.resize.layerSnapshot?.[0]).toMatchObject({ x: 10, y: 10, width: 180, height: 180 });
+    });
+
+    it("collapses a hug auto-layout frame to its content after adaptation", () => {
+        const child = rect({ id: "hug-child", name: "HugChild", x: 5, y: 5, width: 30, height: 20 });
+        const hugFrame = frame({
+            id: "hug-frame",
+            name: "HugFrame",
+            x: 0, y: 0, width: 40, height: 30,
+            childIds: ["hug-child"],
+            layoutMode: "horizontal",
+            paddingLeft: 5, paddingRight: 5, paddingTop: 5, paddingBottom: 5,
+            spacing: 0,
+            primaryAxisSizingMode: "auto",
+            counterAxisSizingMode: "auto",
+        });
+
+        const result = generateCustomResize(
+            {
+                layers: [hugFrame, child],
+                activeResizeId: "master",
+                canvasWidth: 100,
+                canvasHeight: 100,
+                resizes: [resize({ id: "master", width: 100, height: 100, isMaster: true })],
+            },
+            { id: "target", name: "Target", width: 200, height: 200 },
+        );
+
+        const genFrame = result.resize.layerSnapshot?.find((l): l is FrameLayer => l.type === "frame");
+        // Padding scales x2 (5 -> 10); hug frame = child (30x20) + padding (10+10) = 50 x 40.
+        expect(genFrame).toMatchObject({ width: 50, height: 40 });
+    });
+
+    it("scales auto-layout padding and spacing proportionally with the artboard", () => {
+        const a = rect({ id: "a", name: "A", x: 10, y: 4, width: 20, height: 20 });
+        const b = rect({ id: "b", name: "B", x: 38, y: 4, width: 20, height: 20 });
+        const bar = frame({
+            id: "bar",
+            name: "Bar",
+            x: 0, y: 0, width: 100, height: 50,
+            childIds: ["a", "b"],
+            layoutMode: "horizontal",
+            paddingLeft: 10, paddingRight: 10, paddingTop: 4, paddingBottom: 4,
+            spacing: 8,
+            primaryAxisSizingMode: "fixed",
+            counterAxisSizingMode: "fixed",
+        });
+
+        const result = generateCustomResize(
+            {
+                layers: [bar, a, b],
+                activeResizeId: "master",
+                canvasWidth: 100,
+                canvasHeight: 100,
+                resizes: [resize({ id: "master", width: 100, height: 100, isMaster: true })],
+            },
+            { id: "target", name: "Target", width: 200, height: 300 },
+        );
+
+        const genFrame = result.resize.layerSnapshot?.find((l): l is FrameLayer => l.type === "frame");
+        // width ratio 2, height ratio 3; horizontal layout -> spacing scales by width ratio.
+        expect(genFrame).toMatchObject({
+            paddingLeft: 20,
+            paddingRight: 20,
+            paddingTop: 12,
+            paddingBottom: 12,
+            spacing: 16,
+        });
+    });
+
     it("creates content/style-only bindings to master layers", () => {
         const masterText = text({ id: "master-headline", slotId: "headline", name: "Headline" });
         const wideText = text({ id: "wide-headline", slotId: "headline", name: "Headline", x: 40 });

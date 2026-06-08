@@ -296,7 +296,7 @@ export function projectTree(
             const child = byId.get(childId);
             if (!child) continue;
             const childOld: Box = { x: child.x, y: child.y, width: child.width, height: child.height };
-            const constraints = resolveConstraints(child, oldBox);
+            const constraints = adaptationConstraints(child, oldBox);
             const projected = computeConstrainedPosition({ ...childOld, constraints }, delta);
             newGeom.set(childId, projected);
             if (child.type === "frame") {
@@ -315,11 +315,56 @@ export function projectTree(
 
     const fontScale = getScale(sourceSize, targetSize).font;
 
+    // 3. Scale auto-layout padding/spacing with the artboard so inner gaps stay
+    // proportional across formats (horizontal pad/spacing by width ratio,
+    // vertical by height ratio). Only on the adaptation path, never interactive.
+    const padScaleX = targetSize.width / Math.max(1, sourceSize.width);
+    const padScaleY = targetSize.height / Math.max(1, sourceSize.height);
+    const padOverrides = new Map<string, Partial<FrameLayer>>();
+    for (const layer of layers) {
+        if (layer.type !== "frame") continue;
+        const frame = layer as FrameLayer;
+        if (!frame.layoutMode || frame.layoutMode === "none") continue;
+        const horizontal = frame.layoutMode === "horizontal";
+        const o: Partial<FrameLayer> = {};
+        if (typeof frame.paddingLeft === "number") o.paddingLeft = round2(frame.paddingLeft * padScaleX);
+        if (typeof frame.paddingRight === "number") o.paddingRight = round2(frame.paddingRight * padScaleX);
+        if (typeof frame.paddingTop === "number") o.paddingTop = round2(frame.paddingTop * padScaleY);
+        if (typeof frame.paddingBottom === "number") o.paddingBottom = round2(frame.paddingBottom * padScaleY);
+        if (typeof frame.spacing === "number") o.spacing = round2(frame.spacing * (horizontal ? padScaleX : padScaleY));
+        padOverrides.set(layer.id, o);
+    }
+
     return layers.map((layer) => {
         const geom = newGeom.get(layer.id);
-        const next = geom ? ({ ...layer, ...geom } as Layer) : layer;
+        const pad = padOverrides.get(layer.id);
+        const next = (geom || pad) ? ({ ...layer, ...geom, ...pad } as Layer) : layer;
         return scaleFonts ? scaleFontIfNeeded(next, layer, fontScale) : next;
     });
+}
+
+function round2(value: number): number {
+    return Math.round(value * 100) / 100;
+}
+
+/**
+ * Constraints used on the adaptation path. Identical to `resolveConstraints`,
+ * except an auto-layout frame whose `layoutSizingWidth/Height` is "fill" is
+ * forced to stretch on that axis so it fills its parent (artboard or enclosing
+ * frame) instead of pinning to an inferred edge.
+ */
+function adaptationConstraints(
+    layer: Layer,
+    parent: Box,
+): LayerConstraints {
+    const base = resolveConstraints(layer, parent);
+    if (layer.type !== "frame") return base;
+    const frame = layer as FrameLayer;
+    if (!frame.layoutMode || frame.layoutMode === "none") return base;
+    return {
+        horizontal: frame.layoutSizingWidth === "fill" ? "stretch" : base.horizontal,
+        vertical: frame.layoutSizingHeight === "fill" ? "stretch" : base.vertical,
+    };
 }
 
 function getScale(sourceSize: ArtboardSize, targetSize: ArtboardSize) {
@@ -360,7 +405,7 @@ function projectRootRect(
     // auto / decorative / unset — explicit constraints win, otherwise infer
     // from geometry so default adaptation is sensible.
     const artboardOld: Box = { x: 0, y: 0, width: sourceSize.width, height: sourceSize.height };
-    const constraints = resolveConstraints(layer, artboardOld);
+    const constraints = adaptationConstraints(layer, artboardOld);
     return computeConstrainedPosition(
         { x: layer.x, y: layer.y, width: layer.width, height: layer.height, constraints },
         {
