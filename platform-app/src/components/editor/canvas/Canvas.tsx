@@ -31,6 +31,7 @@ import { AlignedStrokeRect } from "./AlignedStrokeRect";
 import { resolveKonvaLayerId } from "./resolveKonvaLayerId";
 import {
     FLIP_LAYER_CONTENT_NAME,
+    getTextTransformBaseSize,
     normalizeLiveTextTransform,
     syncTextTransformNodes,
     TEXT_LAYER_BOUNDS_NAME,
@@ -118,12 +119,16 @@ const CanvasLayer = memo(function CanvasLayer({
     const attachTextGroupRef = useCallback((node: Konva.Group | null) => {
         groupRef.current = node;
         if (node) {
-            node.getClientRect = (config) =>
-                computeLayerBoxClientRect(
+            node.getClientRect = (config) => {
+                const bounds = node.findOne<Konva.Rect>(`.${TEXT_LAYER_BOUNDS_NAME}`);
+                const width = bounds?.width() ?? textBoxRef.current.width;
+                const height = bounds?.height() ?? textBoxRef.current.height;
+                return computeLayerBoxClientRect(
                     node,
-                    { width: textBoxRef.current.width, height: textBoxRef.current.height, strokeWidth: 0 },
+                    { width, height, strokeWidth: 0 },
                     config,
                 );
+            };
         }
     }, []);
 
@@ -657,8 +662,11 @@ function FrameLayerRenderer({
         node.scaleX(1);
         node.scaleY(1);
 
-        let width = node.width() * scaleX;
-        let height = node.height() * scaleY;
+        const textBase = childLayer?.type === "text"
+            ? getTextTransformBaseSize(node, childLayer as TextLayer)
+            : null;
+        let width = (textBase?.width ?? node.width()) * scaleX;
+        let height = (textBase?.height ?? node.height()) * scaleY;
 
         if (childLayer?.type === "text") {
             const synced = syncTextTransformNodes(node, childLayer as TextLayer, width, height);
@@ -691,15 +699,6 @@ function FrameLayerRenderer({
                     extraProps.layoutSizingHeight = "fixed";
                 }
 
-                // Switch text container mode to fixed on manual resize
-                if (childLayer.type === "text") {
-                    const txt = childLayer as any;
-                    if (txt.textAdjust === "auto_width") {
-                        extraProps.textAdjust = "fixed";
-                    } else if (txt.textAdjust === "auto_height") {
-                        if (hasSizedY) extraProps.textAdjust = "fixed";
-                    }
-                }
             }
         }
 
@@ -1301,7 +1300,7 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
         }
 
         // 2. Check if the layer is a child of a FRAME with clipContent
-        const parentFrame = layers.find(
+        const parentFrame = useCanvasStore.getState().layers.find(
             l => l.type === 'frame' && (l as FrameLayer).childIds.includes(layerId)
         ) as FrameLayer | undefined;
 
@@ -1317,7 +1316,7 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
         }
 
         return false;
-    }, [layers, artboardProps.clipContent, canvasWidth, canvasHeight, stageX, stageY, zoom]);
+    }, [artboardProps.clipContent, canvasWidth, canvasHeight, stageX, stageY, zoom]);
 
     const handleLayerSelect = useCallback((e: Konva.KonvaEventObject<MouseEvent>) => {
         // Ignore right clicks for selection to preserve multi-selection for context menus
@@ -1346,6 +1345,8 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
         const isMulti = e.evt?.shiftKey;
         const isDeepSelect = e.evt?.metaKey || e.evt?.ctrlKey || (e.evt as any)?._isDeepSelect;
 
+        const layers = useCanvasStore.getState().layers;
+
         // "Deep select" logic: if it's nested in a frame, we select the frame
         // UNLESS the user holds Cmd/Ctrl (isDeepSelect)
         if (!isDeepSelect) {
@@ -1368,7 +1369,7 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
             // So if we click safely, yes, select just this one.
             selectLayer(id);
         }
-    }, [toggleSelection, selectLayer, layers, isClickOutsideClipBounds]);
+    }, [toggleSelection, selectLayer, isClickOutsideClipBounds]);
 
     const handleLayerDragStart = useCallback((e: Konva.KonvaEventObject<DragEvent>) => {
         const { activeTool, expandMode: isExpand, inpaintMode: isInpaint } = useCanvasStore.getState();
@@ -1401,10 +1402,11 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
         isDragging.current = true;
         setHoveredLayerId(null); // Clear hover during drag
         let id = resolveKonvaLayerId(e.target);
+        const { layers, selectedLayerIds: currentSelectedLayerIds } = useCanvasStore.getState();
 
         // Block drag if the grab point is outside a clipped parent's bounds
         // EXCEPTION: allow if the layer is already selected (Figma-like behavior)
-        if (!selectedLayerIds.includes(id)) {
+        if (!currentSelectedLayerIds.includes(id)) {
             const stage = e.target.getStage();
             const pointer = stage?.getPointerPosition() ?? null;
             if (isClickOutsideClipBounds(id, pointer)) {
@@ -1418,7 +1420,7 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
 
         // "Deep select" drag logic: if it's nested in a frame, and not deep-selected,
         // and not already selected, redirect drag to the parent frame
-        if (!isDeepSelect && !selectedLayerIds.includes(id)) {
+        if (!isDeepSelect && !currentSelectedLayerIds.includes(id)) {
             const parentFrame = layers.find(l => l.type === "frame" && (l as FrameLayer).childIds.includes(id));
             if (parentFrame) {
                 e.target.stopDrag();
@@ -1432,7 +1434,7 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
         }
 
         // If dragging an item that is NOT selected, select it (exclusive)
-        if (!selectedLayerIds.includes(id)) {
+        if (!currentSelectedLayerIds.includes(id)) {
             selectLayer(id);
         }
 
@@ -1443,8 +1445,8 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
         // We can solve this by checking if id is in selectedLayerIds.
         // If not, we form a temporary list [id].
 
-        const effectiveSelection = selectedLayerIds.includes(id)
-            ? selectedLayerIds
+        const effectiveSelection = currentSelectedLayerIds.includes(id)
+            ? currentSelectedLayerIds
             : [id];
 
         // Figma-like: when the user grabs a layer that is nested in a frame,
@@ -1465,7 +1467,7 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
         });
         dragStartLocs.current = locs;
 
-    }, [layers, selectedLayerIds, selectLayer, isClickOutsideClipBounds, setHoveredLayerId]);
+    }, [selectLayer, isClickOutsideClipBounds, setHoveredLayerId]);
 
     // Alt key tracking for distance measurement (both drag and hover)
     useEffect(() => {
@@ -1531,6 +1533,8 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
         let dx = currentSceneX - startLoc.x;
         let dy = currentSceneY - startLoc.y;
 
+        const { layers, selectedLayerIds: currentSelectedLayerIds } = useCanvasStore.getState();
+
         // Snap Logic
         const primaryLayer = layers.find(l => l.id === id);
         if (primaryLayer) {
@@ -1538,7 +1542,7 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
             const proposedY = startLoc.y + dy;
 
             const otherNodes = layers
-                .filter(l => !selectedLayerIds.includes(l.id) && l.visible && !l.locked)
+                .filter(l => !currentSelectedLayerIds.includes(l.id) && l.visible && !l.locked)
                 .map(l => ({
                     id: l.id,
                     x: l.x,
@@ -1603,7 +1607,7 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
             frameHoverCandidate.current = { frameId: null, since: 0 };
             setHighlightedFrameId(null);
         }
-    }, [layers, selectedLayerIds, setHighlightedFrameId, canvasWidth, canvasHeight, updateFrameHoverHighlight]);
+    }, [setHighlightedFrameId, canvasWidth, canvasHeight, updateFrameHoverHighlight]);
 
     const handleLayerDragEnd = useCallback((e: Konva.KonvaEventObject<DragEvent>) => {
         const id = resolveKonvaLayerId(e.target);
@@ -1637,6 +1641,7 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
 
         const dx = currentSceneX - startLoc.x;
         const dy = currentSceneY - startLoc.y;
+        const layers = useCanvasStore.getState().layers;
 
         Object.keys(dragStartLocs.current).forEach(sid => {
             const sLoc = dragStartLocs.current[sid];
@@ -1684,7 +1689,7 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
         }
 
         dragStartLocs.current = {};
-    }, [updateLayer, moveLayerToFrame, removeLayerFromFrame, setHighlightedFrameId, layers, updateFrameHoverHighlight]);
+    }, [updateLayer, moveLayerToFrame, removeLayerFromFrame, setHighlightedFrameId, updateFrameHoverHighlight]);
 
     const handleTransformEnd = useCallback((e: Konva.KonvaEventObject<Event>) => {
         isTransforming.current = false;
@@ -1694,6 +1699,7 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
 
         const node = e.target;
         const id = node.id();
+        const layers = useCanvasStore.getState().layers;
 
         // Block transform commit for locked layers
         const lockedLayer = layers.find(l => l.id === id);
@@ -1719,11 +1725,14 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
         node.scaleX(1);
         node.scaleY(1);
 
-        let width = node.width() * scaleX;
-        let height = node.height() * scaleY;
+        const layer = layers.find(l => l.id === id);
+        const textBase = layer?.type === "text"
+            ? getTextTransformBaseSize(node, layer as TextLayer)
+            : null;
+        let width = (textBase?.width ?? node.width()) * scaleX;
+        let height = (textBase?.height ?? node.height()) * scaleY;
 
         let extraProps: any = {};
-        const layer = layers.find(l => l.id === id);
         if (layer) {
             if (layer.type === "text") {
                 const synced = syncTextTransformNodes(node, layer as TextLayer, width, height);
@@ -1739,15 +1748,6 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
             if (hasSizedX || hasSizedY) {
                 if (hasSizedX && (layer.layoutSizingWidth === "fill" || layer.layoutSizingWidth === "hug")) extraProps.layoutSizingWidth = "fixed";
                 if (hasSizedY && (layer.layoutSizingHeight === "fill" || layer.layoutSizingHeight === "hug")) extraProps.layoutSizingHeight = "fixed";
-
-                if (layer.type === "text") {
-                    const txt = layer as TextLayer;
-                    if (txt.textAdjust === "auto_width") {
-                        extraProps.textAdjust = "fixed";
-                    } else if (txt.textAdjust === "auto_height") {
-                        if (hasSizedY) extraProps.textAdjust = "fixed";
-                    }
-                }
             }
         }
 
@@ -1767,7 +1767,7 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
 
         updateLayer(id, { x: newX, y: newY, width, height, rotation, ...extraProps });
 
-    }, [updateLayer, layers]);
+    }, [updateLayer]);
 
     // ─── Live Resize Snapping ────────────────────────────
     const handleTransform = useCallback((e: Konva.KonvaEventObject<Event>) => {
@@ -1776,6 +1776,8 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
         const id = node.id();
         const stage = node.getStage();
         if (!stage) return;
+
+        const layers = useCanvasStore.getState().layers;
 
         // Block live transform for locked layers
         const lockedCheck = layers.find(l => l.id === id);
@@ -1791,11 +1793,13 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
         const { snapConfig } = useCanvasStore.getState();
         if (!snapConfig.objectSnap && !snapConfig.artboardSnap) return;
 
-        // Read current transform state
+        const textBase = layer?.type === "text"
+            ? getTextTransformBaseSize(node, layer as TextLayer)
+            : null;
         const scaleX = node.scaleX();
         const scaleY = node.scaleY();
-        const currentWidth = node.width() * scaleX;
-        const currentHeight = node.height() * scaleY;
+        const currentWidth = (textBase?.width ?? node.width()) * scaleX;
+        const currentHeight = (textBase?.height ?? node.height()) * scaleY;
 
         // Get scene position
         const absPos = node.getAbsolutePosition();
@@ -1856,7 +1860,7 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
                 node.setAbsolutePosition({ x: newAbsX, y: newAbsY });
             }
         }
-    }, [layers, canvasWidth, canvasHeight]);
+    }, [canvasWidth, canvasHeight]);
 
     const { isPanning, setIsPanning, handleWheel } = usePanZoom({
         stageRef,

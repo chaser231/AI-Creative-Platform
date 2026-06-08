@@ -54,7 +54,8 @@ function buildTextCacheKey(
     const fontStyle = text.fontWeight || "normal";
     const ls = text.letterSpacing || 0;
     const lh = text.lineHeight || 1.2;
-    return `${displayText}\u0001${text.fontFamily}\u0001${text.fontSize}\u0001${fontStyle}\u0001${ls}\u0001${lh}\u0001${adj}\u0001${measureW ?? ""}`;
+    const truncate = text.truncateText ? "1" : "0";
+    return `${displayText}\u0001${text.fontFamily}\u0001${text.fontSize}\u0001${fontStyle}\u0001${ls}\u0001${lh}\u0001${adj}\u0001${measureW ?? ""}\u0001${truncate}`;
 }
 
 function cacheMeasurement(key: string, value: { width: number; height: number }) {
@@ -79,15 +80,17 @@ export function clearTextMeasureCache(): void {
  * 
  * - `auto_width`: single-line, width = measured text width, height = single line height
  * - `auto_height`: width is fixed (from containerWidth or layer.width), height = wrapped text height
- * - `fixed`: uses stored width/height as-is
+ * - `fixed`: uses stored width/height as-is, except when `truncateText` is set — then height
+ *   is measured as a single line (mirrors Canvas ellipsis rendering)
  */
 function estimateTextSizeRaw(
     text: TextLayer,
     containerWidth?: number
 ): { width: number; height: number } {
     const textAdjust = text.textAdjust || "auto_width";
+    const isFixedTruncate = textAdjust === "fixed" && !!text.truncateText;
 
-    if (textAdjust === "fixed") {
+    if (textAdjust === "fixed" && !text.truncateText) {
         return { width: text.width, height: text.height };
     }
 
@@ -115,9 +118,14 @@ function estimateTextSizeRaw(
         // would be interpreted as a getter call.
         node.setAttr("width", measureW);
         node.wrap(isAutoWidth ? "none" : "word");
+        node.ellipsis(isFixedTruncate);
 
-        const w = isAutoWidth ? node.width() : (measureW ?? text.width);
-        const h = node.height();
+        const w = isAutoWidth ? node.width() : (isFixedTruncate ? text.width : (measureW ?? text.width));
+        let h = node.height();
+        if (isFixedTruncate) {
+            const lineHeightPx = text.fontSize * (text.lineHeight || 1.2);
+            h = Math.min(h, lineHeightPx);
+        }
 
         const result = { width: Math.max(1, w), height: Math.max(1, h) };
         cacheMeasurement(cacheKey, result);
@@ -135,7 +143,9 @@ function estimateTextSizeRaw(
         const totalLetterSpacing = Math.max(0, displayText.length - 1) * (text.letterSpacing || 0);
 
         let result: { width: number; height: number };
-        if (textAdjust === "auto_width") {
+        if (isFixedTruncate) {
+            result = { width: text.width, height: Math.max(1, singleLineHeight) };
+        } else if (textAdjust === "auto_width") {
             const w = displayText.length * avgCharWidth + totalLetterSpacing;
             result = { width: Math.max(1, w), height: Math.max(1, singleLineHeight) };
         } else {
@@ -155,7 +165,9 @@ function estimateTextSizeRaw(
     ctx.font = fontSpec;
 
     let result: { width: number; height: number };
-    if (textAdjust === "auto_width") {
+    if (isFixedTruncate) {
+        result = { width: text.width, height: Math.max(1, singleLineHeight) };
+    } else if (textAdjust === "auto_width") {
         const metrics = ctx.measureText(displayText);
         const totalLetterSpacing = Math.max(0, displayText.length - 1) * (text.letterSpacing || 0);
         const measuredWidth = metrics.width + totalLetterSpacing;
@@ -283,6 +295,21 @@ export function measureTextLayer(
 }
 
 /**
+ * Measure wrapped text content at a fixed width, ignoring the stored fixed-box
+ * height. Used by adaptation text-fit to detect vertical overflow.
+ */
+export function measureWrappedTextContent(
+    text: TextLayer,
+    containerWidth: number,
+    overrides: Partial<Pick<TextLayer, "fontSize">> = {},
+): { width: number; height: number } {
+    return measureTextLayer(
+        { ...text, ...overrides, textAdjust: "auto_height" },
+        containerWidth,
+    );
+}
+
+/**
  * Count how many visual lines the text occupies when word-wrapped
  * to a given width. Handles letter spacing.
  */
@@ -351,7 +378,8 @@ export function computeAutoLayout(
 
 function computeAutoLayoutInternal(
     frame: FrameLayer,
-    layerById: Map<string, Layer>
+    layerById: Map<string, Layer>,
+    visited: Set<string> = new Set(),
 ): Record<string, LayerUpdate> {
     const updates: Record<string, LayerUpdate> = {};
 
@@ -433,6 +461,49 @@ function computeAutoLayoutInternal(
                 w = measureWidth;
                 h = est.height;
                 updates[child.id] = { ...updates[child.id], width: w, height: h };
+            }
+        }
+
+        if (child.type === "frame") {
+            const childFrame = layerById.get(child.id) as FrameLayer;
+            const childLayoutMode = childFrame.layoutMode;
+            if (childLayoutMode && childLayoutMode !== "none") {
+                const childIsHorizontal = childLayoutMode === "horizontal";
+                const childPrimaryHug = childFrame.primaryAxisSizingMode === "auto";
+                const childCounterHug = childFrame.counterAxisSizingMode === "auto";
+                const needsHugResolve =
+                    child.layoutSizingWidth === "hug" ||
+                    child.layoutSizingHeight === "hug" ||
+                    childPrimaryHug ||
+                    childCounterHug;
+
+                if (needsHugResolve && !visited.has(child.id)) {
+                    visited.add(child.id);
+                    const nestedUpdates = computeAutoLayoutInternal(childFrame, layerById, visited);
+
+                    for (const [uid, upd] of Object.entries(nestedUpdates)) {
+                        const merged = { ...(updates[uid] ?? {}), ...upd };
+                        updates[uid] = merged;
+                        const existing = layerById.get(uid);
+                        if (existing) {
+                            layerById.set(uid, { ...existing, ...merged } as Layer);
+                        }
+                    }
+
+                    const resolvedChild = layerById.get(child.id) as FrameLayer;
+                    const useResolvedW =
+                        child.layoutSizingWidth === "hug" ||
+                        (childIsHorizontal && childPrimaryHug) ||
+                        (!childIsHorizontal && childCounterHug);
+                    const useResolvedH =
+                        child.layoutSizingHeight === "hug" ||
+                        (childIsHorizontal && childCounterHug) ||
+                        (!childIsHorizontal && childPrimaryHug);
+
+                    if (useResolvedW) w = resolvedChild.width;
+                    if (useResolvedH) h = resolvedChild.height;
+                    updates[child.id] = { ...updates[child.id], width: w, height: h };
+                }
             }
         }
 

@@ -462,15 +462,18 @@ export interface LayerConstraints {
 
 export const DEFAULT_CONSTRAINTS: LayerConstraints = { horizontal: "left", vertical: "top" };
 
-export type LayerResponsiveBehavior = "auto" | "fixed" | "fluid" | "background" | "decorative";
+export type LayerResponsiveBehavior = "auto" | "fixed" | "fluid" | "background";
+
+export type LayerTextFit = "shrink";
 
 export interface LayerResponsiveSettings {
     role?: string;
     behavior?: LayerResponsiveBehavior;
-    priority?: number;
     canHide?: boolean;
     minFontSize?: number;
     maxFontSize?: number;
+    /** Adaptation-only: shrink font to fit a fixed text box (height overflow). */
+    textFit?: LayerTextFit;
 }
 
 /**

@@ -18,7 +18,7 @@ import { useCanvasStore } from "@/store/canvasStore";
 import { useShallow } from "zustand/react/shallow";
 import type { FrameLayer } from "@/types";
 import { cn } from "@/lib/cn";
-import { useState, useRef, memo } from "react";
+import { useMemo, useState, useRef, memo } from "react";
 
 // Stable empty reference for non-frame rows so the children selector below
 // returns referentially-equal results (no spurious re-renders).
@@ -85,14 +85,15 @@ const LayerRow = memo(function LayerRow({
         setHoveredLayerId: s.setHoveredLayerId,
     })));
 
-    const isFrame = layer.type === "frame";
+    const liveLayer = useCanvasStore((s) => s.layers.find((candidate) => candidate.id === layer.id) ?? layer);
+    const isFrame = liveLayer.type === "frame";
 
     // Granular subscriptions: this row only re-renders when its OWN selection
     // state or its OWN children change — not on every unrelated layer edit.
     const isSelected = useCanvasStore((s) => s.selectedLayerIds.includes(layer.id));
     const childLayers = useCanvasStore(
         useShallow((s) => isFrame
-            ? ([...(layer as FrameLayer).childIds]
+            ? ([...(liveLayer as FrameLayer).childIds]
                 .reverse()
                 .map((id) => s.layers.find((l) => l.id === id))
                 .filter(Boolean) as typeof EMPTY_LAYERS)
@@ -316,7 +317,7 @@ const LayerRow = memo(function LayerRow({
 
                 {/* Icon */}
                 <span className="text-text-tertiary shrink-0">
-                    {layerIcons[layer.type]}
+                    {layerIcons[liveLayer.type]}
                 </span>
 
                 {/* Name — inline rename or static */}
@@ -344,20 +345,20 @@ const LayerRow = memo(function LayerRow({
                     <span
                         className={cn(
                             "flex-1 text-xs truncate",
-                            layer.visible ? "text-text-primary" : "text-text-tertiary"
+                            liveLayer.visible ? "text-text-primary" : "text-text-tertiary"
                         )}
                         onDoubleClick={(e) => {
                             e.stopPropagation();
-                            setRenameName(layer.name);
+                            setRenameName(liveLayer.name);
                             setIsRenaming(true);
                         }}
                     >
-                        {layer.name}
+                        {liveLayer.name}
                     </span>
                 )}
 
                 {/* Fixed asset pin indicator (template mode only) */}
-                {layer.isFixedAsset && (
+                {liveLayer.isFixedAsset && (
                     <span className="shrink-0 text-amber-500" title="Фиксированный ассет шаблона">
                         <Pin size={11} />
                     </span>
@@ -372,7 +373,7 @@ const LayerRow = memo(function LayerRow({
                         }}
                         className="p-1 rounded hover:bg-bg-tertiary cursor-pointer"
                     >
-                        {layer.visible ? (
+                        {liveLayer.visible ? (
                             <Eye size={12} className="text-text-tertiary" />
                         ) : (
                             <EyeOff size={12} className="text-text-tertiary" />
@@ -423,10 +424,10 @@ const LayerRow = memo(function LayerRow({
                     y={ctxMenu.y}
                     onClose={() => setCtxMenu(null)}
                     items={buildLayerContextMenuItems(
-                        layer.id,
-                        layer.name,
-                        layer.visible,
-                        layer.locked,
+                        liveLayer.id,
+                        liveLayer.name,
+                        liveLayer.visible,
+                        liveLayer.locked,
                         {
                             duplicate: isSelected ? duplicateSelectedLayers : () => duplicateLayer(layer.id),
                             remove: isSelected ? deleteSelectedLayers : () => removeLayer(layer.id),
@@ -438,13 +439,13 @@ const LayerRow = memo(function LayerRow({
                                 setRenameName(layer.name);
                                 setIsRenaming(true);
                             },
-                            toggleFixedAsset: isTemplateMode && layer.type === "image"
-                                ? () => updateLayer(layer.id, { isFixedAsset: !layer.isFixedAsset })
+                            toggleFixedAsset: isTemplateMode && liveLayer.type === "image"
+                                ? () => updateLayer(liveLayer.id, { isFixedAsset: !liveLayer.isFixedAsset })
                                 : undefined,
                         },
                         {
-                            isImageLayer: layer.type === "image",
-                            isFixedAsset: !!layer.isFixedAsset,
+                            isImageLayer: liveLayer.type === "image",
+                            isFixedAsset: !!liveLayer.isFixedAsset,
                             isTemplateMode,
                         }
                     )}
@@ -454,23 +455,37 @@ const LayerRow = memo(function LayerRow({
     );
 });
 
-export function LayersPanel({ className }: { className?: string } = {}) {
-    const { layers, selectedLayerIds, removeLayerFromFrame } = useCanvasStore(useShallow((s) => ({
-        layers: s.layers, selectedLayerIds: s.selectedLayerIds, removeLayerFromFrame: s.removeLayerFromFrame,
-    })));
-    const searchParams = useSearchParams();
-    const isTemplateMode = searchParams.get("source") === "template";
-    const [isDragOverRoot, setIsDragOverRoot] = useState(false);
-
-    // Build set of all child IDs to exclude from top-level
+function buildTopLevelLayers(layers: ReturnType<typeof useCanvasStore.getState>["layers"]) {
     const childIdSet = new Set<string>();
     layers.forEach((l) => {
         if (l.type === "frame") {
             (l as FrameLayer).childIds.forEach((id) => childIdSet.add(id));
         }
     });
+    return {
+        childIdSet,
+        topLevelLayers: [...layers].filter((l) => !childIdSet.has(l.id)).reverse(),
+    };
+}
 
-    const topLevelLayers = [...layers].filter((l) => !childIdSet.has(l.id)).reverse();
+export function LayersPanel({ className }: { className?: string } = {}) {
+    const topLevelSignature = useCanvasStore((s) => {
+        const { topLevelLayers } = buildTopLevelLayers(s.layers);
+        return topLevelLayers
+            .map((layer) => `${layer.id}:${layer.name}:${layer.type}`)
+            .join("|");
+    });
+    const { selectedLayerIds, removeLayerFromFrame } = useCanvasStore(useShallow((s) => ({
+        selectedLayerIds: s.selectedLayerIds,
+        removeLayerFromFrame: s.removeLayerFromFrame,
+    })));
+    const searchParams = useSearchParams();
+    const isTemplateMode = searchParams.get("source") === "template";
+    const [isDragOverRoot, setIsDragOverRoot] = useState(false);
+
+    const { childIdSet, topLevelLayers } = useMemo(() => {
+        return buildTopLevelLayers(useCanvasStore.getState().layers);
+    }, [topLevelSignature]);
 
     // Handle drop on root area (un-nest from frame)
     const handleRootDragOver = (e: React.DragEvent) => {

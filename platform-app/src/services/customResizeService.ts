@@ -6,9 +6,11 @@ import {
     type LayerBinding,
     type LayerConstraints,
     type ResizeFormat,
+    type TextLayer,
 } from "@/types";
 import { computeConstrainedPosition } from "@/store/canvas/helpers";
-import { applyAllAutoLayouts } from "@/utils/layoutEngine";
+import { applyAllAutoLayouts, measureTextLayer } from "@/utils/layoutEngine";
+import { shrinkTextToFitBox } from "@/utils/textFit";
 import { resolveConstraints, type Box } from "@/utils/constraintInference";
 
 export type CustomResizeDiagnosticCode =
@@ -100,8 +102,12 @@ export function generateCustomResize(
     // Pass the projected layers as the baseline so the auto-layout pass repacks
     // auto-layout frames without the constraint cascade re-projecting the
     // non-auto children we just positioned in projectTree.
-    const layouted = applyAllAutoLayouts(projected);
-    const validated = validateAndApplyHide(layouted, targetSize, diagnostics);
+    const layouted = preserveStretchedRootAutoLayoutGeometry(
+        projected,
+        applyAllAutoLayouts(projected),
+    );
+    const remeasured = applyTextFitShrink(remeasureAdaptedTextBoxes(layouted));
+    const validated = validateAndApplyHide(remeasured, targetSize, diagnostics);
     const master = resolveMasterFormat(state);
     const masterLayers = master ? getLayersForResize(state, master) : [];
     const layerBindings = master
@@ -347,6 +353,38 @@ function round2(value: number): number {
     return Math.round(value * 100) / 100;
 }
 
+/** Keep projected stretch geometry on root hug auto-layout frames after repack. */
+function preserveStretchedRootAutoLayoutGeometry(
+    projected: Layer[],
+    layouted: Layer[],
+): Layer[] {
+    const projectedById = new Map(projected.map((layer) => [layer.id, layer]));
+    const childIdSet = new Set<string>();
+    for (const layer of layouted) {
+        if (layer.type !== "frame") continue;
+        for (const childId of (layer as FrameLayer).childIds) childIdSet.add(childId);
+    }
+
+    return layouted.map((layer) => {
+        if (childIdSet.has(layer.id) || layer.type !== "frame") return layer;
+        const frame = layer as FrameLayer;
+        if (!frame.layoutMode || frame.layoutMode === "none") return layer;
+        const constraints = frame.constraints;
+        if (constraints?.horizontal !== "stretch" || constraints?.vertical !== "stretch") {
+            return layer;
+        }
+        const source = projectedById.get(layer.id);
+        if (!source) return layer;
+        return {
+            ...layer,
+            x: source.x,
+            y: source.y,
+            width: source.width,
+            height: source.height,
+        };
+    });
+}
+
 /**
  * Constraints used on the adaptation path. Identical to `resolveConstraints`,
  * except an auto-layout frame whose `layoutSizingWidth/Height` is "fill" is
@@ -362,8 +400,16 @@ function adaptationConstraints(
     const frame = layer as FrameLayer;
     if (!frame.layoutMode || frame.layoutMode === "none") return base;
     return {
-        horizontal: frame.layoutSizingWidth === "fill" ? "stretch" : base.horizontal,
-        vertical: frame.layoutSizingHeight === "fill" ? "stretch" : base.vertical,
+        horizontal: frame.layoutSizingWidth === "fill"
+            ? "stretch"
+            : frame.layoutSizingWidth === "hug"
+                ? "scale"
+                : base.horizontal,
+        vertical: frame.layoutSizingHeight === "fill"
+            ? "stretch"
+            : frame.layoutSizingHeight === "hug"
+                ? "scale"
+                : base.vertical,
     };
 }
 
@@ -402,7 +448,7 @@ function projectRootRect(
         return computeFixedPosition(layer, sourceSize, targetSize);
     }
 
-    // auto / decorative / unset — explicit constraints win, otherwise infer
+    // auto / unset — explicit constraints win, otherwise infer
     // from geometry so default adaptation is sensible.
     const artboardOld: Box = { x: 0, y: 0, width: sourceSize.width, height: sourceSize.height };
     const constraints = adaptationConstraints(layer, artboardOld);
@@ -466,6 +512,33 @@ function computeFixedAxis(
         return start * (targetAxis / Math.max(1, sourceAxis));
     }
     return start;
+}
+
+function applyTextFitShrink(layers: Layer[]): Layer[] {
+    return layers.map((layer) => (
+        layer.type === "text" ? shrinkTextToFitBox(layer as TextLayer) : layer
+    ));
+}
+
+/** Re-sync text container boxes after font scaling on the adaptation path. */
+function remeasureAdaptedTextBoxes(layers: Layer[]): Layer[] {
+    return layers.map((layer) => {
+        if (layer.type !== "text") return layer;
+        const text = layer as TextLayer;
+        const adj = text.textAdjust ?? "auto_width";
+
+        if (adj === "auto_width") {
+            const size = measureTextLayer(text);
+            return { ...text, width: size.width, height: size.height };
+        }
+        if (adj === "auto_height") {
+            const size = measureTextLayer(text, text.width);
+            return { ...text, height: size.height };
+        }
+
+        const size = measureTextLayer(text, text.width);
+        return { ...text, height: size.height };
+    });
 }
 
 function scaleFontIfNeeded(layer: Layer, base: Layer, fontScale: number): Layer {

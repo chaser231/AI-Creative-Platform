@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getCanvasStateForSave, normalizeCanvasStateForLoad } from "@/utils/canvasState";
+import { getCanvasStateForSave, migrateLayersForLoad, normalizeCanvasStateForLoad } from "@/utils/canvasState";
 import { DEFAULT_ARTBOARD_PROPS, DEFAULT_RESIZE } from "@/store/canvas/types";
 import type { Layer, ResizeFormat } from "@/types";
 
@@ -248,5 +248,105 @@ describe("normalizeCanvasStateForLoad", () => {
         expect(normalized.layers).toEqual(activeLayers);
         expect(normalized.canvasWidth).toBe(540);
         expect(normalized.canvasHeight).toBe(225);
+    });
+
+    it("strips deprecated responsive settings from loaded layers", () => {
+        const legacyLayers = [{
+            id: "legacy",
+            type: "rectangle",
+            name: "Legacy",
+            x: 0,
+            y: 0,
+            width: 100,
+            height: 100,
+            rotation: 0,
+            visible: true,
+            locked: false,
+            fill: "#FFFFFF",
+            stroke: "",
+            strokeWidth: 0,
+            cornerRadius: 0,
+            responsive: {
+                behavior: "decorative",
+                priority: 75,
+                canHide: true,
+            },
+        }] as unknown as Layer[];
+
+        expect(migrateLayersForLoad(legacyLayers)).toEqual([
+            expect.objectContaining({
+                id: "legacy",
+                responsive: { canHide: true },
+            }),
+        ]);
+
+        const normalized = normalizeCanvasStateForLoad({
+            layers: legacyLayers,
+            masterComponents: [],
+            componentInstances: [],
+            resizes: [{
+                id: "master",
+                name: "Master",
+                width: 1080,
+                height: 1080,
+                label: "1080 × 1080",
+                instancesEnabled: false,
+                isMaster: true,
+                layerSnapshot: legacyLayers,
+            }],
+            activeResizeId: "master",
+            artboardProps: DEFAULT_ARTBOARD_PROPS,
+            canvasWidth: 1080,
+            canvasHeight: 1080,
+            palette: { colors: [], backgrounds: [] },
+        });
+
+        expect(normalized.layers[0].responsive).toEqual({ canHide: true });
+    });
+
+    it("strips legacy responsive fields on save", () => {
+        const legacyLayers = [{
+            id: "legacy",
+            type: "rectangle",
+            name: "Legacy",
+            x: 0,
+            y: 0,
+            width: 100,
+            height: 100,
+            rotation: 0,
+            visible: true,
+            locked: false,
+            fill: "#FFFFFF",
+            stroke: "",
+            strokeWidth: 0,
+            cornerRadius: 0,
+            responsive: {
+                behavior: "decorative",
+                priority: 12,
+            },
+        }] as unknown as Layer[];
+
+        const saved = getCanvasStateForSave({
+            layers: legacyLayers,
+            masterComponents: [],
+            componentInstances: [],
+            resizes: [{
+                id: "master",
+                name: "Master",
+                width: 1080,
+                height: 1080,
+                label: "1080 × 1080",
+                instancesEnabled: false,
+                isMaster: true,
+            }],
+            activeResizeId: "master",
+            artboardProps: DEFAULT_ARTBOARD_PROPS,
+            canvasWidth: 1080,
+            canvasHeight: 1080,
+            palette: { colors: [], backgrounds: [] },
+        });
+
+        expect(saved.layers[0].responsive).toBeUndefined();
+        expect(saved.resizes[0].layerSnapshot?.[0].responsive).toBeUndefined();
     });
 });

@@ -1,4 +1,5 @@
 import type { CanvasStore, Layer, ResizeFormat } from "@/store/canvas/types";
+import type { LayerResponsiveSettings } from "@/types";
 
 type CanvasStateSource = Pick<
     CanvasStore,
@@ -28,13 +29,43 @@ function cloneResizes(resizes: ResizeFormat[] | undefined): ResizeFormat[] {
         ? resizes.map((resize) => ({
             ...resize,
             layerSnapshot: resize.layerSnapshot
-                ? cloneLayers(resize.layerSnapshot)
+                ? migrateLayersForLoad(cloneLayers(resize.layerSnapshot))
                 : resize.layerSnapshot,
             layerBindings: resize.layerBindings
                 ? resize.layerBindings.map((binding) => ({ ...binding }))
                 : resize.layerBindings,
         }))
         : [];
+}
+
+function compactResponsiveSettings(settings: LayerResponsiveSettings): LayerResponsiveSettings | undefined {
+    const next: LayerResponsiveSettings = { ...settings };
+    if (!next.role?.trim()) delete next.role;
+    else next.role = next.role.trim();
+    if (!next.behavior || next.behavior === "auto") delete next.behavior;
+    if (!next.canHide) delete next.canHide;
+    if (next.minFontSize === undefined || next.minFontSize === 8) delete next.minFontSize;
+    if (next.maxFontSize === undefined || next.maxFontSize <= 0) delete next.maxFontSize;
+    return Object.keys(next).length > 0 ? next : undefined;
+}
+
+function migrateLayerResponsive(layer: Layer): Layer {
+    if (!layer.responsive) return layer;
+
+    const responsive = { ...layer.responsive } as LayerResponsiveSettings & {
+        behavior?: LayerResponsiveSettings["behavior"] | "decorative";
+        priority?: number;
+    };
+    if ((responsive.behavior as string | undefined) === "decorative") delete responsive.behavior;
+    delete responsive.priority;
+
+    const compacted = compactResponsiveSettings(responsive);
+    if (compacted === layer.responsive) return layer;
+    return { ...layer, responsive: compacted };
+}
+
+export function migrateLayersForLoad(layers: Layer[]): Layer[] {
+    return layers.map((layer) => migrateLayerResponsive(layer));
 }
 
 export function getMasterResize(resizes: ResizeFormat[]): ResizeFormat | undefined {
@@ -66,7 +97,7 @@ export function normalizeCanvasStateForLoad(
     const resizes = cloneResizes(state.resizes ?? fallback.resizes);
     const activeResizeId = resolveActiveResizeId(resizes, state.activeResizeId);
     const activeResize = resizes.find((resize) => resize.id === activeResizeId);
-    const topLevelLayers = cloneLayers(state.layers ?? fallback.layers);
+    const topLevelLayers = migrateLayersForLoad(cloneLayers(state.layers ?? fallback.layers));
     const layers = activeResize?.layerSnapshot !== undefined
         ? cloneLayers(activeResize.layerSnapshot)
         : topLevelLayers;
@@ -90,19 +121,26 @@ export function normalizeCanvasStateForLoad(
  * before serialization, so per-format snapshots are always fresh.
  */
 export function getCanvasStateForSave(store: CanvasStateSource) {
-    const resizesWithSnapshot = store.resizes.map((resize) =>
-        resize.id === store.activeResizeId
-            ? { ...resize, layerSnapshot: store.layers }
-            : resize
-    );
+    const migratedLayers = migrateLayersForLoad(cloneLayers(store.layers));
+    const resizesWithSnapshot = store.resizes.map((resize) => {
+        const snapshot = resize.id === store.activeResizeId
+            ? migratedLayers
+            : resize.layerSnapshot;
+        return {
+            ...resize,
+            layerSnapshot: snapshot
+                ? migrateLayersForLoad(cloneLayers(snapshot))
+                : snapshot,
+        };
+    });
     const activeResize = resizesWithSnapshot.find((resize) => resize.id === store.activeResizeId);
     const masterResize = getMasterResize(resizesWithSnapshot);
     const canonicalResize = masterResize ?? activeResize;
     const canonicalLayers = canonicalResize
         ? (canonicalResize.id === store.activeResizeId
-            ? store.layers
-            : canonicalResize.layerSnapshot ?? store.layers)
-        : store.layers;
+            ? migratedLayers
+            : canonicalResize.layerSnapshot ?? migratedLayers)
+        : migratedLayers;
 
     return {
         layers: canonicalLayers,

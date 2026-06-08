@@ -7,7 +7,22 @@ export const FLIP_LAYER_CONTENT_NAME = "flip-layer-content";
 
 const MIN_TEXT_LAYER_SIZE = 10;
 
-type TextTransformLayer = Pick<TextLayer, "textAdjust" | "flipX" | "flipY">;
+type TextTransformLayer = Pick<TextLayer, "textAdjust" | "flipX" | "flipY" | "width" | "height">;
+
+/** Layer box size used for scale math — NOT Group.getClientRect / auto-width text intrinsic size. */
+export function getTextTransformBaseSize(
+    node: Konva.Node,
+    layer?: Pick<TextLayer, "width" | "height">,
+): { width: number; height: number } {
+    const { boundsNode } = findTextTransformNodes(node);
+    if (boundsNode) {
+        return { width: boundsNode.width(), height: boundsNode.height() };
+    }
+    if (layer) {
+        return { width: layer.width, height: layer.height };
+    }
+    return { width: node.width(), height: node.height() };
+}
 
 function isContainer(node: Konva.Node): node is Konva.Container {
     return typeof (node as Konva.Container).findOne === "function";
@@ -60,8 +75,9 @@ export function syncTextTransformNodes(
 export function normalizeLiveTextTransform(node: Konva.Node, layer: TextTransformLayer) {
     const scaleX = node.scaleX();
     const scaleY = node.scaleY();
-    const width = Math.max(node.width() * scaleX, MIN_TEXT_LAYER_SIZE);
-    const height = Math.max(node.height() * scaleY, MIN_TEXT_LAYER_SIZE);
+    const base = getTextTransformBaseSize(node, layer);
+    const width = Math.max(base.width * scaleX, MIN_TEXT_LAYER_SIZE);
+    const height = Math.max(base.height * scaleY, MIN_TEXT_LAYER_SIZE);
     const changed = Math.abs(scaleX - 1) > 0.001 || Math.abs(scaleY - 1) > 0.001;
 
     if (changed) {
