@@ -48,7 +48,7 @@ describe("imageGenerationParamsSchema", () => {
         });
         expect(r.success).toBe(true);
         if (r.success) {
-            expect(r.data.model).toBe("flux-schnell");
+            expect(r.data.model).toBe("flux-2-pro");
             expect(r.data.style).toBe("photo");
             expect(r.data.aspectRatio).toBe("1:1");
         }

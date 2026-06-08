@@ -12,7 +12,7 @@ import { SelectPill } from "@/components/ui/SelectPill";
 import { useCanvasStore } from "@/store/canvasStore";
 import { useShallow } from "zustand/react/shallow";
 import { RemoteTextProvider, RemoteImageProvider } from "@/services/aiService";
-import { getModelById, getMaxRefs, getMaxOutputs, getAspectRatios, getResolutions, getDefaultResolution, resolveRefTags, getLoraSpec, getModelsForCaps } from "@/lib/ai-models";
+import { getModelById, getMaxRefs, getMaxOutputs, getAspectRatios, getResolutions, getDefaultResolution, resolveRefTags, getLoraSpec, getModelsForCaps, getImageGenerationPickerOptions, getImageEditPickerOptions } from "@/lib/ai-models";
 import { InpaintActionBar, type InpaintAction } from "@/components/inpaint/InpaintActionBar";
 import { useOptionalSharedInpaintMask } from "@/components/inpaint/InpaintContext";
 import { useCanvasEditMode } from "@/hooks/useCanvasEditMode";
@@ -45,40 +45,16 @@ const TEXT_MODELS = [
     { id: "gemini-flash", name: "Gemini 2.5 Flash" },
 ];
 
-const IMAGE_MODELS = [
-    { id: "nano-banana-2", name: "Nano Banana 2" },
-    { id: "nano-banana-pro", name: "Nano Banana Pro" },
-    { id: "nano-banana", name: "Nano Banana" },
-    { id: "flux-2-pro", name: "Flux 2 Pro" },
-    { id: "seedream-5", name: "Seedream 5" },
-    { id: "seedream", name: "Seedream 4.5" },
-    { id: "gpt-image-2", name: "GPT Image 2" },
-    { id: "gpt-image", name: "GPT Image 1.5" },
-    { id: "qwen-image", name: "Qwen Image" },
-    { id: "flux-schnell", name: "Flux Schnell" },
-    { id: "flux-dev", name: "Flux Dev" },
-    { id: "flux-1.1-pro", name: "Flux 1.1 Pro" },
-    { id: "dall-e-3", name: "DALL-E 3" },
-    // LoRA-aware variants — lower in the list so non-LoRA workflows stay
-    // unchanged for users who never open the LoRA picker.
-    { id: "flux-lora", name: "FLUX.1 LoRA" },
-    { id: "flux-2-lora", name: "FLUX.2 LoRA" },
-    { id: "qwen-image-lora", name: "Qwen Image LoRA" },
-];
+const IMAGE_MODELS = getImageGenerationPickerOptions().map((model) => ({
+    id: model.id,
+    name: model.label,
+}));
 
 // Models available for AI image editing (with "edit" cap or specialized tools)
-const EDIT_MODELS = [
-    { id: "nano-banana-2", name: "Nano Banana 2" },
-    { id: "nano-banana-pro", name: "Nano Banana Pro" },
-    { id: "nano-banana", name: "Nano Banana" },
-    { id: "flux-2-pro", name: "Flux 2 Pro" },
-    { id: "seedream-5", name: "Seedream 5" },
-    { id: "seedream", name: "Seedream 4.5" },
-    { id: "gpt-image-2", name: "GPT Image 2" },
-    { id: "gpt-image", name: "GPT Image 1.5" },
-    { id: "qwen-image-edit", name: "Qwen Image Edit" },
-    { id: "qwen-image-edit-lora", name: "Qwen Image Edit LoRA" },
-];
+const EDIT_MODELS = getImageEditPickerOptions().map((model) => ({
+    id: model.id,
+    name: model.label,
+}));
 
 // Outpaint target aspect ratios (used within the edit tab's "Expand" action)
 const OUTPAINT_RATIOS = [

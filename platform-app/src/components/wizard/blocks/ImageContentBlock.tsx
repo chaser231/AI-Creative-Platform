@@ -19,7 +19,7 @@ import { ImageStylePresetPicker } from "@/components/ui/StylePresetPicker";
 import { LoraSelectorPicker } from "@/components/ui/LoraSelectorPicker";
 import { LoraTriggerHint } from "@/components/ui/LoraTriggerHint";
 import { ModelSettingsModal, type AdvancedAIParams } from "@/components/ui/ModelSettingsModal";
-import { getModelById, getMaxRefs, getAspectRatios, getResolutions, resolveRefTags, getLoraSpec } from "@/lib/ai-models";
+import { getModelById, getMaxRefs, getAspectRatios, getResolutions, resolveRefTags, getLoraSpec, getImageGenerationPickerOptions } from "@/lib/ai-models";
 import type { LoraWeight } from "@/lib/ai-providers";
 import { getImagePresetPromptSuffixForModel } from "@/lib/stylePresets";
 import { useStylePresets } from "@/hooks/useStylePresets";
@@ -30,24 +30,10 @@ import { Sliders } from "lucide-react";
 
 // ─── AI Models ───────────────────────────────────────────────────────────────
 
-const IMAGE_GEN_MODELS = [
-    { id: "nano-banana-2", label: "Nano Banana 2" },
-    { id: "nano-banana-pro", label: "Nano Banana Pro" },
-    { id: "nano-banana", label: "Nano Banana" },
-    { id: "flux-2-pro", label: "Flux 2 Pro" },
-    { id: "seedream-5", label: "Seedream 5" },
-    { id: "seedream", label: "Seedream 4.5" },
-    { id: "gpt-image-2", label: "GPT Image 2" },
-    { id: "gpt-image", label: "GPT Image 1.5" },
-    { id: "qwen-image", label: "Qwen Image" },
-    { id: "flux-schnell", label: "Flux Schnell" },
-    { id: "flux-dev", label: "Flux Dev" },
-    { id: "flux-1.1-pro", label: "Flux 1.1 Pro" },
-    { id: "dall-e-3", label: "DALL-E 3" },
-    { id: "flux-lora", label: "FLUX.1 LoRA" },
-    { id: "flux-2-lora", label: "FLUX.2 LoRA" },
-    { id: "qwen-image-lora", label: "Qwen Image LoRA" },
-];
+const IMAGE_GEN_MODELS = getImageGenerationPickerOptions().map((model) => ({
+    id: model.id,
+    label: model.label,
+}));
 
 // Aspect ratios and resolutions are now dynamic per model — see ai-models.ts
 
@@ -74,7 +60,7 @@ export function ImageContentBlock({ id, name, props, value, onChange, businessUn
     const [previewState, setPreviewState] = useState<"empty" | "loading" | "ready" | "error">("empty");
 
     // Generation params
-    const [selectedModel, setSelectedModel] = useState("flux-dev");
+    const [selectedModel, setSelectedModel] = useState("flux-2-pro");
     const [aspectRatio, setAspectRatio] = useState("1:1");
     const [genCount, setGenCount] = useState(1);
     const [seed, setSeed] = useState("");

@@ -79,6 +79,11 @@ export interface ModelEntry {
      * acceleration). Absent on all base models.
      */
     loraSpec?: LoraSpec;
+    /**
+     * Hidden from user-facing model pickers (constructor, editor, photo).
+     * Kept in the registry for internal flows such as AI style preview thumbs.
+     */
+    stylePreviewOnly?: boolean;
 }
 
 // ─── Shared Constants ───────────────────────────────────────────────────────
@@ -174,11 +179,11 @@ export const MODEL_REGISTRY: ModelEntry[] = [
     {
         id: "flux-2-pro",
         label: "Flux 2 Pro",
-        slug: "black-forest-labs/flux-2-pro",
-        provider: "replicate",
+        slug: "fal-ai/flux-2-pro",
+        provider: "fal",
         caps: ["generate", "edit", "vision"],
-        costPerRun: 0.045,
-        maxRefs: 4,
+        costPerRun: 0.03,
+        maxRefs: 8,
         aspectRatios: WIDE_ASPECT_RATIOS,
         resolutions: FLUX_RESOLUTIONS_FULL,
     },
@@ -270,6 +275,7 @@ export const MODEL_REGISTRY: ModelEntry[] = [
         maxOutputs: 4,
         aspectRatios: WIDE_ASPECT_RATIOS,
         resolutions: FLUX_RESOLUTIONS_BASIC,
+        stylePreviewOnly: true,
     },
     {
         id: "flux-dev",
@@ -281,6 +287,7 @@ export const MODEL_REGISTRY: ModelEntry[] = [
         maxOutputs: 4,
         aspectRatios: WIDE_ASPECT_RATIOS,
         resolutions: FLUX_RESOLUTIONS_BASIC,
+        stylePreviewOnly: true,
     },
     {
         id: "flux-1.1-pro",
@@ -291,6 +298,7 @@ export const MODEL_REGISTRY: ModelEntry[] = [
         costPerRun: 0.04,
         aspectRatios: WIDE_ASPECT_RATIOS,
         resolutions: FLUX_RESOLUTIONS_BASIC,
+        stylePreviewOnly: true,
     },
     {
         id: "dall-e-3",
@@ -343,6 +351,7 @@ export const MODEL_REGISTRY: ModelEntry[] = [
         provider: "fal",
         caps: ["generate", "vision"],
         costPerRun: 0.05,
+        maxRefs: 3,
         maxOutputs: 4,
         aspectRatios: LORA_ASPECT_RATIOS,
         loraSpec: {
@@ -586,9 +595,61 @@ const DEFAULT_ASPECT_RATIOS = ["1:1", "16:9", "9:16", "4:3", "3:4", "3:2"];
 
 // ─── Helpers for UI ─────────────────────────────────────────────────────────
 
+/** Curated image-generation models for UI pickers (order preserved). */
+export const IMAGE_GENERATION_PICKER_IDS = [
+    "nano-banana-2",
+    "nano-banana-pro",
+    "nano-banana",
+    "flux-2-pro",
+    "seedream-5",
+    "seedream",
+    "gpt-image-2",
+    "gpt-image",
+    "qwen-image",
+    "dall-e-3",
+    "flux-lora",
+    "flux-2-lora",
+    "qwen-image-lora",
+] as const;
+
+/** Curated image-edit models for UI pickers (order preserved). */
+export const IMAGE_EDIT_PICKER_IDS = [
+    "nano-banana-2",
+    "nano-banana-pro",
+    "nano-banana",
+    "flux-2-pro",
+    "seedream-5",
+    "seedream",
+    "gpt-image-2",
+    "gpt-image",
+    "qwen-image-edit",
+    "qwen-image-edit-lora",
+] as const;
+
+export function isPickerVisibleModel(modelId: string): boolean {
+    const entry = getModelById(modelId);
+    return !!entry && !entry.stylePreviewOnly;
+}
+
+/** Options for image-generation model dropdowns. */
+export function getImageGenerationPickerOptions(): Array<{ id: string; label: string }> {
+    return IMAGE_GENERATION_PICKER_IDS
+        .map((id) => getModelById(id))
+        .filter((entry): entry is ModelEntry => !!entry && !entry.stylePreviewOnly)
+        .map((entry) => ({ id: entry.id, label: entry.label }));
+}
+
+/** Options for image-edit model dropdowns. */
+export function getImageEditPickerOptions(): Array<{ id: string; label: string }> {
+    return IMAGE_EDIT_PICKER_IDS
+        .map((id) => getModelById(id))
+        .filter((entry): entry is ModelEntry => !!entry && !entry.stylePreviewOnly)
+        .map((entry) => ({ id: entry.id, label: entry.label }));
+}
+
 /** Get all models that have ALL specified capabilities. */
 export function getModelsForCaps(...caps: ModelCap[]): ModelEntry[] {
-    return MODEL_REGISTRY.filter(m => caps.every(c => m.caps.includes(c)));
+    return MODEL_REGISTRY.filter(m => caps.every(c => m.caps.includes(c)) && !m.stylePreviewOnly);
 }
 
 /** Lookup a single model by its ID or slug. */
@@ -695,12 +756,20 @@ export function resolveRefTags(prompt: string, modelId: string): string {
     const entry = getModelById(modelId);
     const isGoogle = entry?.slug.startsWith("google/");
     const isSeedream = entry?.slug.startsWith("bytedance/");
+    const isFalFlux = entry?.provider === "fal" && (
+        entry.id === "flux-2-pro"
+        || entry.id === "flux-lora"
+        || entry.id === "flux-2-lora"
+    );
 
     // Replace @ref1 through @ref14
     return prompt.replace(/@ref(\d+)/gi, (_match, numStr: string) => {
         const num = parseInt(numStr, 10);
         if (num < 1 || num > 14) return _match; // leave unknown refs untouched
 
+        if (isFalFlux) {
+            return `@image${num}`;
+        }
         if (isGoogle || isSeedream) {
             const word = ORDINALS[num - 1] || `${num}th`;
             return `the ${word} image`;

@@ -419,9 +419,6 @@ class ReplicateProvider implements AIProviderImplementation {
             } else if (isSeedream) {
                 // Seedream: image_input (4.5 = up to 4 refs, 5-lite = up to 14)
                 input.image_input = params.referenceImages;
-            } else if (slug === "black-forest-labs/flux-2-pro") {
-                // Flux 2 Pro: reference_images
-                input.reference_images = params.referenceImages;
             } else if (slug === "openai/gpt-image-2") {
                 // GPT Image 2: input_images (multi-ref edit/compose)
                 input.input_images = params.referenceImages;
@@ -731,6 +728,7 @@ const FAL_MODEL_MAP: Record<string, string> = {
     "nano-banana-pro": "fal-ai/nano-banana-pro",
     "seedream":        "fal-ai/seedream-4.5",
     "seedream-5":      "fal-ai/bytedance/seedream/v5/lite/text-to-image",
+    "flux-2-pro":      "fal-ai/flux-2-pro",
     "gpt-image-2":     "openai/gpt-image-2",
     "bria-expand":     "fal-ai/bria/expand",
     "flux-2-pro-outpaint": "fal-ai/flux-2-pro/outpaint",
@@ -755,9 +753,11 @@ const FAL_MODEL_MAP_EDIT: Record<string, string> = {
     "nano-banana-2":   "fal-ai/nano-banana-2/edit",
     "nano-banana-pro": "fal-ai/nano-banana-pro/edit",
     "seedream-5":      "fal-ai/bytedance/seedream/v5/lite/edit",
+    "flux-2-pro":      "fal-ai/flux-2-pro/edit",
     "gpt-image-2":     "openai/gpt-image-2/edit",
     // FLUX.1 LoRA has a dedicated img2img endpoint that keeps loras + scale.
     "flux-lora":       "fal-ai/flux-lora/image-to-image",
+    "flux-2-lora":     "fal-ai/flux-2/lora/edit",
     // Qwen Image Edit LoRA is already an image-to-image endpoint, so its
     // /edit and base mappings collapse to the same URL.
     "qwen-image-edit-lora": "fal-ai/qwen-image-edit-lora",
@@ -791,7 +791,7 @@ const FAL_MODEL_MAP_INPAINT: Record<string, string> = {
 //
 // Kept as an explicit set so the FalProvider build-input branch stays narrow
 // and the rest of the pipeline keeps using a unified `aspectRatio` field.
-const FAL_IMAGE_SIZE_MODELS = new Set(["gpt-image-2", "seedream-5"]);
+const FAL_IMAGE_SIZE_MODELS = new Set(["gpt-image-2", "seedream-5", "flux-2-pro"]);
 const FAL_NUM_IMAGES_MODELS = new Set([
     "nano-banana",
     "nano-banana-2",
@@ -1208,17 +1208,24 @@ class FalProvider implements AIProviderImplementation {
         input.prompt = params.prompt;
 
         if (FAL_IMAGE_SIZE_MODELS.has(modelId)) {
-            // GPT Image 2 / Seedream 5 Lite use `image_size` enum (not aspect_ratio).
-            // For Seedream 5 we honour the explicit "2K" / "3K" choice via
-            // `auto_NK`; otherwise we fall back to the AR preset. For GPT Image 2
-            // the resolution knob is `quality` (low | medium | high | auto).
+            // GPT Image 2 / Seedream 5 Lite / Flux 2 Pro use `image_size` enum
+            // (not aspect_ratio). For Seedream 5 we honour the explicit "2K" /
+            // "3K" choice via `auto_NK`; otherwise we fall back to the AR preset.
+            // For GPT Image 2 the resolution knob is `quality` (low | medium | high | auto).
             if (modelId === "seedream-5" && params.scale) {
                 input.image_size = `auto_${params.scale}`; // "auto_2K" | "auto_3K"
+            } else if (modelId === "flux-2-pro" && needsEditEndpoint) {
+                // Edit endpoint defaults to auto; honour explicit AR when provided.
+                input.image_size = params.aspectRatio
+                    ? falImageSizeFromAspectRatio(params.aspectRatio)
+                    : "auto";
             } else {
                 input.image_size = falImageSizeFromAspectRatio(params.aspectRatio);
             }
             if (modelId === "gpt-image-2") {
                 if (params.scale) input.quality = params.scale; // low | medium | high
+                input.output_format = "png";
+            } else if (modelId === "flux-2-pro") {
                 input.output_format = "png";
             }
             // Seedream 5 Lite ignores output_format — leave it out.
@@ -1349,8 +1356,8 @@ class FalProvider implements AIProviderImplementation {
      * Endpoint selection rules:
      *   • qwen-image-edit-lora — always image-to-image (FAL_MODEL_MAP[id])
      *   • flux-lora            — img2img variant when source image is supplied
-     *   • flux-2-lora /        — text-to-image only (no img2img endpoint yet)
-     *     qwen-image-lora
+     *   • flux-2-lora          — edit endpoint when reference images are supplied
+     *   • qwen-image-lora      — text-to-image only
      */
     private async generateLora(
         params: AIRequestParams,
@@ -1486,7 +1493,16 @@ class FalProvider implements AIProviderImplementation {
         }
 
         // Source image for img2img / edit endpoints.
-        if (sourceImage && falEndpoint.includes("image-to-image")) {
+        if (modelId === "flux-2-lora" && falEndpoint.includes("/edit")) {
+            const refs = params.referenceImages && params.referenceImages.length > 0
+                ? params.referenceImages.slice(0, 3)
+                : sourceImage
+                    ? [sourceImage]
+                    : [];
+            if (refs.length > 0) {
+                input.image_urls = refs;
+            }
+        } else if (sourceImage && falEndpoint.includes("image-to-image")) {
             // FLUX.1 LoRA i2i takes `image_url` + optional `strength` (0..1).
             input.image_url = sourceImage;
             // Use a fairly strong strength by default so the LoRA style
@@ -1643,6 +1659,7 @@ const FAL_PRIMARY_MODELS = new Set([
     "nano-banana",
     "nano-banana-pro",
     "seedream-5",
+    "flux-2-pro",
     "gpt-image-2",
     "bria-expand",
     "flux-2-pro-outpaint",
@@ -1672,6 +1689,7 @@ const FAL_PRIMARY_MODELS = new Set([
  * and let Replicate try as a real fallback.
  */
 const FAL_ONLY_MODELS = new Set([
+    "flux-2-pro",
     "flux-2-pro-outpaint",
     // LoRA endpoints — fal-only, no Replicate equivalent.
     "flux-lora",
@@ -1711,8 +1729,8 @@ const MODEL_FALLBACK_CHAIN: Record<string, string[]> = {
     // LoRA fallback — when the LoRA endpoint goes down or the supplied LoRA
     // path is invalid, fall back to the same base model without LoRAs. Style
     // won't be applied, but the user still gets a usable image.
-    "flux-lora":              ["flux-dev", "flux-schnell"],
-    "flux-2-lora":            ["flux-2-pro", "flux-1.1-pro"],
+    "flux-lora":              ["flux-2-pro"],
+    "flux-2-lora":            ["flux-2-pro"],
     "qwen-image-lora":        ["qwen-image"],
     "qwen-image-edit-lora":   ["qwen-image-edit"],
 };
