@@ -828,9 +828,12 @@ function TextInspectorSection({ layer, onChange }: { layer: TextLayer; onChange:
                 ))}
             </div>
             <TwoColumn>
-                <ToggleButton active={!!layer.verticalTrim} label="Vertical trim" onClick={() => onChange({ verticalTrim: !layer.verticalTrim })} />
-                <ToggleButton active={!!layer.truncateText} label="Truncate text" onClick={() => onChange({ truncateText: !layer.truncateText })} />
+                <ToggleButton active={!!layer.verticalTrim} label="Vertical trim" onClick={() => onChange({ verticalTrim: !layer.verticalTrim, baselineTrim: false })} />
+                <ToggleButton active={!!layer.baselineTrim} label="Baseline trim" onClick={() => onChange({ baselineTrim: !layer.baselineTrim, verticalTrim: false })} />
             </TwoColumn>
+            <div className="grid grid-cols-1">
+                <ToggleButton active={!!layer.truncateText} label="Truncate text" onClick={() => onChange({ truncateText: !layer.truncateText })} />
+            </div>
             <PaintRow
                 label="Заливка"
                 value={layer.fill}

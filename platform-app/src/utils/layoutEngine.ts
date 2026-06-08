@@ -175,43 +175,88 @@ function estimateTextSizeRaw(
     return result;
 }
 
-/** Measures the visible glyph extent (ascent+descent) of the font at its size. */
-function measureGlyphExtent(text: TextLayer): number {
+/**
+ * Whether any vertical trim is active for this layer (full glyph hug or
+ * baseline cut). Fixed-size text is never trimmed.
+ */
+export function isTextTrimActive(text: TextLayer): boolean {
+    if ((text.textAdjust || "auto_width") === "fixed") return false;
+    return !!text.verticalTrim || !!text.baselineTrim;
+}
+
+/**
+ * Vertical-trim geometry — the line-box leading to remove above the first line
+ * (`top`) and below the last line (`bottom`) so the container hugs the visible
+ * glyphs while inter-line spacing (line-height) is preserved.
+ *
+ * Mirrors Konva's non-legacy text layout: each line uses an `alphabetic`
+ * baseline placed at `(A − D)/2 + L/2` within its line box, where A/D are the
+ * font's bounding ascent/descent and L is the line-box height. The first line's
+ * glyph top therefore sits `L/2 + (A − D)/2 − actualAscent` below the box top,
+ * and the last line's glyph bottom sits `L/2 − (A − D)/2 − actualDescent` above
+ * the box bottom. `total` is how much shorter the trimmed container is.
+ *
+ * When `baselineTrim` is set the bottom is cut to the text baseline instead of
+ * the descender bottom (the descenders of the last line render below the box).
+ */
+export function getTextTrimMetrics(text: TextLayer): { top: number; bottom: number; total: number } {
+    const L = text.fontSize * (text.lineHeight || 1.2);
+    const cutToBaseline = !!text.baselineTrim;
     const canvas = getMeasureCanvas();
     const ctx = canvas?.getContext("2d") as
         | CanvasRenderingContext2D
         | OffscreenCanvasRenderingContext2D
         | null;
-    if (!ctx) return text.fontSize;
-    ctx.font = `${text.fontWeight || "normal"} ${text.fontSize}px ${text.fontFamily}`;
-    const sample = (text.text || "").replace(/\n+/g, "") || "Mg";
-    const m = ctx.measureText(sample);
-    const ascent = Number.isFinite(m.actualBoundingBoxAscent) ? m.actualBoundingBoxAscent : text.fontSize * 0.8;
-    const descent = Number.isFinite(m.actualBoundingBoxDescent) ? m.actualBoundingBoxDescent : text.fontSize * 0.2;
-    return Math.max(1, ascent + descent);
-}
 
-/**
- * Vertical-trim geometry. `offsetY` is the half-leading above the first line
- * (the same amount sits below the last line), so a trimmed container is shorter
- * than the natural one by `2 * offsetY` and its glyphs must render `offsetY`
- * higher to sit flush with the top edge.
- */
-export function getTextTrimMetrics(text: TextLayer): { offsetY: number } {
-    const lineBox = text.fontSize * (text.lineHeight || 1.2);
-    const glyph = measureGlyphExtent(text);
-    return { offsetY: Math.max(0, (lineBox - glyph) / 2) };
+    let top: number;
+    let bottom: number;
+    if (!ctx) {
+        // SSR / no canvas: assume a symmetric em-box split.
+        const gap = Math.max(0, (L - text.fontSize) / 2);
+        top = gap;
+        bottom = cutToBaseline ? gap + text.fontSize * 0.2 : gap;
+    } else {
+        ctx.font = `${text.fontWeight || "normal"} ${text.fontSize}px ${text.fontFamily}`;
+        ctx.textBaseline = "alphabetic";
+        let display = text.text || "";
+        if (text.textTransform === "uppercase") display = display.toUpperCase();
+        else if (text.textTransform === "lowercase") display = display.toLowerCase();
+        const lines = display.split("\n");
+        const firstLine = lines[0] || "M";
+        const lastLine = lines[lines.length - 1] || "M";
+
+        const fm = ctx.measureText("M");
+        const A = Number.isFinite(fm.fontBoundingBoxAscent)
+            ? fm.fontBoundingBoxAscent
+            : (Number.isFinite(fm.actualBoundingBoxAscent) ? fm.actualBoundingBoxAscent : text.fontSize * 0.9);
+        const D = Number.isFinite(fm.fontBoundingBoxDescent)
+            ? fm.fontBoundingBoxDescent
+            : (Number.isFinite(fm.actualBoundingBoxDescent) ? fm.actualBoundingBoxDescent : text.fontSize * 0.25);
+
+        const fa = ctx.measureText(firstLine);
+        const la = ctx.measureText(lastLine);
+        const actualAscent = Number.isFinite(fa.actualBoundingBoxAscent) ? fa.actualBoundingBoxAscent : A;
+        // Baseline trim cuts exactly at the baseline (descent = 0); otherwise hug
+        // the last line's descender bottom.
+        const actualDescent = cutToBaseline
+            ? 0
+            : (Number.isFinite(la.actualBoundingBoxDescent) ? la.actualBoundingBoxDescent : D);
+
+        top = Math.max(0, L / 2 + (A - D) / 2 - actualAscent);
+        bottom = Math.max(0, L / 2 - (A - D) / 2 - actualDescent);
+    }
+
+    return { top, bottom, total: top + bottom };
 }
 
 function applyVerticalTrim(
     text: TextLayer,
     size: { width: number; height: number },
 ): { width: number; height: number } {
-    if (!text.verticalTrim) return size;
-    if ((text.textAdjust || "auto_width") === "fixed") return size;
-    const { offsetY } = getTextTrimMetrics(text);
-    if (offsetY <= 0) return size;
-    return { width: size.width, height: Math.max(1, size.height - 2 * offsetY) };
+    if (!isTextTrimActive(text)) return size;
+    const { total } = getTextTrimMetrics(text);
+    if (total <= 0) return size;
+    return { width: size.width, height: Math.max(1, size.height - total) };
 }
 
 /**

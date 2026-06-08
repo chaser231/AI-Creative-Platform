@@ -287,12 +287,19 @@ export function TextPropsGrouped({
                         <div className="grid grid-cols-2 gap-2">
                             <ToggleRow
                                 checked={!!layer.verticalTrim}
-                                label="Вертикальная обрезка"
-                                onChange={(checked) => onChange({ verticalTrim: checked })}
+                                label="Vertical trim"
+                                onChange={(checked) => onChange({ verticalTrim: checked, baselineTrim: false })}
                             />
                             <ToggleRow
+                                checked={!!layer.baselineTrim}
+                                label="Baseline trim"
+                                onChange={(checked) => onChange({ baselineTrim: checked, verticalTrim: false })}
+                            />
+                        </div>
+                        <div className="grid grid-cols-1">
+                            <ToggleRow
                                 checked={!!layer.truncateText}
-                                label="Обрезать текст"
+                                label="Truncate text"
                                 onChange={(checked) => onChange({ truncateText: checked })}
                             />
                         </div>

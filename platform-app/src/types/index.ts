@@ -245,6 +245,8 @@ export interface TextComponentProps extends BaseComponentProps {
     textAdjust?: "auto_width" | "auto_height" | "fixed";
     truncateText?: boolean;
     verticalTrim?: boolean;
+    /** Trim the container bottom to the text baseline (cuts descenders). */
+    baselineTrim?: boolean;
     textTransform?: "none" | "uppercase" | "lowercase";
 }
 
@@ -534,6 +536,8 @@ export interface TextLayer extends BaseLayer {
     textAdjust?: "auto_width" | "auto_height" | "fixed";
     truncateText?: boolean;
     verticalTrim?: boolean;
+    /** Trim the container bottom to the text baseline (cuts descenders). */
+    baselineTrim?: boolean;
     textTransform?: "none" | "uppercase" | "lowercase";
 }
 

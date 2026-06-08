@@ -37,7 +37,7 @@ const LAYOUT_AFFECTING_KEYS: ReadonlySet<string> = new Set<string>([
     "x", "y", "width", "height", "rotation", "visible",
     // text metrics that change measured size
     "text", "fontSize", "fontFamily", "fontWeight", "letterSpacing",
-    "lineHeight", "textAdjust", "textTransform", "verticalTrim",
+    "lineHeight", "textAdjust", "textTransform", "verticalTrim", "baselineTrim",
     // auto-layout frame config
     "layoutMode", "paddingTop", "paddingRight", "paddingBottom", "paddingLeft",
     "spacing", "primaryAxisAlignItems", "counterAxisAlignItems",
@@ -58,7 +58,7 @@ function updateAffectsLayout(updates: LayerUpdate): boolean {
 // Text-metric keys whose change must remeasure an auto-sized text container.
 const TEXT_METRIC_KEYS: ReadonlySet<string> = new Set<string>([
     "text", "fontSize", "fontFamily", "fontWeight", "letterSpacing",
-    "lineHeight", "textAdjust", "textTransform", "verticalTrim", "width",
+    "lineHeight", "textAdjust", "textTransform", "verticalTrim", "baselineTrim", "width",
 ]);
 
 function updateTouchesTextMetrics(updates: LayerUpdate): boolean {
@@ -222,7 +222,7 @@ export const createLayerSlice: StateCreator<CanvasStore, [], [], LayerSlice> = (
                 verticalAlign: layer.verticalAlign,
                 letterSpacing: layer.letterSpacing, lineHeight: layer.lineHeight,
                 textAdjust: layer.textAdjust, truncateText: layer.truncateText,
-                verticalTrim: layer.verticalTrim,
+                verticalTrim: layer.verticalTrim, baselineTrim: layer.baselineTrim,
             },
             layer.name, "text", layer.slotId, state,
         );
