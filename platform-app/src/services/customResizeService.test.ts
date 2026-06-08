@@ -312,6 +312,106 @@ describe("generateCustomResize", () => {
         });
     });
 
+    it("infers edge constraints for layers without explicit constraints", () => {
+        const result = generateCustomResize(
+            {
+                layers: [
+                    rect({ id: "corner", name: "Corner", x: 80, y: 80, width: 10, height: 10 }),
+                ],
+                activeResizeId: "master",
+                canvasWidth: 100,
+                canvasHeight: 100,
+                resizes: [resize({ id: "master", width: 100, height: 100, isMaster: true })],
+            },
+            { id: "target", name: "Target", width: 200, height: 200 },
+        );
+
+        // No constraints set -> inferred bottom-right -> stays pinned to the corner
+        // instead of clinging to the top-left as before.
+        expect(result.resize.layerSnapshot?.[0]).toMatchObject({ x: 180, y: 180, width: 10, height: 10 });
+    });
+
+    it("adapts children of a non-auto-layout frame to the new artboard", () => {
+        const child = rect({ id: "corner-child", name: "CornerChild", x: 80, y: 80, width: 10, height: 10 });
+        const parent = frame({
+            id: "bg-frame",
+            name: "BgFrame",
+            x: 0, y: 0, width: 100, height: 100,
+            childIds: ["corner-child"],
+        });
+
+        const result = generateCustomResize(
+            {
+                layers: [parent, child],
+                activeResizeId: "master",
+                canvasWidth: 100,
+                canvasHeight: 100,
+                resizes: [resize({ id: "master", width: 100, height: 100, isMaster: true })],
+            },
+            { id: "target", name: "Target", width: 200, height: 200 },
+        );
+
+        const byName = new Map(result.resize.layerSnapshot?.map((l) => [l.name, l]));
+        // Full-bleed frame stretches to fill; corner child stays in the corner.
+        expect(byName.get("BgFrame")).toMatchObject({ x: 0, y: 0, width: 200, height: 200 });
+        expect(byName.get("CornerChild")).toMatchObject({ x: 180, y: 180, width: 10, height: 10 });
+    });
+
+    it("projects nested frame children two levels deep", () => {
+        const grand = rect({
+            id: "grand", name: "Grand", x: 0, y: 0, width: 25, height: 25,
+            constraints: { horizontal: "scale", vertical: "scale" },
+        });
+        const inner = frame({
+            id: "inner", name: "Inner", x: 0, y: 0, width: 50, height: 50,
+            childIds: ["grand"],
+            constraints: { horizontal: "scale", vertical: "scale" },
+        });
+        const outer = frame({
+            id: "outer", name: "Outer", x: 0, y: 0, width: 100, height: 100,
+            childIds: ["inner"],
+            constraints: { horizontal: "scale", vertical: "scale" },
+        });
+
+        const result = generateCustomResize(
+            {
+                layers: [outer, inner, grand],
+                activeResizeId: "master",
+                canvasWidth: 100,
+                canvasHeight: 100,
+                resizes: [resize({ id: "master", width: 100, height: 100, isMaster: true })],
+            },
+            { id: "target", name: "Target", width: 200, height: 200 },
+        );
+
+        const byName = new Map(result.resize.layerSnapshot?.map((l) => [l.name, l]));
+        // 2x uniform scale must propagate through both nesting levels.
+        expect(byName.get("Inner")).toMatchObject({ width: 100, height: 100 });
+        expect(byName.get("Grand")).toMatchObject({ width: 50, height: 50 });
+    });
+
+    it("prefers a same-orientation source over a closer aspect ratio", () => {
+        const result = generateCustomResize(
+            {
+                layers: [rect({ id: "active-square", name: "ActiveSquare" })],
+                activeResizeId: "master",
+                canvasWidth: 500,
+                canvasHeight: 500,
+                resizes: [
+                    resize({ id: "master", width: 500, height: 500, isMaster: true }),
+                    resize({ id: "landRatio", name: "Land", width: 600, height: 500, layerSnapshot: [rect({ id: "land-layer", name: "LandLayer" })] }),
+                    resize({ id: "portRatio", name: "Port", width: 100, height: 1000, layerSnapshot: [rect({ id: "port-layer", name: "PortLayer" })] }),
+                ],
+            },
+            { id: "target", name: "Target", width: 500, height: 1000 },
+        );
+
+        // Target is portrait: the portrait source wins even though the square
+        // master is a closer aspect-ratio match.
+        expect(result.sourceResizeId).toBe("portRatio");
+        expect(result.resize.layerSnapshot?.[0]?.name).toBe("PortLayer");
+    });
+
     it("creates content/style-only bindings to master layers", () => {
         const masterText = text({ id: "master-headline", slotId: "headline", name: "Headline" });
         const wideText = text({ id: "wide-headline", slotId: "headline", name: "Headline", x: 40 });
