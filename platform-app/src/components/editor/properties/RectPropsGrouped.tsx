@@ -86,6 +86,7 @@ export function RectPropsGrouped({
                                     strokeJoin: layer.strokeJoin,
                                 }}
                                 onChange={onChange}
+                                showLabel={false}
                             />
                         </div>
                         {/* Corner Radius */}

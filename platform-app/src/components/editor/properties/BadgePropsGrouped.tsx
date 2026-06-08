@@ -40,9 +40,9 @@ export function BadgePropsGrouped({
                 value={layer.shape}
                 onChange={(val) => onChange({ shape: val as BadgeLayer["shape"] })}
                 options={[
-                    { value: "pill", label: "Pill" },
-                    { value: "rectangle", label: "Rect" },
-                    { value: "circle", label: "Circle" },
+                    { value: "pill", label: "Плашка" },
+                    { value: "rectangle", label: "Прямоугольник" },
+                    { value: "circle", label: "Круг" },
                 ]}
             />
 
@@ -84,7 +84,7 @@ export function BadgePropsGrouped({
                         <div className="w-full h-px bg-border-primary" />
                         {/* Fill */}
                         <div>
-                            <label className="text-[9px] text-text-tertiary uppercase tracking-wider font-medium mb-1.5 block">Фон</label>
+                            <label className="text-[9px] text-text-tertiary uppercase tracking-wider font-medium mb-1.5 block">Заливка</label>
                             <div className="flex items-center gap-1.5">
                                 <div className={`transition-opacity ${fillEnabled ? '' : 'opacity-30 pointer-events-none'}`}>
                                     <PaintInput value={layer.fill} gradientTargetId={layer.id} onChange={(v) => onChange({ fill: v })} />

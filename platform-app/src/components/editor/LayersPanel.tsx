@@ -18,7 +18,11 @@ import { useCanvasStore } from "@/store/canvasStore";
 import { useShallow } from "zustand/react/shallow";
 import type { FrameLayer } from "@/types";
 import { cn } from "@/lib/cn";
-import { useState, useRef } from "react";
+import { useState, useRef, memo } from "react";
+
+// Stable empty reference for non-frame rows so the children selector below
+// returns referentially-equal results (no spurious re-renders).
+const EMPTY_LAYERS: ReturnType<typeof useCanvasStore.getState>["layers"] = [];
 import { useSearchParams } from "next/navigation";
 import { ContextMenu, buildLayerContextMenuItems, buildMultiSelectionContextMenuItems } from "./ContextMenu";
 
@@ -42,7 +46,7 @@ function findParentFrame(
     ) as FrameLayer | undefined) ?? null;
 }
 
-function LayerRow({
+const LayerRow = memo(function LayerRow({
     layer,
     depth = 0,
     isTemplateMode = false,
@@ -51,9 +55,9 @@ function LayerRow({
     depth?: number;
     isTemplateMode?: boolean;
 }) {
+    // Action references are stable, so this selector object is referentially
+    // stable across renders and never triggers a re-render on its own.
     const {
-        layers,
-        selectedLayerIds,
         selectLayer,
         toggleSelection,
         toggleLayerVisibility,
@@ -70,7 +74,6 @@ function LayerRow({
         reorderLayers,
         setHoveredLayerId,
     } = useCanvasStore(useShallow((s) => ({
-        layers: s.layers, selectedLayerIds: s.selectedLayerIds,
         selectLayer: s.selectLayer, toggleSelection: s.toggleSelection,
         toggleLayerVisibility: s.toggleLayerVisibility, toggleLayerLock: s.toggleLayerLock,
         removeLayer: s.removeLayer, duplicateLayer: s.duplicateLayer,
@@ -82,6 +85,20 @@ function LayerRow({
         setHoveredLayerId: s.setHoveredLayerId,
     })));
 
+    const isFrame = layer.type === "frame";
+
+    // Granular subscriptions: this row only re-renders when its OWN selection
+    // state or its OWN children change — not on every unrelated layer edit.
+    const isSelected = useCanvasStore((s) => s.selectedLayerIds.includes(layer.id));
+    const childLayers = useCanvasStore(
+        useShallow((s) => isFrame
+            ? ([...(layer as FrameLayer).childIds]
+                .reverse()
+                .map((id) => s.layers.find((l) => l.id === id))
+                .filter(Boolean) as typeof EMPTY_LAYERS)
+            : EMPTY_LAYERS)
+    );
+
     const [expanded, setExpanded] = useState(true);
     const [isDragOver, setIsDragOver] = useState(false);
     const [dragPlacement, setDragPlacement] = useState<"before" | "inside" | "after" | null>(null);
@@ -90,16 +107,6 @@ function LayerRow({
     const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; multiIds?: string[] } | null>(null);
     const rowRef = useRef<HTMLDivElement>(null);
     const renameInputRef = useRef<HTMLInputElement>(null);
-
-    const isFrame = layer.type === "frame";
-    const childLayers = isFrame
-        ? [...(layer as FrameLayer).childIds]
-            .reverse()
-            .map((id) => layers.find((l) => l.id === id))
-            .filter(Boolean) as typeof layers
-        : [];
-
-    const isSelected = selectedLayerIds.includes(layer.id);
 
     const handleDragStart = (e: React.DragEvent) => {
         e.stopPropagation();
@@ -133,6 +140,7 @@ function LayerRow({
         if (draggedLayerId === layer.id) return;
 
         // Don't drop selection into one of its own members (if multiple)
+        const selectedLayerIds = useCanvasStore.getState().selectedLayerIds;
         if (selectedLayerIds.includes(draggedLayerId) && selectedLayerIds.includes(layer.id)) return;
 
         // Prevent dropping a frame onto itself or its own children
@@ -176,6 +184,8 @@ function LayerRow({
         if (!draggedLayerId) return;
         // Don't drop into self
         if (draggedLayerId === layer.id) return;
+
+        const { layers, selectedLayerIds } = useCanvasStore.getState();
 
         // Prevent dropping a frame into itself (simple check for single drag)
         const draggedLayer = layers.find((l) => l.id === draggedLayerId);
@@ -258,6 +268,7 @@ function LayerRow({
                     e.preventDefault();
                     e.stopPropagation();
                     // If right clicking something not in selection, select it
+                    const selectedLayerIds = useCanvasStore.getState().selectedLayerIds;
                     if (!isSelected) {
                         selectLayer(layer.id);
                         setCtxMenu({ x: e.clientX, y: e.clientY });
@@ -441,7 +452,7 @@ function LayerRow({
             ) : null}
         </>
     );
-}
+});
 
 export function LayersPanel({ className }: { className?: string } = {}) {
     const { layers, selectedLayerIds, removeLayerFromFrame } = useCanvasStore(useShallow((s) => ({

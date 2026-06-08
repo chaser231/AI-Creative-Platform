@@ -31,6 +31,7 @@ import {
     Plus,
     RotateCw,
     Scissors,
+    SlidersHorizontal,
     StretchHorizontal,
     StretchVertical,
     Type,
@@ -51,6 +52,8 @@ import type {
     ImageFitMode,
     Layer,
     LayerImageFill,
+    LayerResponsiveBehavior,
+    LayerResponsiveSettings,
     RectangleLayer,
     TemplateSlotRole,
     TextLayer,
@@ -80,6 +83,7 @@ const SYSTEM_FONTS = [
 ];
 
 const FIELD_CLASS = "w-full h-8 rounded-[var(--radius-md)] border border-border-primary bg-bg-secondary pl-7 pr-2 text-[11px] text-text-primary text-center focus:outline-none focus:ring-1 focus:ring-border-focus";
+const RESPONSIVE_CONTROLS_STORAGE_KEY = "studio-responsive-controls-open";
 type SizeModeOption = { value: string; label: string };
 type LayerSizeModeConfig = {
     value: string;
@@ -155,6 +159,15 @@ export function PropertiesPanel() {
     const activeFormat = resizes.find((resize) => resize.id === activeResizeId);
     const [artboardFillTab, setArtboardFillTab] = useState<"paint" | "image">("paint");
     const artboardFillImageActive = artboardFillTab === "image" || !!artboardProps.backgroundImage;
+    const [responsiveControlsOpen, setResponsiveControlsOpen] = useState(() => {
+        if (typeof window === "undefined") return false;
+        return window.localStorage.getItem(RESPONSIVE_CONTROLS_STORAGE_KEY) === "1";
+    });
+
+    useEffect(() => {
+        if (typeof window === "undefined") return;
+        window.localStorage.setItem(RESPONSIVE_CONTROLS_STORAGE_KEY, responsiveControlsOpen ? "1" : "0");
+    }, [responsiveControlsOpen]);
 
     const handleArtboardStrokeChange = useCallback((updates: Partial<StrokeControlsValue>) => {
         const next: Partial<typeof artboardProps> = {};
@@ -224,6 +237,8 @@ export function PropertiesPanel() {
                         layer={selectedLayer}
                         layers={layers}
                         activeResizeId={activeResizeId}
+                        responsiveControlsOpen={responsiveControlsOpen}
+                        onResponsiveControlsOpenChange={setResponsiveControlsOpen}
                         onChange={(updates) => updateLayer(selectedLayer.id, updates)}
                         onAlign={alignSelectedLayers}
                     />
@@ -237,7 +252,7 @@ export function PropertiesPanel() {
                         </InspectorSection>
                         <InspectorSection title="Стиль артборда" icon={<Paintbrush size={13} />}>
                             <PaintRow
-                                label="Фон"
+                                label="Заливка"
                                 value={artboardProps.fill}
                                 gradientTargetId="artboard"
                                 onChange={(fill) => updateArtboardProps({ fill })}
@@ -305,12 +320,16 @@ function LayerInspector({
     layer,
     layers,
     activeResizeId,
+    responsiveControlsOpen,
+    onResponsiveControlsOpenChange,
     onChange,
     onAlign,
 }: {
     layer: Layer;
     layers: Layer[];
     activeResizeId: string;
+    responsiveControlsOpen: boolean;
+    onResponsiveControlsOpenChange: (open: boolean) => void;
     onChange: (updates: Partial<Layer>) => void;
     onAlign: (alignment: "left" | "center" | "right" | "top" | "middle" | "bottom") => void;
 }) {
@@ -377,6 +396,12 @@ function LayerInspector({
                 <AutoLayoutChildSection layer={layer} onChange={onChange} />
             )}
             <ConstraintsSection layer={layer} onChange={onChange} />
+            <ResponsiveInspectorSection
+                layer={layer}
+                enabled={responsiveControlsOpen}
+                onEnabledChange={onResponsiveControlsOpenChange}
+                onChange={onChange}
+            />
             {layer.type === "text" && <TextInspectorSection layer={layer} onChange={(updates) => onChange(updates as Partial<Layer>)} />}
             {layer.type === "image" && <ImageInspectorSection layer={layer} onChange={(updates) => onChange(updates as Partial<Layer>)} />}
             {layer.type === "rectangle" && <ShapeStyleSection layer={layer} onChange={(updates) => onChange(updates as Partial<Layer>)} />}
@@ -401,12 +426,12 @@ function AlignmentSection({
     return (
         <InspectorSection title="Выравнивание" icon={<AlignCenter size={13} />}>
             <div className={cn("grid grid-cols-6 rounded-[var(--radius-md)] border border-border-primary overflow-hidden", disabled && "opacity-40 pointer-events-none")}>
-                <IconButton title="Left" onClick={() => onAlign("left")}><AlignLeft size={13} /></IconButton>
-                <IconButton title="Center" onClick={() => onAlign("center")}><AlignCenter size={13} /></IconButton>
-                <IconButton title="Right" onClick={() => onAlign("right")}><AlignRight size={13} /></IconButton>
-                <IconButton title="Top" onClick={() => onAlign("top")}><AlignLeft size={13} className="-rotate-90" /></IconButton>
-                <IconButton title="Middle" onClick={() => onAlign("middle")}><AlignCenter size={13} className="rotate-90" /></IconButton>
-                <IconButton title="Bottom" onClick={() => onAlign("bottom")}><AlignRight size={13} className="-rotate-90" /></IconButton>
+                <IconButton title="По левому краю" onClick={() => onAlign("left")}><AlignLeft size={13} /></IconButton>
+                <IconButton title="По центру" onClick={() => onAlign("center")}><AlignCenter size={13} /></IconButton>
+                <IconButton title="По правому краю" onClick={() => onAlign("right")}><AlignRight size={13} /></IconButton>
+                <IconButton title="По верхнему краю" onClick={() => onAlign("top")}><AlignLeft size={13} className="-rotate-90" /></IconButton>
+                <IconButton title="По середине" onClick={() => onAlign("middle")}><AlignCenter size={13} className="rotate-90" /></IconButton>
+                <IconButton title="По нижнему краю" onClick={() => onAlign("bottom")}><AlignRight size={13} className="-rotate-90" /></IconButton>
             </div>
         </InspectorSection>
     );
@@ -421,7 +446,7 @@ function ConstraintsSection({
 }) {
     const constraints = layer.constraints ?? DEFAULT_CONSTRAINTS;
     return (
-        <InspectorSection title="Constraints" icon={<Anchor size={13} />}>
+        <InspectorSection title="Привязка" icon={<Anchor size={13} />}>
             <div className="grid grid-cols-[72px_1fr] gap-2">
                 <ConstraintsAnchorGrid
                     constraints={constraints}
@@ -433,11 +458,11 @@ function ConstraintsSection({
                         value={constraints.horizontal}
                         onChange={(value) => onChange({ constraints: { ...constraints, horizontal: value as ConstraintH } } as Partial<Layer>)}
                         options={[
-                            { value: "left", label: "Left" },
-                            { value: "right", label: "Right" },
-                            { value: "center", label: "Center" },
-                            { value: "stretch", label: "Stretch" },
-                            { value: "scale", label: "Scale" },
+                            { value: "left", label: "Слева" },
+                            { value: "right", label: "Справа" },
+                            { value: "center", label: "По центру" },
+                            { value: "stretch", label: "Растянуть" },
+                            { value: "scale", label: "Масштаб" },
                         ]}
                     />
                     <Select
@@ -445,11 +470,11 @@ function ConstraintsSection({
                         value={constraints.vertical}
                         onChange={(value) => onChange({ constraints: { ...constraints, vertical: value as ConstraintV } } as Partial<Layer>)}
                         options={[
-                            { value: "top", label: "Top" },
-                            { value: "bottom", label: "Bottom" },
-                            { value: "center", label: "Center" },
-                            { value: "stretch", label: "Stretch" },
-                            { value: "scale", label: "Scale" },
+                            { value: "top", label: "Сверху" },
+                            { value: "bottom", label: "Снизу" },
+                            { value: "center", label: "По центру" },
+                            { value: "stretch", label: "Растянуть" },
+                            { value: "scale", label: "Масштаб" },
                         ]}
                     />
                 </div>
@@ -459,20 +484,20 @@ function ConstraintsSection({
                 value={layer.slotId || "none"}
                 onChange={(value) => onChange({ slotId: value as TemplateSlotRole } as Partial<Layer>)}
                 options={[
-                    { value: "none", label: "No slot" },
-                    { value: "headline", label: "Headline" },
-                    { value: "subhead", label: "Subhead" },
-                    { value: "cta", label: "CTA" },
-                    { value: "background", label: "Background" },
-                    { value: "image-primary", label: "Main image" },
-                    { value: "logo", label: "Logo" },
+                    { value: "none", label: "Без слота" },
+                    { value: "headline", label: "Заголовок" },
+                    { value: "subhead", label: "Подзаголовок" },
+                    { value: "cta", label: "Кнопка" },
+                    { value: "background", label: "Фон" },
+                    { value: "image-primary", label: "Главное изображение" },
+                    { value: "logo", label: "Логотип" },
                 ]}
             />
             {layer.type === "frame" && (
                 <input
                     value={(layer as FrameLayer).groupSlotId || ""}
                     onChange={(event) => onChange({ groupSlotId: event.target.value || undefined } as Partial<Layer>)}
-                    placeholder="Group slot ID"
+                    placeholder="ID группового слота"
                     className="w-full h-8 px-2 rounded-[var(--radius-md)] border border-border-primary bg-bg-secondary text-[11px] text-text-primary focus:outline-none focus:ring-1 focus:ring-border-focus placeholder:text-text-tertiary"
                 />
             )}
@@ -480,12 +505,109 @@ function ConstraintsSection({
     );
 }
 
+function ResponsiveInspectorSection({
+    layer,
+    enabled,
+    onEnabledChange,
+    onChange,
+}: {
+    layer: Layer;
+    enabled: boolean;
+    onEnabledChange: (enabled: boolean) => void;
+    onChange: (updates: Partial<Layer>) => void;
+}) {
+    const responsive = layer.responsive ?? {};
+    const supportsFontLimits = layer.type === "text" || layer.type === "badge";
+
+    const updateResponsive = (updates: Partial<LayerResponsiveSettings>) => {
+        onChange({ responsive: compactResponsiveSettings({ ...responsive, ...updates }) } as Partial<Layer>);
+    };
+
+    return (
+        <InspectorSection title="Адаптация" icon={<SlidersHorizontal size={13} />}>
+            <ToggleButton
+                active={enabled}
+                icon={<SlidersHorizontal size={12} />}
+                label="Расширенные"
+                onClick={() => onEnabledChange(!enabled)}
+            />
+            {enabled && (
+                <>
+                    <LabeledControl label="Роль">
+                        <input
+                            value={responsive.role ?? ""}
+                            onChange={(event) => updateResponsive({ role: event.target.value })}
+                            placeholder={layer.slotId && layer.slotId !== "none" ? layer.slotId : layer.name}
+                            className="w-full h-8 px-2 rounded-[var(--radius-md)] border border-border-primary bg-bg-secondary text-[11px] text-text-primary focus:outline-none focus:ring-1 focus:ring-border-focus placeholder:text-text-tertiary"
+                        />
+                    </LabeledControl>
+                    <Select
+                        size="xs"
+                        value={responsive.behavior ?? "auto"}
+                        onChange={(behavior) => updateResponsive({ behavior: behavior as LayerResponsiveBehavior })}
+                        options={[
+                            { value: "auto", label: "Авто" },
+                            { value: "fixed", label: "Фикс." },
+                            { value: "fluid", label: "Гибкая" },
+                            { value: "background", label: "Фон" },
+                            { value: "decorative", label: "Декор" },
+                        ]}
+                    />
+                    <TwoColumn>
+                        <NumberField
+                            label="Приор"
+                            value={responsive.priority ?? 50}
+                            min={0}
+                            max={100}
+                            onChange={(priority) => updateResponsive({ priority })}
+                        />
+                        <ToggleButton
+                            active={!!responsive.canHide}
+                            label="Скрывать"
+                            icon={responsive.canHide ? <EyeOff size={12} /> : <Eye size={12} />}
+                            onClick={() => updateResponsive({ canHide: !responsive.canHide })}
+                        />
+                    </TwoColumn>
+                    {supportsFontLimits && (
+                        <TwoColumn>
+                            <NumberField
+                                label="Min"
+                                value={responsive.minFontSize ?? 8}
+                                min={1}
+                                onChange={(minFontSize) => updateResponsive({ minFontSize })}
+                            />
+                            <NumberField
+                                label="Max"
+                                value={responsive.maxFontSize ?? 0}
+                                min={0}
+                                onChange={(maxFontSize) => updateResponsive({ maxFontSize: maxFontSize > 0 ? maxFontSize : undefined })}
+                            />
+                        </TwoColumn>
+                    )}
+                </>
+            )}
+        </InspectorSection>
+    );
+}
+
+function compactResponsiveSettings(settings: LayerResponsiveSettings): LayerResponsiveSettings | undefined {
+    const next: LayerResponsiveSettings = { ...settings };
+    if (!next.role?.trim()) delete next.role;
+    else next.role = next.role.trim();
+    if (!next.behavior || next.behavior === "auto") delete next.behavior;
+    if (next.priority === undefined || next.priority === 50) delete next.priority;
+    if (!next.canHide) delete next.canHide;
+    if (next.minFontSize === undefined || next.minFontSize === 8) delete next.minFontSize;
+    if (next.maxFontSize === undefined || next.maxFontSize <= 0) delete next.maxFontSize;
+    return Object.keys(next).length > 0 ? next : undefined;
+}
+
 function AutoLayoutChildSection({ layer, onChange }: { layer: Layer; onChange: (updates: Partial<Layer>) => void }) {
     return (
-        <InspectorSection title="Auto Layout" icon={<LayoutDashboard size={13} />}>
+        <InspectorSection title="Авторазметка" icon={<LayoutDashboard size={13} />}>
             <ToggleButton
                 active={!!layer.isAbsolutePositioned}
-                label="Absolute position"
+                label="Абсолютная позиция"
                 onClick={() => onChange({ isAbsolutePositioned: !layer.isAbsolutePositioned } as Partial<Layer>)}
             />
         </InspectorSection>
@@ -498,7 +620,7 @@ function FrameLayoutSection({ layer, onChange }: { layer: FrameLayer; onChange: 
     const horizontalPadding = layer.paddingLeft ?? layer.paddingRight ?? 0;
     const verticalPadding = layer.paddingTop ?? layer.paddingBottom ?? 0;
     return (
-        <InspectorSection title="Auto Layout" icon={<LayoutDashboard size={13} />}>
+        <InspectorSection title="Авторазметка" icon={<LayoutDashboard size={13} />}>
             <div className="grid grid-cols-3 overflow-hidden rounded-[var(--radius-md)] border border-border-primary">
                 {(["none", "horizontal", "vertical"] as const).map((mode) => (
                     <button
@@ -510,7 +632,7 @@ function FrameLayoutSection({ layer, onChange }: { layer: FrameLayer; onChange: 
                                 ? "bg-accent-primary/10 text-accent-primary"
                                 : "text-text-tertiary hover:text-text-primary hover:bg-bg-tertiary",
                         )}
-                        title={mode === "none" ? "Auto Layout off" : mode}
+                        title={mode === "none" ? "Авторазметка выключена" : mode === "horizontal" ? "Горизонтально" : "Вертикально"}
                     >
                         {mode === "none" ? <Grid3X3 size={13} /> : mode === "horizontal" ? <ArrowRight size={14} /> : <ArrowDown size={14} />}
                     </button>
@@ -526,14 +648,14 @@ function FrameLayoutSection({ layer, onChange }: { layer: FrameLayer; onChange: 
                     <div className="grid grid-cols-[1fr_28px] gap-2">
                         <div className="grid grid-cols-2 gap-2">
                             <CompactNumberField
-                                label="Horizontal padding"
+                                label="Горизонтальные отступы"
                                 icon={<MoveHorizontal size={12} />}
                                 value={horizontalPadding}
                                 min={0}
                                 onChange={(value) => onChange({ paddingLeft: value, paddingRight: value })}
                             />
                             <CompactNumberField
-                                label="Vertical padding"
+                                label="Вертикальные отступы"
                                 icon={<MoveVertical size={12} />}
                                 value={verticalPadding}
                                 min={0}
@@ -547,21 +669,21 @@ function FrameLayoutSection({ layer, onChange }: { layer: FrameLayer; onChange: 
                                 "flex h-8 items-center justify-center rounded-[var(--radius-md)] border border-border-primary text-text-tertiary transition-colors hover:bg-bg-tertiary hover:text-text-primary",
                                 individualPaddingOpen && "bg-accent-primary/10 text-accent-primary",
                             )}
-                            title="Individual padding"
+                            title="Индивидуальные отступы"
                         >
                             <Plus size={13} />
                         </button>
                     </div>
                     {individualPaddingOpen && (
                         <TwoColumn>
-                            <CompactNumberField label="Top padding" icon={<PanelTop size={12} />} value={layer.paddingTop || 0} min={0} onChange={(paddingTop) => onChange({ paddingTop })} />
-                            <CompactNumberField label="Right padding" icon={<PanelRight size={12} />} value={layer.paddingRight || 0} min={0} onChange={(paddingRight) => onChange({ paddingRight })} />
-                            <CompactNumberField label="Bottom padding" icon={<PanelBottom size={12} />} value={layer.paddingBottom || 0} min={0} onChange={(paddingBottom) => onChange({ paddingBottom })} />
-                            <CompactNumberField label="Left padding" icon={<PanelLeft size={12} />} value={layer.paddingLeft || 0} min={0} onChange={(paddingLeft) => onChange({ paddingLeft })} />
+                            <CompactNumberField label="Отступ сверху" icon={<PanelTop size={12} />} value={layer.paddingTop || 0} min={0} onChange={(paddingTop) => onChange({ paddingTop })} />
+                            <CompactNumberField label="Отступ справа" icon={<PanelRight size={12} />} value={layer.paddingRight || 0} min={0} onChange={(paddingRight) => onChange({ paddingRight })} />
+                            <CompactNumberField label="Отступ снизу" icon={<PanelBottom size={12} />} value={layer.paddingBottom || 0} min={0} onChange={(paddingBottom) => onChange({ paddingBottom })} />
+                            <CompactNumberField label="Отступ слева" icon={<PanelLeft size={12} />} value={layer.paddingLeft || 0} min={0} onChange={(paddingLeft) => onChange({ paddingLeft })} />
                         </TwoColumn>
                     )}
                     <CompactNumberField
-                        label="Gap"
+                        label="Интервал"
                         icon={layer.layoutMode === "horizontal" ? <BetweenHorizontalStart size={12} /> : <BetweenVerticalStart size={12} />}
                         value={layer.spacing || 0}
                         min={0}
@@ -625,7 +747,7 @@ function TextInspectorSection({ layer, onChange }: { layer: TextLayer; onChange:
     }, [workspaceFontNames]);
 
     return (
-        <InspectorSection title="Typography" icon={<Type size={13} />}>
+        <InspectorSection title="Текст" icon={<Type size={13} />}>
             {isFontMissing && (
                 <div className="rounded-[var(--radius-md)] border border-amber-500/20 bg-amber-500/10 px-2 py-1.5 text-[10px] text-amber-500">
                     Шрифт «{layer.fontFamily}» не установлен
@@ -644,9 +766,9 @@ function TextInspectorSection({ layer, onChange }: { layer: TextLayer; onChange:
                     onChange={(fontWeight) => onChange({ fontWeight })}
                     options={availableWeights.map((weight) => ({ value: weight, label: weight }))}
                 />
-                <NumberField label="Size" icon={<ALargeSmall size={13} />} value={layer.fontSize} min={1} onChange={(fontSize) => onChange({ fontSize })} />
-                <NumberField label="Line" icon={<BetweenVerticalStart size={13} />} value={Math.round((layer.lineHeight || 1.2) * 100)} min={1} onChange={(lineHeight) => onChange({ lineHeight: lineHeight / 100 })} />
-                <NumberField label="Track" icon={<MoveHorizontal size={13} />} value={layer.letterSpacing} step={0.1} onChange={(letterSpacing) => onChange({ letterSpacing })} />
+                <NumberField label="Размер" icon={<ALargeSmall size={13} />} value={layer.fontSize} min={1} onChange={(fontSize) => onChange({ fontSize })} />
+                <NumberField label="Интерлиньяж" icon={<BetweenVerticalStart size={13} />} value={Math.round((layer.lineHeight || 1.2) * 100)} min={1} onChange={(lineHeight) => onChange({ lineHeight: lineHeight / 100 })} />
+                <NumberField label="Трекинг" icon={<MoveHorizontal size={13} />} value={layer.letterSpacing} step={0.1} onChange={(letterSpacing) => onChange({ letterSpacing })} />
             </TwoColumn>
             <TwoColumn>
                 <TextAdjustSwitcher
@@ -663,30 +785,30 @@ function TextInspectorSection({ layer, onChange }: { layer: TextLayer; onChange:
                     value={layer.textTransform || "none"}
                     onChange={(textTransform) => onChange({ textTransform: textTransform as TextLayer["textTransform"] })}
                     options={[
-                        { value: "none", label: "Default" },
-                        { value: "uppercase", label: "Upper" },
-                        { value: "lowercase", label: "Lower" },
+                        { value: "none", label: "Без изменений" },
+                        { value: "uppercase", label: "Верхний" },
+                        { value: "lowercase", label: "Нижний" },
                     ]}
                 />
             </TwoColumn>
             <div className="grid grid-cols-3 rounded-[var(--radius-md)] border border-border-primary overflow-hidden">
-                <IconButton title="Left" active={layer.align === "left"} onClick={() => onChange({ align: "left" })}><AlignLeft size={13} /></IconButton>
-                <IconButton title="Center" active={layer.align === "center"} onClick={() => onChange({ align: "center" })}><AlignCenter size={13} /></IconButton>
-                <IconButton title="Right" active={layer.align === "right"} onClick={() => onChange({ align: "right" })}><AlignRight size={13} /></IconButton>
+                <IconButton title="По левому краю" active={layer.align === "left"} onClick={() => onChange({ align: "left" })}><AlignLeft size={13} /></IconButton>
+                <IconButton title="По центру" active={layer.align === "center"} onClick={() => onChange({ align: "center" })}><AlignCenter size={13} /></IconButton>
+                <IconButton title="По правому краю" active={layer.align === "right"} onClick={() => onChange({ align: "right" })}><AlignRight size={13} /></IconButton>
             </div>
             <div className="grid grid-cols-3 rounded-[var(--radius-md)] border border-border-primary overflow-hidden">
                 {(["top", "middle", "bottom"] as const).map((align) => (
-                    <IconButton key={align} title={align} active={(layer.verticalAlign || "top") === align} onClick={() => onChange({ verticalAlign: align })}>
+                    <IconButton key={align} title={align === "top" ? "По верхнему краю" : align === "middle" ? "По середине" : "По нижнему краю"} active={(layer.verticalAlign || "top") === align} onClick={() => onChange({ verticalAlign: align })}>
                         <VerticalAlignGlyph align={align} />
                     </IconButton>
                 ))}
             </div>
             <TwoColumn>
-                <ToggleButton active={!!layer.verticalTrim} label="Vertical trim" onClick={() => onChange({ verticalTrim: !layer.verticalTrim })} />
-                <ToggleButton active={!!layer.truncateText} label="Truncate" onClick={() => onChange({ truncateText: !layer.truncateText })} />
+                <ToggleButton active={!!layer.verticalTrim} label="Вертикальная обрезка" onClick={() => onChange({ verticalTrim: !layer.verticalTrim })} />
+                <ToggleButton active={!!layer.truncateText} label="Обрезать текст" onClick={() => onChange({ truncateText: !layer.truncateText })} />
             </TwoColumn>
             <PaintRow
-                label="Fill"
+                label="Заливка"
                 value={layer.fill}
                 allowGradient={false}
                 enabled={layer.fillEnabled !== false}
@@ -769,7 +891,7 @@ function ImageInspectorSection({ layer, onChange }: { layer: ImageLayer; onChang
             <InspectorSection title="Стиль" icon={<Paintbrush size={13} />}>
                 <OpacityControl value={layer.opacity ?? 1} onChange={(opacity) => onChange({ opacity })} />
                 <PaintRow
-                    label="Fill"
+                    label="Заливка"
                     value={layer.fill ?? "#FFFFFF"}
                     gradientTargetId={layer.id}
                     enabled={layer.fillEnabled !== false}
@@ -792,7 +914,7 @@ function ImageInspectorSection({ layer, onChange }: { layer: ImageLayer; onChang
                             onFocusChange={(updates) => onChange(updates)}
                             onReplaceImage={() => fileRef.current?.click()}
                             isReplacingImage={isUploading}
-                            replaceImageLabel={isUploading ? "Загрузка..." : "Заменить image"}
+                            replaceImageLabel={isUploading ? "Загрузка..." : "Заменить изображение"}
                         />
                     )}
                 />
@@ -913,14 +1035,14 @@ function BadgeInspectorSection({ layer, onChange }: { layer: BadgeLayer; onChang
                 value={layer.shape}
                 onChange={(shape) => onChange({ shape: shape as BadgeLayer["shape"] })}
                 options={[
-                    { value: "pill", label: "Pill" },
-                    { value: "rectangle", label: "Rect" },
-                    { value: "circle", label: "Circle" },
+                    { value: "pill", label: "Плашка" },
+                    { value: "rectangle", label: "Прямоугольник" },
+                    { value: "circle", label: "Круг" },
                 ]}
             />
             <OpacityControl value={layer.opacity ?? 1} onChange={(opacity) => onChange({ opacity })} />
             <PaintRow
-                label="Фон"
+                label="Заливка"
                 value={layer.fill}
                 gradientTargetId={layer.id}
                 enabled={fillEnabled}
@@ -1001,7 +1123,7 @@ function CornerRadiusSection({
                         individualCornersOpen && "bg-accent-primary/10 text-accent-primary",
                         !allEqual && "border-accent-primary/30 text-accent-primary",
                     )}
-                    title={allEqual ? "Individual corners" : "Mixed corners"}
+                    title={allEqual ? "Отдельные скругления" : "Разные скругления"}
                 >
                     <Grid3X3 size={13} />
                 </button>
@@ -1042,7 +1164,7 @@ function CornerRadiusSection({
                 <ToggleButton
                     active={clipContent}
                     icon={<Scissors size={12} />}
-                    label="Clip content"
+                    label="Обрезать содержимое"
                     onClick={() => onClipChange(!clipContent)}
                 />
             )}
@@ -1104,7 +1226,7 @@ function NumberField({
             <span
                 {...scrub}
                 className="absolute left-2 top-1/2 z-10 flex -translate-y-1/2 cursor-ew-resize items-center text-[11px] font-medium text-text-tertiary hover:text-text-primary"
-                title="Drag to adjust"
+                title="Изменить значение"
             >
                 {icon ?? label}
             </span>
@@ -1149,7 +1271,7 @@ function SizeField({
             <span
                 {...scrub}
                 className="flex h-8 cursor-ew-resize select-none items-center justify-center border-r border-border-primary text-[11px] font-medium text-text-tertiary hover:text-text-primary"
-                title="Drag to adjust"
+                title="Изменить значение"
             >
                 {label}
             </span>
@@ -1187,9 +1309,9 @@ function TextAdjustSwitcher({
     onChange: (value: NonNullable<TextLayer["textAdjust"]>) => void;
 }) {
     const options: Array<{ value: NonNullable<TextLayer["textAdjust"]>; title: string; icon: ReactNode }> = [
-        { value: "auto_width", title: "Auto width", icon: <StretchHorizontal size={13} /> },
-        { value: "auto_height", title: "Auto height", icon: <StretchVertical size={13} /> },
-        { value: "fixed", title: "Fixed size", icon: <Maximize2 size={13} /> },
+        { value: "auto_width", title: "Автоширина", icon: <StretchHorizontal size={13} /> },
+        { value: "auto_height", title: "Автовысота", icon: <StretchVertical size={13} /> },
+        { value: "fixed", title: "Фиксированный размер", icon: <Maximize2 size={13} /> },
     ];
 
     return (
@@ -1294,7 +1416,7 @@ function ImageSourceStylePanel({
     onFocusChange,
     onReplaceImage,
     isReplacingImage = false,
-    replaceImageLabel = "Заменить image",
+    replaceImageLabel = "Заменить изображение",
 }: {
     fitModes: ImageFitMode[];
     fit: ImageFitMode;
@@ -1407,7 +1529,7 @@ function LayerImageFillPanel({
                 className="flex h-8 w-full items-center justify-center gap-1.5 rounded-[var(--radius-md)] border border-border-primary bg-bg-secondary text-[10px] font-medium text-text-secondary transition-colors hover:bg-bg-tertiary hover:text-text-primary disabled:opacity-50 cursor-pointer"
             >
                 <Upload size={12} />
-                {isUploading ? "Загрузка..." : imageFill?.src ? "Заменить image fill" : "Загрузить image fill"}
+                {isUploading ? "Загрузка..." : imageFill?.src ? "Заменить изображение заливки" : "Загрузить изображение заливки"}
             </button>
             {imageFill?.src && (
                 <>
@@ -1424,7 +1546,7 @@ function LayerImageFillPanel({
                         onClick={() => onChange(undefined)}
                         className="flex h-8 w-full items-center justify-center rounded-[var(--radius-md)] border border-border-primary text-[10px] text-text-tertiary transition-colors hover:bg-red-500/10 hover:text-red-500 cursor-pointer"
                     >
-                        Убрать image fill
+                        Убрать изображение заливки
                     </button>
                 </>
             )}
@@ -1518,7 +1640,7 @@ function PercentField({ value, onChange, disabled }: { value: number; onChange: 
             <span
                 {...scrub}
                 className="absolute left-2 top-1/2 z-10 h-px w-2 -translate-y-1/2 cursor-ew-resize rounded-full bg-text-tertiary hover:bg-text-primary"
-                title="Drag to adjust opacity"
+                title="Изменить непрозрачность"
             />
             <SmartNumberInput
                 min={0}
@@ -1568,10 +1690,10 @@ function AutoLayoutAlignmentGrid({
                     value={primary}
                     onChange={(value) => onChange({ primaryAxisAlignItems: value as FrameLayer["primaryAxisAlignItems"] })}
                     options={[
-                        { value: "flex-start", label: "Start" },
-                        { value: "center", label: "Center" },
-                        { value: "flex-end", label: "End" },
-                        { value: "space-between", label: "Space" },
+                        { value: "flex-start", label: "В начало" },
+                        { value: "center", label: "По центру" },
+                        { value: "flex-end", label: "В конец" },
+                        { value: "space-between", label: "Между" },
                     ]}
                 />
                 <Select
@@ -1579,10 +1701,10 @@ function AutoLayoutAlignmentGrid({
                     value={counter}
                     onChange={(value) => onChange({ counterAxisAlignItems: value as FrameLayer["counterAxisAlignItems"] })}
                     options={[
-                        { value: "flex-start", label: "Start" },
-                        { value: "center", label: "Center" },
-                        { value: "flex-end", label: "End" },
-                        { value: "stretch", label: "Stretch" },
+                        { value: "flex-start", label: "В начало" },
+                        { value: "center", label: "По центру" },
+                        { value: "flex-end", label: "В конец" },
+                        { value: "stretch", label: "Растянуть" },
                     ]}
                 />
             </div>
@@ -1629,7 +1751,7 @@ function OpacityControl({ value, onChange }: { value: number; onChange: (opacity
         onChange: (next) => onChange(Math.max(0, Math.min(100, next)) / 100),
     });
     return (
-        <LabeledControl label="Opacity">
+        <LabeledControl label="Непрозрачность">
             <div className="flex items-center gap-2">
                 <input
                     type="range"
@@ -1643,7 +1765,7 @@ function OpacityControl({ value, onChange }: { value: number; onChange: (opacity
                     <span
                         {...scrub}
                         className="absolute left-2 top-1/2 z-10 h-px w-2 -translate-y-1/2 cursor-ew-resize rounded-full bg-text-tertiary hover:bg-text-primary"
-                        title="Drag to adjust opacity"
+                        title="Изменить непрозрачность"
                     />
                     <SmartNumberInput
                         min={0}
@@ -1736,9 +1858,9 @@ function findParentFrame(layers: Layer[], layerId: string) {
 
 function layoutSizingOptions(layer: Layer) {
     return [
-        { value: "fixed", label: "Fixed" },
-        { value: "fill", label: "Fill" },
-        ...(layer.type === "frame" || layer.type === "text" ? [{ value: "hug", label: "Hug" }] : []),
+        { value: "fixed", label: "Фикс." },
+        { value: "fill", label: "Заполн." },
+        ...(layer.type === "frame" || layer.type === "text" ? [{ value: "hug", label: "По содерж." }] : []),
     ];
 }
 
@@ -1763,8 +1885,8 @@ function getLayerSizeModeConfig(layer: Layer, axis: "width" | "height", isInside
     return {
         value: mode === "auto" ? "hug" : "fixed",
         options: [
-            { value: "fixed", label: "Fixed" },
-            { value: "hug", label: "Hug" },
+            { value: "fixed", label: "Фикс." },
+            { value: "hug", label: "По содерж." },
         ],
         toUpdates: (value) => (axisUsesPrimarySizing
             ? { primaryAxisSizingMode: value === "hug" ? "auto" : "fixed" }

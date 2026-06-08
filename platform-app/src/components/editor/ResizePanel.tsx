@@ -1,6 +1,6 @@
 "use client";
 
-import { Plus, Trash2, Check, Link, Unlink, X, Copy, FileText, Crown, Settings2, Pencil, Maximize2 } from "lucide-react";
+import { Plus, Trash2, Check, Link, Unlink, X, Copy, FileText, Crown, Settings2, Pencil, Maximize2, Sparkles, AlertTriangle } from "lucide-react";
 import { useCanvasStore } from "@/store/canvasStore";
 import { useShallow } from "zustand/react/shallow";
 import { useState, useRef, useCallback } from "react";
@@ -8,6 +8,7 @@ import { cloneLayerTree } from "@/utils/cloneLayerTree";
 import { BindToMasterModal } from "./BindToMasterModal";
 import { ContextMenu } from "./ContextMenu";
 import type { ContextMenuEntry } from "./ContextMenu";
+import type { CustomResizeDiagnostic } from "@/services/customResizeService";
 import { cn } from "@/lib/cn";
 
 export function ResizePanel({ className }: { className?: string } = {}) {
@@ -21,6 +22,7 @@ export function ResizePanel({ className }: { className?: string } = {}) {
         renameResize,
         resizeFormat,
         duplicateResize,
+        createSmartResize,
         layers,
         masterComponents,
         promoteFormatToMaster,
@@ -32,6 +34,7 @@ export function ResizePanel({ className }: { className?: string } = {}) {
         renameResize: s.renameResize,
         resizeFormat: s.resizeFormat,
         duplicateResize: s.duplicateResize,
+        createSmartResize: s.createSmartResize,
         layers: s.layers,
         masterComponents: s.masterComponents,
         promoteFormatToMaster: s.promoteFormatToMaster,
@@ -41,6 +44,7 @@ export function ResizePanel({ className }: { className?: string } = {}) {
     const [customName, setCustomName] = useState("");
     const [customWidth, setCustomWidth] = useState("1200");
     const [customHeight, setCustomHeight] = useState("628");
+    const [smartDiagnostics, setSmartDiagnostics] = useState<CustomResizeDiagnostic[]>([]);
     const [editingId, setEditingId] = useState<string | null>(null);
     const [editingName, setEditingName] = useState("");
     const renameRef = useRef<HTMLInputElement>(null);
@@ -144,10 +148,31 @@ export function ResizePanel({ className }: { className?: string } = {}) {
         return items;
     }, [resizes, handleStartRename, handleStartResize, duplicateResize, promoteFormatToMaster, demoteFormatFromMaster, removeResize]);
 
-    const handleAddCustom = (mode: "clone" | "empty") => {
+    const resetAddForm = () => {
+        setCustomName("");
+        setCustomWidth("1200");
+        setCustomHeight("628");
+    };
+
+    const handleAddCustom = (mode: "clone" | "empty" | "smart") => {
         if (!customName.trim()) return;
         const width = Number(customWidth) || 1200;
         const height = Number(customHeight) || 628;
+        setSmartDiagnostics([]);
+
+        if (mode === "smart") {
+            const result = createSmartResize({
+                name: customName.trim(),
+                width,
+                height,
+            });
+            setSmartDiagnostics(result.diagnostics);
+            resetAddForm();
+            if (result.diagnostics.length === 0) {
+                setShowAddForm(false);
+            }
+            return;
+        }
 
         const format = {
             id: `custom-${Date.now()}`,
@@ -162,9 +187,7 @@ export function ResizePanel({ className }: { className?: string } = {}) {
         };
 
         addResize(format);
-        setCustomName("");
-        setCustomWidth("1200");
-        setCustomHeight("628");
+        resetAddForm();
         setShowAddForm(false);
     };
 
@@ -176,7 +199,10 @@ export function ResizePanel({ className }: { className?: string } = {}) {
                     Форматы
                 </h3>
                 <button
-                    onClick={() => setShowAddForm(!showAddForm)}
+                    onClick={() => {
+                        setShowAddForm(!showAddForm);
+                        setSmartDiagnostics([]);
+                    }}
                     className="p-1.5 rounded-[var(--radius-md)] hover:bg-bg-secondary transition-colors cursor-pointer"
                     title="Добавить формат"
                 >
@@ -209,25 +235,36 @@ export function ResizePanel({ className }: { className?: string } = {}) {
 
                     {/* Choice: duplicate current content or start fresh */}
                     {layers.length > 0 ? (
-                        <div className="flex gap-1.5">
+                        <div className="space-y-1.5">
                             <button
-                                onClick={() => handleAddCustom("clone")}
+                                onClick={() => handleAddCustom("smart")}
                                 disabled={!customName.trim()}
-                                className="flex-1 flex items-center justify-center gap-1 h-7 rounded-[var(--radius-md)] bg-accent-primary text-text-inverse text-[11px] font-medium hover:bg-accent-primary-hover transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-                                title="Дублировать содержимое текущего формата в новый"
+                                className="flex h-7 w-full items-center justify-center gap-1 rounded-[var(--radius-md)] border border-accent-primary/30 bg-accent-primary/10 text-[11px] font-medium text-accent-primary transition-colors hover:bg-accent-primary/15 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                                title="Адаптировать ближайший формат шаблона под новый размер"
                             >
-                                <Copy size={11} />
-                                С содержимым
+                                <Sparkles size={11} />
+                                Адаптировать
                             </button>
-                            <button
-                                onClick={() => handleAddCustom("empty")}
-                                disabled={!customName.trim()}
-                                className="flex-1 flex items-center justify-center gap-1 h-7 rounded-[var(--radius-md)] border border-border-primary text-text-secondary text-[11px] font-medium hover:bg-bg-tertiary hover:text-text-primary transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-                                title="Создать пустой формат без содержимого"
-                            >
-                                <FileText size={11} />
-                                Чистый лист
-                            </button>
+                            <div className="flex gap-1.5">
+                                <button
+                                    onClick={() => handleAddCustom("clone")}
+                                    disabled={!customName.trim()}
+                                    className="flex min-w-0 flex-1 items-center justify-center gap-1 h-7 rounded-[var(--radius-md)] bg-accent-primary text-text-inverse text-[10px] font-medium hover:bg-accent-primary-hover transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                                    title="Дублировать содержимое текущего формата в новый"
+                                >
+                                    <Copy size={11} />
+                                    <span className="truncate">С содержимым</span>
+                                </button>
+                                <button
+                                    onClick={() => handleAddCustom("empty")}
+                                    disabled={!customName.trim()}
+                                    className="flex min-w-0 flex-1 items-center justify-center gap-1 h-7 rounded-[var(--radius-md)] border border-border-primary text-text-secondary text-[10px] font-medium hover:bg-bg-tertiary hover:text-text-primary transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                                    title="Создать пустой формат без содержимого"
+                                >
+                                    <FileText size={11} />
+                                    <span className="truncate">Чистый лист</span>
+                                </button>
+                            </div>
                         </div>
                     ) : (
                         <button
@@ -237,6 +274,26 @@ export function ResizePanel({ className }: { className?: string } = {}) {
                         >
                             Добавить
                         </button>
+                    )}
+                    {smartDiagnostics.length > 0 && (
+                        <div className="rounded-[var(--radius-md)] border border-amber-500/20 bg-amber-500/10 px-2 py-1.5">
+                            <div className="mb-1 flex items-center gap-1 text-[10px] font-medium text-amber-600">
+                                <AlertTriangle size={11} />
+                                Формат создан с предупреждениями
+                            </div>
+                            <div className="space-y-0.5">
+                                {smartDiagnostics.slice(0, 3).map((diagnostic, index) => (
+                                    <p key={`${diagnostic.code}-${diagnostic.layerId ?? index}`} className="text-[9px] leading-snug text-amber-700">
+                                        {diagnostic.message}
+                                    </p>
+                                ))}
+                                {smartDiagnostics.length > 3 && (
+                                    <p className="text-[9px] text-amber-700">
+                                        Ещё {smartDiagnostics.length - 3}
+                                    </p>
+                                )}
+                            </div>
+                        </div>
                     )}
                 </div>
             )}

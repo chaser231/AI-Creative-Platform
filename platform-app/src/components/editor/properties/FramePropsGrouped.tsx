@@ -26,14 +26,14 @@ export function FramePropsGrouped({
             <div className="relative">
                 <PopoverButton
                     icon={<LayoutDashboard size={12} />}
-                    label="Лейаут"
+                    label="Авторазметка"
                     isActive={activePopover === "layout"}
                     onClick={() => togglePopover("layout")}
                 />
                 <Popover isOpen={activePopover === "layout"} onClose={() => setActivePopover(null)}>
                     <div className="space-y-4">
                         <div className="flex items-center justify-between">
-                            <label className="text-[10px] text-text-primary font-medium">Авто-лейаут</label>
+                            <label className="text-[10px] text-text-primary font-medium">Авторазметка</label>
                             <Select
                                 size="xs"
                                 value={layer.layoutMode || "none"}
@@ -66,10 +66,10 @@ export function FramePropsGrouped({
                                                 value={layer.primaryAxisAlignItems || "flex-start"}
                                                 onChange={(val) => onChange({ primaryAxisAlignItems: val as FrameLayer["primaryAxisAlignItems"] })}
                                                 options={[
-                                                    { value: "flex-start", label: "Start" },
-                                                    { value: "center", label: "Center" },
-                                                    { value: "flex-end", label: "End" },
-                                                    { value: "space-between", label: "Space Between" },
+                                                    { value: "flex-start", label: "В начало" },
+                                                    { value: "center", label: "По центру" },
+                                                    { value: "flex-end", label: "В конец" },
+                                                    { value: "space-between", label: "Между" },
                                                 ]}
                                             />
                                             <Select
@@ -77,10 +77,10 @@ export function FramePropsGrouped({
                                                 value={layer.counterAxisAlignItems || "flex-start"}
                                                 onChange={(val) => onChange({ counterAxisAlignItems: val as FrameLayer["counterAxisAlignItems"] })}
                                                 options={[
-                                                    { value: "flex-start", label: "Top/Left" },
-                                                    { value: "center", label: "Center" },
-                                                    { value: "flex-end", label: "Bottom/Right" },
-                                                    { value: "stretch", label: "Stretch" },
+                                                    { value: "flex-start", label: "Сверху/слева" },
+                                                    { value: "center", label: "По центру" },
+                                                    { value: "flex-end", label: "Снизу/справа" },
+                                                    { value: "stretch", label: "Растянуть" },
                                                 ]}
                                             />
                                         </div>
@@ -92,29 +92,29 @@ export function FramePropsGrouped({
                                     <div className="grid grid-cols-2 gap-2">
                                         <div>
                                             <span className="text-[9px] text-text-tertiary font-light mb-1 block">
-                                                {layer.layoutMode === "horizontal" ? "Ширина (Main)" : "Высота (Main)"}
+                                                {layer.layoutMode === "horizontal" ? "Ширина (главная)" : "Высота (главная)"}
                                             </span>
                                             <Select
                                                 size="xs"
                                                 value={layer.primaryAxisSizingMode || "fixed"}
                                                 onChange={(val) => onChange({ primaryAxisSizingMode: val as FrameLayer["primaryAxisSizingMode"] })}
                                                 options={[
-                                                    { value: "fixed", label: "Fixed" },
-                                                    { value: "auto", label: "Hug" },
+                                                    { value: "fixed", label: "Фикс." },
+                                                    { value: "auto", label: "По содерж." },
                                                 ]}
                                             />
                                         </div>
                                         <div>
                                             <span className="text-[9px] text-text-tertiary font-light mb-1 block">
-                                                {layer.layoutMode === "horizontal" ? "Высота (Cross)" : "Ширина (Cross)"}
+                                                {layer.layoutMode === "horizontal" ? "Высота (поперечная)" : "Ширина (поперечная)"}
                                             </span>
                                             <Select
                                                 size="xs"
                                                 value={layer.counterAxisSizingMode || "fixed"}
                                                 onChange={(val) => onChange({ counterAxisSizingMode: val as FrameLayer["counterAxisSizingMode"] })}
                                                 options={[
-                                                    { value: "fixed", label: "Fixed" },
-                                                    { value: "auto", label: "Hug" },
+                                                    { value: "fixed", label: "Фикс." },
+                                                    { value: "auto", label: "По содерж." },
                                                 ]}
                                             />
                                         </div>
@@ -190,6 +190,7 @@ export function FramePropsGrouped({
                                     strokeJoin: layer.strokeJoin,
                                 }}
                                 onChange={onChange}
+                                showLabel={false}
                             />
                         </div>
                         {/* Corner Radius */}
@@ -212,7 +213,7 @@ export function FramePropsGrouped({
                 title="Обрезка содержимого"
             >
                 <Scissors size={10} />
-                Clip
+                Обрезка
             </button>
         </div>
     );

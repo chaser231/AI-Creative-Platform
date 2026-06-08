@@ -4,6 +4,7 @@ import { useRef, useEffect } from "react";
 import { Transformer } from "react-konva";
 import Konva from "konva";
 import { useCanvasStore } from "@/store/canvasStore";
+import { normalizeLiveTextTransform } from "./textTransformUtils";
 
 /* ─── Selection Transformer ───────────────────────── */
 interface SelectionTransformerProps {
@@ -16,12 +17,24 @@ interface SelectionTransformerProps {
 export function SelectionTransformer({ selectedLayerIds, stageRef, excludeIds }: SelectionTransformerProps) {
     const trRef = useRef<Konva.Transformer>(null);
     const editingLayerId = useCanvasStore((s) => s.editingLayerId);
-    const layers = useCanvasStore((s) => s.layers);
+    // Re-attach only when the SELECTED layers' geometry/lock changes, not on
+    // every unrelated layer edit in the document.
+    const selectionSignature = useCanvasStore((s) => {
+        let sig = "";
+        for (const id of selectedLayerIds) {
+            if (excludeIds?.has(id)) continue;
+            const l = s.layers.find((x) => x.id === id);
+            if (!l) continue;
+            sig += `${id}:${l.x},${l.y},${l.width},${l.height},${l.rotation},${l.locked ? 1 : 0};`;
+        }
+        return sig;
+    });
 
     useEffect(() => {
         if (!trRef.current || !stageRef.current) return;
 
         // Find all selected nodes, excluding frame children, locked layers, AND the currently editing text layer
+        const layers = useCanvasStore.getState().layers;
         const filteredIds = selectedLayerIds.filter((id) => {
             if (excludeIds?.has(id)) return false;
             if (editingLayerId && id === editingLayerId) return false;
@@ -35,7 +48,7 @@ export function SelectionTransformer({ selectedLayerIds, stageRef, excludeIds }:
 
         trRef.current.nodes(nodes);
         trRef.current.getLayer()?.batchDraw();
-    }, [selectedLayerIds, stageRef, excludeIds, editingLayerId, layers]);
+    }, [selectedLayerIds, stageRef, excludeIds, editingLayerId, selectionSignature]);
 
     return (
         <Transformer
@@ -62,12 +75,22 @@ interface FrameChildTransformerProps {
 export function FrameChildTransformer({ selectedChildIds, containerRef }: FrameChildTransformerProps) {
     const trRef = useRef<Konva.Transformer>(null);
     const editingLayerId = useCanvasStore((s) => s.editingLayerId);
-    const layers = useCanvasStore((s) => s.layers);
+    // Re-attach only when the selected children's geometry/lock changes.
+    const selectionSignature = useCanvasStore((s) => {
+        let sig = "";
+        for (const id of selectedChildIds) {
+            const l = s.layers.find((x) => x.id === id);
+            if (!l) continue;
+            sig += `${id}:${l.x},${l.y},${l.width},${l.height},${l.rotation},${l.locked ? 1 : 0};`;
+        }
+        return sig;
+    });
 
     useEffect(() => {
         if (!trRef.current || !containerRef.current) return;
 
         // Exclude the currently editing text layer and locked layers from the transformer
+        const layers = useCanvasStore.getState().layers;
         const filteredIds = selectedChildIds.filter((id) => {
             if (editingLayerId && id === editingLayerId) return false;
             const layer = layers.find((l) => l.id === id);
@@ -81,26 +104,18 @@ export function FrameChildTransformer({ selectedChildIds, containerRef }: FrameC
 
         trRef.current.nodes(nodes);
         trRef.current.getLayer()?.batchDraw();
-    }, [selectedChildIds, containerRef, editingLayerId, layers]);
+    }, [selectedChildIds, containerRef, editingLayerId, selectionSignature]);
 
     // Live transform handler: reset text scale to prevent visual stretching
     const handleTransform = () => {
         const tr = trRef.current;
         if (!tr) return;
+        const layers = useCanvasStore.getState().layers;
         const nodes = tr.nodes();
         nodes.forEach((node) => {
             const layer = layers.find(l => l.id === node.id());
             if (layer?.type === "text") {
-                const scaleX = node.scaleX();
-                const scaleY = node.scaleY();
-                if (Math.abs(scaleX - 1) > 0.001 || Math.abs(scaleY - 1) > 0.001) {
-                    const newWidth = Math.max(node.width() * scaleX, 10);
-                    const newHeight = Math.max(node.height() * scaleY, 10);
-                    node.scaleX(1);
-                    node.scaleY(1);
-                    node.width(newWidth);
-                    node.height(newHeight);
-                }
+                normalizeLiveTextTransform(node, layer);
             }
         });
     };

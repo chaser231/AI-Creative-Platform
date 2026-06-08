@@ -37,6 +37,7 @@ import type { SnapConfig } from "@/services/snapService";
 import type { SlotMapping } from "@/services/slotMappingService";
 import type Konva from "konva";
 import type { TemplatePack } from "@/services/templateService";
+import type { CustomResizeDiagnostic } from "@/services/customResizeService";
 
 // ─── Re-export layer types for slice convenience ────────
 export type {
@@ -281,6 +282,7 @@ export interface CanvasStore {
 
     // Resize actions
     addResize: (format: ResizeFormat) => void;
+    createSmartResize: (input: { name: string; width: number; height: number }) => { resizeId: string; diagnostics: CustomResizeDiagnostic[] };
     removeResize: (resizeId: string) => void;
     renameResize: (resizeId: string, name: string) => void;
     resizeFormat: (resizeId: string, width: number, height: number) => void;
