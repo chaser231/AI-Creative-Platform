@@ -5,7 +5,7 @@ import { Sparkles, Wand2, X, Ratio, Settings2, Maximize2, Sliders, Brush } from 
 import { trpc } from "@/lib/trpc";
 import { usePhotoStore } from "@/store/photoStore";
 import { RefAutocompleteTextarea } from "@/components/ui/RefAutocompleteTextarea";
-import { getModelById, getMaxRefs, getMaxOutputs, getAspectRatios, getResolutions, getDefaultResolution, resolveRefTags, getLoraSpec } from "@/lib/ai-models";
+import { getModelById, getMaxRefs, getMaxOutputs, getAspectRatios, getResolutions, getDefaultResolution, resolveRefTags, getLoraSpec, getImageGenerationPickerOptions, getImageEditPickerOptions } from "@/lib/ai-models";
 import type { LoraWeight } from "@/lib/ai-providers";
 import { persistImageToS3, uploadForAI, uploadManyForAI } from "@/utils/imageUpload";
 import { ImageStylePresetPicker } from "@/components/ui/StylePresetPicker";
@@ -30,38 +30,16 @@ interface PhotoPromptBarProps {
 }
 
 // Full-generation image models (text → image)
-const IMAGE_MODELS = [
-    { id: "nano-banana-2", name: "Nano Banana 2" },
-    { id: "nano-banana-pro", name: "Nano Banana Pro" },
-    { id: "nano-banana", name: "Nano Banana" },
-    { id: "flux-2-pro", name: "Flux 2 Pro" },
-    { id: "seedream-5", name: "Seedream 5" },
-    { id: "seedream", name: "Seedream 4.5" },
-    { id: "gpt-image-2", name: "GPT Image 2" },
-    { id: "gpt-image", name: "GPT Image 1.5" },
-    { id: "qwen-image", name: "Qwen Image" },
-    { id: "flux-schnell", name: "Flux Schnell" },
-    { id: "flux-dev", name: "Flux Dev" },
-    { id: "flux-1.1-pro", name: "Flux 1.1 Pro" },
-    { id: "dall-e-3", name: "DALL-E 3" },
-    { id: "flux-lora", name: "FLUX.1 LoRA" },
-    { id: "flux-2-lora", name: "FLUX.2 LoRA" },
-    { id: "qwen-image-lora", name: "Qwen Image LoRA" },
-];
+const IMAGE_MODELS = getImageGenerationPickerOptions().map((model) => ({
+    id: model.id,
+    name: model.label,
+}));
 
 // Models that can edit an existing image (text-guided, full-image, no mask)
-const EDIT_MODELS = [
-    { id: "nano-banana-2", name: "Nano Banana 2" },
-    { id: "nano-banana-pro", name: "Nano Banana Pro" },
-    { id: "nano-banana", name: "Nano Banana" },
-    { id: "flux-2-pro", name: "Flux 2 Pro" },
-    { id: "seedream-5", name: "Seedream 5" },
-    { id: "seedream", name: "Seedream 4.5" },
-    { id: "gpt-image-2", name: "GPT Image 2" },
-    { id: "gpt-image", name: "GPT Image 1.5" },
-    { id: "qwen-image-edit", name: "Qwen Image Edit" },
-    { id: "qwen-image-edit-lora", name: "Qwen Image Edit LoRA" },
-];
+const EDIT_MODELS = getImageEditPickerOptions().map((model) => ({
+    id: model.id,
+    name: model.label,
+}));
 
 export function PhotoPromptBar({ projectId }: PhotoPromptBarProps) {
     const activeSessionId = usePhotoStore((s) => s.activeSessionId);

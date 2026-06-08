@@ -308,8 +308,8 @@ RULES:
       cleanPrompt = cleanPrompt.replace(/^["']|["']$/g, ''); // strip quotes again after wrapper removal
       cleanPrompt = cleanPrompt.trim();
 
-      // Call AI provider (use specified model or default to flux-schnell)
-      const selectedModel = (params.model as string) || "flux-schnell";
+      // Call AI provider (use specified model or default to flux-2-pro)
+      const selectedModel = (params.model as string) || "flux-2-pro";
       const { generateWithFallback } = await import("@/lib/ai-providers");
 
       console.log(`[Pipeline ▶5 executeAction] generate_image — model: ${selectedModel}, hasRefImages: ${hasActualRefs ? referenceImages.length : 0}`);
@@ -553,7 +553,7 @@ RULES:
     case "apply_and_fill_template": {
       const templateId = params.templateId as string;
       const topic = params.topic as string;
-      const imageModel = (params.imageModel as string) || "flux-schnell";
+      const imageModel = (params.imageModel as string) || "flux-2-pro";
       const templateRefImages = params.referenceImages as string[] | undefined;
       // `visionContext` is `let` because we can hydrate it lazily from
       // `preGeneratedImageUrl` below (no-refs-but-have-image scenario).

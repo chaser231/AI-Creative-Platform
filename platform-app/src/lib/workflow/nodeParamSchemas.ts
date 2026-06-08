@@ -69,7 +69,7 @@ export const imageGenerationParamsSchema = z.object({
             "flux-2-lora",
             "qwen-image-lora",
         ])
-        .default("flux-schnell"),
+        .default("flux-2-pro"),
     aspectRatio: z
         .enum(["1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9"])
         .default("1:1"),

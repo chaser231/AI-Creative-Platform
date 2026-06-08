@@ -174,6 +174,25 @@ describe("FalProvider — LoRA-aware generate path", () => {
         expect(body.loras).toHaveLength(1);
     });
 
+    it("flux-2-lora: routes to fal-ai/flux-2/lora/edit and forwards image_urls", async () => {
+        mockFetch.mockResolvedValueOnce(
+            okJson({ images: [{ url: "https://fal.media/edited.png" }] }),
+        );
+
+        await generateWithFallback({
+            prompt: "@ref1 place on beige cyclorama",
+            type: "image",
+            model: "flux-2-lora",
+            referenceImages: ["https://cdn.example.com/product.png"],
+        });
+
+        const [url, init] = mockFetch.mock.calls[0] as [string, RequestInit];
+        expect(url).toBe("https://queue.fal.run/fal-ai/flux-2/lora/edit");
+
+        const body = JSON.parse(init.body as string);
+        expect(body.image_urls).toEqual(["https://cdn.example.com/product.png"]);
+    });
+
     it("respects spec.acceleration whitelist (silently drops unsupported value)", async () => {
         mockFetch.mockResolvedValueOnce(
             okJson({ images: [{ url: "https://fal.media/x.png" }] }),
@@ -216,6 +235,53 @@ describe("FalProvider — native fal multi-output payloads", () => {
 
         const body = JSON.parse(init.body as string);
         expect(body.num_images).toBe(count);
+    });
+});
+
+describe("FalProvider — flux-2-pro reference payloads", () => {
+    it("routes to fal-ai/flux-2-pro/edit with image_urls when references are present", async () => {
+        mockFetch.mockResolvedValueOnce(
+            okJson({ images: [{ url: "https://fal.media/flux2.png", width: 1024, height: 1024 }] }),
+        );
+
+        const res = await generateWithFallback({
+            prompt: "keep the product from @image1 exactly",
+            type: "image",
+            model: "flux-2-pro",
+            aspectRatio: "1:1",
+            referenceImages: ["https://cdn.example.com/ref.png"],
+        });
+
+        expect(res.content).toBe("https://fal.media/flux2.png");
+        expect(res.model).toBe("flux-2-pro");
+
+        const [url, init] = mockFetch.mock.calls[0] as [string, RequestInit];
+        expect(url).toBe("https://queue.fal.run/fal-ai/flux-2-pro/edit");
+
+        const body = JSON.parse(init.body as string);
+        expect(body.image_urls).toEqual(["https://cdn.example.com/ref.png"]);
+        expect(body.image_size).toBeTruthy();
+        expect(body.output_format).toBe("png");
+    });
+
+    it("routes to fal-ai/flux-2-pro text-to-image when no references are present", async () => {
+        mockFetch.mockResolvedValueOnce(
+            okJson({ images: [{ url: "https://fal.media/flux2-t2i.png" }] }),
+        );
+
+        await generateWithFallback({
+            prompt: "studio product photo",
+            type: "image",
+            model: "flux-2-pro",
+            aspectRatio: "16:9",
+        });
+
+        const [url, init] = mockFetch.mock.calls[0] as [string, RequestInit];
+        expect(url).toBe("https://queue.fal.run/fal-ai/flux-2-pro");
+
+        const body = JSON.parse(init.body as string);
+        expect(body.image_urls).toBeUndefined();
+        expect(body.image_size).toBe("landscape_16_9");
     });
 });
 
