@@ -1,28 +1,25 @@
 import { v4 as uuid } from "uuid";
 import {
     DEFAULT_CONSTRAINTS,
+    type AdaptationDiagnostic,
+    type AdaptationDiagnosticCode,
     type FrameLayer,
     type Layer,
     type LayerBinding,
     type LayerConstraints,
     type ResizeFormat,
+    type TextLayer,
 } from "@/types";
 import { computeConstrainedPosition } from "@/store/canvas/helpers";
-import { applyAllAutoLayouts } from "@/utils/layoutEngine";
+import { applyAllAutoLayouts, measureTextLayer } from "@/utils/layoutEngine";
+import { applyTextContainerLimits } from "@/utils/textContainerLimits";
+import { shrinkTextToFitBox } from "@/utils/textFit";
 import { resolveConstraints, type Box } from "@/utils/constraintInference";
 
-export type CustomResizeDiagnosticCode =
-    | "no-source-layers"
-    | "invalid-layer-geometry"
-    | "layer-out-of-bounds";
-
-export interface CustomResizeDiagnostic {
-    code: CustomResizeDiagnosticCode;
-    severity: "warning";
-    message: string;
-    layerId?: string;
-    layerName?: string;
-}
+/** @deprecated Use AdaptationDiagnostic from @/types */
+export type CustomResizeDiagnosticCode = AdaptationDiagnosticCode;
+/** @deprecated Use AdaptationDiagnostic from @/types */
+export type CustomResizeDiagnostic = AdaptationDiagnostic;
 
 export interface CustomResizeState {
     layers: Layer[];
@@ -41,8 +38,20 @@ export interface GenerateCustomResizeInput {
 
 export interface GenerateCustomResizeResult {
     resize: ResizeFormat;
-    diagnostics: CustomResizeDiagnostic[];
+    diagnostics: AdaptationDiagnostic[];
     sourceResizeId?: string;
+}
+
+function withAdaptationMetadata(
+    resize: ResizeFormat,
+    diagnostics: AdaptationDiagnostic[],
+    adaptedFromResizeId?: string,
+): ResizeFormat {
+    return {
+        ...resize,
+        ...(diagnostics.length > 0 ? { adaptationDiagnostics: diagnostics } : {}),
+        ...(adaptedFromResizeId ? { adaptedFromResizeId } : {}),
+    };
 }
 
 interface SourceCandidate {
@@ -70,7 +79,7 @@ export function generateCustomResize(
 ): GenerateCustomResizeResult {
     const width = Math.max(1, Math.round(input.width));
     const height = Math.max(1, Math.round(input.height));
-    const diagnostics: CustomResizeDiagnostic[] = [];
+    const diagnostics: AdaptationDiagnostic[] = [];
 
     const source = selectSourceCandidate(state, { width, height });
     if (!source || source.layers.length === 0) {
@@ -80,7 +89,7 @@ export function generateCustomResize(
             message: "No source layers were available; created an empty custom format.",
         });
         return {
-            resize: {
+            resize: withAdaptationMetadata({
                 id: input.id ?? `smart-${uuid()}`,
                 name: input.name,
                 width,
@@ -88,7 +97,7 @@ export function generateCustomResize(
                 label: `${width} × ${height}`,
                 instancesEnabled: false,
                 layerSnapshot: [],
-            },
+            }, diagnostics),
             diagnostics,
         };
     }
@@ -100,8 +109,12 @@ export function generateCustomResize(
     // Pass the projected layers as the baseline so the auto-layout pass repacks
     // auto-layout frames without the constraint cascade re-projecting the
     // non-auto children we just positioned in projectTree.
-    const layouted = applyAllAutoLayouts(projected);
-    const validated = validateAndApplyHide(layouted, targetSize, diagnostics);
+    const layouted = preserveStretchedRootAutoLayoutGeometry(
+        projected,
+        applyAllAutoLayouts(projected),
+    );
+    const remeasured = applyTextFitShrink(applyTextContainerLimitsToLayers(remeasureAdaptedTextBoxes(layouted)));
+    const validated = validateAndApplyHide(remeasured, targetSize, diagnostics);
     const master = resolveMasterFormat(state);
     const masterLayers = master ? getLayersForResize(state, master) : [];
     const layerBindings = master
@@ -116,7 +129,7 @@ export function generateCustomResize(
         : [];
 
     return {
-        resize: {
+        resize: withAdaptationMetadata({
             id: input.id ?? `smart-${uuid()}`,
             name: input.name,
             width,
@@ -125,7 +138,7 @@ export function generateCustomResize(
             instancesEnabled: false,
             layerSnapshot: validated,
             ...(layerBindings.length > 0 ? { layerBindings } : {}),
-        },
+        }, diagnostics, source.resize.id),
         diagnostics,
         sourceResizeId: source.resize.id,
     };
@@ -347,6 +360,38 @@ function round2(value: number): number {
     return Math.round(value * 100) / 100;
 }
 
+/** Keep projected stretch geometry on root hug auto-layout frames after repack. */
+function preserveStretchedRootAutoLayoutGeometry(
+    projected: Layer[],
+    layouted: Layer[],
+): Layer[] {
+    const projectedById = new Map(projected.map((layer) => [layer.id, layer]));
+    const childIdSet = new Set<string>();
+    for (const layer of layouted) {
+        if (layer.type !== "frame") continue;
+        for (const childId of (layer as FrameLayer).childIds) childIdSet.add(childId);
+    }
+
+    return layouted.map((layer) => {
+        if (childIdSet.has(layer.id) || layer.type !== "frame") return layer;
+        const frame = layer as FrameLayer;
+        if (!frame.layoutMode || frame.layoutMode === "none") return layer;
+        const constraints = frame.constraints;
+        if (constraints?.horizontal !== "stretch" || constraints?.vertical !== "stretch") {
+            return layer;
+        }
+        const source = projectedById.get(layer.id);
+        if (!source) return layer;
+        return {
+            ...layer,
+            x: source.x,
+            y: source.y,
+            width: source.width,
+            height: source.height,
+        };
+    });
+}
+
 /**
  * Constraints used on the adaptation path. Identical to `resolveConstraints`,
  * except an auto-layout frame whose `layoutSizingWidth/Height` is "fill" is
@@ -362,8 +407,16 @@ function adaptationConstraints(
     const frame = layer as FrameLayer;
     if (!frame.layoutMode || frame.layoutMode === "none") return base;
     return {
-        horizontal: frame.layoutSizingWidth === "fill" ? "stretch" : base.horizontal,
-        vertical: frame.layoutSizingHeight === "fill" ? "stretch" : base.vertical,
+        horizontal: frame.layoutSizingWidth === "fill"
+            ? "stretch"
+            : frame.layoutSizingWidth === "hug"
+                ? "scale"
+                : base.horizontal,
+        vertical: frame.layoutSizingHeight === "fill"
+            ? "stretch"
+            : frame.layoutSizingHeight === "hug"
+                ? "scale"
+                : base.vertical,
     };
 }
 
@@ -402,7 +455,7 @@ function projectRootRect(
         return computeFixedPosition(layer, sourceSize, targetSize);
     }
 
-    // auto / decorative / unset — explicit constraints win, otherwise infer
+    // auto / unset — explicit constraints win, otherwise infer
     // from geometry so default adaptation is sensible.
     const artboardOld: Box = { x: 0, y: 0, width: sourceSize.width, height: sourceSize.height };
     const constraints = adaptationConstraints(layer, artboardOld);
@@ -468,6 +521,39 @@ function computeFixedAxis(
     return start;
 }
 
+function applyTextContainerLimitsToLayers(layers: Layer[]): Layer[] {
+    return layers.map((layer) => (
+        layer.type === "text" ? applyTextContainerLimits(layer as TextLayer) : layer
+    ));
+}
+
+function applyTextFitShrink(layers: Layer[]): Layer[] {
+    return layers.map((layer) => (
+        layer.type === "text" ? shrinkTextToFitBox(layer as TextLayer) : layer
+    ));
+}
+
+/** Re-sync text container boxes after font scaling on the adaptation path. */
+function remeasureAdaptedTextBoxes(layers: Layer[]): Layer[] {
+    return layers.map((layer) => {
+        if (layer.type !== "text") return layer;
+        const text = layer as TextLayer;
+        const adj = text.textAdjust ?? "auto_width";
+
+        if (adj === "auto_width") {
+            const size = measureTextLayer(text);
+            return { ...text, width: size.width, height: size.height };
+        }
+        if (adj === "auto_height") {
+            const size = measureTextLayer(text, text.width);
+            return { ...text, height: size.height };
+        }
+
+        const size = measureTextLayer(text, text.width);
+        return { ...text, height: size.height };
+    });
+}
+
 function scaleFontIfNeeded(layer: Layer, base: Layer, fontScale: number): Layer {
     if (layer.responsive?.behavior === "fixed") return layer;
 
@@ -497,7 +583,7 @@ function clamp(value: number, min: number, max: number | undefined): number {
 function validateAndApplyHide(
     layers: Layer[],
     targetSize: ArtboardSize,
-    diagnostics: CustomResizeDiagnostic[],
+    diagnostics: AdaptationDiagnostic[],
 ): Layer[] {
     let changed = false;
     const nextLayers = layers.map((layer) => {
@@ -515,7 +601,7 @@ function validateAndApplyHide(
     return changed ? nextLayers : layers;
 }
 
-function getLayerDiagnostic(layer: Layer, targetSize: ArtboardSize): CustomResizeDiagnostic | null {
+function getLayerDiagnostic(layer: Layer, targetSize: ArtboardSize): AdaptationDiagnostic | null {
     const hasInvalidGeometry = ![layer.x, layer.y, layer.width, layer.height].every(Number.isFinite)
         || layer.width <= 0
         || layer.height <= 0;

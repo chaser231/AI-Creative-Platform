@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { generateCustomResize } from "@/services/customResizeService";
 import type { FrameLayer, Layer, RectangleLayer, ResizeFormat, TextLayer } from "@/types";
+import { measureTextLayer, measureWrappedTextContent } from "@/utils/layoutEngine";
 
 function rect(overrides: Partial<RectangleLayer> = {}): RectangleLayer {
     return {
@@ -282,6 +283,91 @@ describe("generateCustomResize", () => {
         expect((result.resize.layerSnapshot?.[0] as TextLayer).fontSize).toBe(40);
     });
 
+    it("shrinks fixed text to fit box when responsive.textFit is shrink", () => {
+        const result = generateCustomResize(
+            {
+                layers: [
+                    text({
+                        id: "headline",
+                        textAdjust: "fixed",
+                        width: 200,
+                        height: 60,
+                        fontSize: 40,
+                        lineHeight: 1.2,
+                        text: "Длинный заголовок который точно переносится на несколько строк",
+                        responsive: { textFit: "shrink", minFontSize: 12 },
+                    }),
+                ],
+                activeResizeId: "master",
+                canvasWidth: 100,
+                canvasHeight: 100,
+                resizes: [resize({ id: "master", width: 100, height: 100, isMaster: true })],
+            },
+            { id: "target", name: "Target", width: 100, height: 100 },
+        );
+
+        const adapted = result.resize.layerSnapshot?.[0] as TextLayer;
+        expect(adapted.fontSize).toBeLessThan(40);
+        expect(adapted.fontSize).toBeGreaterThanOrEqual(12);
+        expect(measureWrappedTextContent(adapted, adapted.width).height).toBeLessThanOrEqual(adapted.height + 0.5);
+    });
+
+    it("clamps adapted text box to responsive container limits and maxLines", () => {
+        const result = generateCustomResize(
+            {
+                layers: [
+                    text({
+                        id: "headline",
+                        textAdjust: "fixed",
+                        width: 400,
+                        height: 200,
+                        fontSize: 20,
+                        lineHeight: 1.2,
+                        text: "Очень длинный заголовок который переносится на много строк",
+                        responsive: { maxWidth: 240, maxLines: 2 },
+                    }),
+                ],
+                activeResizeId: "master",
+                canvasWidth: 100,
+                canvasHeight: 100,
+                resizes: [resize({ id: "master", width: 100, height: 100, isMaster: true })],
+            },
+            { id: "target", name: "Target", width: 100, height: 100 },
+        );
+
+        const adapted = result.resize.layerSnapshot?.[0] as TextLayer;
+        expect(adapted.width).toBeLessThanOrEqual(240);
+        expect(adapted.height).toBeLessThanOrEqual(20 * 1.2 * 2 + 0.5);
+    });
+
+    it("remeasures text container after font scales on adaptation", () => {
+        const result = generateCustomResize(
+            {
+                layers: [
+                    text({
+                        id: "headline",
+                        textAdjust: "auto_width",
+                        fontSize: 20,
+                        text: "МАРКЕТА",
+                        width: 120,
+                        height: 30,
+                    }),
+                ],
+                activeResizeId: "master",
+                canvasWidth: 100,
+                canvasHeight: 100,
+                resizes: [resize({ id: "master", width: 100, height: 100, isMaster: true })],
+            },
+            { id: "target", name: "Target", width: 400, height: 400 },
+        );
+
+        const adapted = result.resize.layerSnapshot?.[0] as TextLayer;
+        const expected = measureTextLayer(adapted);
+        expect(adapted.fontSize).toBeGreaterThan(20);
+        expect(adapted.width).toBeCloseTo(expected.width, 0);
+        expect(adapted.height).toBeCloseTo(expected.height, 0);
+    });
+
     it("fills the artboard for background behavior", () => {
         const result = generateCustomResize(
             {
@@ -412,6 +498,40 @@ describe("generateCustomResize", () => {
         expect(result.resize.layerSnapshot?.[0]?.name).toBe("PortLayer");
     });
 
+    it("stretches a wrap-in-auto-layout frame to fill the portrait artboard", () => {
+        const first = rect({ id: "first", name: "First", x: 10, y: 10, width: 30, height: 60 });
+        const second = rect({ id: "second", name: "Second", x: 50, y: 10, width: 30, height: 60 });
+        const wrappedFrame = frame({
+            id: "al-frame",
+            name: "Auto Layout",
+            x: 10,
+            y: 10,
+            width: 80,
+            height: 80,
+            childIds: ["first", "second"],
+            layoutMode: "horizontal",
+            spacing: 10,
+            primaryAxisSizingMode: "auto",
+            counterAxisSizingMode: "auto",
+            constraints: { horizontal: "stretch", vertical: "stretch" },
+        });
+        const layers = [wrappedFrame, first, second];
+
+        const result = generateCustomResize(
+            {
+                layers,
+                activeResizeId: "master",
+                canvasWidth: 100,
+                canvasHeight: 100,
+                resizes: [resize({ id: "master", width: 100, height: 100, isMaster: true })],
+            },
+            { id: "target", name: "Target", width: 100, height: 200 },
+        );
+
+        const genFrame = result.resize.layerSnapshot?.find((l): l is FrameLayer => l.type === "frame");
+        expect(genFrame).toMatchObject({ x: 10, y: 10, width: 80, height: 180 });
+    });
+
     it("stretches a fill auto-layout frame to fill the artboard (keeping margins)", () => {
         const fillFrame = frame({
             id: "fill-frame",
@@ -467,6 +587,56 @@ describe("generateCustomResize", () => {
         expect(genFrame).toMatchObject({ width: 50, height: 40 });
     });
 
+    it("preserves nested hug frame content layout after adaptation", () => {
+        const rectA = rect({ id: "a", name: "A", x: 5, y: 5, width: 40, height: 30 });
+        const rectB = rect({ id: "b", name: "B", x: 55, y: 5, width: 60, height: 30 });
+        const inner = frame({
+            id: "inner",
+            name: "Inner",
+            x: 10, y: 10, width: 200, height: 80,
+            childIds: ["a", "b"],
+            layoutMode: "horizontal",
+            layoutSizingWidth: "hug",
+            layoutSizingHeight: "hug",
+            primaryAxisSizingMode: "auto",
+            counterAxisSizingMode: "auto",
+            paddingLeft: 5, paddingRight: 5, paddingTop: 5, paddingBottom: 5,
+            spacing: 10,
+        });
+        const outer = frame({
+            id: "outer",
+            name: "Outer",
+            x: 0, y: 0, width: 300, height: 200,
+            childIds: ["inner"],
+            layoutMode: "horizontal",
+            layoutSizingWidth: "hug",
+            layoutSizingHeight: "hug",
+            primaryAxisSizingMode: "auto",
+            counterAxisSizingMode: "auto",
+            paddingLeft: 10, paddingRight: 10, paddingTop: 10, paddingBottom: 10,
+            spacing: 0,
+        });
+
+        const result = generateCustomResize(
+            {
+                layers: [outer, inner, rectA, rectB],
+                activeResizeId: "master",
+                canvasWidth: 100,
+                canvasHeight: 100,
+                resizes: [resize({ id: "master", width: 100, height: 100, isMaster: true })],
+            },
+            { id: "target", name: "Target", width: 200, height: 200 },
+        );
+
+        const byName = new Map(result.resize.layerSnapshot?.map((l) => [l.name, l]));
+
+        // Inner hugs to scaled padding/spacing + unscaled AL children (not stale 200×80).
+        expect(byName.get("Inner")).toMatchObject({ width: 140, height: 50 });
+        expect(byName.get("Outer")).toMatchObject({ width: 180, height: 90 });
+        expect(byName.get("A")).toMatchObject({ width: 40, height: 30 });
+        expect(byName.get("B")).toMatchObject({ width: 60, height: 30 });
+    });
+
     it("scales auto-layout padding and spacing proportionally with the artboard", () => {
         const a = rect({ id: "a", name: "A", x: 10, y: 4, width: 20, height: 20 });
         const b = rect({ id: "b", name: "B", x: 38, y: 4, width: 20, height: 20 });
@@ -502,6 +672,50 @@ describe("generateCustomResize", () => {
             paddingBottom: 12,
             spacing: 16,
         });
+    });
+
+    it("hides every out-of-bounds layer marked canHide", () => {
+        const result = generateCustomResize(
+            {
+                layers: [
+                    rect({
+                        id: "back",
+                        name: "Back",
+                        x: 95,
+                        y: 10,
+                        width: 20,
+                        height: 20,
+                        responsive: { canHide: true },
+                    }),
+                    rect({
+                        id: "front",
+                        name: "Front",
+                        x: 95,
+                        y: 70,
+                        width: 20,
+                        height: 20,
+                        responsive: { canHide: true },
+                    }),
+                ],
+                activeResizeId: "master",
+                canvasWidth: 100,
+                canvasHeight: 100,
+                resizes: [resize({ id: "master", width: 100, height: 100, isMaster: true })],
+            },
+            { id: "target", name: "Target", width: 100, height: 100 },
+        );
+
+        const byName = new Map(result.resize.layerSnapshot?.map((layer) => [layer.name, layer]));
+        expect(byName.get("Back")?.visible).toBe(false);
+        expect(byName.get("Front")?.visible).toBe(false);
+        expect(result.diagnostics).toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({ layerName: "Back", code: "layer-out-of-bounds" }),
+                expect.objectContaining({ layerName: "Front", code: "layer-out-of-bounds" }),
+            ]),
+        );
+        expect(result.resize.adaptationDiagnostics).toEqual(result.diagnostics);
+        expect(result.resize.adaptedFromResizeId).toBe("master");
     });
 
     it("creates content/style-only bindings to master layers", () => {

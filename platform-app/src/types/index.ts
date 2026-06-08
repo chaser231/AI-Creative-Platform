@@ -93,6 +93,19 @@ export function migrateLegacyBinding(binding: Partial<LayerBinding> & { masterLa
 }
 
 // ─── Resize Formats ─────────────────────────────────────
+export type AdaptationDiagnosticCode =
+    | "no-source-layers"
+    | "invalid-layer-geometry"
+    | "layer-out-of-bounds";
+
+export interface AdaptationDiagnostic {
+    code: AdaptationDiagnosticCode;
+    severity: "warning";
+    message: string;
+    layerId?: string;
+    layerName?: string;
+}
+
 export interface ResizeFormat {
     id: string;
     name: string;
@@ -105,6 +118,11 @@ export interface ResizeFormat {
     // Phase 2: Master binding
     isMaster?: boolean;               // this format is the master source
     layerBindings?: LayerBinding[];   // per-layer sync config to master
+
+    /** Warnings emitted when this format was created via smart adaptation. */
+    adaptationDiagnostics?: AdaptationDiagnostic[];
+    /** Source format id used for the last smart adaptation. */
+    adaptedFromResizeId?: string;
 }
 
 export const PRESET_FORMATS: ResizeFormat[] = [
@@ -462,15 +480,25 @@ export interface LayerConstraints {
 
 export const DEFAULT_CONSTRAINTS: LayerConstraints = { horizontal: "left", vertical: "top" };
 
-export type LayerResponsiveBehavior = "auto" | "fixed" | "fluid" | "background" | "decorative";
+export type LayerResponsiveBehavior = "auto" | "fixed" | "fluid" | "background";
+
+export type LayerTextFit = "shrink";
 
 export interface LayerResponsiveSettings {
     role?: string;
     behavior?: LayerResponsiveBehavior;
-    priority?: number;
     canHide?: boolean;
     minFontSize?: number;
     maxFontSize?: number;
+    /** Adaptation-only: shrink font to fit a fixed text box (height overflow). */
+    textFit?: LayerTextFit;
+    /** Cap visible line count; pairs with ellipsis when text overflows the cap. */
+    maxLines?: number;
+    /** Clamp text container width/height on the adaptation path. */
+    minWidth?: number;
+    maxWidth?: number;
+    minHeight?: number;
+    maxHeight?: number;
 }
 
 /**

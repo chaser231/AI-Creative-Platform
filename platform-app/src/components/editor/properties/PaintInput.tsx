@@ -3,8 +3,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { FlipHorizontal, Plus, RotateCw, Trash2, X } from "lucide-react";
-import type { GradientPaint, GradientType, Paint, PaintStop } from "@/types";
+import type { GradientPaint, GradientType, Paint, PaintStop, SolidPaint } from "@/types";
 import { SmartNumberInput } from "@/components/ui/SmartNumberInput";
+import { useDebouncedCallback } from "@/hooks/useDebouncedCallback";
 import { useCanvasStore } from "@/store/canvasStore";
 import {
     flipGradientPaint,
@@ -77,6 +78,25 @@ export function PaintInput({
     const draggingStopId = useRef<string | null>(null);
     const suppressNextBarClick = useRef(false);
     const setActiveGradientEditorTarget = useCanvasStore((s) => s.setActiveGradientEditorTarget);
+    const { schedule: scheduleSolidCommit, flush: flushSolidCommit } = useDebouncedCallback(onChange);
+    const pendingSolidPaint = useRef<SolidPaint | null>(null);
+
+    const commitSolidPaint = (updates: Partial<Pick<SolidPaint, "color" | "opacity">>) => {
+        const base = pendingSolidPaint.current ?? normalizePaint(value);
+        if (base.kind !== "solid") return;
+        const next: SolidPaint = { ...base, ...updates };
+        pendingSolidPaint.current = next;
+        scheduleSolidCommit(next);
+    };
+
+    const flushSolidPaint = () => {
+        flushSolidCommit();
+        pendingSolidPaint.current = null;
+    };
+
+    useEffect(() => {
+        pendingSolidPaint.current = null;
+    }, [value]);
 
     const selectedStop = useMemo(() => {
         if (!gradient) return null;
@@ -311,18 +331,22 @@ export function PaintInput({
                                 <input
                                     type="color"
                                     value={normalized.color.startsWith("#") ? normalized.color.slice(0, 7) : "#000000"}
-                                    onChange={(event) => onChange({ ...normalized, color: event.target.value })}
+                                    onChange={(event) => commitSolidPaint({ color: event.target.value })}
+                                    onBlur={flushSolidPaint}
                                     className="h-9 w-12 cursor-pointer rounded-[var(--radius-sm)] border border-border-primary"
                                 />
                                 <input
                                     value={normalized.color}
-                                    onChange={(event) => onChange({ ...normalized, color: event.target.value })}
+                                    onChange={(event) => commitSolidPaint({ color: event.target.value })}
+                                    onBlur={flushSolidPaint}
                                     className="h-9 flex-1 rounded-[var(--radius-sm)] border border-border-primary bg-bg-secondary px-2 text-[12px] text-text-primary focus:outline-none focus:ring-1 focus:ring-border-focus"
                                 />
                             </div>
                             <OpacityControl
                                 value={normalized.opacity}
-                                onChange={(opacity) => onChange({ ...normalized, opacity })}
+                                onChange={(opacity) => commitSolidPaint({ opacity })}
+                                onRangeBlur={flushSolidPaint}
+                                debounceRange
                             />
                         </div>
                     )}
@@ -468,15 +492,50 @@ export function PaintInput({
     );
 }
 
-function OpacityControl({ value, onChange }: { value: number; onChange: (value: number) => void }) {
+function OpacityControl({
+    value,
+    onChange,
+    debounceRange = false,
+    onRangeBlur,
+}: {
+    value: number;
+    onChange: (value: number) => void;
+    debounceRange?: boolean;
+    onRangeBlur?: () => void;
+}) {
+    const [localPercent, setLocalPercent] = useState(Math.round(value * 100));
+    const { schedule: scheduleRangeChange, flush: flushRangeChange } = useDebouncedCallback(onChange);
+
+    useEffect(() => {
+        setLocalPercent(Math.round(value * 100));
+    }, [value]);
+
+    const handleRangeChange = (percent: number) => {
+        const opacity = Math.min(1, Math.max(0, percent / 100));
+        setLocalPercent(percent);
+        if (debounceRange) {
+            scheduleRangeChange(opacity);
+        } else {
+            onChange(opacity);
+        }
+    };
+
+    const handleRangeBlur = () => {
+        if (debounceRange) {
+            flushRangeChange();
+            onRangeBlur?.();
+        }
+    };
+
     return (
         <div className="flex items-center gap-2">
             <input
                 type="range"
                 min={0}
                 max={100}
-                value={Math.round(value * 100)}
-                onChange={(event) => onChange(Math.min(1, Math.max(0, Number(event.target.value) / 100)))}
+                value={localPercent}
+                onChange={(event) => handleRangeChange(Number(event.target.value))}
+                onBlur={handleRangeBlur}
                 className="flex-1 accent-accent-primary"
             />
             <SmartNumberInput

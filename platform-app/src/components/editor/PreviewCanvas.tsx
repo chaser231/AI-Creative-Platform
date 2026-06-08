@@ -14,6 +14,8 @@ import type {
 } from "@/types";
 import type { CornerRadiusValue } from "@/utils/strokeGeometry";
 import { computeImageFitProps } from "@/utils/imageFitUtils";
+import { getTextTrimMetrics, isTextTrimActive } from "@/utils/layoutEngine";
+import { getEffectiveTextRenderHeight, shouldUseTextEllipsis } from "@/utils/textContainerLimits";
 import { normalizePaint, paintToKonvaProps } from "@/utils/paint";
 import { AlignedStrokeRect } from "@/components/editor/canvas/AlignedStrokeRect";
 import Konva from "konva";
@@ -80,7 +82,10 @@ function PreviewLayer({ layer, allLayers, loadedImages, imageStatuses, renderX, 
                     <FlipLayerContent layer={layer}>
                         <Text
                             width={layer.textAdjust === "auto_width" ? undefined : layer.width}
-                            height={layer.textAdjust === "auto_width" || layer.textAdjust === "auto_height" ? undefined : layer.height}
+                            height={layer.textAdjust === "auto_width" || layer.textAdjust === "auto_height"
+                                ? undefined
+                                : getEffectiveTextRenderHeight(layer)}
+                            offsetY={isTextTrimActive(layer) ? getTextTrimMetrics(layer).top : 0}
                             text={layer.textTransform === "uppercase" ? layer.text.toUpperCase() : layer.textTransform === "lowercase" ? layer.text.toLowerCase() : layer.text}
                             fontSize={layer.fontSize}
                             fontFamily={layer.fontFamily}
@@ -91,7 +96,7 @@ function PreviewLayer({ layer, allLayers, loadedImages, imageStatuses, renderX, 
                             letterSpacing={layer.letterSpacing}
                             lineHeight={layer.lineHeight}
                             wrap={layer.textAdjust === "auto_width" ? "none" : "word"}
-                            ellipsis={layer.textAdjust === "fixed" ? (layer.truncateText || false) : false}
+                            ellipsis={layer.textAdjust === "fixed" ? shouldUseTextEllipsis(layer) : false}
                         />
                     </FlipLayerContent>
                 </Group>

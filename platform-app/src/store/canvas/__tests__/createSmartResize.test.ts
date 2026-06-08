@@ -184,6 +184,9 @@ describe("canvas resize slice createSmartResize", () => {
                 severity: "warning",
             }),
         ]);
+        const generated = state.resizes.find((format) => format.id === result.resizeId);
+        expect(generated?.adaptationDiagnostics).toEqual(result.diagnostics);
+        expect(generated?.adaptedFromResizeId).toBe("master");
         expect(state.layers[0].visible).toBe(false);
     });
 });

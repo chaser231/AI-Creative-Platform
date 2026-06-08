@@ -554,39 +554,85 @@ function ResponsiveInspectorSection({
                             { value: "fixed", label: "Фикс." },
                             { value: "fluid", label: "Гибкая" },
                             { value: "background", label: "Фон" },
-                            { value: "decorative", label: "Декор" },
                         ]}
                     />
-                    <TwoColumn>
-                        <NumberField
-                            label="Приор"
-                            value={responsive.priority ?? 50}
-                            min={0}
-                            max={100}
-                            onChange={(priority) => updateResponsive({ priority })}
-                        />
-                        <ToggleButton
-                            active={!!responsive.canHide}
-                            label="Скрывать"
-                            icon={responsive.canHide ? <EyeOff size={12} /> : <Eye size={12} />}
-                            onClick={() => updateResponsive({ canHide: !responsive.canHide })}
-                        />
-                    </TwoColumn>
+                    <ToggleButton
+                        active={!!responsive.canHide}
+                        label="Скрывать"
+                        title="Скрывать слой, если он не влезает в новый формат после адаптации."
+                        icon={responsive.canHide ? <EyeOff size={12} /> : <Eye size={12} />}
+                        onClick={() => updateResponsive({ canHide: !responsive.canHide })}
+                    />
                     {supportsFontLimits && (
-                        <TwoColumn>
-                            <NumberField
-                                label="Min"
-                                value={responsive.minFontSize ?? 8}
-                                min={1}
-                                onChange={(minFontSize) => updateResponsive({ minFontSize })}
+                        <>
+                            <ToggleButton
+                                active={responsive.textFit === "shrink"}
+                                label="Уменьшать шрифт"
+                                title="Уменьшать кегль, если текст не влезает в фиксированный блок при адаптации."
+                                icon={<ALargeSmall size={12} />}
+                                onClick={() => updateResponsive({
+                                    textFit: responsive.textFit === "shrink" ? undefined : "shrink",
+                                })}
                             />
                             <NumberField
-                                label="Max"
-                                value={responsive.maxFontSize ?? 0}
+                                label="Строк макс."
+                                value={responsive.maxLines ?? 0}
                                 min={0}
-                                onChange={(maxFontSize) => updateResponsive({ maxFontSize: maxFontSize > 0 ? maxFontSize : undefined })}
+                                onChange={(maxLines) => updateResponsive({
+                                    maxLines: maxLines > 0 ? Math.round(maxLines) : undefined,
+                                })}
                             />
-                        </TwoColumn>
+                            <TwoColumn>
+                                <NumberField
+                                    label="Min"
+                                    value={responsive.minFontSize ?? 8}
+                                    min={1}
+                                    onChange={(minFontSize) => updateResponsive({ minFontSize })}
+                                />
+                                <NumberField
+                                    label="Max"
+                                    value={responsive.maxFontSize ?? 0}
+                                    min={0}
+                                    onChange={(maxFontSize) => updateResponsive({ maxFontSize: maxFontSize > 0 ? maxFontSize : undefined })}
+                                />
+                            </TwoColumn>
+                            <TwoColumn>
+                                <NumberField
+                                    label="Min W"
+                                    value={responsive.minWidth ?? 0}
+                                    min={0}
+                                    onChange={(minWidth) => updateResponsive({
+                                        minWidth: minWidth > 0 ? minWidth : undefined,
+                                    })}
+                                />
+                                <NumberField
+                                    label="Max W"
+                                    value={responsive.maxWidth ?? 0}
+                                    min={0}
+                                    onChange={(maxWidth) => updateResponsive({
+                                        maxWidth: maxWidth > 0 ? maxWidth : undefined,
+                                    })}
+                                />
+                            </TwoColumn>
+                            <TwoColumn>
+                                <NumberField
+                                    label="Min H"
+                                    value={responsive.minHeight ?? 0}
+                                    min={0}
+                                    onChange={(minHeight) => updateResponsive({
+                                        minHeight: minHeight > 0 ? minHeight : undefined,
+                                    })}
+                                />
+                                <NumberField
+                                    label="Max H"
+                                    value={responsive.maxHeight ?? 0}
+                                    min={0}
+                                    onChange={(maxHeight) => updateResponsive({
+                                        maxHeight: maxHeight > 0 ? maxHeight : undefined,
+                                    })}
+                                />
+                            </TwoColumn>
+                        </>
                     )}
                 </>
             )}
@@ -599,8 +645,13 @@ function compactResponsiveSettings(settings: LayerResponsiveSettings): LayerResp
     if (!next.role?.trim()) delete next.role;
     else next.role = next.role.trim();
     if (!next.behavior || next.behavior === "auto") delete next.behavior;
-    if (next.priority === undefined || next.priority === 50) delete next.priority;
     if (!next.canHide) delete next.canHide;
+    if (!next.textFit) delete next.textFit;
+    if (!next.maxLines || next.maxLines <= 0) delete next.maxLines;
+    if (!next.minWidth || next.minWidth <= 0) delete next.minWidth;
+    if (!next.maxWidth || next.maxWidth <= 0) delete next.maxWidth;
+    if (!next.minHeight || next.minHeight <= 0) delete next.minHeight;
+    if (!next.maxHeight || next.maxHeight <= 0) delete next.maxHeight;
     if (next.minFontSize === undefined || next.minFontSize === 8) delete next.minFontSize;
     if (next.maxFontSize === undefined || next.maxFontSize <= 0) delete next.maxFontSize;
     return Object.keys(next).length > 0 ? next : undefined;
@@ -1831,10 +1882,11 @@ function IconButton({ children, title, onClick, active }: { children: ReactNode;
     );
 }
 
-function ToggleButton({ active, label, icon, onClick }: { active: boolean; label: string; icon?: ReactNode; onClick: () => void }) {
+function ToggleButton({ active, label, icon, title, onClick }: { active: boolean; label: string; icon?: ReactNode; title?: string; onClick: () => void }) {
     return (
         <button
             type="button"
+            title={title}
             onClick={onClick}
             className={cn(
                 "flex h-8 items-center justify-center gap-1.5 rounded-[var(--radius-md)] border px-3 text-[10px] transition-colors cursor-pointer",

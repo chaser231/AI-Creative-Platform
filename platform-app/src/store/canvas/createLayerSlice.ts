@@ -1140,6 +1140,7 @@ export const createLayerSlice: StateCreator<CanvasStore, [], [], LayerSlice> = (
             counterAxisAlignItems: "flex-start",
             primaryAxisSizingMode: "auto",
             counterAxisSizingMode: "auto",
+            constraints: { horizontal: "stretch", vertical: "stretch" },
         };
 
         // 6. Create master + instances for the frame
