@@ -9,7 +9,7 @@ const STYLE_PROPS = [
     "fontSize", "fontFamily", "fontWeight",
     "align", "verticalAlign", "letterSpacing", "lineHeight", "cornerRadius", "cornerRadii", "objectFit",
     "focusX", "focusY",
-    "textColor", "textAdjust", "truncateText", "verticalTrim", "textTransform",
+    "textColor", "textAdjust", "truncateText", "verticalTrim", "baselineTrim", "textTransform",
 ] as const;
 const SIZE_PROPS = ["width", "height"] as const;
 const POSITION_PROPS = ["x", "y", "rotation", "flipX", "flipY"] as const;

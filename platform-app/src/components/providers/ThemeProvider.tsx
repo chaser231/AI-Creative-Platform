@@ -3,6 +3,7 @@
 import { useEffect, useMemo } from "react";
 import { useThemeStore } from "@/store/themeStore";
 import { loadAllCustomFonts, type WorkspaceFontAsset } from "@/lib/customFonts";
+import { clearTextMeasureCache } from "@/utils/layoutEngine";
 import { trpc } from "@/lib/trpc";
 import { useWorkspace } from "@/providers/WorkspaceProvider";
 
@@ -31,7 +32,15 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     }, [workspaceFonts, templateFonts]);
 
     useEffect(() => {
-        loadAllCustomFonts(allFontAssets).catch(err => console.error("Failed to inject custom fonts on load", err));
+        // Drop any text measurements taken with a fallback font, then again once
+        // the browser reports every @font-face ready, so text containers size to
+        // the real font instead of a default (avoids wrong padding / wrapping).
+        loadAllCustomFonts(allFontAssets)
+            .catch(err => console.error("Failed to inject custom fonts on load", err))
+            .finally(() => clearTextMeasureCache());
+        if (typeof document !== "undefined" && "fonts" in document) {
+            document.fonts.ready.then(() => clearTextMeasureCache()).catch(() => {});
+        }
 
         const root = document.documentElement;
 

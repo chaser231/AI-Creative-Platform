@@ -3,6 +3,7 @@
 import { useRef, useState, useEffect, useCallback } from "react";
 import type { TextLayer } from "@/types";
 import Konva from "konva";
+import { getTextTrimMetrics, isTextTrimActive, measureTextLayer } from "@/utils/layoutEngine";
 
 /**
  * InlineTextEditor — Figma-like inline text editing overlay.
@@ -100,6 +101,14 @@ export function InlineTextEditor({
     const isAutoHeight = layer.textAdjust === "auto_height" || !layer.textAdjust;
     const isFixed = layer.textAdjust === "fixed";
 
+    // Vertical trim: the reported height shrinks by the total trimmed leading
+    // and the textarea is shifted up by the top leading so glyphs sit flush with
+    // the top edge — mirroring the static Konva render (natural height + offsetY).
+    const trim = isTextTrimActive(layer)
+        ? getTextTrimMetrics(layer)
+        : { top: 0, bottom: 0, total: 0 };
+    const trimShiftScreen = trim.top * zoom;
+
     // Use the live layer dimensions from the store (updated by auto-layout)
     const screenW = Math.max(layer.width * zoom, 20);
     const screenH = Math.max(layer.height * zoom, fontSizeScaled * layer.lineHeight);
@@ -124,26 +133,33 @@ export function InlineTextEditor({
             ta.style.height = Math.max(ta.scrollHeight, fontSizeScaled * layer.lineHeight) + "px";
         }
 
-        // Report the CSS-measured dimensions back as unscaled layer coordinates,
-        // but only when they actually changed (avoids a redundant updateLayer call).
-        if (onDimensionsChange && zoom > 0) {
+        // Report dimensions back using the SAME engine measurement the static
+        // canvas uses (Konva + vertical trim), not the CSS scrollHeight. CSS line
+        // boxes diverge from Konva's, so subtracting the trim from scrollHeight
+        // left a height that didn't match the committed render — vertical trim
+        // appeared to "reset" after editing until the button was toggled.
+        if (onDimensionsChange) {
+            const measured = measureTextLayer(
+                { ...layer, text: value } as TextLayer,
+                isAutoWidth ? undefined : layer.width,
+            );
             const dims: { width?: number; height?: number } = {};
-            const newW = isAutoWidth ? Math.max(ta.scrollWidth, 20) / zoom : 0;
-            const newH = (isAutoHeight || isAutoWidth) ? Math.max(ta.scrollHeight, fontSizeScaled * layer.lineHeight) / zoom : 0;
-
-            if (isAutoWidth && Math.abs(newW - lastReportedDims.current.w) > 0.5) {
-                dims.width = newW;
+            if (isAutoWidth && Math.abs(measured.width - lastReportedDims.current.w) > 0.5) {
+                dims.width = measured.width;
             }
-            if ((isAutoHeight || isAutoWidth) && Math.abs(newH - lastReportedDims.current.h) > 0.5) {
-                dims.height = newH;
+            if ((isAutoHeight || isAutoWidth) && Math.abs(measured.height - lastReportedDims.current.h) > 0.5) {
+                dims.height = measured.height;
             }
             if (dims.width !== undefined || dims.height !== undefined) {
-                lastReportedDims.current = { w: newW || lastReportedDims.current.w, h: newH || lastReportedDims.current.h };
+                lastReportedDims.current = {
+                    w: dims.width ?? lastReportedDims.current.w,
+                    h: dims.height ?? lastReportedDims.current.h,
+                };
                 pendingDims.current = { ...pendingDims.current, ...dims };
                 scheduleFlush();
             }
         }
-    }, [isAutoWidth, isAutoHeight, fontSizeScaled, layer.lineHeight, zoom, onDimensionsChange, scheduleFlush]);
+    }, [isAutoWidth, isAutoHeight, fontSizeScaled, layer, value, onDimensionsChange, scheduleFlush]);
 
     // Auto-focus, select all text, and initial resize on mount
     useEffect(() => {
@@ -226,6 +242,7 @@ export function InlineTextEditor({
                 style={{
                     // Match Konva text rendering exactly
                     display: "block",
+                    transform: trimShiftScreen ? `translateY(${-trimShiftScreen}px)` : undefined,
                     fontSize: fontSizeScaled,
                     fontFamily: layer.fontFamily,
                     fontWeight: layer.fontWeight || "normal",

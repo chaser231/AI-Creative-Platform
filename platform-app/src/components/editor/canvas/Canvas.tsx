@@ -36,6 +36,8 @@ import {
     TEXT_LAYER_BOUNDS_NAME,
     TEXT_LAYER_CONTENT_NAME,
 } from "./textTransformUtils";
+import { getTextTrimMetrics, isTextTrimActive } from "@/utils/layoutEngine";
+import { computeLayerBoxClientRect } from "@/utils/strokeGeometry";
 /* ─── Constants ───────────────────────────────────── */
 const FRAME_HIGHLIGHT_STROKE = "#6366F1";
 const FRAME_HIGHLIGHT_WIDTH = 2;
@@ -101,6 +103,29 @@ const CanvasLayer = memo(function CanvasLayer({
         layer.type === "rectangle" || layer.type === "frame" ? layer.strokeJoin : undefined,
         layer.type === "rectangle" || layer.type === "frame" ? layer.strokeEnabled : undefined,
     ]);
+
+    // Text: pin the selection/hover bounds to the layer box. With vertical trim
+    // the Konva Text node keeps its natural height (so all lines still render)
+    // and is shifted up via offsetY — that would otherwise leak the Group's
+    // client-rect above/below the trimmed box. We override getClientRect here.
+    //
+    // The override is installed via a ref callback (during commit) rather than an
+    // effect so it is in place BEFORE the SelectionTransformer's effect reads the
+    // rect. An effect-based install raced the transformer and left the selection
+    // box at the untrimmed height until the next reselect/toggle.
+    const textBoxRef = useRef({ width: layer.width, height: layer.height });
+    textBoxRef.current = { width: layer.width, height: layer.height };
+    const attachTextGroupRef = useCallback((node: Konva.Group | null) => {
+        groupRef.current = node;
+        if (node) {
+            node.getClientRect = (config) =>
+                computeLayerBoxClientRect(
+                    node,
+                    { width: textBoxRef.current.width, height: textBoxRef.current.height, strokeWidth: 0 },
+                    config,
+                );
+        }
+    }, []);
 
     if (!layer.visible) return null;
 
@@ -174,7 +199,7 @@ const CanvasLayer = memo(function CanvasLayer({
                 </Group>
             )}
             {layer.type === "text" && !isEditing && (
-                <Group {...commonProps}>
+                <Group ref={attachTextGroupRef} {...commonProps}>
                     <Rect
                         name={TEXT_LAYER_BOUNDS_NAME}
                         width={layer.width}
@@ -188,6 +213,7 @@ const CanvasLayer = memo(function CanvasLayer({
                             ref={shapeRef as React.RefObject<Konva.Text | null>}
                             width={layer.textAdjust === "auto_width" ? undefined : layer.width}
                             height={layer.textAdjust === "auto_width" || layer.textAdjust === "auto_height" ? undefined : layer.height}
+                            offsetY={isTextTrimActive(layer) ? getTextTrimMetrics(layer).top : 0}
                             text={layer.textTransform === "uppercase" ? layer.text.toUpperCase() : layer.textTransform === "lowercase" ? layer.text.toLowerCase() : layer.text}
                             fontSize={layer.fontSize}
                             fontFamily={layer.fontFamily}

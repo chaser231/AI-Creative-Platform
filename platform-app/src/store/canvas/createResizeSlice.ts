@@ -12,45 +12,23 @@ import { DEFAULT_RESIZE } from "./types";
 import { v4 as uuid } from "uuid";
 import { applyLayout, applyAllAutoLayouts } from "@/utils/layoutEngine";
 import { applyConstraints } from "@/utils/resizeUtil";
-import { computeConstrainedPosition, getContentSourceUpdates } from "./helpers";
+import { getContentSourceUpdates } from "./helpers";
 import { cloneLayerTree } from "@/utils/cloneLayerTree";
 import { applyCascade, type CascadeContext } from "./bindingCascade";
-import { generateCustomResize } from "@/services/customResizeService";
+import { generateCustomResize, projectTree } from "@/services/customResizeService";
 
-function applyArtboardConstraintsToRootLayers(
+/**
+ * Adapts a whole layer tree to a new artboard size for MANUAL format resize.
+ * Projects roots and nested frame children via explicit-or-inferred
+ * constraints, then settles auto-layout frames. Fonts are intentionally not
+ * rescaled here (manual resize keeps text size; smart-resize handles fonts).
+ */
+function adaptLayersToArtboard(
     layers: Layer[],
     oldSize: { width: number; height: number },
     newSize: { width: number; height: number },
 ): Layer[] {
-    if (
-        Math.abs(oldSize.width - newSize.width) < 0.01 &&
-        Math.abs(oldSize.height - newSize.height) < 0.01
-    ) {
-        return layers;
-    }
-
-    const childIds = new Set<string>();
-    for (const layer of layers) {
-        if (layer.type === "frame") {
-            for (const childId of layer.childIds) childIds.add(childId);
-        }
-    }
-
-    const delta = {
-        oldX: 0,
-        oldY: 0,
-        oldWidth: oldSize.width,
-        oldHeight: oldSize.height,
-        newX: 0,
-        newY: 0,
-        newWidth: newSize.width,
-        newHeight: newSize.height,
-    };
-
-    return layers.map((layer) => {
-        if (childIds.has(layer.id)) return layer;
-        return { ...layer, ...computeConstrainedPosition(layer, delta) } as Layer;
-    });
+    return applyAllAutoLayouts(projectTree(layers, oldSize, newSize, { scaleFonts: false }));
 }
 
 export type ResizeSlice = Pick<CanvasStore,
@@ -210,10 +188,7 @@ export const createResizeSlice: StateCreator<CanvasStore, [], [], ResizeSlice> =
         const oldSize = { width: target.width, height: target.height };
         const newSize = { width, height };
         const resizedActiveLayers = state.activeResizeId === resizeId
-            ? applyAllAutoLayouts(
-                applyArtboardConstraintsToRootLayers(state.layers, oldSize, newSize),
-                state.layers,
-            )
+            ? adaptLayersToArtboard(state.layers, oldSize, newSize)
             : state.layers;
 
         set({
@@ -227,10 +202,7 @@ export const createResizeSlice: StateCreator<CanvasStore, [], [], ResizeSlice> =
                         layerSnapshot: state.activeResizeId === resizeId
                             ? resizedActiveLayers
                             : r.layerSnapshot
-                                ? applyAllAutoLayouts(
-                                    applyArtboardConstraintsToRootLayers(r.layerSnapshot, oldSize, newSize),
-                                    r.layerSnapshot,
-                                )
+                                ? adaptLayersToArtboard(r.layerSnapshot, oldSize, newSize)
                                 : r.layerSnapshot,
                     }
                     : r
@@ -433,10 +405,7 @@ export const createResizeSlice: StateCreator<CanvasStore, [], [], ResizeSlice> =
         const state = get();
         const oldSize = { width: state.canvasWidth, height: state.canvasHeight };
         const newSize = { width, height };
-        const resizedLayers = applyAllAutoLayouts(
-            applyArtboardConstraintsToRootLayers(state.layers, oldSize, newSize),
-            state.layers,
-        );
+        const resizedLayers = adaptLayersToArtboard(state.layers, oldSize, newSize);
 
         set({
             canvasWidth: width,

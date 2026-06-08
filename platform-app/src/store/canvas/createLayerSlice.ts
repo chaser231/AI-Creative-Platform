@@ -12,7 +12,7 @@ import type {
 import { MAX_HISTORY } from "./types";
 import { CONTENT_SOURCE_KEYS } from "@/types";
 import { v4 as uuid } from "uuid";
-import { applyAllAutoLayouts } from "@/utils/layoutEngine";
+import { applyAllAutoLayouts, measureTextLayer } from "@/utils/layoutEngine";
 import {
     syncFrameChildIdsToMasters,
     syncFrameChildIdsToInstances,
@@ -37,7 +37,7 @@ const LAYOUT_AFFECTING_KEYS: ReadonlySet<string> = new Set<string>([
     "x", "y", "width", "height", "rotation", "visible",
     // text metrics that change measured size
     "text", "fontSize", "fontFamily", "fontWeight", "letterSpacing",
-    "lineHeight", "textAdjust", "textTransform",
+    "lineHeight", "textAdjust", "textTransform", "verticalTrim", "baselineTrim",
     // auto-layout frame config
     "layoutMode", "paddingTop", "paddingRight", "paddingBottom", "paddingLeft",
     "spacing", "primaryAxisAlignItems", "counterAxisAlignItems",
@@ -53,6 +53,42 @@ function updateAffectsLayout(updates: LayerUpdate): boolean {
         if (LAYOUT_AFFECTING_KEYS.has(key)) return true;
     }
     return false;
+}
+
+// Text-metric keys whose change must remeasure an auto-sized text container.
+const TEXT_METRIC_KEYS: ReadonlySet<string> = new Set<string>([
+    "text", "fontSize", "fontFamily", "fontWeight", "letterSpacing",
+    "lineHeight", "textAdjust", "textTransform", "verticalTrim", "baselineTrim", "width",
+]);
+
+function updateTouchesTextMetrics(updates: LayerUpdate): boolean {
+    for (const key in updates) {
+        if (TEXT_METRIC_KEYS.has(key)) return true;
+    }
+    return false;
+}
+
+/**
+ * Remeasures a STANDALONE (non-frame-child) auto-sized text layer after a
+ * metric change. Text inside auto-layout frames is already remeasured by
+ * `applyAllAutoLayouts`; standalone text would otherwise keep a stale container
+ * size — the root cause of the "selected font shows but the box stays wrong
+ * until you re-click the text" bug.
+ */
+function remeasureStandaloneText(layers: Layer[], id: string, updates: LayerUpdate): Layer[] {
+    if (!updateTouchesTextMetrics(updates)) return layers;
+    const layer = layers.find((l) => l.id === id);
+    if (!layer || layer.type !== "text") return layers;
+    const adj = layer.textAdjust ?? "auto_width";
+    if (adj === "fixed") return layers;
+    const isChild = !!(layer as Layer & { parentId?: string }).parentId
+        || layers.some((l) => l.type === "frame" && (l as FrameLayer).childIds.includes(id));
+    if (isChild) return layers;
+    const size = measureTextLayer(layer as TextLayer, adj === "auto_width" ? undefined : layer.width);
+    const next = adj === "auto_width"
+        ? { ...layer, width: size.width, height: size.height }
+        : { ...layer, height: size.height };
+    return layers.map((l) => (l.id === id ? (next as Layer) : l));
 }
 
 function getDefaultTextFontFamily() {
@@ -186,7 +222,7 @@ export const createLayerSlice: StateCreator<CanvasStore, [], [], LayerSlice> = (
                 verticalAlign: layer.verticalAlign,
                 letterSpacing: layer.letterSpacing, lineHeight: layer.lineHeight,
                 textAdjust: layer.textAdjust, truncateText: layer.truncateText,
-                verticalTrim: layer.verticalTrim,
+                verticalTrim: layer.verticalTrim, baselineTrim: layer.baselineTrim,
             },
             layer.name, "text", layer.slotId, state,
         );
@@ -409,7 +445,11 @@ export const createLayerSlice: StateCreator<CanvasStore, [], [], LayerSlice> = (
                 });
             };
 
-            const updatedLayers = computeUpdatedLayers(state.layers, id, updates);
+            const updatedLayers = remeasureStandaloneText(
+                computeUpdatedLayers(state.layers, id, updates),
+                id,
+                updates,
+            );
             const newLayers = updateAffectsLayout(updates)
                 ? applyAllAutoLayouts(updatedLayers, state.layers)
                 : updatedLayers;

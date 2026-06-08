@@ -7,6 +7,7 @@ import {
     AlignLeft,
     AlignRight,
     Anchor,
+    AlignVerticalSpaceAround,
     ArrowDown,
     ArrowRight,
     BetweenHorizontalStart,
@@ -32,9 +33,10 @@ import {
     RotateCw,
     Scissors,
     SlidersHorizontal,
-    StretchHorizontal,
-    StretchVertical,
+    Square,
     Type,
+    UnfoldHorizontal,
+    UnfoldVertical,
     Unlink,
     Upload,
 } from "lucide-react";
@@ -61,6 +63,8 @@ import type {
 import { DEFAULT_CONSTRAINTS, IMAGE_FIT_MODE_LABELS } from "@/types";
 import { cn } from "@/lib/cn";
 import { PREINSTALLED_FONTS, getUserFonts, normalizeFontFamilyName, saveUserFont } from "@/lib/customFonts";
+import { clearTextMeasureCache } from "@/utils/layoutEngine";
+import { weightLabel } from "@/utils/fontWeight";
 import { getAvailableFontFamiliesSync } from "@/utils/fontUtils";
 import { uploadForAI } from "@/utils/imageUpload";
 import { normalizePaint } from "@/utils/paint";
@@ -746,6 +750,20 @@ function TextInspectorSection({ layer, onChange }: { layer: TextLayer; onChange:
         });
     }, [workspaceFontNames]);
 
+    // Wait for the font (family + weight) to actually load before applying it,
+    // then drop stale fallback measurements so the text box sizes to the real
+    // glyphs on the first click instead of needing a re-select.
+    const ensureFontLoaded = async (family: string, weight?: string | number) => {
+        if (typeof document !== "undefined" && "fonts" in document) {
+            try {
+                await document.fonts.load(`${weight ?? layer.fontWeight ?? 400} 16px "${family}"`);
+            } catch {
+                /* ignore — fall back to whatever is available */
+            }
+        }
+        clearTextMeasureCache();
+    };
+
     return (
         <InspectorSection title="Текст" icon={<Type size={13} />}>
             {isFontMissing && (
@@ -756,18 +774,24 @@ function TextInspectorSection({ layer, onChange }: { layer: TextLayer; onChange:
             <Select
                 size="xs"
                 value={layer.fontFamily}
-                onChange={(fontFamily) => onChange({ fontFamily })}
+                onChange={async (fontFamily) => {
+                    await ensureFontLoaded(fontFamily);
+                    onChange({ fontFamily });
+                }}
                 options={availableFonts.map((font) => ({ value: font, label: font }))}
             />
             <TwoColumn>
                 <Select
                     size="xs"
                     value={layer.fontWeight}
-                    onChange={(fontWeight) => onChange({ fontWeight })}
-                    options={availableWeights.map((weight) => ({ value: weight, label: weight }))}
+                    onChange={async (fontWeight) => {
+                        await ensureFontLoaded(layer.fontFamily, fontWeight);
+                        onChange({ fontWeight });
+                    }}
+                    options={availableWeights.map((weight) => ({ value: weight, label: weightLabel(weight) }))}
                 />
                 <NumberField label="Размер" icon={<ALargeSmall size={13} />} value={layer.fontSize} min={1} onChange={(fontSize) => onChange({ fontSize })} />
-                <NumberField label="Интерлиньяж" icon={<BetweenVerticalStart size={13} />} value={Math.round((layer.lineHeight || 1.2) * 100)} min={1} onChange={(lineHeight) => onChange({ lineHeight: lineHeight / 100 })} />
+                <NumberField label="Интерлиньяж" icon={<AlignVerticalSpaceAround size={13} />} suffix="%" value={Math.round((layer.lineHeight || 1.2) * 100)} min={1} onChange={(lineHeight) => onChange({ lineHeight: lineHeight / 100 })} />
                 <NumberField label="Трекинг" icon={<MoveHorizontal size={13} />} value={layer.letterSpacing} step={0.1} onChange={(letterSpacing) => onChange({ letterSpacing })} />
             </TwoColumn>
             <TwoColumn>
@@ -804,9 +828,12 @@ function TextInspectorSection({ layer, onChange }: { layer: TextLayer; onChange:
                 ))}
             </div>
             <TwoColumn>
-                <ToggleButton active={!!layer.verticalTrim} label="Вертикальная обрезка" onClick={() => onChange({ verticalTrim: !layer.verticalTrim })} />
-                <ToggleButton active={!!layer.truncateText} label="Обрезать текст" onClick={() => onChange({ truncateText: !layer.truncateText })} />
+                <ToggleButton active={!!layer.verticalTrim} label="Vertical trim" onClick={() => onChange({ verticalTrim: !layer.verticalTrim, baselineTrim: false })} />
+                <ToggleButton active={!!layer.baselineTrim} label="Baseline trim" onClick={() => onChange({ baselineTrim: !layer.baselineTrim, verticalTrim: false })} />
             </TwoColumn>
+            <div className="grid grid-cols-1">
+                <ToggleButton active={!!layer.truncateText} label="Truncate text" onClick={() => onChange({ truncateText: !layer.truncateText })} />
+            </div>
             <PaintRow
                 label="Заливка"
                 value={layer.fill}
@@ -847,6 +874,7 @@ function TextInspectorSection({ layer, onChange }: { layer: TextLayer; onChange:
                                 });
                             }
                             setAvailableFonts((prev) => Array.from(new Set([...prev, fontName])).sort());
+                            clearTextMeasureCache();
                             onChange({ fontFamily: fontName });
                         } catch (err) {
                             console.error("Failed to install font:", err);
@@ -1211,6 +1239,7 @@ function NumberField({
     max,
     step,
     icon,
+    suffix,
 }: {
     label: string;
     value: number;
@@ -1219,6 +1248,7 @@ function NumberField({
     max?: number;
     step?: number;
     icon?: ReactNode;
+    suffix?: string;
 }) {
     const scrub = useNumberScrub({ value, onChange, min, max, step });
     return (
@@ -1238,6 +1268,11 @@ function NumberField({
                 onChange={onChange}
                 className={FIELD_CLASS}
             />
+            {suffix && (
+                <span className="pointer-events-none absolute right-2 top-1/2 z-10 -translate-y-1/2 text-[11px] font-medium text-text-tertiary">
+                    {suffix}
+                </span>
+            )}
         </div>
     );
 }
@@ -1309,9 +1344,9 @@ function TextAdjustSwitcher({
     onChange: (value: NonNullable<TextLayer["textAdjust"]>) => void;
 }) {
     const options: Array<{ value: NonNullable<TextLayer["textAdjust"]>; title: string; icon: ReactNode }> = [
-        { value: "auto_width", title: "Автоширина", icon: <StretchHorizontal size={13} /> },
-        { value: "auto_height", title: "Автовысота", icon: <StretchVertical size={13} /> },
-        { value: "fixed", title: "Фиксированный размер", icon: <Maximize2 size={13} /> },
+        { value: "auto_width", title: "Автоширина", icon: <UnfoldHorizontal size={13} /> },
+        { value: "auto_height", title: "Автовысота", icon: <UnfoldVertical size={13} /> },
+        { value: "fixed", title: "Фиксированный размер", icon: <Square size={13} /> },
     ];
 
     return (

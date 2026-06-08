@@ -65,6 +65,15 @@ function cacheMeasurement(key: string, value: { width: number; height: number })
 }
 
 /**
+ * Drops all cached text measurements. Must be called whenever fonts finish
+ * loading: measurements taken before a custom font was registered fall back to
+ * a default font and would otherwise stay cached with the wrong geometry.
+ */
+export function clearTextMeasureCache(): void {
+    _textMeasureCache.clear();
+}
+
+/**
  * Measure the rendered size of a text layer.
  * Uses Konva.Text internally so the measurement exactly matches canvas rendering.
  * 
@@ -72,7 +81,7 @@ function cacheMeasurement(key: string, value: { width: number; height: number })
  * - `auto_height`: width is fixed (from containerWidth or layer.width), height = wrapped text height
  * - `fixed`: uses stored width/height as-is
  */
-function estimateTextSize(
+function estimateTextSizeRaw(
     text: TextLayer,
     containerWidth?: number
 ): { width: number; height: number } {
@@ -164,6 +173,113 @@ function estimateTextSize(
     }
     cacheMeasurement(cacheKey, result);
     return result;
+}
+
+/**
+ * Whether any vertical trim is active for this layer (full glyph hug or
+ * baseline cut). Fixed-size text is never trimmed.
+ */
+export function isTextTrimActive(text: TextLayer): boolean {
+    if ((text.textAdjust || "auto_width") === "fixed") return false;
+    return !!text.verticalTrim || !!text.baselineTrim;
+}
+
+/**
+ * Vertical-trim geometry — the line-box leading to remove above the first line
+ * (`top`) and below the last line (`bottom`) so the container hugs the visible
+ * glyphs while inter-line spacing (line-height) is preserved.
+ *
+ * Mirrors Konva's non-legacy text layout: each line uses an `alphabetic`
+ * baseline placed at `(A − D)/2 + L/2` within its line box, where A/D are the
+ * font's bounding ascent/descent and L is the line-box height. The first line's
+ * glyph top therefore sits `L/2 + (A − D)/2 − actualAscent` below the box top,
+ * and the last line's glyph bottom sits `L/2 − (A − D)/2 − actualDescent` above
+ * the box bottom. `total` is how much shorter the trimmed container is.
+ *
+ * When `baselineTrim` is set the bottom is cut to the text baseline instead of
+ * the descender bottom (the descenders of the last line render below the box).
+ */
+export function getTextTrimMetrics(text: TextLayer): { top: number; bottom: number; total: number } {
+    const L = text.fontSize * (text.lineHeight || 1.2);
+    const cutToBaseline = !!text.baselineTrim;
+    const canvas = getMeasureCanvas();
+    const ctx = canvas?.getContext("2d") as
+        | CanvasRenderingContext2D
+        | OffscreenCanvasRenderingContext2D
+        | null;
+
+    let top: number;
+    let bottom: number;
+    if (!ctx) {
+        // SSR / no canvas: assume a symmetric em-box split.
+        const gap = Math.max(0, (L - text.fontSize) / 2);
+        top = gap;
+        bottom = cutToBaseline ? gap + text.fontSize * 0.2 : gap;
+    } else {
+        ctx.font = `${text.fontWeight || "normal"} ${text.fontSize}px ${text.fontFamily}`;
+        ctx.textBaseline = "alphabetic";
+        let display = text.text || "";
+        if (text.textTransform === "uppercase") display = display.toUpperCase();
+        else if (text.textTransform === "lowercase") display = display.toLowerCase();
+        const lines = display.split("\n");
+        const firstLine = lines[0] || "M";
+        const lastLine = lines[lines.length - 1] || "M";
+
+        const fm = ctx.measureText("M");
+        const A = Number.isFinite(fm.fontBoundingBoxAscent)
+            ? fm.fontBoundingBoxAscent
+            : (Number.isFinite(fm.actualBoundingBoxAscent) ? fm.actualBoundingBoxAscent : text.fontSize * 0.9);
+        const D = Number.isFinite(fm.fontBoundingBoxDescent)
+            ? fm.fontBoundingBoxDescent
+            : (Number.isFinite(fm.actualBoundingBoxDescent) ? fm.actualBoundingBoxDescent : text.fontSize * 0.25);
+
+        const fa = ctx.measureText(firstLine);
+        const la = ctx.measureText(lastLine);
+        const actualAscent = Number.isFinite(fa.actualBoundingBoxAscent) ? fa.actualBoundingBoxAscent : A;
+        // Baseline trim cuts exactly at the baseline (descent = 0); otherwise hug
+        // the last line's descender bottom.
+        const actualDescent = cutToBaseline
+            ? 0
+            : (Number.isFinite(la.actualBoundingBoxDescent) ? la.actualBoundingBoxDescent : D);
+
+        top = Math.max(0, L / 2 + (A - D) / 2 - actualAscent);
+        bottom = Math.max(0, L / 2 - (A - D) / 2 - actualDescent);
+    }
+
+    return { top, bottom, total: top + bottom };
+}
+
+function applyVerticalTrim(
+    text: TextLayer,
+    size: { width: number; height: number },
+): { width: number; height: number } {
+    if (!isTextTrimActive(text)) return size;
+    const { total } = getTextTrimMetrics(text);
+    if (total <= 0) return size;
+    return { width: size.width, height: Math.max(1, size.height - total) };
+}
+
+/**
+ * Measures a text layer, applying vertical trim when enabled. Trim removes the
+ * line-box leading so the container hugs the visible glyphs.
+ */
+function estimateTextSize(
+    text: TextLayer,
+    containerWidth?: number,
+): { width: number; height: number } {
+    return applyVerticalTrim(text, estimateTextSizeRaw(text, containerWidth));
+}
+
+/**
+ * Public wrapper around the internal text measurement. Used to remeasure a
+ * standalone (non-frame-child) auto-sized text layer after a metric change,
+ * since `applyAllAutoLayouts` only remeasures text living inside frames.
+ */
+export function measureTextLayer(
+    text: TextLayer,
+    containerWidth?: number,
+): { width: number; height: number } {
+    return estimateTextSize(text, containerWidth);
 }
 
 /**
