@@ -8,8 +8,49 @@ import { cloneLayerTree } from "@/utils/cloneLayerTree";
 import { BindToMasterModal } from "./BindToMasterModal";
 import { ContextMenu } from "./ContextMenu";
 import type { ContextMenuEntry } from "./ContextMenu";
-import type { CustomResizeDiagnostic } from "@/services/customResizeService";
+import type { AdaptationDiagnostic } from "@/types";
 import { cn } from "@/lib/cn";
+
+function FormatWarningsList({
+    diagnostics,
+    onSelectLayer,
+}: {
+    diagnostics: AdaptationDiagnostic[];
+    onSelectLayer?: (layerId: string) => void;
+}) {
+    return (
+        <div className="space-y-0.5">
+            {diagnostics.map((diagnostic, index) => {
+                const content = (
+                    <p className="text-[9px] leading-snug text-amber-700">
+                        {diagnostic.message}
+                    </p>
+                );
+                if (!diagnostic.layerId || !onSelectLayer) {
+                    return (
+                        <div key={`${diagnostic.code}-${diagnostic.layerId ?? index}`}>
+                            {content}
+                        </div>
+                    );
+                }
+                return (
+                    <button
+                        key={`${diagnostic.code}-${diagnostic.layerId}`}
+                        type="button"
+                        onClick={(event) => {
+                            event.stopPropagation();
+                            onSelectLayer(diagnostic.layerId!);
+                        }}
+                        className="block w-full rounded-[var(--radius-sm)] px-1 py-0.5 text-left hover:bg-amber-500/10 cursor-pointer"
+                        title="Показать слой на канвасе"
+                    >
+                        {content}
+                    </button>
+                );
+            })}
+        </div>
+    );
+}
 
 export function ResizePanel({ className }: { className?: string } = {}) {
     const {
@@ -27,6 +68,7 @@ export function ResizePanel({ className }: { className?: string } = {}) {
         masterComponents,
         promoteFormatToMaster,
         demoteFormatFromMaster,
+        selectLayer,
     } = useCanvasStore(useShallow((s) => ({
         resizes: s.resizes, activeResizeId: s.activeResizeId,
         setActiveResize: s.setActiveResize, addResize: s.addResize,
@@ -39,12 +81,14 @@ export function ResizePanel({ className }: { className?: string } = {}) {
         masterComponents: s.masterComponents,
         promoteFormatToMaster: s.promoteFormatToMaster,
         demoteFormatFromMaster: s.demoteFormatFromMaster,
+        selectLayer: s.selectLayer,
     })));
     const [showAddForm, setShowAddForm] = useState(false);
     const [customName, setCustomName] = useState("");
     const [customWidth, setCustomWidth] = useState("1200");
     const [customHeight, setCustomHeight] = useState("628");
-    const [smartDiagnostics, setSmartDiagnostics] = useState<CustomResizeDiagnostic[]>([]);
+    const [pendingSmartResizeId, setPendingSmartResizeId] = useState<string | null>(null);
+    const [expandedWarningsId, setExpandedWarningsId] = useState<string | null>(null);
     const [editingId, setEditingId] = useState<string | null>(null);
     const [editingName, setEditingName] = useState("");
     const renameRef = useRef<HTMLInputElement>(null);
@@ -158,7 +202,7 @@ export function ResizePanel({ className }: { className?: string } = {}) {
         if (!customName.trim()) return;
         const width = Number(customWidth) || 1200;
         const height = Number(customHeight) || 628;
-        setSmartDiagnostics([]);
+        setPendingSmartResizeId(null);
 
         if (mode === "smart") {
             const result = createSmartResize({
@@ -166,10 +210,14 @@ export function ResizePanel({ className }: { className?: string } = {}) {
                 width,
                 height,
             });
-            setSmartDiagnostics(result.diagnostics);
+            setPendingSmartResizeId(result.resizeId);
+            if (result.diagnostics.length > 0) {
+                setExpandedWarningsId(result.resizeId);
+            }
             resetAddForm();
             if (result.diagnostics.length === 0) {
                 setShowAddForm(false);
+                setPendingSmartResizeId(null);
             }
             return;
         }
@@ -201,7 +249,7 @@ export function ResizePanel({ className }: { className?: string } = {}) {
                 <button
                     onClick={() => {
                         setShowAddForm(!showAddForm);
-                        setSmartDiagnostics([]);
+                        setPendingSmartResizeId(null);
                     }}
                     className="p-1.5 rounded-[var(--radius-md)] hover:bg-bg-secondary transition-colors cursor-pointer"
                     title="Добавить формат"
@@ -275,26 +323,29 @@ export function ResizePanel({ className }: { className?: string } = {}) {
                             Добавить
                         </button>
                     )}
-                    {smartDiagnostics.length > 0 && (
-                        <div className="rounded-[var(--radius-md)] border border-amber-500/20 bg-amber-500/10 px-2 py-1.5">
-                            <div className="mb-1 flex items-center gap-1 text-[10px] font-medium text-amber-600">
-                                <AlertTriangle size={11} />
-                                Формат создан с предупреждениями
+                    {(() => {
+                        const formWarnings = pendingSmartResizeId
+                            ? resizes.find((format) => format.id === pendingSmartResizeId)?.adaptationDiagnostics ?? []
+                            : [];
+                        if (formWarnings.length === 0) return null;
+                        return (
+                            <div className="rounded-[var(--radius-md)] border border-amber-500/20 bg-amber-500/10 px-2 py-1.5">
+                                <div className="mb-1 flex items-center gap-1 text-[10px] font-medium text-amber-600">
+                                    <AlertTriangle size={11} />
+                                    Формат создан с предупреждениями
+                                </div>
+                                <FormatWarningsList
+                                    diagnostics={formWarnings}
+                                    onSelectLayer={(layerId) => {
+                                        if (pendingSmartResizeId) {
+                                            setActiveResize(pendingSmartResizeId);
+                                            selectLayer(layerId);
+                                        }
+                                    }}
+                                />
                             </div>
-                            <div className="space-y-0.5">
-                                {smartDiagnostics.slice(0, 3).map((diagnostic, index) => (
-                                    <p key={`${diagnostic.code}-${diagnostic.layerId ?? index}`} className="text-[9px] leading-snug text-amber-700">
-                                        {diagnostic.message}
-                                    </p>
-                                ))}
-                                {smartDiagnostics.length > 3 && (
-                                    <p className="text-[9px] text-amber-700">
-                                        Ещё {smartDiagnostics.length - 3}
-                                    </p>
-                                )}
-                            </div>
-                        </div>
-                    )}
+                        );
+                    })()}
                 </div>
             )}
 
@@ -307,6 +358,9 @@ export function ResizePanel({ className }: { className?: string } = {}) {
                     const isSnapshot = resize.layerSnapshot !== undefined;
                     const isLegacy = !isSnapshot && masterComponents.length > 0;
                     const isEditingSize = editingSizeId === resize.id;
+                    const adaptationWarnings = resize.adaptationDiagnostics ?? [];
+                    const warningCount = adaptationWarnings.length;
+                    const warningsExpanded = expandedWarningsId === resize.id;
 
                     return (
                         <div key={resize.id} className="mb-0.5">
@@ -385,8 +439,25 @@ export function ResizePanel({ className }: { className?: string } = {}) {
                                         {isBound && (
                                             <span className="text-accent-primary ml-1">· {resize.layerBindings!.length} связей</span>
                                         )}
+                                        {warningCount > 0 && (
+                                            <span className="text-amber-600 ml-1">· {warningCount} предупр.</span>
+                                        )}
                                     </div>
                                 </div>
+
+                                {warningCount > 0 && (
+                                    <button
+                                        type="button"
+                                        onClick={(event) => {
+                                            event.stopPropagation();
+                                            setExpandedWarningsId(warningsExpanded ? null : resize.id);
+                                        }}
+                                        className="shrink-0 rounded-[var(--radius-sm)] p-0.5 text-amber-600 hover:bg-amber-500/10 cursor-pointer"
+                                        title={warningsExpanded ? "Скрыть предупреждения" : "Показать предупреждения адаптации"}
+                                    >
+                                        <AlertTriangle size={11} />
+                                    </button>
+                                )}
 
                                 {/* Action buttons — fixed width area to prevent jumping */}
                                 <div className="flex items-center gap-0.5 shrink-0 w-[52px] justify-end">
@@ -470,6 +541,25 @@ export function ResizePanel({ className }: { className?: string } = {}) {
                                     )}
                                 </div>
                             </div>
+
+                            {warningsExpanded && warningCount > 0 && (
+                                <div
+                                    className="mx-2 mt-1 rounded-[var(--radius-md)] border border-amber-500/20 bg-amber-500/10 px-2 py-1.5"
+                                    onClick={(event) => event.stopPropagation()}
+                                >
+                                    <div className="mb-1 flex items-center gap-1 text-[10px] font-medium text-amber-600">
+                                        <AlertTriangle size={11} />
+                                        Предупреждения адаптации
+                                    </div>
+                                    <FormatWarningsList
+                                        diagnostics={adaptationWarnings}
+                                        onSelectLayer={(layerId) => {
+                                            setActiveResize(resize.id);
+                                            selectLayer(layerId);
+                                        }}
+                                    />
+                                </div>
+                            )}
 
                             {/* Inline size editing (appears below the item when active) */}
                             {isEditingSize && (

@@ -34,6 +34,9 @@ function cloneResizes(resizes: ResizeFormat[] | undefined): ResizeFormat[] {
             layerBindings: resize.layerBindings
                 ? resize.layerBindings.map((binding) => ({ ...binding }))
                 : resize.layerBindings,
+            adaptationDiagnostics: resize.adaptationDiagnostics
+                ? resize.adaptationDiagnostics.map((diagnostic) => ({ ...diagnostic }))
+                : resize.adaptationDiagnostics,
         }))
         : [];
 }

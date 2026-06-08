@@ -1,6 +1,8 @@
 import { v4 as uuid } from "uuid";
 import {
     DEFAULT_CONSTRAINTS,
+    type AdaptationDiagnostic,
+    type AdaptationDiagnosticCode,
     type FrameLayer,
     type Layer,
     type LayerBinding,
@@ -14,18 +16,10 @@ import { applyTextContainerLimits } from "@/utils/textContainerLimits";
 import { shrinkTextToFitBox } from "@/utils/textFit";
 import { resolveConstraints, type Box } from "@/utils/constraintInference";
 
-export type CustomResizeDiagnosticCode =
-    | "no-source-layers"
-    | "invalid-layer-geometry"
-    | "layer-out-of-bounds";
-
-export interface CustomResizeDiagnostic {
-    code: CustomResizeDiagnosticCode;
-    severity: "warning";
-    message: string;
-    layerId?: string;
-    layerName?: string;
-}
+/** @deprecated Use AdaptationDiagnostic from @/types */
+export type CustomResizeDiagnosticCode = AdaptationDiagnosticCode;
+/** @deprecated Use AdaptationDiagnostic from @/types */
+export type CustomResizeDiagnostic = AdaptationDiagnostic;
 
 export interface CustomResizeState {
     layers: Layer[];
@@ -44,8 +38,20 @@ export interface GenerateCustomResizeInput {
 
 export interface GenerateCustomResizeResult {
     resize: ResizeFormat;
-    diagnostics: CustomResizeDiagnostic[];
+    diagnostics: AdaptationDiagnostic[];
     sourceResizeId?: string;
+}
+
+function withAdaptationMetadata(
+    resize: ResizeFormat,
+    diagnostics: AdaptationDiagnostic[],
+    adaptedFromResizeId?: string,
+): ResizeFormat {
+    return {
+        ...resize,
+        ...(diagnostics.length > 0 ? { adaptationDiagnostics: diagnostics } : {}),
+        ...(adaptedFromResizeId ? { adaptedFromResizeId } : {}),
+    };
 }
 
 interface SourceCandidate {
@@ -73,7 +79,7 @@ export function generateCustomResize(
 ): GenerateCustomResizeResult {
     const width = Math.max(1, Math.round(input.width));
     const height = Math.max(1, Math.round(input.height));
-    const diagnostics: CustomResizeDiagnostic[] = [];
+    const diagnostics: AdaptationDiagnostic[] = [];
 
     const source = selectSourceCandidate(state, { width, height });
     if (!source || source.layers.length === 0) {
@@ -83,7 +89,7 @@ export function generateCustomResize(
             message: "No source layers were available; created an empty custom format.",
         });
         return {
-            resize: {
+            resize: withAdaptationMetadata({
                 id: input.id ?? `smart-${uuid()}`,
                 name: input.name,
                 width,
@@ -91,7 +97,7 @@ export function generateCustomResize(
                 label: `${width} × ${height}`,
                 instancesEnabled: false,
                 layerSnapshot: [],
-            },
+            }, diagnostics),
             diagnostics,
         };
     }
@@ -123,7 +129,7 @@ export function generateCustomResize(
         : [];
 
     return {
-        resize: {
+        resize: withAdaptationMetadata({
             id: input.id ?? `smart-${uuid()}`,
             name: input.name,
             width,
@@ -132,7 +138,7 @@ export function generateCustomResize(
             instancesEnabled: false,
             layerSnapshot: validated,
             ...(layerBindings.length > 0 ? { layerBindings } : {}),
-        },
+        }, diagnostics, source.resize.id),
         diagnostics,
         sourceResizeId: source.resize.id,
     };
@@ -577,7 +583,7 @@ function clamp(value: number, min: number, max: number | undefined): number {
 function validateAndApplyHide(
     layers: Layer[],
     targetSize: ArtboardSize,
-    diagnostics: CustomResizeDiagnostic[],
+    diagnostics: AdaptationDiagnostic[],
 ): Layer[] {
     let changed = false;
     const nextLayers = layers.map((layer) => {
@@ -595,7 +601,7 @@ function validateAndApplyHide(
     return changed ? nextLayers : layers;
 }
 
-function getLayerDiagnostic(layer: Layer, targetSize: ArtboardSize): CustomResizeDiagnostic | null {
+function getLayerDiagnostic(layer: Layer, targetSize: ArtboardSize): AdaptationDiagnostic | null {
     const hasInvalidGeometry = ![layer.x, layer.y, layer.width, layer.height].every(Number.isFinite)
         || layer.width <= 0
         || layer.height <= 0;

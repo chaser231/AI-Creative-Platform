@@ -349,4 +349,48 @@ describe("normalizeCanvasStateForLoad", () => {
         expect(saved.layers[0].responsive).toBeUndefined();
         expect(saved.resizes[0].layerSnapshot?.[0].responsive).toBeUndefined();
     });
+
+    it("preserves adaptation diagnostics on resize formats through save and load", () => {
+        const diagnostics = [{
+            code: "layer-out-of-bounds" as const,
+            severity: "warning" as const,
+            message: 'Layer "CTA" extends outside the generated artboard.',
+            layerId: "cta-1",
+            layerName: "CTA",
+        }];
+        const resizes: ResizeFormat[] = [{
+            id: "story",
+            name: "Story",
+            width: 1080,
+            height: 1920,
+            label: "1080 × 1920",
+            instancesEnabled: false,
+            adaptationDiagnostics: diagnostics,
+            adaptedFromResizeId: "master",
+            layerSnapshot: [],
+        }];
+
+        const saved = getCanvasStateForSave({
+            layers: [],
+            masterComponents: [],
+            componentInstances: [],
+            resizes,
+            activeResizeId: "story",
+            artboardProps: DEFAULT_ARTBOARD_PROPS,
+            canvasWidth: 1080,
+            canvasHeight: 1920,
+            palette: { colors: [], backgrounds: [] },
+        });
+
+        const normalized = normalizeCanvasStateForLoad({
+            layers: saved.layers,
+            resizes: saved.resizes,
+            activeResizeId: saved.activeResizeId,
+            canvasWidth: saved.canvasWidth,
+            canvasHeight: saved.canvasHeight,
+        });
+
+        expect(normalized.resizes[0].adaptationDiagnostics).toEqual(diagnostics);
+        expect(normalized.resizes[0].adaptedFromResizeId).toBe("master");
+    });
 });

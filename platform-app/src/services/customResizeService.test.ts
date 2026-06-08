@@ -714,6 +714,8 @@ describe("generateCustomResize", () => {
                 expect.objectContaining({ layerName: "Front", code: "layer-out-of-bounds" }),
             ]),
         );
+        expect(result.resize.adaptationDiagnostics).toEqual(result.diagnostics);
+        expect(result.resize.adaptedFromResizeId).toBe("master");
     });
 
     it("creates content/style-only bindings to master layers", () => {
