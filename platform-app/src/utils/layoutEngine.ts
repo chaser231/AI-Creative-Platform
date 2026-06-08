@@ -65,6 +65,15 @@ function cacheMeasurement(key: string, value: { width: number; height: number })
 }
 
 /**
+ * Drops all cached text measurements. Must be called whenever fonts finish
+ * loading: measurements taken before a custom font was registered fall back to
+ * a default font and would otherwise stay cached with the wrong geometry.
+ */
+export function clearTextMeasureCache(): void {
+    _textMeasureCache.clear();
+}
+
+/**
  * Measure the rendered size of a text layer.
  * Uses Konva.Text internally so the measurement exactly matches canvas rendering.
  * 
@@ -72,7 +81,7 @@ function cacheMeasurement(key: string, value: { width: number; height: number })
  * - `auto_height`: width is fixed (from containerWidth or layer.width), height = wrapped text height
  * - `fixed`: uses stored width/height as-is
  */
-function estimateTextSize(
+function estimateTextSizeRaw(
     text: TextLayer,
     containerWidth?: number
 ): { width: number; height: number } {
@@ -164,6 +173,68 @@ function estimateTextSize(
     }
     cacheMeasurement(cacheKey, result);
     return result;
+}
+
+/** Measures the visible glyph extent (ascent+descent) of the font at its size. */
+function measureGlyphExtent(text: TextLayer): number {
+    const canvas = getMeasureCanvas();
+    const ctx = canvas?.getContext("2d") as
+        | CanvasRenderingContext2D
+        | OffscreenCanvasRenderingContext2D
+        | null;
+    if (!ctx) return text.fontSize;
+    ctx.font = `${text.fontWeight || "normal"} ${text.fontSize}px ${text.fontFamily}`;
+    const sample = (text.text || "").replace(/\n+/g, "") || "Mg";
+    const m = ctx.measureText(sample);
+    const ascent = Number.isFinite(m.actualBoundingBoxAscent) ? m.actualBoundingBoxAscent : text.fontSize * 0.8;
+    const descent = Number.isFinite(m.actualBoundingBoxDescent) ? m.actualBoundingBoxDescent : text.fontSize * 0.2;
+    return Math.max(1, ascent + descent);
+}
+
+/**
+ * Vertical-trim geometry. `offsetY` is the half-leading above the first line
+ * (the same amount sits below the last line), so a trimmed container is shorter
+ * than the natural one by `2 * offsetY` and its glyphs must render `offsetY`
+ * higher to sit flush with the top edge.
+ */
+export function getTextTrimMetrics(text: TextLayer): { offsetY: number } {
+    const lineBox = text.fontSize * (text.lineHeight || 1.2);
+    const glyph = measureGlyphExtent(text);
+    return { offsetY: Math.max(0, (lineBox - glyph) / 2) };
+}
+
+function applyVerticalTrim(
+    text: TextLayer,
+    size: { width: number; height: number },
+): { width: number; height: number } {
+    if (!text.verticalTrim) return size;
+    if ((text.textAdjust || "auto_width") === "fixed") return size;
+    const { offsetY } = getTextTrimMetrics(text);
+    if (offsetY <= 0) return size;
+    return { width: size.width, height: Math.max(1, size.height - 2 * offsetY) };
+}
+
+/**
+ * Measures a text layer, applying vertical trim when enabled. Trim removes the
+ * line-box leading so the container hugs the visible glyphs.
+ */
+function estimateTextSize(
+    text: TextLayer,
+    containerWidth?: number,
+): { width: number; height: number } {
+    return applyVerticalTrim(text, estimateTextSizeRaw(text, containerWidth));
+}
+
+/**
+ * Public wrapper around the internal text measurement. Used to remeasure a
+ * standalone (non-frame-child) auto-sized text layer after a metric change,
+ * since `applyAllAutoLayouts` only remeasures text living inside frames.
+ */
+export function measureTextLayer(
+    text: TextLayer,
+    containerWidth?: number,
+): { width: number; height: number } {
+    return estimateTextSize(text, containerWidth);
 }
 
 /**

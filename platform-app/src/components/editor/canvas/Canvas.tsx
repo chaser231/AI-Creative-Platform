@@ -36,6 +36,7 @@ import {
     TEXT_LAYER_BOUNDS_NAME,
     TEXT_LAYER_CONTENT_NAME,
 } from "./textTransformUtils";
+import { getTextTrimMetrics } from "@/utils/layoutEngine";
 /* ─── Constants ───────────────────────────────────── */
 const FRAME_HIGHLIGHT_STROKE = "#6366F1";
 const FRAME_HIGHLIGHT_WIDTH = 2;
@@ -188,6 +189,7 @@ const CanvasLayer = memo(function CanvasLayer({
                             ref={shapeRef as React.RefObject<Konva.Text | null>}
                             width={layer.textAdjust === "auto_width" ? undefined : layer.width}
                             height={layer.textAdjust === "auto_width" || layer.textAdjust === "auto_height" ? undefined : layer.height}
+                            offsetY={layer.verticalTrim && layer.textAdjust !== "fixed" ? getTextTrimMetrics(layer).offsetY : 0}
                             text={layer.textTransform === "uppercase" ? layer.text.toUpperCase() : layer.textTransform === "lowercase" ? layer.text.toLowerCase() : layer.text}
                             fontSize={layer.fontSize}
                             fontFamily={layer.fontFamily}

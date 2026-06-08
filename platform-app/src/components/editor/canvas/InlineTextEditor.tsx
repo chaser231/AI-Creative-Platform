@@ -3,6 +3,7 @@
 import { useRef, useState, useEffect, useCallback } from "react";
 import type { TextLayer } from "@/types";
 import Konva from "konva";
+import { getTextTrimMetrics } from "@/utils/layoutEngine";
 
 /**
  * InlineTextEditor — Figma-like inline text editing overlay.
@@ -100,6 +101,12 @@ export function InlineTextEditor({
     const isAutoHeight = layer.textAdjust === "auto_height" || !layer.textAdjust;
     const isFixed = layer.textAdjust === "fixed";
 
+    // Vertical trim: glyphs render `trimOffset` higher and the reported height
+    // shrinks by 2 * trimOffset, mirroring the static Konva render so the box
+    // hugs the text while editing too.
+    const trimOffset = layer.verticalTrim && !isFixed ? getTextTrimMetrics(layer).offsetY : 0;
+    const trimOffsetScreen = trimOffset * zoom;
+
     // Use the live layer dimensions from the store (updated by auto-layout)
     const screenW = Math.max(layer.width * zoom, 20);
     const screenH = Math.max(layer.height * zoom, fontSizeScaled * layer.lineHeight);
@@ -129,7 +136,8 @@ export function InlineTextEditor({
         if (onDimensionsChange && zoom > 0) {
             const dims: { width?: number; height?: number } = {};
             const newW = isAutoWidth ? Math.max(ta.scrollWidth, 20) / zoom : 0;
-            const newH = (isAutoHeight || isAutoWidth) ? Math.max(ta.scrollHeight, fontSizeScaled * layer.lineHeight) / zoom : 0;
+            const rawH = (isAutoHeight || isAutoWidth) ? Math.max(ta.scrollHeight, fontSizeScaled * layer.lineHeight) / zoom : 0;
+            const newH = rawH > 0 ? Math.max(1, rawH - 2 * trimOffset) : 0;
 
             if (isAutoWidth && Math.abs(newW - lastReportedDims.current.w) > 0.5) {
                 dims.width = newW;
@@ -143,7 +151,7 @@ export function InlineTextEditor({
                 scheduleFlush();
             }
         }
-    }, [isAutoWidth, isAutoHeight, fontSizeScaled, layer.lineHeight, zoom, onDimensionsChange, scheduleFlush]);
+    }, [isAutoWidth, isAutoHeight, fontSizeScaled, layer.lineHeight, zoom, onDimensionsChange, scheduleFlush, trimOffset]);
 
     // Auto-focus, select all text, and initial resize on mount
     useEffect(() => {
@@ -226,6 +234,7 @@ export function InlineTextEditor({
                 style={{
                     // Match Konva text rendering exactly
                     display: "block",
+                    transform: trimOffsetScreen ? `translateY(${-trimOffsetScreen}px)` : undefined,
                     fontSize: fontSizeScaled,
                     fontFamily: layer.fontFamily,
                     fontWeight: layer.fontWeight || "normal",
