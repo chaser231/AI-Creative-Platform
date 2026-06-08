@@ -14,6 +14,7 @@ import type {
 } from "@/types";
 import type { CornerRadiusValue } from "@/utils/strokeGeometry";
 import { computeImageFitProps } from "@/utils/imageFitUtils";
+import { getTextTrimMetrics, isTextTrimActive } from "@/utils/layoutEngine";
 import { normalizePaint, paintToKonvaProps } from "@/utils/paint";
 import { AlignedStrokeRect } from "@/components/editor/canvas/AlignedStrokeRect";
 import Konva from "konva";
@@ -81,6 +82,7 @@ function PreviewLayer({ layer, allLayers, loadedImages, imageStatuses, renderX, 
                         <Text
                             width={layer.textAdjust === "auto_width" ? undefined : layer.width}
                             height={layer.textAdjust === "auto_width" || layer.textAdjust === "auto_height" ? undefined : layer.height}
+                            offsetY={isTextTrimActive(layer) ? getTextTrimMetrics(layer).top : 0}
                             text={layer.textTransform === "uppercase" ? layer.text.toUpperCase() : layer.textTransform === "lowercase" ? layer.text.toLowerCase() : layer.text}
                             fontSize={layer.fontSize}
                             fontFamily={layer.fontFamily}
