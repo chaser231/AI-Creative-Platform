@@ -474,6 +474,13 @@ export interface LayerResponsiveSettings {
     maxFontSize?: number;
     /** Adaptation-only: shrink font to fit a fixed text box (height overflow). */
     textFit?: LayerTextFit;
+    /** Cap visible line count; pairs with ellipsis when text overflows the cap. */
+    maxLines?: number;
+    /** Clamp text container width/height on the adaptation path. */
+    minWidth?: number;
+    maxWidth?: number;
+    minHeight?: number;
+    maxHeight?: number;
 }
 
 /**

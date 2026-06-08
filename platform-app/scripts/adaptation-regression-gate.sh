@@ -11,6 +11,7 @@ npx vitest run \
   src/utils/__tests__/textVerticalTrim.test.ts \
   src/utils/__tests__/layoutEngineTruncate.test.ts \
   src/utils/__tests__/textFit.test.ts \
+  src/utils/__tests__/textContainerLimits.test.ts \
   src/components/editor/canvas/textTransformUtils.test.ts \
   src/services/customResizeService.test.ts \
   src/utils/constraintInference.test.ts \

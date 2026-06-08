@@ -1,5 +1,6 @@
 import { Layer, FrameLayer, TextLayer, TemplateSlotRole, ResizeFormat, LayerUpdate } from "@/types";
 import { computeConstrainedPosition } from "@/store/canvas/helpers";
+import { getMaxLinesCapHeight } from "@/utils/textContainerLimits";
 import type { FrameResizeDelta } from "@/store/canvas/types";
 import Konva from "konva";
 
@@ -55,7 +56,8 @@ function buildTextCacheKey(
     const ls = text.letterSpacing || 0;
     const lh = text.lineHeight || 1.2;
     const truncate = text.truncateText ? "1" : "0";
-    return `${displayText}\u0001${text.fontFamily}\u0001${text.fontSize}\u0001${fontStyle}\u0001${ls}\u0001${lh}\u0001${adj}\u0001${measureW ?? ""}\u0001${truncate}`;
+    const maxLines = text.responsive?.maxLines ?? "";
+    return `${displayText}\u0001${text.fontFamily}\u0001${text.fontSize}\u0001${fontStyle}\u0001${ls}\u0001${lh}\u0001${adj}\u0001${measureW ?? ""}\u0001${truncate}\u0001${maxLines}`;
 }
 
 function cacheMeasurement(key: string, value: { width: number; height: number }) {
@@ -91,7 +93,9 @@ function estimateTextSizeRaw(
     const isFixedTruncate = textAdjust === "fixed" && !!text.truncateText;
 
     if (textAdjust === "fixed" && !text.truncateText) {
-        return { width: text.width, height: text.height };
+        const capHeight = getMaxLinesCapHeight(text);
+        if (!capHeight) return { width: text.width, height: text.height };
+        return { width: text.width, height: Math.min(text.height, capHeight) };
     }
 
     let displayText = text.text;
@@ -126,6 +130,8 @@ function estimateTextSizeRaw(
             const lineHeightPx = text.fontSize * (text.lineHeight || 1.2);
             h = Math.min(h, lineHeightPx);
         }
+        const capHeight = getMaxLinesCapHeight(text);
+        if (capHeight != null) h = Math.min(h, capHeight);
 
         const result = { width: Math.max(1, w), height: Math.max(1, h) };
         cacheMeasurement(cacheKey, result);
@@ -143,6 +149,7 @@ function estimateTextSizeRaw(
         const totalLetterSpacing = Math.max(0, displayText.length - 1) * (text.letterSpacing || 0);
 
         let result: { width: number; height: number };
+        const capHeight = getMaxLinesCapHeight(text);
         if (isFixedTruncate) {
             result = { width: text.width, height: Math.max(1, singleLineHeight) };
         } else if (textAdjust === "auto_width") {
@@ -154,6 +161,7 @@ function estimateTextSizeRaw(
             const lineCount = Math.max(1, Math.ceil(displayText.length / charsPerLine));
             result = { width: fixedW, height: Math.max(1, lineCount * singleLineHeight) };
         }
+        if (capHeight != null) result.height = Math.min(result.height, capHeight);
         cacheMeasurement(cacheKey, result);
         return result;
     }
@@ -165,6 +173,7 @@ function estimateTextSizeRaw(
     ctx.font = fontSpec;
 
     let result: { width: number; height: number };
+    const capHeight = getMaxLinesCapHeight(text);
     if (isFixedTruncate) {
         result = { width: text.width, height: Math.max(1, singleLineHeight) };
     } else if (textAdjust === "auto_width") {
@@ -183,6 +192,7 @@ function estimateTextSizeRaw(
             height: Math.max(1, lineCount * singleLineHeight),
         };
     }
+    if (capHeight != null) result.height = Math.min(result.height, capHeight);
     cacheMeasurement(cacheKey, result);
     return result;
 }

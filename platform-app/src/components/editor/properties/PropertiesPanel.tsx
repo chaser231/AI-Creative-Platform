@@ -574,6 +574,14 @@ function ResponsiveInspectorSection({
                                     textFit: responsive.textFit === "shrink" ? undefined : "shrink",
                                 })}
                             />
+                            <NumberField
+                                label="Строк макс."
+                                value={responsive.maxLines ?? 0}
+                                min={0}
+                                onChange={(maxLines) => updateResponsive({
+                                    maxLines: maxLines > 0 ? Math.round(maxLines) : undefined,
+                                })}
+                            />
                             <TwoColumn>
                                 <NumberField
                                     label="Min"
@@ -586,6 +594,42 @@ function ResponsiveInspectorSection({
                                     value={responsive.maxFontSize ?? 0}
                                     min={0}
                                     onChange={(maxFontSize) => updateResponsive({ maxFontSize: maxFontSize > 0 ? maxFontSize : undefined })}
+                                />
+                            </TwoColumn>
+                            <TwoColumn>
+                                <NumberField
+                                    label="Min W"
+                                    value={responsive.minWidth ?? 0}
+                                    min={0}
+                                    onChange={(minWidth) => updateResponsive({
+                                        minWidth: minWidth > 0 ? minWidth : undefined,
+                                    })}
+                                />
+                                <NumberField
+                                    label="Max W"
+                                    value={responsive.maxWidth ?? 0}
+                                    min={0}
+                                    onChange={(maxWidth) => updateResponsive({
+                                        maxWidth: maxWidth > 0 ? maxWidth : undefined,
+                                    })}
+                                />
+                            </TwoColumn>
+                            <TwoColumn>
+                                <NumberField
+                                    label="Min H"
+                                    value={responsive.minHeight ?? 0}
+                                    min={0}
+                                    onChange={(minHeight) => updateResponsive({
+                                        minHeight: minHeight > 0 ? minHeight : undefined,
+                                    })}
+                                />
+                                <NumberField
+                                    label="Max H"
+                                    value={responsive.maxHeight ?? 0}
+                                    min={0}
+                                    onChange={(maxHeight) => updateResponsive({
+                                        maxHeight: maxHeight > 0 ? maxHeight : undefined,
+                                    })}
                                 />
                             </TwoColumn>
                         </>
@@ -603,6 +647,11 @@ function compactResponsiveSettings(settings: LayerResponsiveSettings): LayerResp
     if (!next.behavior || next.behavior === "auto") delete next.behavior;
     if (!next.canHide) delete next.canHide;
     if (!next.textFit) delete next.textFit;
+    if (!next.maxLines || next.maxLines <= 0) delete next.maxLines;
+    if (!next.minWidth || next.minWidth <= 0) delete next.minWidth;
+    if (!next.maxWidth || next.maxWidth <= 0) delete next.maxWidth;
+    if (!next.minHeight || next.minHeight <= 0) delete next.minHeight;
+    if (!next.maxHeight || next.maxHeight <= 0) delete next.maxHeight;
     if (next.minFontSize === undefined || next.minFontSize === 8) delete next.minFontSize;
     if (next.maxFontSize === undefined || next.maxFontSize <= 0) delete next.maxFontSize;
     return Object.keys(next).length > 0 ? next : undefined;

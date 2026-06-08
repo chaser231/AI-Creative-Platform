@@ -10,6 +10,7 @@ import {
 } from "@/types";
 import { computeConstrainedPosition } from "@/store/canvas/helpers";
 import { applyAllAutoLayouts, measureTextLayer } from "@/utils/layoutEngine";
+import { applyTextContainerLimits } from "@/utils/textContainerLimits";
 import { shrinkTextToFitBox } from "@/utils/textFit";
 import { resolveConstraints, type Box } from "@/utils/constraintInference";
 
@@ -106,7 +107,7 @@ export function generateCustomResize(
         projected,
         applyAllAutoLayouts(projected),
     );
-    const remeasured = applyTextFitShrink(remeasureAdaptedTextBoxes(layouted));
+    const remeasured = applyTextFitShrink(applyTextContainerLimitsToLayers(remeasureAdaptedTextBoxes(layouted)));
     const validated = validateAndApplyHide(remeasured, targetSize, diagnostics);
     const master = resolveMasterFormat(state);
     const masterLayers = master ? getLayersForResize(state, master) : [];
@@ -512,6 +513,12 @@ function computeFixedAxis(
         return start * (targetAxis / Math.max(1, sourceAxis));
     }
     return start;
+}
+
+function applyTextContainerLimitsToLayers(layers: Layer[]): Layer[] {
+    return layers.map((layer) => (
+        layer.type === "text" ? applyTextContainerLimits(layer as TextLayer) : layer
+    ));
 }
 
 function applyTextFitShrink(layers: Layer[]): Layer[] {

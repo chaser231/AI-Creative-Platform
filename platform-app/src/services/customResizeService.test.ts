@@ -312,6 +312,34 @@ describe("generateCustomResize", () => {
         expect(measureWrappedTextContent(adapted, adapted.width).height).toBeLessThanOrEqual(adapted.height + 0.5);
     });
 
+    it("clamps adapted text box to responsive container limits and maxLines", () => {
+        const result = generateCustomResize(
+            {
+                layers: [
+                    text({
+                        id: "headline",
+                        textAdjust: "fixed",
+                        width: 400,
+                        height: 200,
+                        fontSize: 20,
+                        lineHeight: 1.2,
+                        text: "Очень длинный заголовок который переносится на много строк",
+                        responsive: { maxWidth: 240, maxLines: 2 },
+                    }),
+                ],
+                activeResizeId: "master",
+                canvasWidth: 100,
+                canvasHeight: 100,
+                resizes: [resize({ id: "master", width: 100, height: 100, isMaster: true })],
+            },
+            { id: "target", name: "Target", width: 100, height: 100 },
+        );
+
+        const adapted = result.resize.layerSnapshot?.[0] as TextLayer;
+        expect(adapted.width).toBeLessThanOrEqual(240);
+        expect(adapted.height).toBeLessThanOrEqual(20 * 1.2 * 2 + 0.5);
+    });
+
     it("remeasures text container after font scales on adaptation", () => {
         const result = generateCustomResize(
             {
