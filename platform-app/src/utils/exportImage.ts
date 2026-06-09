@@ -30,3 +30,15 @@ export async function zipPngDataUrls(
     const content = await zip.generateAsync({ type: "blob" });
     saveAs(content, zipName);
 }
+
+export async function zipTextFiles(
+    entries: Array<{ fileName: string; content: string }>,
+    zipName: string,
+): Promise<void> {
+    const zip = new JSZip();
+    for (const entry of entries) {
+        zip.file(entry.fileName, entry.content);
+    }
+    const content = await zip.generateAsync({ type: "blob" });
+    saveAs(content, zipName);
+}

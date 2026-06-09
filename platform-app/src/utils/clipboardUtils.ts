@@ -8,15 +8,22 @@
  */
 
 import type { Layer, FrameLayer } from "@/types";
+import { layersToSvgFragment } from "@/services/svgExport";
 import Konva from "konva";
 
 // ─── Clipboard Data Format ─────────────────────────────
 
 const CLIPBOARD_MARKER = "ai-creative-platform-layers" as const;
 
+/**
+ * Clipboard schema version.
+ * - v1: text/rect/image/badge/frame layers.
+ * - v2: adds the `vector` layer type. Vector geometry serializes inline in the
+ *   `layers` array, so cross-format copy/cut works without extra infrastructure.
+ */
 export interface ClipboardLayerData {
     type: typeof CLIPBOARD_MARKER;
-    version: 1;
+    version: 1 | 2;
     layers: Layer[];
     sourceProjectId?: string;
     sourceFormatId?: string;
@@ -76,7 +83,7 @@ export async function copyLayersToClipboard(
 
     const data: ClipboardLayerData = {
         type: CLIPBOARD_MARKER,
-        version: 1,
+        version: 2,
         layers,
         sourceProjectId: projectId,
         sourceFormatId: formatId,
@@ -112,6 +119,45 @@ export async function pasteLayersFromClipboard(): Promise<ClipboardLayerData | n
     } catch {
         // Not our data or permission denied
         return null;
+    }
+}
+
+// ─── Copy Layers as SVG ────────────────────────────────
+
+/**
+ * Serialize the selected layers to an SVG document and write it to the system
+ * clipboard as text (most compatible across browsers and target apps).
+ */
+export async function copyLayersAsSvg(
+    layerIds: string[],
+    allLayers: Layer[],
+    stage?: Konva.Stage | null,
+): Promise<boolean> {
+    if (layerIds.length === 0) return false;
+    const layers = collectLayerTree(layerIds, allLayers);
+    if (layers.length === 0) return false;
+
+    // Outline text to vector paths so the copied SVG renders identically without
+    // the original fonts installed in the target app.
+    let outlinedText: Awaited<ReturnType<typeof import("@/services/exportText").buildOutlinedTextMap>> | undefined;
+    if (stage) {
+        try {
+            const { buildOutlinedTextMap } = await import("@/services/exportText");
+            outlinedText = await buildOutlinedTextMap(stage, allLayers);
+        } catch {
+            outlinedText = undefined;
+        }
+    }
+
+    const svg = layersToSvgFragment(layers, outlinedText);
+    if (!svg) return false;
+
+    try {
+        await navigator.clipboard.writeText(svg);
+        return true;
+    } catch (err) {
+        console.error("[clipboard] Failed to copy as SVG:", err);
+        return false;
     }
 }
 

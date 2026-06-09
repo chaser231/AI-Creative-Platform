@@ -25,6 +25,7 @@ import {
     MoveHorizontal,
     MoveVertical,
     Paintbrush,
+    PenTool,
     PanelBottom,
     PanelLeft,
     PanelRight,
@@ -44,6 +45,7 @@ import { useShallow } from "zustand/react/shallow";
 import { Select } from "@/components/ui/Select";
 import { SmartNumberInput, useNumberScrub } from "@/components/ui/SmartNumberInput";
 import { useCanvasStore } from "@/store/canvasStore";
+import { enterVectorEditMode } from "@/utils/vectorEdit";
 import type {
     BadgeLayer,
     ConstraintH,
@@ -59,6 +61,7 @@ import type {
     RectangleLayer,
     TemplateSlotRole,
     TextLayer,
+    VectorLayer,
 } from "@/types";
 import { DEFAULT_CONSTRAINTS, IMAGE_FIT_MODE_LABELS } from "@/types";
 import { cn } from "@/lib/cn";
@@ -342,6 +345,23 @@ function LayerInspector({
     const widthModeConfig = getLayerSizeModeConfig(layer, "width", isInsideAutoLayout);
     const heightModeConfig = getLayerSizeModeConfig(layer, "height", isInsideAutoLayout);
 
+    const lockAspectRatio = !!layer.lockAspectRatio;
+    const aspect = layer.height !== 0 ? layer.width / layer.height : 1;
+
+    const handleSizeChange = (axis: "width" | "height", value: number) => {
+        const base = resolveManualSizeUpdate(layer, axis, value, axis === "width" ? widthModeConfig : heightModeConfig);
+        if (lockAspectRatio && aspect > 0) {
+            const otherAxis = axis === "width" ? "height" : "width";
+            const otherValue = axis === "width"
+                ? Math.max(1, Math.round(value / aspect))
+                : Math.max(1, Math.round(value * aspect));
+            Object.assign(base, resolveManualSizeUpdate(layer, otherAxis, otherValue, otherAxis === "width" ? widthModeConfig : heightModeConfig));
+            (base as Record<string, number>)[axis] = value;
+            (base as Record<string, number>)[otherAxis] = otherValue;
+        }
+        onChange(base as Partial<Layer>);
+    };
+
     return (
         <div className="space-y-3">
             <AlignmentSection disabled={isInsideAutoLayout} onAlign={onAlign} />
@@ -369,24 +389,39 @@ function LayerInspector({
                 </div>
             </InspectorSection>
             <InspectorSection title="Размер" icon={<Maximize2 size={13} />}>
-                <TwoColumn>
-                    <SizeField
-                        label="W"
-                        value={Math.round(layer.width)}
-                        min={1}
-                        modeConfig={widthModeConfig}
-                        onModeChange={(mode) => widthModeConfig && onChange(widthModeConfig.toUpdates(mode))}
-                        onChange={(width) => onChange(resolveManualSizeUpdate(layer, "width", width, widthModeConfig))}
-                    />
-                    <SizeField
-                        label="H"
-                        value={Math.round(layer.height)}
-                        min={1}
-                        modeConfig={heightModeConfig}
-                        onModeChange={(mode) => heightModeConfig && onChange(heightModeConfig.toUpdates(mode))}
-                        onChange={(height) => onChange(resolveManualSizeUpdate(layer, "height", height, heightModeConfig))}
-                    />
-                </TwoColumn>
+                <div className="flex items-start gap-1.5">
+                    <div className="grid flex-1 grid-cols-2 gap-2">
+                        <SizeField
+                            label="W"
+                            value={Math.round(layer.width)}
+                            min={1}
+                            modeConfig={widthModeConfig}
+                            onModeChange={(mode) => widthModeConfig && onChange(widthModeConfig.toUpdates(mode))}
+                            onChange={(width) => handleSizeChange("width", width)}
+                        />
+                        <SizeField
+                            label="H"
+                            value={Math.round(layer.height)}
+                            min={1}
+                            modeConfig={heightModeConfig}
+                            onModeChange={(mode) => heightModeConfig && onChange(heightModeConfig.toUpdates(mode))}
+                            onChange={(height) => handleSizeChange("height", height)}
+                        />
+                    </div>
+                    <button
+                        type="button"
+                        title={lockAspectRatio ? "Пропорции зафиксированы" : "Зафиксировать пропорции"}
+                        onClick={() => onChange({ lockAspectRatio: !lockAspectRatio } as Partial<Layer>)}
+                        className={cn(
+                            "flex h-8 w-8 shrink-0 items-center justify-center rounded-[var(--radius-md)] border transition-colors cursor-pointer",
+                            lockAspectRatio
+                                ? "border-accent-primary/30 bg-accent-primary/10 text-accent-primary"
+                                : "border-border-primary text-text-tertiary hover:text-text-primary hover:bg-bg-tertiary",
+                        )}
+                    >
+                        {lockAspectRatio ? <Link size={13} /> : <Unlink size={13} />}
+                    </button>
+                </div>
                 {activeResizeId !== "master" && layer.masterId && layer.type === "image" && (
                     <IconToggle
                         active={!layer.detachedSizeSync}
@@ -409,6 +444,7 @@ function LayerInspector({
             {layer.type === "text" && <TextInspectorSection layer={layer} onChange={(updates) => onChange(updates as Partial<Layer>)} />}
             {layer.type === "image" && <ImageInspectorSection layer={layer} onChange={(updates) => onChange(updates as Partial<Layer>)} />}
             {layer.type === "rectangle" && <ShapeStyleSection layer={layer} onChange={(updates) => onChange(updates as Partial<Layer>)} />}
+            {layer.type === "vector" && <VectorStyleSection layer={layer} onChange={(updates) => onChange(updates as Partial<Layer>)} />}
             {layer.type === "badge" && <BadgeInspectorSection layer={layer} onChange={(updates) => onChange(updates as Partial<Layer>)} />}
             {layer.type === "frame" && (
                 <>
@@ -1131,6 +1167,55 @@ function BadgeInspectorSection({ layer, onChange }: { layer: BadgeLayer; onChang
             <LabeledControl label="Цвет текста">
                 <ColorInput value={layer.textColor} onChange={(textColor) => onChange({ textColor })} />
             </LabeledControl>
+        </InspectorSection>
+    );
+}
+
+function VectorStyleSection({
+    layer,
+    onChange,
+}: {
+    layer: VectorLayer;
+    onChange: (updates: Partial<VectorLayer>) => void;
+}) {
+    const fillEnabled = layer.fillEnabled !== false;
+    const vectorEditLayerId = useCanvasStore((s) => s.vectorEditLayerId);
+    const setVectorEditLayerId = useCanvasStore((s) => s.setVectorEditLayerId);
+    const updateLayer = useCanvasStore((s) => s.updateLayer);
+    const isEditing = vectorEditLayerId === layer.id;
+    return (
+        <InspectorSection title="Стиль" icon={<Paintbrush size={13} />}>
+            <IconToggle
+                active={isEditing}
+                label={isEditing ? "Завершить редактирование точек" : "Редактировать точки"}
+                icon={<PenTool size={12} />}
+                onClick={() => {
+                    if (isEditing) {
+                        setVectorEditLayerId(null);
+                        return;
+                    }
+                    enterVectorEditMode(layer, updateLayer, setVectorEditLayerId);
+                }}
+            />
+            <OpacityControl value={layer.opacity ?? 1} onChange={(opacity) => onChange({ opacity })} />
+            <PaintRow
+                label="Заливка"
+                value={layer.fill}
+                gradientTargetId={layer.id}
+                enabled={fillEnabled}
+                onToggleEnabled={() => onChange({ fillEnabled: !fillEnabled })}
+                onChange={(fill) => onChange({ fill })}
+            />
+            <StrokeControls
+                value={{
+                    stroke: layer.stroke || "#000000",
+                    strokeEnabled: layer.strokeEnabled,
+                    strokeWidth: layer.strokeWidth ?? 0,
+                    strokeAlign: layer.strokeAlign,
+                    strokeJoin: layer.strokeJoin,
+                }}
+                onChange={(updates) => onChange(updates as Partial<VectorLayer>)}
+            />
         </InspectorSection>
     );
 }

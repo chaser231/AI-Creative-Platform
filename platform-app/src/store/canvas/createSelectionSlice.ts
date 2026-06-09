@@ -6,6 +6,7 @@ import type { StateCreator } from "zustand";
 import type { CanvasStore, Layer, FrameLayer, HistorySnapshot } from "./types";
 import { MAX_HISTORY } from "./types";
 import { applyAllAutoLayouts } from "@/utils/layoutEngine";
+import { pushSnapshot } from "./createHistorySlice";
 import {
     getEditModeExitPatchesForSelection,
     getPrimarySelectedLayerId,
@@ -15,7 +16,10 @@ export type SelectionSlice = Pick<CanvasStore,
     | "selectedLayerIds"
     | "selectLayer" | "toggleSelection" | "addToSelection" | "removeFromSelection"
     | "alignSelectedLayers" | "batchUpdateLayers"
+    | "beginTransformPreview" | "previewLayerGeometry" | "endTransformPreview"
 >;
+
+let transformPreviewHistoryPushed = false;
 
 export const createSelectionSlice: StateCreator<CanvasStore, [], [], SelectionSlice> = (set, get) => ({
     selectedLayerIds: [],
@@ -185,7 +189,29 @@ export const createSelectionSlice: StateCreator<CanvasStore, [], [], SelectionSl
         });
     },
 
+    beginTransformPreview: () => {
+        if (!transformPreviewHistoryPushed) {
+            pushSnapshot(set as (p: Partial<CanvasStore>) => void, get);
+            transformPreviewHistoryPushed = true;
+        }
+    },
+
+    previewLayerGeometry: (updates) => {
+        if (updates.length === 0) return;
+        set((state) => ({
+            layers: state.layers.map((layer) => {
+                const update = updates.find((u) => u.id === layer.id);
+                return update ? ({ ...layer, ...update.changes } as Layer) : layer;
+            }),
+        }));
+    },
+
+    endTransformPreview: () => {
+        transformPreviewHistoryPushed = false;
+    },
+
     batchUpdateLayers: (updates) => {
+        transformPreviewHistoryPushed = false;
         set((state) => {
             if (updates.length === 0) return state;
 

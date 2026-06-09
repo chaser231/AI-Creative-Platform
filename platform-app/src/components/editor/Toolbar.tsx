@@ -11,10 +11,12 @@ import {
     Sparkles,
     Magnet,
     Workflow,
+    PenTool,
 } from "lucide-react";
 import { useCanvasStore } from "@/store/canvasStore";
 import { useShallow } from "zustand/react/shallow";
 import type { ToolType } from "@/types";
+import { svgTextToVectorOverrides } from "@/utils/svgImport";
 import { useRef, useState } from "react";
 import { Popover } from "@/components/ui/Popover";
 import { Select } from "@/components/ui/Select";
@@ -24,6 +26,7 @@ const TOOLS: { id: ToolType; icon: React.ReactNode; label: string }[] = [
     { id: "select", icon: <MousePointer2 size={18} />, label: "Выбор" },
     { id: "text", icon: <Type size={18} />, label: "Текст" },
     { id: "rectangle", icon: <Square size={18} />, label: "Прямоугольник" },
+    { id: "pen", icon: <PenTool size={18} />, label: "Перо (вектор)" },
     { id: "frame", icon: <SquareDashed size={18} />, label: "Фрейм" },
     { id: "badge", icon: <Award size={18} />, label: "Бейдж" },
     { id: "image", icon: <ImagePlus size={18} />, label: "Изображение" },
@@ -55,11 +58,13 @@ export function Toolbar({
         setActiveTool,
         addImageLayer,
         addBadgeLayer,
+        addVectorLayer,
         snapConfig,
         updateSnapConfig,
     } = useCanvasStore(useShallow((s) => ({
         activeTool: s.activeTool, setActiveTool: s.setActiveTool,
         addImageLayer: s.addImageLayer, addBadgeLayer: s.addBadgeLayer,
+        addVectorLayer: s.addVectorLayer,
         snapConfig: s.snapConfig, updateSnapConfig: s.updateSnapConfig,
     })));
     const { registerFile } = useProjectLibrary();
@@ -82,6 +87,19 @@ export function Toolbar({
         const file = e.target.files?.[0];
         e.target.value = "";
         if (!file) return;
+
+        // SVG -> native editable vector layer.
+        if (file.type === "image/svg+xml" || /\.svg$/i.test(file.name)) {
+            void file.text().then((text) => {
+                const overrides = svgTextToVectorOverrides(text, {
+                    x: 200,
+                    y: 200,
+                    name: file.name.replace(/\.svg$/i, "") || "Vector",
+                });
+                if (overrides) addVectorLayer(overrides);
+            });
+            return;
+        }
 
         // Drop the layer immediately (via an ObjectURL), then register the
         // file to S3 + project library in the background. Once the library
@@ -222,7 +240,7 @@ export function Toolbar({
             <input
                 ref={fileRef}
                 type="file"
-                accept="image/*"
+                accept="image/*,.svg"
                 className="hidden"
                 onChange={handleImageUpload}
             />

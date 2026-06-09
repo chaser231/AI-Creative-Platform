@@ -10,8 +10,12 @@ import { useCanvasStore } from "@/store/canvasStore";
 import { useShallow } from "zustand/react/shallow";
 import type { FrameLayer } from "@/types";
 import { cn } from "@/lib/cn";
-import { downloadDataUrl, zipPngDataUrls } from "@/utils/exportImage";
+import { downloadDataUrl, zipPngDataUrls, zipTextFiles } from "@/utils/exportImage";
 import { getCanvasStateForSave } from "@/utils/canvasState";
+import { layersToSvg, layersToSvgFragment } from "@/services/svgExport";
+import { layersToEps, layersToEpsFragment } from "@/services/epsExport";
+import { collectLayerTree } from "@/utils/clipboardUtils";
+import type { Layer } from "@/types";
 
 interface ExportModalProps {
     open: boolean;
@@ -51,14 +55,15 @@ export function ExportModal({ open, onClose, stageRef }: ExportModalProps) {
     const [scale, setScale] = useState(1);
     const [exportMode, setExportMode] = useState<ExportMode>("single");
     const [exportTarget, setExportTarget] = useState<ExportTarget>("artboard");
+    const [exportFormat, setExportFormat] = useState<"png" | "svg" | "eps">("png");
     const [selectedResizes, setSelectedResizes] = useState<Set<string>>(new Set());
     const [isExporting, setIsExporting] = useState(false);
     const [transparentBackground, setTransparentBackground] = useState(false);
 
-    const { canvasWidth, canvasHeight, layers, resizes, setActiveResize, activeResizeId } = useCanvasStore(useShallow((s) => ({
+    const { canvasWidth, canvasHeight, layers, resizes, setActiveResize, activeResizeId, artboardProps } = useCanvasStore(useShallow((s) => ({
         canvasWidth: s.canvasWidth, canvasHeight: s.canvasHeight, layers: s.layers,
         resizes: s.resizes, setActiveResize: s.setActiveResize,
-        activeResizeId: s.activeResizeId,
+        activeResizeId: s.activeResizeId, artboardProps: s.artboardProps,
     })));
 
     // Get all frames for export target selector
@@ -177,7 +182,102 @@ export function ExportModal({ open, onClose, stageRef }: ExportModalProps) {
         downloadDataUrl(dataURL, fileName);
     }, [stageRef, getExportBounds, captureDataUrl]);
 
+    const downloadSvg = useCallback((svg: string, fileName: string) => {
+        const blob = new Blob([svg], { type: "image/svg+xml" });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = fileName;
+        link.click();
+        URL.revokeObjectURL(url);
+    }, []);
+
+    const handleSvgExport = useCallback(async () => {
+        const targetName = exportTarget === "artboard"
+            ? "artboard"
+            : (layers.find((l) => l.id === exportTarget)?.name || "frame");
+        setIsExporting(true);
+        try {
+            const [{ buildOutlinedTextMap }, { buildEmbeddedImageMap }] = await Promise.all([
+                import("@/services/exportText"),
+                import("@/services/exportImages"),
+            ]);
+            const { promoteFigmaVectorImagesForExport } = await import("@/lib/figma/vectorPromotion");
+            const exportLayers = await promoteFigmaVectorImagesForExport(layers as Layer[]);
+            const outlinedText = await buildOutlinedTextMap(stageRef.current, exportLayers);
+            const embeddedImages = await buildEmbeddedImageMap(exportLayers);
+
+            let svg: string;
+            if (exportTarget === "artboard") {
+                svg = layersToSvg({
+                    layers: exportLayers,
+                    width: canvasWidth,
+                    height: canvasHeight,
+                    artboardFill: artboardProps.fill,
+                    artboardFillEnabled: !transparentBackground && artboardProps.fillEnabled !== false,
+                    outlinedText,
+                    embeddedImages,
+                });
+            } else {
+                const subtree = collectLayerTree([exportTarget], exportLayers);
+                svg = subtree.length ? layersToSvgFragment(subtree, outlinedText) : "";
+            }
+            if (svg) downloadSvg(svg, `${targetName}.svg`);
+        } finally {
+            setIsExporting(false);
+            onClose();
+        }
+    }, [exportTarget, layers, canvasWidth, canvasHeight, artboardProps, transparentBackground, downloadSvg, onClose, stageRef]);
+
+    const handleEpsExport = useCallback(async () => {
+        const targetName = exportTarget === "artboard"
+            ? "artboard"
+            : (layers.find((l) => l.id === exportTarget)?.name || "frame");
+        setIsExporting(true);
+        try {
+            const [{ buildOutlinedTextMap }, { promoteFigmaVectorImagesForExport }] = await Promise.all([
+                import("@/services/exportText"),
+                import("@/lib/figma/vectorPromotion"),
+            ]);
+            const exportLayers = await promoteFigmaVectorImagesForExport(layers as Layer[]);
+            const outlinedText = await buildOutlinedTextMap(stageRef.current, exportLayers);
+
+            let eps: string;
+            if (exportTarget !== "artboard") {
+                const subtree = collectLayerTree([exportTarget], exportLayers);
+                eps = layersToEpsFragment(subtree, outlinedText);
+            } else {
+                eps = layersToEps({
+                    layers: exportLayers,
+                    width: canvasWidth,
+                    height: canvasHeight,
+                    artboardFill: artboardProps.fill,
+                    artboardFillEnabled: !transparentBackground && artboardProps.fillEnabled !== false,
+                    outlinedText,
+                });
+            }
+            const blob = new Blob([eps], { type: "application/postscript" });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement("a");
+            link.href = url;
+            link.download = `${targetName}.eps`;
+            link.click();
+            URL.revokeObjectURL(url);
+        } finally {
+            setIsExporting(false);
+            onClose();
+        }
+    }, [exportTarget, layers, canvasWidth, canvasHeight, artboardProps, transparentBackground, onClose, stageRef]);
+
     const handleSingleExport = () => {
+        if (exportFormat === "svg") {
+            void handleSvgExport();
+            return;
+        }
+        if (exportFormat === "eps") {
+            void handleEpsExport();
+            return;
+        }
         const bounds = getExportBounds();
         const targetName = exportTarget === "artboard"
             ? "artboard"
@@ -195,49 +295,91 @@ export function ExportModal({ open, onClose, stageRef }: ExportModalProps) {
 
         setIsExporting(true);
 
-        // Save current state
         const originalResizeId = activeResizeId;
         const oldScale = stage.scaleX();
         const oldX = stage.x();
         const oldY = stage.y();
 
-        const pngEntries: Array<{ fileName: string; dataUrl: string }> = [];
+        try {
+            if (exportFormat === "svg" || exportFormat === "eps") {
+                const [{ buildOutlinedTextMap }, { buildEmbeddedImageMap }, { promoteFigmaVectorImagesForExport }] = await Promise.all([
+                    import("@/services/exportText"),
+                    import("@/services/exportImages"),
+                    import("@/lib/figma/vectorPromotion"),
+                ]);
+                const vectorEntries: Array<{ fileName: string; content: string }> = [];
 
-        for (const resize of resizesToExport) {
-            // Switch to resize
-            setActiveResize(resize.id);
+                for (const resize of resizesToExport) {
+                    setActiveResize(resize.id);
+                    await new Promise((resolve) => setTimeout(resolve, 300));
 
-            // Wait for render
-            await new Promise((resolve) => setTimeout(resolve, 200));
+                    const state = useCanvasStore.getState();
+                    const exportLayers = await promoteFigmaVectorImagesForExport(state.layers as Layer[]);
+                    const outlinedText = await buildOutlinedTextMap(stage, exportLayers);
+                    const embeddedImages = exportFormat === "svg"
+                        ? await buildEmbeddedImageMap(exportLayers)
+                        : undefined;
 
-            // Reset for clean export
-            stage.scale({ x: 1, y: 1 });
-            stage.position({ x: 0, y: 0 });
+                    const content = exportFormat === "svg"
+                        ? layersToSvg({
+                            layers: exportLayers,
+                            width: state.canvasWidth,
+                            height: state.canvasHeight,
+                            artboardFill: state.artboardProps.fill,
+                            artboardFillEnabled: !transparentBackground && state.artboardProps.fillEnabled !== false,
+                            outlinedText,
+                            embeddedImages,
+                        })
+                        : layersToEps({
+                            layers: state.layers as Layer[],
+                            width: state.canvasWidth,
+                            height: state.canvasHeight,
+                            artboardFill: state.artboardProps.fill,
+                            artboardFillEnabled: !transparentBackground && state.artboardProps.fillEnabled !== false,
+                            outlinedText,
+                        });
+
+                    vectorEntries.push({
+                        fileName: `${resize.name}-${resize.width}x${resize.height}.${exportFormat}`,
+                        content,
+                    });
+                }
+
+                await zipTextFiles(vectorEntries, `export-batch-${exportFormat}.zip`);
+            } else {
+                const pngEntries: Array<{ fileName: string; dataUrl: string }> = [];
+
+                for (const resize of resizesToExport) {
+                    setActiveResize(resize.id);
+                    await new Promise((resolve) => setTimeout(resolve, 200));
+
+                    stage.scale({ x: 1, y: 1 });
+                    stage.position({ x: 0, y: 0 });
+                    stage.batchDraw();
+
+                    const dataURL = captureDataUrl(stage, {
+                        x: 0,
+                        y: 0,
+                        width: resize.width,
+                        height: resize.height,
+                    });
+
+                    pngEntries.push({
+                        fileName: `${resize.name}-${resize.width}x${resize.height}@${scale}x.png`,
+                        dataUrl: dataURL,
+                    });
+                }
+
+                await zipPngDataUrls(pngEntries, "export-batch.zip");
+            }
+        } finally {
+            setActiveResize(originalResizeId);
+            stage.scale({ x: oldScale, y: oldScale });
+            stage.position({ x: oldX, y: oldY });
             stage.batchDraw();
-
-            const dataURL = captureDataUrl(stage, {
-                x: 0,
-                y: 0,
-                width: resize.width,
-                height: resize.height,
-            });
-
-            pngEntries.push({
-                fileName: `${resize.name}-${resize.width}x${resize.height}@${scale}x.png`,
-                dataUrl: dataURL,
-            });
+            setIsExporting(false);
+            onClose();
         }
-
-        await zipPngDataUrls(pngEntries, "export-batch.zip");
-
-        // Restore original state
-        setActiveResize(originalResizeId);
-        stage.scale({ x: oldScale, y: oldScale });
-        stage.position({ x: oldX, y: oldY });
-        stage.batchDraw();
-
-        setIsExporting(false);
-        onClose();
     };
 
     const bounds = getExportBounds();
@@ -255,7 +397,7 @@ export function ExportModal({ open, onClose, stageRef }: ExportModalProps) {
                     </Button>
                     {exportMode === "single" ? (
                         <Button onClick={handleSingleExport} icon={<Download size={16} />}>
-                            Скачать PNG
+                            {exportFormat === "svg" ? "Скачать SVG" : exportFormat === "eps" ? "Скачать EPS" : "Скачать PNG"}
                         </Button>
                     ) : exportMode === "batch" ? (
                         <Button
@@ -358,34 +500,57 @@ export function ExportModal({ open, onClose, stageRef }: ExportModalProps) {
                             </div>
                         )}
 
-                        {/* Preview info */}
-                        <div className="p-3 bg-bg-secondary rounded-[var(--radius-md)] border border-border-primary">
-                            <p className="text-sm text-text-primary font-medium">
-                                Экспорт PNG
-                            </p>
-                            <p className="text-xs text-text-secondary mt-1">
-                                {Math.round(bounds.width * scale)} × {Math.round(bounds.height * scale)} pixels
-                            </p>
-                        </div>
-
-                        {/* Scale selector */}
+                        {/* Format selector */}
                         <div className="space-y-1.5">
-                            <label className="text-sm font-medium text-text-primary">Масштаб</label>
+                            <label className="text-sm font-medium text-text-primary">Формат</label>
                             <div className="flex gap-2">
-                                {[1, 2].map((s) => (
+                                {(["png", "svg", "eps"] as const).map((f) => (
                                     <button
-                                        key={s}
-                                        onClick={() => setScale(s)}
-                                        className={`flex-1 h-9 rounded-[var(--radius-md)] text-sm font-medium border transition-all cursor-pointer ${scale === s
+                                        key={f}
+                                        onClick={() => setExportFormat(f)}
+                                        className={`flex-1 h-9 rounded-[var(--radius-md)] text-sm font-medium border transition-all cursor-pointer uppercase ${exportFormat === f
                                             ? "border-accent-primary bg-bg-tertiary text-text-primary"
                                             : "border-border-primary text-text-secondary hover:border-border-secondary"
                                             }`}
                                     >
-                                        {s}x
+                                        {f}
                                     </button>
                                 ))}
                             </div>
                         </div>
+
+                        {/* Preview info */}
+                        <div className="p-3 bg-bg-secondary rounded-[var(--radius-md)] border border-border-primary">
+                            <p className="text-sm text-text-primary font-medium">
+                                {exportFormat === "svg" ? "Экспорт SVG (вектор)" : exportFormat === "eps" ? "Экспорт EPS (вектор)" : "Экспорт PNG"}
+                            </p>
+                            <p className="text-xs text-text-secondary mt-1">
+                                {exportFormat !== "png"
+                                    ? `${Math.round(bounds.width)} × ${Math.round(bounds.height)} (масштабируемый)`
+                                    : `${Math.round(bounds.width * scale)} × ${Math.round(bounds.height * scale)} pixels`}
+                            </p>
+                        </div>
+
+                        {/* Scale selector (PNG only) */}
+                        {exportFormat === "png" && (
+                            <div className="space-y-1.5">
+                                <label className="text-sm font-medium text-text-primary">Масштаб</label>
+                                <div className="flex gap-2">
+                                    {[1, 2].map((s) => (
+                                        <button
+                                            key={s}
+                                            onClick={() => setScale(s)}
+                                            className={`flex-1 h-9 rounded-[var(--radius-md)] text-sm font-medium border transition-all cursor-pointer ${scale === s
+                                                ? "border-accent-primary bg-bg-tertiary text-text-primary"
+                                                : "border-border-primary text-text-secondary hover:border-border-secondary"
+                                                }`}
+                                        >
+                                            {s}x
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
                         <TransparentBackgroundOption
                             checked={transparentBackground}
                             onChange={setTransparentBackground}
@@ -393,6 +558,25 @@ export function ExportModal({ open, onClose, stageRef }: ExportModalProps) {
                     </>
                 ) : exportMode === "batch" ? (
                     <>
+                        {/* Format selector (batch) */}
+                        <div className="space-y-1.5">
+                            <label className="text-sm font-medium text-text-primary">Формат</label>
+                            <div className="flex gap-2">
+                                {(["png", "svg", "eps"] as const).map((f) => (
+                                    <button
+                                        key={f}
+                                        onClick={() => setExportFormat(f)}
+                                        className={`flex-1 h-9 rounded-[var(--radius-md)] text-sm font-medium border transition-all cursor-pointer uppercase ${exportFormat === f
+                                            ? "border-accent-primary bg-bg-tertiary text-text-primary"
+                                            : "border-border-primary text-text-secondary hover:border-border-secondary"
+                                            }`}
+                                    >
+                                        {f}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+
                         {/* Batch export: resize list */}
                         <div className="space-y-1.5">
                             <div className="flex items-center justify-between">
@@ -441,24 +625,26 @@ export function ExportModal({ open, onClose, stageRef }: ExportModalProps) {
                             </div>
                         </div>
 
-                        {/* Scale selector for batch */}
-                        <div className="space-y-1.5">
-                            <label className="text-sm font-medium text-text-primary">Масштаб</label>
-                            <div className="flex gap-2">
-                                {[1, 2].map((s) => (
-                                    <button
-                                        key={s}
-                                        onClick={() => setScale(s)}
-                                        className={`flex-1 h-9 rounded-[var(--radius-md)] text-sm font-medium border transition-all cursor-pointer ${scale === s
-                                            ? "border-accent-primary bg-bg-tertiary text-text-primary"
-                                            : "border-border-primary text-text-secondary hover:border-border-secondary"
-                                            }`}
-                                    >
-                                        {s}x
-                                    </button>
-                                ))}
+                        {/* Scale selector for batch (PNG only) */}
+                        {exportFormat === "png" && (
+                            <div className="space-y-1.5">
+                                <label className="text-sm font-medium text-text-primary">Масштаб</label>
+                                <div className="flex gap-2">
+                                    {[1, 2].map((s) => (
+                                        <button
+                                            key={s}
+                                            onClick={() => setScale(s)}
+                                            className={`flex-1 h-9 rounded-[var(--radius-md)] text-sm font-medium border transition-all cursor-pointer ${scale === s
+                                                ? "border-accent-primary bg-bg-tertiary text-text-primary"
+                                                : "border-border-primary text-text-secondary hover:border-border-secondary"
+                                                }`}
+                                        >
+                                            {s}x
+                                        </button>
+                                    ))}
+                                </div>
                             </div>
-                        </div>
+                        )}
                         <TransparentBackgroundOption
                             checked={transparentBackground}
                             onChange={setTransparentBackground}

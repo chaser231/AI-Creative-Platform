@@ -16,6 +16,8 @@ export type ViewportSlice = Pick<CanvasStore,
     | "activeGradientEditorTarget" | "setActiveGradientEditorTarget"
     | "expandMode" | "expandPadding" | "expandTargetLayerId"
     | "drawingBox" | "setDrawingBox"
+    | "keepAspectRatio" | "setKeepAspectRatio"
+    | "vectorEditLayerId" | "setVectorEditLayerId"
     | "setZoom" | "setStagePosition"
     | "updateArtboardProps" | "updateSnapConfig"
     | "setHighlightedFrameId" | "setHoveredLayerId" | "getFrameAtPoint"
@@ -44,6 +46,8 @@ export const createViewportSlice: StateCreator<CanvasStore, [], [], ViewportSlic
     highlightedFrameId: null,
     hoveredLayerId: null,
     drawingBox: null,
+    keepAspectRatio: false,
+    vectorEditLayerId: null,
     editorMode: "studio",
     isEditingText: false,
     editingLayerId: null,
@@ -66,6 +70,14 @@ export const createViewportSlice: StateCreator<CanvasStore, [], [], ViewportSlic
 
     setDrawingBox: (box) => {
         set({ drawingBox: box });
+    },
+
+    setKeepAspectRatio: (value) => {
+        set({ keepAspectRatio: value });
+    },
+
+    setVectorEditLayerId: (id) => {
+        set({ vectorEditLayerId: id });
     },
 
     setZoom: (zoom) => {

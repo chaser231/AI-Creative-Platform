@@ -28,6 +28,7 @@ import type { Layer, ResizeFormat } from "@/types";
 import { createFigmaClientForUser } from "./client";
 import { downloadAssetsForFrames } from "./assets";
 import { findNodeById, mapFigmaDocument, type MapperResult } from "./mapper";
+import { promoteFigmaVectorLayers } from "./vectorPromotion";
 import type { FigmaImportOptions, ImportReport } from "./types";
 import { emptyReport } from "./types";
 
@@ -204,14 +205,13 @@ async function runImport(args: StartImportArgs, prisma: PrismaClient): Promise<v
         uploadedById: userId,
     });
 
-    // Apply downloaded URLs onto the mapped layers.
+    // Apply downloaded URLs and promote Figma SVG renders to editable VectorLayers.
     for (const frame of allFrames) {
-        for (const layer of frame.layers) {
-            const url = downloadReport.layerUrls[layer.id];
-            if (url && layer.type === "image") {
-                layer.src = url;
-            }
-        }
+        frame.layers = promoteFigmaVectorLayers(
+            frame.layers,
+            downloadReport.vectorOverrides,
+            downloadReport.layerUrls,
+        );
     }
 
     // ── 5. Build CanvasState and persist onto the Project ───────────────────

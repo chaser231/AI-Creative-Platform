@@ -20,7 +20,10 @@ function collectFixedLayerUrls(layers: unknown, urls: Set<string>) {
   for (const item of layers) {
     const layer = asRecord(item);
     if (!layer) continue;
-    if (layer.isFixedAsset === true && layer.type === "image") {
+    // Image layers and any library-backed vector layers that reference a stored
+    // asset URL (`src`) must keep template Asset rows. Inline-geometry vectors
+    // have no `src` and serialize directly in the template JSON.
+    if (layer.isFixedAsset === true && (layer.type === "image" || layer.type === "vector")) {
       addUrl(urls, layer.src);
     }
   }
@@ -96,7 +99,7 @@ export async function syncTemplateImageAssets({
         const filename = url.split("/").pop()?.split("?")[0] || "template-asset";
         const ext = filename.split(".").pop()?.toLowerCase() || "";
         return {
-          type: "IMAGE" as const,
+          type: (ext === "svg" ? "VECTOR" : "IMAGE") as "VECTOR" | "IMAGE",
           filename,
           url,
           mimeType: extToMime[ext] || "image/png",

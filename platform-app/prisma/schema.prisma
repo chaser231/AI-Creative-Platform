@@ -343,6 +343,7 @@ enum AssetType {
   AUDIO
   FONT
   LOGO
+  VECTOR
   OTHER
 }
 

@@ -5,7 +5,7 @@
 import type { StateCreator } from "zustand";
 import type {
     CanvasStore,
-    Layer, LayerUpdate, TextLayer, RectangleLayer, ImageLayer, BadgeLayer, FrameLayer,
+    Layer, LayerUpdate, TextLayer, RectangleLayer, ImageLayer, BadgeLayer, FrameLayer, VectorLayer,
     MasterComponent, ComponentInstance, ComponentProps,
     HistorySnapshot,
 } from "./types";
@@ -22,6 +22,7 @@ import { pushSnapshot } from "./createHistorySlice";
 import { useBrandKitStore } from "@/store/brandKitStore";
 import { applyCascade, type CascadeContext } from "./bindingCascade";
 import { getEditModeExitPatchesForRemovedLayers } from "./editModeHelpers";
+import { makeStarSubpaths } from "@/utils/vectorGeometry";
 
 // Throttle timer for updateLayer history
 let _updateHistoryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -98,6 +99,7 @@ function getDefaultTextFontFamily() {
 export type LayerSlice = Pick<CanvasStore,
     | "layers"
     | "addTextLayer" | "addRectangleLayer" | "addImageLayer" | "addBadgeLayer" | "addFrameLayer"
+    | "addVectorLayer"
     | "updateLayer" | "removeLayer"
     | "deleteSelectedLayers" | "duplicateSelectedLayers" | "duplicateLayer"
     | "reorderLayers" | "reorderLayer"
@@ -319,6 +321,34 @@ export const createLayerSlice: StateCreator<CanvasStore, [], [], LayerSlice> = (
             layers: [...s.layers, finalLayer],
             masterComponents: [...s.masterComponents, master],
             componentInstances: [...s.componentInstances, ...instances],
+            selectedLayerIds: [id],
+            activeTool: "select",
+        }));
+        return id;
+    },
+
+    addVectorLayer: (overrides = {}) => {
+        pushSnapshot(set as (p: Partial<CanvasStore>) => void, get);
+        const id = uuid();
+        const layer: VectorLayer = {
+            id,
+            type: "vector",
+            name: "Vector",
+            x: 100, y: 100, width: 200, height: 200,
+            rotation: 0, visible: true, locked: false,
+            subpaths: makeStarSubpaths(),
+            fill: "#111827",
+            fillEnabled: true,
+            fillRule: "nonzero",
+            stroke: "#000000",
+            strokeEnabled: false,
+            strokeWidth: 0,
+            strokeAlign: "center",
+            strokeJoin: "miter",
+            ...overrides,
+        };
+        set((s) => ({
+            layers: [...s.layers, layer as Layer],
             selectedLayerIds: [id],
             activeTool: "select",
         }));

@@ -2,10 +2,19 @@
 
 import { useRef, useCallback, useEffect, useState, useMemo, memo, Fragment, type ReactNode } from "react";
 import { ImageIcon } from "lucide-react";
-import { Stage, Layer, Rect, Text, Image as KonvaImage, Transformer, Group, Line, Circle } from "react-konva";
+import { Stage, Layer, Rect, Text, Image as KonvaImage, Transformer, Group, Line, Circle, Path } from "react-konva";
 import { useCanvasStore } from "@/store/canvasStore";
 import { useShallow } from "zustand/react/shallow";
-import type { CornerRadii, Layer as LayerType, TextLayer, BadgeLayer, FrameLayer, ImageLayer, LayerImageFill, Paint, LayerUpdate } from "@/types";
+import type { CornerRadii, Layer as LayerType, TextLayer, BadgeLayer, FrameLayer, ImageLayer, VectorLayer, VectorAnchor, LayerImageFill, Paint, LayerUpdate } from "@/types";
+import { subpathsToPathData, hasRenderableGeometry, normalizeAbsSubpaths, computeAbsBounds } from "@/utils/vectorGeometry";
+import { svgTextToVectorOverrides, looksLikeSvg } from "@/utils/svgImport";
+import { enterVectorEditMode, isReadOnlyImportedPath, parseEditableSubpaths, visibleAnchorIndices } from "@/utils/vectorEdit";
+import {
+    applyBBoxToProxy,
+    computeUnionBBoxFromDrag,
+} from "@/utils/groupTransform";
+import { GroupSelectionTransformer, MULTI_TRANSFORM_PROXY_ID } from "./GroupSelectionTransformer";
+import { enforceLockedAspectOnNode, lockedAspectDimensions } from "@/utils/aspectRatioLock";
 import type { CornerRadiusValue } from "@/utils/strokeGeometry";
 import { computeImageFitProps } from "@/utils/imageFitUtils";
 import { ContextMenu, buildLayerContextMenuItems, buildMultiSelectionContextMenuItems } from "../ContextMenu";
@@ -23,6 +32,7 @@ import { InlineTextEditor } from "./InlineTextEditor";
 import { SnapGuides } from "./SnapGuides";
 import { usePanZoom } from "./usePanZoom";
 import { ArtboardBackgroundRenderer } from "./ArtboardBackgroundRenderer";
+import { useFigmaVectorInlineSvg } from "@/hooks/useFigmaVectorInlineSvg";
 import { useProjectLibrary } from "@/hooks/useProjectLibrary";
 import { normalizePaint, paintToKonvaProps, setGradientEndpoints } from "@/utils/paint";
 import { canLayerFitInFrame, collectAncestorFrameIds } from "@/utils/frameDropUtils";
@@ -43,6 +53,18 @@ import { computeLayerBoxClientRect } from "@/utils/strokeGeometry";
 /* ─── Constants ───────────────────────────────────── */
 const FRAME_HIGHLIGHT_STROKE = "#6366F1";
 const FRAME_HIGHLIGHT_WIDTH = 2;
+
+/* ─── Pen tool ─────────────────────────────────────── */
+interface PenDraftAnchor {
+    x: number;
+    y: number;
+    inX?: number;
+    inY?: number;
+    outX?: number;
+    outY?: number;
+}
+
+const PEN_STROKE = "#6366F1";
 
 
 
@@ -254,6 +276,13 @@ const CanvasLayer = memo(function CanvasLayer({
                     commonProps={commonProps}
                 />
             )}
+            {layer.type === "vector" && (
+                <VectorLayerRenderer
+                    groupRef={groupRef}
+                    layer={layer}
+                    commonProps={commonProps}
+                />
+            )}
             {layer.type === "badge" && (
                 <BadgeLayerRenderer
                     groupRef={groupRef}
@@ -291,6 +320,7 @@ function ImageLayerRenderer({
     commonProps: Record<string, unknown>;
 }) {
     const image = useImage(layer.src);
+    const figmaInlineSvg = useFigmaVectorInlineSvg(layer.src, layer.metadata?.figmaOriginalType);
     const fillMode = layer.fillMode ?? "image";
     const cornerRadius = resolveCornerRadius(layer.cornerRadius ?? 0, layer.cornerRadii);
 
@@ -315,6 +345,12 @@ function ImageLayerRenderer({
                         fill={layer.fill ?? "#FFFFFF"}
                         fillMode="paint"
                         fillEnabled={layer.fillEnabled}
+                    />
+                ) : figmaInlineSvg ? (
+                    <InlineSvgVectorImage
+                        inlineSvg={figmaInlineSvg}
+                        width={layer.width}
+                        height={layer.height}
                     />
                 ) : image ? (
                     <ImageFillContent
@@ -356,6 +392,371 @@ function FlipLayerContent({ layer, children }: { layer: Pick<LayerType, "width" 
             scaleY={layer.flipY ? -1 : 1}
         >
             {children}
+        </Group>
+    );
+}
+
+/** Resolve a Paint to a flat stroke color (gradients fall back to first stop). */
+function resolveStrokeColor(paint: Paint | undefined): string | undefined {
+    if (paint === undefined || paint === "") return undefined;
+    const normalized = normalizePaint(paint);
+    if (normalized.kind === "solid") return normalized.color;
+    return normalized.stops[0]?.color;
+}
+
+/** Renders imported boolean/subtract SVG via native browser SVG rasterization (faithful preview). */
+function InlineSvgVectorImage({ inlineSvg, width, height }: { inlineSvg: string; width: number; height: number }) {
+    const [image, setImage] = useState<HTMLImageElement | null>(null);
+    useEffect(() => {
+        const img = new window.Image();
+        img.onload = () => setImage(img);
+        img.onerror = () => setImage(null);
+        img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(inlineSvg)}`;
+        return () => {
+            img.onload = null;
+            img.onerror = null;
+        };
+    }, [inlineSvg]);
+    if (!image) return null;
+    return <KonvaImage image={image} width={width} height={height} listening={false} perfectDrawEnabled={false} />;
+}
+
+function VectorLayerRenderer({
+    groupRef,
+    layer,
+    commonProps,
+}: {
+    groupRef: React.RefObject<Konva.Group | null>;
+    layer: VectorLayer;
+    commonProps: Record<string, unknown>;
+}) {
+    const activeTool = useCanvasStore((s) => s.activeTool);
+    const vectorEditLayerId = useCanvasStore((s) => s.vectorEditLayerId);
+    const setVectorEditLayerId = useCanvasStore((s) => s.setVectorEditLayerId);
+    const updateLayer = useCanvasStore((s) => s.updateLayer);
+    const width = layer.width;
+    const height = layer.height;
+    const isEditing = vectorEditLayerId === layer.id;
+
+    const hasInline = !!layer.inlineSvg;
+    const useRaw = !hasInline && !!layer.rawSvgPath;
+    const useSubpaths = hasRenderableGeometry(layer.subpaths);
+    const keepImportedPreview = isEditing && (hasInline || useRaw) && !useSubpaths;
+    const pathData = useSubpaths
+        ? subpathsToPathData(layer.subpaths, width, height)
+        : layer.rawSvgPath ?? "";
+    const rawScaleX = useRaw && layer.viewBoxWidth ? width / layer.viewBoxWidth : 1;
+    const rawScaleY = useRaw && layer.viewBoxHeight ? height / layer.viewBoxHeight : 1;
+
+    const fillProps = layer.fillEnabled === false
+        ? { fillEnabled: false }
+        : paintToKonvaProps(layer.fill, width, height);
+    const strokeColor = layer.strokeEnabled ? resolveStrokeColor(layer.stroke) : undefined;
+
+    return (
+        <Group
+            ref={groupRef as React.RefObject<Konva.Group | null>}
+            {...commonProps}
+            onDblClick={(e: Konva.KonvaEventObject<MouseEvent>) => {
+                (commonProps.onClick as ((ev: Konva.KonvaEventObject<MouseEvent>) => void) | undefined)?.(e);
+                if (activeTool !== "select") return;
+                if (useSubpaths) {
+                    setVectorEditLayerId(layer.id);
+                    return;
+                }
+                if (hasInline || useRaw) {
+                    enterVectorEditMode(layer, updateLayer, setVectorEditLayerId);
+                }
+            }}
+        >
+            <Rect
+                x={0}
+                y={0}
+                width={width}
+                height={height}
+                fill="rgba(0,0,0,0.001)"
+                listening={activeTool === "select"}
+                perfectDrawEnabled={false}
+            />
+            <FlipLayerContent layer={layer}>
+                {keepImportedPreview && hasInline ? (
+                    <InlineSvgVectorImage inlineSvg={layer.inlineSvg!} width={width} height={height} />
+                ) : keepImportedPreview && useRaw ? (
+                    <Path
+                        data={layer.rawSvgPath!}
+                        scaleX={rawScaleX}
+                        scaleY={rawScaleY}
+                        {...fillProps}
+                        fillRule={layer.fillRule ?? "nonzero"}
+                        stroke={strokeColor}
+                        strokeWidth={strokeColor ? layer.strokeWidth ?? 0 : 0}
+                        lineJoin={layer.strokeJoin ?? "miter"}
+                        strokeScaleEnabled={false}
+                        listening={false}
+                        perfectDrawEnabled={false}
+                    />
+                ) : hasInline && !isEditing ? (
+                    <InlineSvgVectorImage inlineSvg={layer.inlineSvg!} width={width} height={height} />
+                ) : (
+                    <Path
+                        data={pathData}
+                        scaleX={rawScaleX}
+                        scaleY={rawScaleY}
+                        {...fillProps}
+                        fillRule={layer.fillRule ?? "nonzero"}
+                        stroke={strokeColor}
+                        strokeWidth={strokeColor ? layer.strokeWidth ?? 0 : 0}
+                        lineJoin={layer.strokeJoin ?? "miter"}
+                        strokeScaleEnabled={false}
+                        listening={false}
+                        perfectDrawEnabled={false}
+                    />
+                )}
+            </FlipLayerContent>
+        </Group>
+    );
+}
+
+/** Interactive anchor + handle editing overlay for a vector layer. */
+function VectorEditOverlay({
+    layer,
+    zoom,
+    onChange,
+}: {
+    layer: VectorLayer;
+    zoom: number;
+    onChange: (id: string, updates: LayerUpdate) => void;
+}) {
+    const { x, y, width, height } = layer;
+    const subpaths = useMemo(() => parseEditableSubpaths(layer) ?? [], [layer]);
+    const readOnly = isReadOnlyImportedPath(layer);
+    const needsConversion = !readOnly && (!!layer.inlineSvg || !!layer.rawSvgPath);
+    const visibleAnchors = useMemo(
+        () => (readOnly ? [] : visibleAnchorIndices(subpaths, needsConversion ? 12 : 40)),
+        [subpaths, needsConversion, readOnly],
+    );
+    const [selectedAnchor, setSelectedAnchor] = useState<{ si: number; pi: number } | null>(null);
+    const anchorR = 4.5 / zoom;
+    const handleR = 3.5 / zoom;
+    const strokeW = 1 / zoom;
+    const outlinePath = useMemo(
+        () => (subpaths.length > 0 ? subpathsToPathData(subpaths, width, height) : ""),
+        [subpaths, width, height],
+    );
+
+    const toScene = (nx: number, ny: number) => ({ x: x + nx * width, y: y + ny * height });
+    const toNorm = (sx: number, sy: number) => ({
+        x: width !== 0 ? (sx - x) / width : 0,
+        y: height !== 0 ? (sy - y) / height : 0,
+    });
+
+    const commitSubpathUpdate = (next: typeof subpaths) => {
+        if (readOnly) return;
+        if (needsConversion && !hasRenderableGeometry(layer.subpaths)) {
+            onChange(layer.id, {
+                subpaths: next,
+                fillRule: layer.fillRule ?? (next.length > 1 ? "evenodd" : "nonzero"),
+                inlineSvg: undefined,
+                rawSvgPath: undefined,
+                viewBoxWidth: undefined,
+                viewBoxHeight: undefined,
+            });
+        } else {
+            onChange(layer.id, { subpaths: next });
+        }
+    };
+
+    const updateAnchor = (si: number, pi: number, mut: (p: VectorAnchorLike) => VectorAnchorLike) => {
+        const next = subpaths.map((sp, i) =>
+            i !== si ? sp : { ...sp, points: sp.points.map((p, j) => (j !== pi ? p : mut({ ...p }))) },
+        );
+        commitSubpathUpdate(next);
+    };
+
+    return (
+        <Group listening={!readOnly}>
+            {(readOnly || needsConversion) ? (
+                <Rect
+                    x={x}
+                    y={y}
+                    width={width}
+                    height={height}
+                    stroke={PEN_STROKE}
+                    strokeWidth={strokeW}
+                    dash={[6 / zoom, 4 / zoom]}
+                    listening={false}
+                    perfectDrawEnabled={false}
+                />
+            ) : outlinePath ? (
+                <Path
+                    x={x}
+                    y={y}
+                    data={outlinePath}
+                    stroke={PEN_STROKE}
+                    strokeWidth={strokeW}
+                    fill="transparent"
+                    listening={false}
+                    perfectDrawEnabled={false}
+                />
+            ) : null}
+            {readOnly && (
+                <Text
+                    x={x}
+                    y={y + height + 8 / zoom}
+                    width={width}
+                    text="Boolean-контур (Subtract): редактирование точек недоступно"
+                    fontSize={11 / zoom}
+                    fill="#6366F1"
+                    listening={false}
+                    perfectDrawEnabled={false}
+                />
+            )}
+            {visibleAnchors.map(({ si, pi }) => {
+                const p = subpaths[si]?.points[pi];
+                if (!p) return null;
+                const a = toScene(p.x, p.y);
+                const isSelected = selectedAnchor?.si === si && selectedAnchor?.pi === pi;
+                const hasIn = isSelected && p.inX !== undefined && p.inY !== undefined;
+                const hasOut = isSelected && p.outX !== undefined && p.outY !== undefined;
+                const inPt = hasIn ? toScene(p.inX as number, p.inY as number) : null;
+                const outPt = hasOut ? toScene(p.outX as number, p.outY as number) : null;
+                return (
+                    <Fragment key={`${si}-${pi}`}>
+                        {inPt && <Line points={[a.x, a.y, inPt.x, inPt.y]} stroke={PEN_STROKE} strokeWidth={strokeW} listening={false} perfectDrawEnabled={false} />}
+                        {outPt && <Line points={[a.x, a.y, outPt.x, outPt.y]} stroke={PEN_STROKE} strokeWidth={strokeW} listening={false} perfectDrawEnabled={false} />}
+                        {inPt && (
+                            <Circle
+                                x={inPt.x}
+                                y={inPt.y}
+                                radius={handleR}
+                                fill="#FFFFFF"
+                                stroke={PEN_STROKE}
+                                strokeWidth={strokeW}
+                                draggable
+                                perfectDrawEnabled={false}
+                                onDragMove={(e) => {
+                                    const n = toNorm(e.target.x(), e.target.y());
+                                    updateAnchor(si, pi, (pt) => ({ ...pt, inX: n.x, inY: n.y, type: "bezier" }));
+                                }}
+                            />
+                        )}
+                        {outPt && (
+                            <Circle
+                                x={outPt.x}
+                                y={outPt.y}
+                                radius={handleR}
+                                fill="#FFFFFF"
+                                stroke={PEN_STROKE}
+                                strokeWidth={strokeW}
+                                draggable
+                                perfectDrawEnabled={false}
+                                onDragMove={(e) => {
+                                    const n = toNorm(e.target.x(), e.target.y());
+                                    updateAnchor(si, pi, (pt) => ({ ...pt, outX: n.x, outY: n.y, type: "bezier" }));
+                                }}
+                            />
+                        )}
+                        <Circle
+                            x={a.x}
+                            y={a.y}
+                            radius={anchorR}
+                            fill={isSelected ? PEN_STROKE : "#FFFFFF"}
+                            stroke={PEN_STROKE}
+                            strokeWidth={strokeW}
+                            draggable
+                            perfectDrawEnabled={false}
+                            onMouseDown={(e) => {
+                                e.cancelBubble = true;
+                                setSelectedAnchor({ si, pi });
+                            }}
+                            onDragMove={(e) => {
+                                const n = toNorm(e.target.x(), e.target.y());
+                                const dx = n.x - p.x;
+                                const dy = n.y - p.y;
+                                updateAnchor(si, pi, (pt) => ({
+                                    ...pt,
+                                    x: n.x,
+                                    y: n.y,
+                                    ...(pt.inX !== undefined ? { inX: pt.inX + dx, inY: (pt.inY as number) + dy } : {}),
+                                    ...(pt.outX !== undefined ? { outX: pt.outX + dx, outY: (pt.outY as number) + dy } : {}),
+                                }));
+                            }}
+                            onDblClick={(e) => {
+                                e.cancelBubble = true;
+                                setSelectedAnchor({ si, pi });
+                                updateAnchor(si, pi, (pt) => {
+                                    if (pt.inX !== undefined || pt.outX !== undefined) {
+                                        const { inX, inY, outX, outY, ...rest } = pt;
+                                        void inX; void inY; void outX; void outY;
+                                        return { ...rest, type: "corner" };
+                                    }
+                                    return {
+                                        ...pt,
+                                        inX: pt.x - 0.08,
+                                        inY: pt.y,
+                                        outX: pt.x + 0.08,
+                                        outY: pt.y,
+                                        type: "bezier",
+                                    };
+                                });
+                            }}
+                        />
+                    </Fragment>
+                );
+            })}
+        </Group>
+    );
+}
+
+type VectorAnchorLike = VectorAnchor;
+
+function PenPreview({
+    points,
+    cursor,
+    zoom,
+}: {
+    points: PenDraftAnchor[];
+    cursor: { x: number; y: number } | null;
+    zoom: number;
+}) {
+    // Build a path through the committed anchors plus a rubber-band to the cursor.
+    const previewAnchors = cursor
+        ? [...points, { x: cursor.x, y: cursor.y }]
+        : points;
+    const d = subpathsToPathData(
+        [{ points: previewAnchors.map((p) => ({ ...p, type: "corner" as const })), closed: false }],
+        1,
+        1,
+    );
+    const handleRadius = 3 / zoom;
+    const anchorRadius = 4 / zoom;
+    return (
+        <Group listening={false}>
+            <Path data={d} stroke={PEN_STROKE} strokeWidth={1.5 / zoom} />
+            {points.map((p, i) => (
+                <Fragment key={i}>
+                    {p.outX !== undefined && p.outY !== undefined && (
+                        <>
+                            <Line points={[p.x, p.y, p.outX, p.outY]} stroke={PEN_STROKE} strokeWidth={1 / zoom} />
+                            <Circle x={p.outX} y={p.outY} radius={handleRadius} fill="#FFFFFF" stroke={PEN_STROKE} strokeWidth={1 / zoom} />
+                        </>
+                    )}
+                    {p.inX !== undefined && p.inY !== undefined && (
+                        <>
+                            <Line points={[p.x, p.y, p.inX, p.inY]} stroke={PEN_STROKE} strokeWidth={1 / zoom} />
+                            <Circle x={p.inX} y={p.inY} radius={handleRadius} fill="#FFFFFF" stroke={PEN_STROKE} strokeWidth={1 / zoom} />
+                        </>
+                    )}
+                    <Circle
+                        x={p.x}
+                        y={p.y}
+                        radius={anchorRadius}
+                        fill={i === 0 ? PEN_STROKE : "#FFFFFF"}
+                        stroke={PEN_STROKE}
+                        strokeWidth={1.5 / zoom}
+                    />
+                </Fragment>
+            ))}
         </Group>
     );
 }
@@ -657,9 +1058,15 @@ function FrameLayerRenderer({
         const allLayers = useCanvasStore.getState().layers;
         const childLayer = allLayers.find(l => l.id === id);
 
-        const scaleX = node.scaleX();
-        const scaleY = node.scaleY();
+        let scaleX = node.scaleX();
+        let scaleY = node.scaleY();
         const rotation = node.rotation();
+
+        if (childLayer) {
+            enforceLockedAspectOnNode(node, childLayer);
+            scaleX = node.scaleX();
+            scaleY = node.scaleY();
+        }
 
         // Reset scale and apply to width/height
         node.scaleX(1);
@@ -668,8 +1075,13 @@ function FrameLayerRenderer({
         const textBase = childLayer?.type === "text"
             ? getTextTransformBaseSize(node, childLayer as TextLayer)
             : null;
-        let width = (textBase?.width ?? node.width()) * scaleX;
-        let height = (textBase?.height ?? node.height()) * scaleY;
+        const baseWidth = textBase?.width ?? node.width();
+        const baseHeight = textBase?.height ?? node.height();
+        const sized = childLayer
+            ? lockedAspectDimensions(childLayer, scaleX, scaleY, baseWidth, baseHeight)
+            : { width: baseWidth * scaleX, height: baseHeight * scaleY };
+        let width = sized.width;
+        let height = sized.height;
 
         if (childLayer?.type === "text") {
             const synced = syncTextTransformNodes(node, childLayer as TextLayer, width, height);
@@ -1052,6 +1464,7 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
     const isAltPressed = useRef(false);
     const [isAltHovering, setIsAltHovering] = useState(false);
     const isDragging = useRef(false);
+    const [isDraggingLayers, setIsDraggingLayers] = useState(false);
     const isTransforming = useRef(false);
     const clipBlocked = useRef(false);  // set when a mouseDown is blocked by clip bounds
     const frameHoverCandidate = useRef<{ frameId: string | null; since: number }>({ frameId: null, since: 0 });
@@ -1062,6 +1475,11 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
     // Drawing mode refs
     const drawingStartPoint = useRef<{ x: number; y: number } | null>(null);
 
+    // Pen tool draft (artboard-local coordinates)
+    const [penPoints, setPenPoints] = useState<PenDraftAnchor[]>([]);
+    const [penCursor, setPenCursor] = useState<{ x: number; y: number } | null>(null);
+    const penDragging = useRef(false);
+
     const {
         layers,
         selectedLayerIds,
@@ -1069,10 +1487,12 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
         toggleSelection,
         addToSelection,
         updateLayer,
+        batchUpdateLayers,
         addImageLayer,
         addTextLayer,
         addRectangleLayer,
         addFrameLayer,
+        addVectorLayer,
         removeLayer,
         duplicateLayer,
         bringToFront,
@@ -1105,6 +1525,8 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
         moveLayerToFrame,
         removeLayerFromFrame,
         wrapInAutoLayoutFrame,
+        vectorEditLayerId,
+        setVectorEditLayerId,
     } = useCanvasStore(useShallow((s) => ({
         layers: s.layers,
         selectedLayerIds: s.selectedLayerIds,
@@ -1112,10 +1534,12 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
         toggleSelection: s.toggleSelection,
         addToSelection: s.addToSelection,
         updateLayer: s.updateLayer,
+        batchUpdateLayers: s.batchUpdateLayers,
         addImageLayer: s.addImageLayer,
         addTextLayer: s.addTextLayer,
         addRectangleLayer: s.addRectangleLayer,
         addFrameLayer: s.addFrameLayer,
+        addVectorLayer: s.addVectorLayer,
         removeLayer: s.removeLayer,
         duplicateLayer: s.duplicateLayer,
         bringToFront: s.bringToFront,
@@ -1148,6 +1572,8 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
         moveLayerToFrame: s.moveLayerToFrame,
         removeLayerFromFrame: s.removeLayerFromFrame,
         wrapInAutoLayoutFrame: s.wrapInAutoLayoutFrame,
+        vectorEditLayerId: s.vectorEditLayerId,
+        setVectorEditLayerId: s.setVectorEditLayerId,
     })));
 
     // Expand mode state
@@ -1163,7 +1589,7 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
     const inpaintTargetLayerId = useCanvasStore((s) => s.inpaintTargetLayerId);
     const sharedInpaintMask = useOptionalSharedInpaintMask();
 
-    const isDrawingTool = activeTool === "text" || activeTool === "rectangle" || activeTool === "frame";
+    const isDrawingTool = activeTool === "text" || activeTool === "rectangle" || activeTool === "frame" || activeTool === "pen";
     const artboardStrokeImage = useImage(artboardProps.strokeMode === "image" ? artboardProps.strokeImage?.src ?? "" : "");
 
     // Prevent stage pan from competing with expand handles or inpaint brush.
@@ -1194,6 +1620,22 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
             drawingStartPoint.current = null;
         }
     }, [activeTool]);
+
+    // Clear the pen draft whenever the pen tool is deactivated.
+    useEffect(() => {
+        if (activeTool !== "pen") {
+            penDragging.current = false;
+            setPenPoints([]);
+            setPenCursor(null);
+        }
+    }, [activeTool]);
+
+    // Exit vector point-editing if the layer is deselected or tool changes.
+    useEffect(() => {
+        if (!vectorEditLayerId) return;
+        const stillValid = activeTool === "select" && selectedLayerIds.includes(vectorEditLayerId);
+        if (!stillValid) setVectorEditLayerId(null);
+    }, [vectorEditLayerId, selectedLayerIds, activeTool, setVectorEditLayerId]);
 
     // Register stageRef in store (for Copy as PNG from keyboard shortcuts)
     const setStageRef = useCanvasStore((s) => s.setStageRef);
@@ -1403,6 +1845,7 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
 
         setStageDraggable(false);
         isDragging.current = true;
+        setIsDraggingLayers(true);
         setHoveredLayerId(null); // Clear hover during drag
         let id = resolveKonvaLayerId(e.target);
         const { layers, selectedLayerIds: currentSelectedLayerIds } = useCanvasStore.getState();
@@ -1526,9 +1969,10 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
         const stage = e.target.getStage();
         if (!stage) return;
 
-        const { snapConfig } = useCanvasStore.getState();
+        const { snapConfig, layers, selectedLayerIds: currentSelectedLayerIds } = useCanvasStore.getState();
+        const dragIds = Object.keys(dragStartLocs.current);
+        const isMultiDrag = dragIds.length >= 2;
 
-        // Convert Absolute (Screen) Position to Scene Coordinates
         const absPos = e.target.getAbsolutePosition();
         const currentSceneX = (absPos.x - stage.x()) / stage.scaleX();
         const currentSceneY = (absPos.y - stage.y()) / stage.scaleY();
@@ -1536,79 +1980,92 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
         let dx = currentSceneX - startLoc.x;
         let dy = currentSceneY - startLoc.y;
 
-        const { layers, selectedLayerIds: currentSelectedLayerIds } = useCanvasStore.getState();
+        const otherNodes = layers
+            .filter((l) => !dragIds.includes(l.id) && l.visible && !l.locked)
+            .map((l) => ({
+                id: l.id,
+                x: l.x,
+                y: l.y,
+                width: l.width,
+                height: l.height,
+                rotation: l.rotation,
+            }));
 
-        // Snap Logic
-        const primaryLayer = layers.find(l => l.id === id);
-        if (primaryLayer) {
-            const proposedX = startLoc.x + dx;
-            const proposedY = startLoc.y + dy;
-
-            const otherNodes = layers
-                .filter(l => !currentSelectedLayerIds.includes(l.id) && l.visible && !l.locked)
-                .map(l => ({
-                    id: l.id,
-                    x: l.x,
-                    y: l.y,
-                    width: l.width,
-                    height: l.height,
-                    rotation: l.rotation
-                }));
-
-            const snapResult = computeSnap(
-                {
-                    id: primaryLayer.id,
-                    x: proposedX,
-                    y: proposedY,
-                    width: primaryLayer.width,
-                    height: primaryLayer.height,
-                    rotation: primaryLayer.rotation
-                },
-                otherNodes,
-                snapConfig,
-                { width: canvasWidth, height: canvasHeight },
-                isAltPressed.current
-            );
-
-            setSnapLines(snapResult.guides);
-            setDistanceMeasurements(snapResult.distances);
-            setSpacingGuides(snapResult.spacingGuides);
-
-            if (snapResult.x !== null) {
-                dx = snapResult.x - startLoc.x;
-            }
-            if (snapResult.y !== null) {
-                dy = snapResult.y - startLoc.y;
+        if (isMultiDrag) {
+            const startUnion = computeUnionBBoxFromDrag(layers, dragStartLocs.current, 0, 0);
+            const proposedUnion = computeUnionBBoxFromDrag(layers, dragStartLocs.current, dx, dy);
+            if (startUnion && proposedUnion) {
+                const snapResult = computeSnap(
+                    {
+                        id: MULTI_TRANSFORM_PROXY_ID,
+                        x: proposedUnion.x,
+                        y: proposedUnion.y,
+                        width: proposedUnion.width,
+                        height: proposedUnion.height,
+                        rotation: 0,
+                    },
+                    otherNodes,
+                    snapConfig,
+                    { width: canvasWidth, height: canvasHeight },
+                    isAltPressed.current,
+                );
+                setSnapLines(snapResult.guides);
+                setDistanceMeasurements(snapResult.distances);
+                setSpacingGuides(snapResult.spacingGuides);
+                if (snapResult.x !== null) dx = snapResult.x - startUnion.x;
+                if (snapResult.y !== null) dy = snapResult.y - startUnion.y;
             }
         } else {
-            setSnapLines([]);
-            setDistanceMeasurements([]);
-            setSpacingGuides([]);
+            const primaryLayer = layers.find((l) => l.id === id);
+            if (primaryLayer) {
+                const snapResult = computeSnap(
+                    {
+                        id: primaryLayer.id,
+                        x: startLoc.x + dx,
+                        y: startLoc.y + dy,
+                        width: primaryLayer.width,
+                        height: primaryLayer.height,
+                        rotation: primaryLayer.rotation,
+                    },
+                    otherNodes,
+                    snapConfig,
+                    { width: canvasWidth, height: canvasHeight },
+                    isAltPressed.current,
+                );
+                setSnapLines(snapResult.guides);
+                setDistanceMeasurements(snapResult.distances);
+                setSpacingGuides(snapResult.spacingGuides);
+                if (snapResult.x !== null) dx = snapResult.x - startLoc.x;
+                if (snapResult.y !== null) dy = snapResult.y - startLoc.y;
+            } else {
+                setSnapLines([]);
+                setDistanceMeasurements([]);
+                setSpacingGuides([]);
+            }
         }
 
-        // Move other selected nodes (and self)
-        Object.keys(dragStartLocs.current).forEach(sid => {
-            const node = stage.findOne("#" + sid);
-            if (node) {
-                const sLoc = dragStartLocs.current[sid];
-                const targetSceneX = sLoc.x + dx;
-                const targetSceneY = sLoc.y + dy;
-
-                const targetAbsX = targetSceneX * stage.scaleX() + stage.x();
-                const targetAbsY = targetSceneY * stage.scaleY() + stage.y();
-
-                node.setAbsolutePosition({
-                    x: targetAbsX,
-                    y: targetAbsY
-                });
-            }
+        dragIds.forEach((sid) => {
+            const node = stage.findOne(`#${sid}`);
+            if (!node) return;
+            const sLoc = dragStartLocs.current[sid];
+            const targetSceneX = sLoc.x + dx;
+            const targetSceneY = sLoc.y + dy;
+            node.setAbsolutePosition({
+                x: targetSceneX * stage.scaleX() + stage.x(),
+                y: targetSceneY * stage.scaleY() + stage.y(),
+            });
         });
 
-        if (Object.keys(dragStartLocs.current).length === 1) {
-            updateFrameHoverHighlight(stage, id);
-        } else {
+        if (isMultiDrag) {
+            const proxy = stage.findOne(`#${MULTI_TRANSFORM_PROXY_ID}`) as Konva.Rect | undefined;
+            const bbox = computeUnionBBoxFromDrag(layers, dragStartLocs.current, dx, dy);
+            if (proxy && bbox) {
+                applyBBoxToProxy(proxy, bbox);
+            }
             frameHoverCandidate.current = { frameId: null, since: 0 };
             setHighlightedFrameId(null);
+        } else if (dragIds.length === 1) {
+            updateFrameHoverHighlight(stage, id);
         }
     }, [setHighlightedFrameId, canvasWidth, canvasHeight, updateFrameHoverHighlight]);
 
@@ -1636,8 +2093,8 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
         setSpacingGuides([]);
         setStageDraggable(true);
         isDragging.current = false;
+        setIsDraggingLayers(false);
 
-        // Scene Coordinates
         const absPos = e.target.getAbsolutePosition();
         const currentSceneX = (absPos.x - stage.x()) / stage.scaleX();
         const currentSceneY = (absPos.y - stage.y()) / stage.scaleY();
@@ -1646,14 +2103,18 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
         const dy = currentSceneY - startLoc.y;
         const layers = useCanvasStore.getState().layers;
 
-        Object.keys(dragStartLocs.current).forEach(sid => {
+        const dragUpdates = Object.keys(dragStartLocs.current).map((sid) => {
             const sLoc = dragStartLocs.current[sid];
             if (sid === id) {
-                updateLayer(sid, { x: currentSceneX, y: currentSceneY });
-            } else {
-                updateLayer(sid, { x: sLoc.x + dx, y: sLoc.y + dy });
+                return { id: sid, changes: { x: currentSceneX, y: currentSceneY } };
             }
+            return { id: sid, changes: { x: sLoc.x + dx, y: sLoc.y + dy } };
         });
+        if (dragUpdates.length > 1) {
+            batchUpdateLayers(dragUpdates);
+        } else if (dragUpdates.length === 1) {
+            updateLayer(dragUpdates[0].id, dragUpdates[0].changes);
+        }
 
         if (Object.keys(dragStartLocs.current).length === 1) {
             const sceneWidth = e.target.width() * e.target.scaleX();
@@ -1692,7 +2153,7 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
         }
 
         dragStartLocs.current = {};
-    }, [updateLayer, moveLayerToFrame, removeLayerFromFrame, setHighlightedFrameId, updateFrameHoverHighlight]);
+    }, [updateLayer, batchUpdateLayers, moveLayerToFrame, removeLayerFromFrame, setHighlightedFrameId, updateFrameHoverHighlight]);
 
     const handleTransformEnd = useCallback((e: Konva.KonvaEventObject<Event>) => {
         isTransforming.current = false;
@@ -1720,20 +2181,31 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
 
         const stage = node.getStage();
 
-        const scaleX = node.scaleX();
-        const scaleY = node.scaleY();
+        let scaleX = node.scaleX();
+        let scaleY = node.scaleY();
         const rotation = node.rotation();
+
+        const layer = layers.find(l => l.id === id);
+        if (layer) {
+            enforceLockedAspectOnNode(node, layer);
+            scaleX = node.scaleX();
+            scaleY = node.scaleY();
+        }
 
         // Reset scale and apply to width/height to avoid compounding scale
         node.scaleX(1);
         node.scaleY(1);
 
-        const layer = layers.find(l => l.id === id);
         const textBase = layer?.type === "text"
             ? getTextTransformBaseSize(node, layer as TextLayer)
             : null;
-        let width = (textBase?.width ?? node.width()) * scaleX;
-        let height = (textBase?.height ?? node.height()) * scaleY;
+        const baseWidth = textBase?.width ?? node.width();
+        const baseHeight = textBase?.height ?? node.height();
+        const sized = layer
+            ? lockedAspectDimensions(layer, scaleX, scaleY, baseWidth, baseHeight)
+            : { width: baseWidth * scaleX, height: baseHeight * scaleY, scaleX, scaleY };
+        let width = sized.width;
+        let height = sized.height;
 
         let extraProps: any = {};
         if (layer) {
@@ -1788,12 +2260,17 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
 
         // For TEXT nodes: reset scale immediately and apply width/height.
         // This prevents the visual "stretching" effect — text re-wraps in real-time.
+        const { snapConfig, selectedLayerIds: currentSelection } = useCanvasStore.getState();
+
         const layer = layers.find(l => l.id === id);
         if (layer?.type === "text") {
             normalizeLiveTextTransform(node, layer as TextLayer);
+        } else if (layer && currentSelection.length === 1) {
+            enforceLockedAspectOnNode(node, layer);
         }
 
-        const { snapConfig } = useCanvasStore.getState();
+        // Multi-select uses a group proxy transformer — per-node resize snap causes chaos.
+        if (currentSelection.length > 1) return;
         if (!snapConfig.objectSnap && !snapConfig.artboardSnap) return;
 
         const textBase = layer?.type === "text"
@@ -1879,6 +2356,56 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
 
     /* ─── Stage Interaction ───────────────────────────── */
 
+    const cancelPenPath = useCallback(() => {
+        penDragging.current = false;
+        setPenPoints([]);
+        setPenCursor(null);
+    }, []);
+
+    const finalizePenPath = useCallback((closed: boolean) => {
+        penDragging.current = false;
+        const points = penPoints;
+        setPenPoints([]);
+        setPenCursor(null);
+        if (points.length < 2) return;
+
+        const abs = [{ points: points.map((p) => ({ ...p })), closed }];
+        const bounds = computeAbsBounds(abs);
+        const { subpaths, width, height } = normalizeAbsSubpaths(abs);
+        addVectorLayer({
+            name: "Path",
+            x: bounds.minX,
+            y: bounds.minY,
+            width: Math.max(1, Math.round(width)),
+            height: Math.max(1, Math.round(height)),
+            subpaths,
+            // Pen-drawn paths default to a visible outline; fill can be toggled on.
+            fillEnabled: closed,
+            fill: "#111827",
+            stroke: PEN_STROKE,
+            strokeEnabled: !closed,
+            strokeWidth: !closed ? 2 : 0,
+        });
+        setActiveTool("select");
+    }, [penPoints, addVectorLayer, setActiveTool]);
+
+    // Pen keyboard: Enter/double = finish open path, Escape = cancel.
+    useEffect(() => {
+        if (activeTool !== "pen") return;
+        const onKey = (e: KeyboardEvent) => {
+            if (e.key === "Enter") {
+                e.preventDefault();
+                finalizePenPath(false);
+            } else if (e.key === "Escape") {
+                e.preventDefault();
+                cancelPenPath();
+                setActiveTool("select");
+            }
+        };
+        window.addEventListener("keydown", onKey);
+        return () => window.removeEventListener("keydown", onKey);
+    }, [activeTool, finalizePenPath, cancelPenPath, setActiveTool]);
+
     const handleStageMouseDown = useCallback((e: Konva.KonvaEventObject<MouseEvent>) => {
         // If panning, let Konva handle drag (stage is draggable)
         if (isPanning) {
@@ -1948,6 +2475,34 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
 
         if (isExpandControlNode(e.target)) {
             e.cancelBubble = true;
+            return;
+        }
+
+        // ── Pen tool interception ──
+        if (activeTool === "pen") {
+            const stage = e.target.getStage();
+            if (!stage) return;
+            const pointer = stage.getPointerPosition();
+            if (!pointer) return;
+            const sceneX = (pointer.x - stage.x()) / stage.scaleX();
+            const sceneY = (pointer.y - stage.y()) / stage.scaleY();
+
+            e.cancelBubble = true;
+            setContextMenu(null);
+            if (isEditingText) stopTextEditing();
+
+            // Close path if clicking near the first anchor.
+            if (penPoints.length >= 2) {
+                const first = penPoints[0];
+                const closeDist = Math.hypot(sceneX - first.x, sceneY - first.y);
+                if (closeDist <= Math.max(8 / zoom, 4)) {
+                    finalizePenPath(true);
+                    return;
+                }
+            }
+
+            setPenPoints((prev) => [...prev, { x: sceneX, y: sceneY }]);
+            penDragging.current = true;
             return;
         }
 
@@ -2104,6 +2659,7 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
                             if (node) {
                                 node.startDrag(e.evt);
                                 isDragging.current = true;
+                                setIsDraggingLayers(true);
                                 setStageDraggable(false);
 
                                 // Snapshot drag start positions
@@ -2142,7 +2698,7 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
                 stopTextEditing();
             }
         }
-    }, [selectLayer, isEditingText, stopTextEditing, isPanning, activeGradientEditorTarget, selectedLayerIds, layers, zoom, artboardProps.clipContent, canvasWidth, canvasHeight, activeTool, addTextLayer, setActiveTool, setDrawingBox, startTextEditing, expandMode, inpaintMode, exitCanvasEditModes, sharedInpaintMask]);
+    }, [selectLayer, isEditingText, stopTextEditing, isPanning, activeGradientEditorTarget, selectedLayerIds, layers, zoom, artboardProps.clipContent, canvasWidth, canvasHeight, activeTool, addTextLayer, setActiveTool, setDrawingBox, startTextEditing, expandMode, inpaintMode, exitCanvasEditModes, sharedInpaintMask, penPoints, finalizePenPath]);
 
     const handleStageMouseMove = useCallback((e: Konva.KonvaEventObject<MouseEvent>) => {
         const stage = e.target.getStage();
@@ -2152,6 +2708,27 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
 
         const currentSceneX = (pointer.x - stage.x()) / stage.scaleX();
         const currentSceneY = (pointer.y - stage.y()) / stage.scaleY();
+
+        // Pen tool: drag to add bezier handles, hover for rubber-band preview
+        if (activeTool === "pen") {
+            if (penDragging.current && penPoints.length > 0) {
+                setPenPoints((prev) => {
+                    if (prev.length === 0) return prev;
+                    const next = [...prev];
+                    const last = { ...next[next.length - 1] };
+                    last.outX = currentSceneX;
+                    last.outY = currentSceneY;
+                    // Mirror handle for a smooth point.
+                    last.inX = last.x - (currentSceneX - last.x);
+                    last.inY = last.y - (currentSceneY - last.y);
+                    next[next.length - 1] = last;
+                    return next;
+                });
+            } else {
+                setPenCursor({ x: currentSceneX, y: currentSceneY });
+            }
+            return;
+        }
 
         // Alt-hover distance measurement
         if (isAltPressed.current && !isDragging.current && !isTransforming.current && selectedLayerIds.length > 0) {
@@ -2237,12 +2814,18 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
                 height: Math.abs(currentSceneY - prev.startY),
             };
         });
-    }, [selectionBox, selectedLayerIds, layers, canvasWidth, canvasHeight, setDrawingBox, activeTool]);
+    }, [selectionBox, selectedLayerIds, layers, canvasWidth, canvasHeight, setDrawingBox, activeTool, penPoints]);
 
     const handleStageMouseUp = useCallback((e: Konva.KonvaEventObject<MouseEvent>) => {
         if (isPanning) {
             if (containerRef.current) containerRef.current.style.cursor = "grab";
             setStageDraggable(true);
+            return;
+        }
+
+        // ── Pen tool: end of a click/drag adds-handle cycle ──
+        if (activeTool === "pen") {
+            penDragging.current = false;
             return;
         }
 
@@ -2505,8 +3088,37 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
             e.stopPropagation();
             setIsDraggingFile(false);
 
-            const files = Array.from(e.dataTransfer.files).filter((f) =>
-                f.type.startsWith("image/")
+            // Resolve the drop point in scene (artboard-local) coordinates.
+            const getDropScenePos = (): { x: number; y: number } => {
+                const stage = stageRef.current;
+                if (stage) {
+                    stage.setPointersPositions(e.nativeEvent);
+                    const rel = stage.getRelativePointerPosition();
+                    if (rel) return { x: rel.x, y: rel.y };
+                }
+                return { x: 100, y: 100 };
+            };
+
+            const allFiles = Array.from(e.dataTransfer.files);
+
+            // SVG files -> native editable vector layers.
+            const svgFiles = allFiles.filter(
+                (f) => f.type === "image/svg+xml" || /\.svg$/i.test(f.name),
+            );
+            for (const file of svgFiles) {
+                void file.text().then((text) => {
+                    const pos = getDropScenePos();
+                    const overrides = svgTextToVectorOverrides(text, {
+                        x: pos.x,
+                        y: pos.y,
+                        name: file.name.replace(/\.svg$/i, "") || "Vector",
+                    });
+                    if (overrides) addVectorLayer(overrides);
+                });
+            }
+
+            const files = allFiles.filter(
+                (f) => f.type.startsWith("image/") && f.type !== "image/svg+xml",
             );
             for (const file of files) {
                 // Show the dropped image instantly with an ObjectURL, then
@@ -2537,7 +3149,7 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
                 img.src = localPreview;
             }
         },
-        [addImageLayer, projectId, registerFile]
+        [addImageLayer, addVectorLayer, projectId, registerFile]
     );
 
     /* ─── Export Layers Utility ────────────────────────── */
@@ -2717,7 +3329,7 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
                 onMouseMove={handleStageMouseMove}
                 onMouseUp={handleStageMouseUp}
                 onContextMenu={handleContextMenu}
-                draggable={stageDraggable && !isEditingText}
+                draggable={stageDraggable && !isEditingText && activeTool !== "pen"}
                 onDragMove={(e) => {
                     // Stage drag
                     // We need to differentiate stage drag from shape drag?
@@ -2827,6 +3439,11 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
                         activeTool={activeTool}
                     />
 
+                    {/* Pen tool live preview */}
+                    {activeTool === "pen" && penPoints.length > 0 && (
+                        <PenPreview points={penPoints} cursor={penCursor} zoom={zoom} />
+                    )}
+
                     {gradientHandleTarget && (
                         <GradientDirectionHandles
                             target={gradientHandleTarget}
@@ -2879,9 +3496,51 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
                     })()}
 
                     {/* Selection Transformer — hidden when dedicated edit overlays own the handles. */}
-                    {!expandMode && !inpaintMode && !gradientHandleTarget && (
-                        <SelectionTransformer selectedLayerIds={selectedLayerIds} stageRef={stageRef} excludeIds={frameChildIds} />
-                    )}
+                    {!expandMode && !inpaintMode && !gradientHandleTarget && !vectorEditLayerId && (() => {
+                        const topLevelIds = selectedLayerIds.filter((id) => !frameChildIds.has(id));
+                        const unlockedTopLevel = topLevelIds.filter((id) => {
+                            const l = layers.find((x) => x.id === id);
+                            return l && !l.locked && l.id !== editingLayerId;
+                        });
+                        if (unlockedTopLevel.length > 1) {
+                            return (
+                                <GroupSelectionTransformer
+                                    selectedLayerIds={selectedLayerIds}
+                                    stageRef={stageRef}
+                                    excludeIds={frameChildIds}
+                                    pauseProxySync={isDraggingLayers}
+                                    canvasWidth={canvasWidth}
+                                    canvasHeight={canvasHeight}
+                                    onSnapGuides={setSnapLines}
+                                    onTransformActiveChange={(active) => {
+                                        isTransforming.current = active;
+                                        if (!active) {
+                                            setSnapLines([]);
+                                            setDistanceMeasurements([]);
+                                            setSpacingGuides([]);
+                                        }
+                                    }}
+                                />
+                            );
+                        }
+                        if (unlockedTopLevel.length === 1) {
+                            return (
+                                <SelectionTransformer
+                                    selectedLayerIds={selectedLayerIds}
+                                    stageRef={stageRef}
+                                    excludeIds={frameChildIds}
+                                />
+                            );
+                        }
+                        return null;
+                    })()}
+
+                    {/* Vector point-editing overlay */}
+                    {vectorEditLayerId && (() => {
+                        const editLayer = layers.find((l) => l.id === vectorEditLayerId && l.type === "vector") as VectorLayer | undefined;
+                        if (!editLayer) return null;
+                        return <VectorEditOverlay layer={editLayer} zoom={zoom} onChange={updateLayer} />;
+                    })()}
 
                     {/* Expand Overlay — drag handles for generative expand */}
                     {expandMode && expandTargetLayerId && (
@@ -3037,16 +3696,22 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
                                         });
                                     }
                                 },
+                                copyAsSvg: () => {
+                                    import("@/utils/clipboardUtils").then(({ copyLayersAsSvg }) => {
+                                        void copyLayersAsSvg([layer.id], layers, stageRef.current);
+                                    });
+                                },
                                 wrapInAutoLayout: () => wrapInAutoLayoutFrame(),
-                                toggleFixedAsset: isTemplateMode && layer.type === "image"
+                                toggleFixedAsset: isTemplateMode && (layer.type === "image" || layer.type === "vector")
                                     ? () => updateLayer(layer.id, { isFixedAsset: !layer.isFixedAsset })
                                     : undefined,
-                                createSwatchFromFill: (layer.type === "text" || layer.type === "rectangle" || layer.type === "badge" || layer.type === "frame")
+                                createSwatchFromFill: (layer.type === "text" || layer.type === "rectangle" || layer.type === "badge" || layer.type === "frame" || layer.type === "vector")
                                     ? () => useCanvasStore.getState().createSwatchFromLayerFill(layer.id)
                                     : undefined,
                             },
                             {
                                 isImageLayer: layer.type === "image",
+                                isVectorLayer: layer.type === "vector",
                                 isFixedAsset: !!layer.isFixedAsset,
                                 isTemplateMode,
                             }

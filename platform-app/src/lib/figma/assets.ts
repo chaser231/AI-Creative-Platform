@@ -14,6 +14,8 @@
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 import { randomUUID } from "node:crypto";
 import type { Prisma, PrismaClient } from "@prisma/client";
+import type { VectorLayer } from "@/types";
+import { importedVectorToLayerProps, parseSvgToVector } from "@/utils/svgImport";
 import type { FigmaClient } from "./client";
 import type { MapperFrame } from "./mapper";
 
@@ -54,6 +56,8 @@ export interface DownloadReport {
     imagesFailed: number;
     /** Per-layer {layerId → S3 URL}. Callers patch the mapper output with these. */
     layerUrls: Record<string, string>;
+    /** Parsed vector geometry for Figma SVG renders (Subtract, boolean ops, etc.). */
+    vectorOverrides: Record<string, Partial<VectorLayer>>;
 }
 
 export interface DownloadParams {
@@ -80,6 +84,7 @@ export async function downloadAssetsForFrames(
         imagesDownloaded: 0,
         imagesFailed: 0,
         layerUrls: {},
+        vectorOverrides: {},
     };
 
     // ── 1. Collect unique imageRefs across every frame ──────────────────────
@@ -108,7 +113,7 @@ export async function downloadAssetsForFrames(
                 continue;
             }
             try {
-                const s3Url = await downloadAndUpload({
+                const { url: s3Url } = await downloadAndUpload({
                     prisma,
                     sourceUrl: url,
                     keyPrefix: `figma-imports/${projectId}/fills`,
@@ -167,7 +172,7 @@ export async function downloadAssetsForFrames(
                 continue;
             }
             try {
-                const s3Url = await downloadAndUpload({
+                const { url: s3Url, svgText } = await downloadAndUpload({
                     prisma,
                     sourceUrl: url,
                     keyPrefix: `figma-imports/${projectId}/renders`,
@@ -180,6 +185,12 @@ export async function downloadAssetsForFrames(
                 });
                 report.imagesDownloaded++;
                 report.layerUrls[item.targetLayerId] = s3Url;
+                if (format === "svg" && svgText) {
+                    const imported = parseSvgToVector(svgText);
+                    if (imported) {
+                        report.vectorOverrides[item.targetLayerId] = importedVectorToLayerProps(imported);
+                    }
+                }
             } catch (err) {
                 console.error(`[figma/assets] render ${item.nodeId} upload failed:`, err);
                 report.imagesFailed++;
@@ -202,7 +213,7 @@ async function downloadAndUpload(args: {
     uploadedById: string;
     metadata: Record<string, string>;
     signal?: AbortSignal;
-}): Promise<string> {
+}): Promise<{ url: string; svgText?: string }> {
     const resp = await fetch(args.sourceUrl, { signal: args.signal });
     if (!resp.ok) {
         throw new Error(`Source fetch failed (${resp.status})`);
@@ -272,7 +283,8 @@ async function downloadAndUpload(args: {
         console.error("[figma/assets] Asset row creation failed:", err);
     }
 
-    return publicUrl;
+    const svgText = contentType === "image/svg+xml" ? buffer.toString("utf-8") : undefined;
+    return { url: publicUrl, svgText };
 }
 
 function sanitize(name: string): string {

@@ -170,7 +170,7 @@ export const FORMAT_PACKS: FormatPack[] = [
 ];
 
 // ─── Creative Component (Master/Instance) ───────────────
-export type ComponentType = "text" | "image" | "rectangle" | "badge" | "frame";
+export type ComponentType = "text" | "image" | "rectangle" | "badge" | "frame" | "vector";
 
 export interface BaseComponentProps {
     x: number;
@@ -409,6 +409,7 @@ export const CONTENT_SOURCE_KEYS: Record<ComponentType, string[]> = {
     badge: ["label"],
     rectangle: [],
     frame: [],
+    vector: [],
 };
 
 /**
@@ -460,13 +461,13 @@ export interface BrandKit {
 }
 
 // ─── Tool ───────────────────────────────────────────────
-export type ToolType = "select" | "text" | "rectangle" | "image" | "badge" | "frame";
+export type ToolType = "select" | "text" | "rectangle" | "image" | "badge" | "frame" | "pen";
 
 // ─── Editor Mode ────────────────────────────────────────
 export type EditorMode = "wizard" | "studio";
 
 // ─── Legacy Layer compat (used by Canvas renderer) ──────
-export type LayerType = "text" | "image" | "rectangle" | "badge" | "frame";
+export type LayerType = "text" | "image" | "rectangle" | "badge" | "frame" | "vector";
 
 export type TemplateSlotRole = 'headline' | 'subhead' | 'cta' | 'background' | 'image-primary' | 'logo' | 'none';
 
@@ -547,6 +548,8 @@ export interface BaseLayer {
     responsive?: LayerResponsiveSettings;
     /** Opaque integration metadata (Figma, future Sketch/XD, etc.) */
     metadata?: LayerMetadata;
+    /** When true, resize keeps width/height proportional (Figma chain-link lock). */
+    lockAspectRatio?: boolean;
 }
 
 export interface TextLayer extends BaseLayer {
@@ -645,7 +648,53 @@ export interface FrameLayer extends BaseLayer {
     groupSlotId?: string;
 }
 
-export type Layer = TextLayer | RectangleLayer | ImageLayer | BadgeLayer | FrameLayer;
+// ─── Vector (editable path) ─────────────────────────────
+
+export type VectorPointType = "corner" | "bezier";
+
+/**
+ * A single anchor point of a vector path. Coordinates are normalized to the
+ * 0..1 range relative to the layer bounding box; control handles (`in`/`out`)
+ * are absolute normalized positions, not offsets.
+ */
+export interface VectorAnchor {
+    x: number;
+    y: number;
+    inX?: number;
+    inY?: number;
+    outX?: number;
+    outY?: number;
+    type: VectorPointType;
+}
+
+export interface VectorSubpath {
+    points: VectorAnchor[];
+    closed: boolean;
+}
+
+export interface VectorLayer extends BaseLayer {
+    type: "vector";
+    /** Editable geometry, normalized to the 0..1 unit box. */
+    subpaths: VectorSubpath[];
+    fillRule?: "nonzero" | "evenodd";
+    fill: Paint;
+    fillEnabled?: boolean; // default true
+    stroke?: Paint;
+    strokeEnabled?: boolean; // default false
+    strokeWidth?: number;
+    strokeAlign?: StrokeAlign;
+    strokeJoin?: StrokeJoin;
+    /** Optional fallback raw `d` (natural coords) used when subpaths are empty. */
+    rawSvgPath?: string;
+    viewBoxWidth?: number;
+    viewBoxHeight?: number;
+    /** Faithful SVG snippet (viewBox-sized) for boolean/subtract imports from Figma. */
+    inlineSvg?: string;
+    /** Backlink to a library/template SVG asset URL (when inserted from library). */
+    src?: string;
+}
+
+export type Layer = TextLayer | RectangleLayer | ImageLayer | BadgeLayer | FrameLayer | VectorLayer;
 
 /** Accepts any subset of layer properties without requiring the `type` discriminant. */
 export type LayerUpdate = Partial<BaseLayer>
@@ -654,6 +703,7 @@ export type LayerUpdate = Partial<BaseLayer>
     & Partial<Omit<ImageLayer, keyof BaseLayer>>
     & Partial<Omit<BadgeLayer, keyof BaseLayer | "fill">>
     & Partial<Omit<FrameLayer, keyof BaseLayer | "fill">>
+    & Partial<Omit<VectorLayer, keyof BaseLayer | "fill">>
     & { fill?: Paint };
 
 // ─── Template Catalogization ────────────────────────────
