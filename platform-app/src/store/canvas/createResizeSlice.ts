@@ -15,7 +15,8 @@ import { applyConstraints } from "@/utils/resizeUtil";
 import { getContentSourceUpdates } from "./helpers";
 import { cloneLayerTree } from "@/utils/cloneLayerTree";
 import { applyCascade, type CascadeContext } from "./bindingCascade";
-import { generateCustomResize, projectTree } from "@/services/customResizeService";
+import { generateCustomResize } from "@/services/customResizeService";
+import { AdaptationPresets, runAdaptationPipeline } from "@/services/adaptationPipeline";
 
 /**
  * Adapts a whole layer tree to a new artboard size for MANUAL format resize.
@@ -28,7 +29,7 @@ function adaptLayersToArtboard(
     oldSize: { width: number; height: number },
     newSize: { width: number; height: number },
 ): Layer[] {
-    return applyAllAutoLayouts(projectTree(layers, oldSize, newSize, { scaleFonts: false }));
+    return runAdaptationPipeline(layers, oldSize, newSize, AdaptationPresets.manualResize).layers;
 }
 
 export type ResizeSlice = Pick<CanvasStore,

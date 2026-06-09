@@ -96,7 +96,10 @@ src/
 │   ├── templateCatalogService.ts # Template search/filter
 │   ├── layoutEngine.ts     # Layout rules for template slots
 │   ├── snapService.ts      # Snap-to-grid/guides
-│   ├── smartResizeService.ts # Multi-format content adaptation
+│   ├── adaptationPipeline.ts # Layer-based adaptation kernel (studio + manual resize)
+│   ├── adaptationProjection.ts # Artboard projection for adaptation
+│   ├── customResizeService.ts # «Адаптировать» orchestrator (ResizePanel)
+│   ├── templateAdaptationService.ts # SlotMapping: snapshot pipeline + legacy shim
 │   └── slotMappingService.ts # Template slot → layer mapping
 │
 ├── providers/
