@@ -13,6 +13,7 @@ import type {
     ImageLayer,
     BadgeLayer,
     FrameLayer,
+    VectorLayer,
     ToolType,
     MasterComponent,
     ComponentInstance,
@@ -48,6 +49,7 @@ export type {
     ImageLayer,
     BadgeLayer,
     FrameLayer,
+    VectorLayer,
     ToolType,
     MasterComponent,
     ComponentInstance,
@@ -196,6 +198,12 @@ export interface CanvasStore {
     // Drawing mode preview
     drawingBox: { startX: number; startY: number; currentX: number; currentY: number } | null;
 
+    // Lock aspect ratio for selection resize (Figma-like)
+    keepAspectRatio: boolean;
+
+    // Vector point-editing mode: id of the vector layer being edited (or null)
+    vectorEditLayerId: string | null;
+
     // Inline text editing
     isEditingText: boolean;
     editingLayerId: string | null;
@@ -229,6 +237,7 @@ export interface CanvasStore {
     addImageLayer: (src: string, width: number, height: number) => string;
     addBadgeLayer: (overrides?: Partial<BadgeLayer>) => void;
     addFrameLayer: (overrides?: Partial<FrameLayer>) => void;
+    addVectorLayer: (overrides?: Partial<VectorLayer>) => string;
     updateLayer: (id: string, updates: LayerUpdate) => void;
     removeLayer: (id: string) => void;
     selectLayer: (id: string | string[] | null) => void;
@@ -237,6 +246,9 @@ export interface CanvasStore {
     removeFromSelection: (id: string) => void;
     deleteSelectedLayers: () => void;
     batchUpdateLayers: (updates: { id: string; changes: Partial<Layer> }[]) => void;
+    beginTransformPreview: () => void;
+    previewLayerGeometry: (updates: { id: string; changes: Partial<Pick<Layer, "x" | "y" | "width" | "height">> }[]) => void;
+    endTransformPreview: () => void;
     alignSelectedLayers: (alignment: 'left' | 'center' | 'right' | 'top' | 'middle' | 'bottom') => void;
     duplicateSelectedLayers: () => void;
     reorderLayers: (fromIndex: number, toIndex: number) => void;
@@ -318,6 +330,12 @@ export interface CanvasStore {
 
     // Drawing mode
     setDrawingBox: (box: { startX: number; startY: number; currentX: number; currentY: number } | null) => void;
+
+    // Aspect ratio lock
+    setKeepAspectRatio: (value: boolean) => void;
+
+    // Vector point-editing
+    setVectorEditLayerId: (id: string | null) => void;
 
     // Inline text editing
     startTextEditing: (layerId: string) => void;

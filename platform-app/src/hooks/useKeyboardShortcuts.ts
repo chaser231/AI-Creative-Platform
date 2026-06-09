@@ -10,6 +10,9 @@ import {
     pasteLayersFromClipboard,
     copyLayerAsPng,
 } from "@/utils/clipboardUtils";
+import { svgTextToVectorOverrides, looksLikeSvg } from "@/utils/svgImport";
+import { enterVectorEditMode } from "@/utils/vectorEdit";
+import type { VectorLayer } from "@/types";
 
 /**
  * Global keyboard shortcuts for the editor.
@@ -33,6 +36,9 @@ export function useKeyboardShortcuts() {
         stageRef,
         wrapInAutoLayoutFrame,
         setDrawingBox,
+        addVectorLayer,
+        vectorEditLayerId,
+        setVectorEditLayerId,
     } = useCanvasStore(useShallow((s) => ({
         selectedLayerIds: s.selectedLayerIds, layers: s.layers,
         isEditingText: s.isEditingText, activeTool: s.activeTool,
@@ -43,6 +49,9 @@ export function useKeyboardShortcuts() {
         pasteLayers: s.pasteLayers, stageRef: s.stageRef,
         wrapInAutoLayoutFrame: s.wrapInAutoLayoutFrame,
         setDrawingBox: s.setDrawingBox,
+        addVectorLayer: s.addVectorLayer,
+        vectorEditLayerId: s.vectorEditLayerId,
+        setVectorEditLayerId: s.setVectorEditLayerId,
     })));
 
     // clipboard state lives in a ref so it persists across renders
@@ -169,8 +178,23 @@ export function useKeyboardShortcuts() {
                 return;
             }
 
-            // ─── Escape: cancel drawing mode or deselect ──
+            // ─── Enter: edit vector vertices (single vector selection) ──
+            if (e.key === "Enter" && activeTool === "select" && selectedLayerIds.length === 1) {
+                const layer = layers.find((l) => l.id === selectedLayerIds[0]);
+                if (layer?.type === "vector") {
+                    e.preventDefault();
+                    enterVectorEditMode(layer as VectorLayer, updateLayer, setVectorEditLayerId);
+                    return;
+                }
+            }
+
+            // ─── Escape: exit vector edit / drawing mode / deselect ──
             if (e.key === "Escape") {
+                if (vectorEditLayerId) {
+                    e.preventDefault();
+                    setVectorEditLayerId(null);
+                    return;
+                }
                 if (activeTool !== "select") {
                     setActiveTool("select");
                     setDrawingBox(null);
@@ -243,11 +267,58 @@ export function useKeyboardShortcuts() {
                 if (didMove) return;
             }
         },
-        [selectedLayerIds, layers, isEditingText, deleteSelectedLayers, duplicateSelectedLayers, updateLayer, undo, redo, selectLayer, reorderLayer, pasteLayers, stageRef, activeTool, setActiveTool, wrapInAutoLayoutFrame, setDrawingBox]
+        [selectedLayerIds, layers, isEditingText, deleteSelectedLayers, duplicateSelectedLayers, updateLayer, undo, redo, selectLayer, reorderLayer, pasteLayers, stageRef, activeTool, setActiveTool, wrapInAutoLayoutFrame, setDrawingBox, vectorEditLayerId, setVectorEditLayerId]
+    );
+
+    // Native paste of external SVG (markup or file) -> editable vector layer.
+    // Internal JSON layer paste stays on the Cmd+V keydown path above.
+    const handlePaste = useCallback(
+        (e: ClipboardEvent) => {
+            if (isEditingText) return;
+            if (isFocusedOnInput(e)) return;
+            const data = e.clipboardData;
+            if (!data) return;
+
+            const dropAt = () => {
+                const state = useCanvasStore.getState();
+                return { x: Math.round(state.canvasWidth / 2) - 100, y: Math.round(state.canvasHeight / 2) - 100 };
+            };
+
+            // SVG files attached to the clipboard.
+            const svgFile = Array.from(data.files).find(
+                (f) => f.type === "image/svg+xml" || /\.svg$/i.test(f.name),
+            );
+            if (svgFile) {
+                e.preventDefault();
+                void svgFile.text().then((text) => {
+                    const pos = dropAt();
+                    const overrides = svgTextToVectorOverrides(text, { x: pos.x, y: pos.y });
+                    if (overrides) addVectorLayer(overrides);
+                });
+                return;
+            }
+
+            // SVG markup as text (copied from Illustrator/Figma/editor).
+            const svgText = data.getData("image/svg+xml") || data.getData("text/plain");
+            if (svgText && looksLikeSvg(svgText)) {
+                const pos = dropAt();
+                const overrides = svgTextToVectorOverrides(svgText, { x: pos.x, y: pos.y });
+                if (overrides) {
+                    e.preventDefault();
+                    addVectorLayer(overrides);
+                }
+            }
+        },
+        [isEditingText, addVectorLayer],
     );
 
     useEffect(() => {
         window.addEventListener("keydown", handleKeyDown);
         return () => window.removeEventListener("keydown", handleKeyDown);
     }, [handleKeyDown]);
+
+    useEffect(() => {
+        window.addEventListener("paste", handlePaste);
+        return () => window.removeEventListener("paste", handlePaste);
+    }, [handlePaste]);
 }

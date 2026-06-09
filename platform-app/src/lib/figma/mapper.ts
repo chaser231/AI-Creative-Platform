@@ -11,7 +11,8 @@
  *    merge back into the same source file.
  *
  * Unsupported today (Phase 1):
- *  - Vector / Boolean nodes → rasterized as ImageLayer (svg URL is fetched by worker).
+ *  - Vector / Boolean nodes → fetched as SVG via `/v1/images`, then promoted to
+ *    VectorLayer with `inlineSvg` by the import worker (faithful Subtract/boolean).
  *  - Gradients / multi-fill → flattened to first solid fill; warning emitted.
  *  - Effects (shadows/blurs) → ignored; warning emitted.
  *  - Stroke dashes → lost; align + weight + color preserved when present.

@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/Input";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { useCanvasStore } from "@/store/canvasStore";
 import type { ImageLayer } from "@/store/canvas/types";
+import { svgTextToVectorOverrides } from "@/utils/svgImport";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -35,6 +36,7 @@ export function AssetLibraryModal({ projectId, open, onClose }: AssetLibraryModa
     const [deleteOpen, setDeleteOpen] = useState(false);
 
     const addImageLayer = useCanvasStore((s) => s.addImageLayer);
+    const addVectorLayer = useCanvasStore((s) => s.addVectorLayer);
     const updateLayer = useCanvasStore((s) => s.updateLayer);
     const selectedLayerIds = useCanvasStore((s) => s.selectedLayerIds);
     const layers = useCanvasStore((s) => s.layers);
@@ -75,6 +77,8 @@ export function AssetLibraryModal({ projectId, open, onClose }: AssetLibraryModa
         filename: string;
         sizeBytes: number;
         createdAt: Date;
+        type?: string;
+        mimeType?: string;
     };
 
     // Workspace assets — client-side search + sort (server doesn't accept those on this endpoint)
@@ -134,10 +138,31 @@ export function AssetLibraryModal({ projectId, open, onClose }: AssetLibraryModa
     // ── Actions ─────────────────────────────────────────────────────
     const handleAddToCanvas = useCallback(() => {
         for (const asset of selectedAssets) {
-            addImageLayer(asset.url, 400, 400);
+            const isVector = asset.type === "VECTOR"
+                || asset.mimeType === "image/svg+xml"
+                || /\.svg(\?|$)/i.test(asset.url);
+            if (isVector) {
+                // Fetch the SVG markup and insert as an editable vector layer.
+                void fetch(asset.url)
+                    .then((r) => r.text())
+                    .then((text) => {
+                        const overrides = svgTextToVectorOverrides(text, {
+                            x: 200,
+                            y: 200,
+                            name: asset.filename?.replace(/\.svg$/i, "") || "Vector",
+                        });
+                        if (overrides) addVectorLayer({ ...overrides, src: asset.url });
+                    })
+                    .catch(() => {
+                        // Fall back to a raster image layer if the SVG can't be fetched/parsed.
+                        addImageLayer(asset.url, 400, 400);
+                    });
+            } else {
+                addImageLayer(asset.url, 400, 400);
+            }
         }
         setSelectedIds(new Set());
-    }, [selectedAssets, addImageLayer]);
+    }, [selectedAssets, addImageLayer, addVectorLayer]);
 
     /**
      * Replace the src of the currently-selected image layer with the first

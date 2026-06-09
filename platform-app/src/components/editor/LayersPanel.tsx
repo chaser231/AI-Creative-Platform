@@ -439,12 +439,13 @@ const LayerRow = memo(function LayerRow({
                                 setRenameName(layer.name);
                                 setIsRenaming(true);
                             },
-                            toggleFixedAsset: isTemplateMode && liveLayer.type === "image"
+                            toggleFixedAsset: isTemplateMode && (liveLayer.type === "image" || liveLayer.type === "vector")
                                 ? () => updateLayer(liveLayer.id, { isFixedAsset: !liveLayer.isFixedAsset })
                                 : undefined,
                         },
                         {
                             isImageLayer: liveLayer.type === "image",
+                            isVectorLayer: liveLayer.type === "vector",
                             isFixedAsset: !!liveLayer.isFixedAsset,
                             isTemplateMode,
                         }

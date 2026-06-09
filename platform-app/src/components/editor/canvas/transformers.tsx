@@ -4,6 +4,8 @@ import { useRef, useEffect } from "react";
 import { Transformer } from "react-konva";
 import Konva from "konva";
 import { useCanvasStore } from "@/store/canvasStore";
+import { enforceLockedAspectOnNode, isLayerAspectLocked } from "@/utils/aspectRatioLock";
+import { applyAspectRatioToSideAnchor } from "@/utils/transformBox";
 import { normalizeLiveTextTransform } from "./textTransformUtils";
 
 /* ─── Selection Transformer ───────────────────────── */
@@ -14,9 +16,23 @@ interface SelectionTransformerProps {
     excludeIds?: Set<string>;
 }
 
+function selectionUsesTransformerKeepRatio(
+    selectedLayerIds: string[],
+    layers: ReturnType<typeof useCanvasStore.getState>["layers"],
+    excludeIds?: Set<string>,
+): boolean {
+    const ids = selectedLayerIds.filter((id) => !excludeIds?.has(id));
+    if (ids.length !== 1) return false;
+    const layer = layers.find((l) => l.id === ids[0]);
+    return isLayerAspectLocked(layer);
+}
+
 export function SelectionTransformer({ selectedLayerIds, stageRef, excludeIds }: SelectionTransformerProps) {
     const trRef = useRef<Konva.Transformer>(null);
     const editingLayerId = useCanvasStore((s) => s.editingLayerId);
+    const keepAspectRatio = useCanvasStore((s) =>
+        selectionUsesTransformerKeepRatio(s.selectedLayerIds, s.layers, excludeIds),
+    );
     // Re-attach only when the SELECTED layers' geometry/lock changes, not on
     // every unrelated layer edit in the document.
     const selectionSignature = useCanvasStore((s) => {
@@ -42,6 +58,12 @@ export function SelectionTransformer({ selectedLayerIds, stageRef, excludeIds }:
             if (layer?.locked) return false;
             return true;
         });
+        if (filteredIds.length !== 1) {
+            trRef.current.nodes([]);
+            trRef.current.getLayer()?.batchDraw();
+            return;
+        }
+
         const nodes = filteredIds
             .map((id) => stageRef.current?.findOne("#" + id))
             .filter((node): node is Konva.Node => !!node);
@@ -53,8 +75,13 @@ export function SelectionTransformer({ selectedLayerIds, stageRef, excludeIds }:
     return (
         <Transformer
             ref={trRef}
+            keepRatio={keepAspectRatio}
+            shiftBehavior="inverted"
             boundBoxFunc={(oldBox, newBox) => {
                 if (newBox.width < 5 || newBox.height < 5) return oldBox;
+                if (keepAspectRatio) {
+                    return applyAspectRatioToSideAnchor(oldBox, newBox, trRef.current?.getActiveAnchor());
+                }
                 return newBox;
             }}
             borderStroke="#6366F1"
@@ -75,6 +102,9 @@ interface FrameChildTransformerProps {
 export function FrameChildTransformer({ selectedChildIds, containerRef }: FrameChildTransformerProps) {
     const trRef = useRef<Konva.Transformer>(null);
     const editingLayerId = useCanvasStore((s) => s.editingLayerId);
+    const keepAspectRatio = useCanvasStore((s) =>
+        selectionUsesTransformerKeepRatio(selectedChildIds, s.layers),
+    );
     // Re-attach only when the selected children's geometry/lock changes.
     const selectionSignature = useCanvasStore((s) => {
         let sig = "";
@@ -106,7 +136,6 @@ export function FrameChildTransformer({ selectedChildIds, containerRef }: FrameC
         trRef.current.getLayer()?.batchDraw();
     }, [selectedChildIds, containerRef, editingLayerId, selectionSignature]);
 
-    // Live transform handler: reset text scale to prevent visual stretching
     const handleTransform = () => {
         const tr = trRef.current;
         if (!tr) return;
@@ -116,6 +145,8 @@ export function FrameChildTransformer({ selectedChildIds, containerRef }: FrameC
             const layer = layers.find(l => l.id === node.id());
             if (layer?.type === "text") {
                 normalizeLiveTextTransform(node, layer);
+            } else {
+                enforceLockedAspectOnNode(node, layer);
             }
         });
     };
@@ -124,8 +155,13 @@ export function FrameChildTransformer({ selectedChildIds, containerRef }: FrameC
         <Transformer
             ref={trRef}
             onTransform={handleTransform}
+            keepRatio={keepAspectRatio}
+            shiftBehavior="inverted"
             boundBoxFunc={(oldBox, newBox) => {
                 if (newBox.width < 5 || newBox.height < 5) return oldBox;
+                if (keepAspectRatio) {
+                    return applyAspectRatioToSideAnchor(oldBox, newBox, trRef.current?.getActiveAnchor());
+                }
                 return newBox;
             }}
             borderStroke="#6366F1"

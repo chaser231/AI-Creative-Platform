@@ -1,7 +1,7 @@
 "use client";
 
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactNode } from "react";
-import { Stage, Layer, Rect, Text, Image as KonvaImage, Group } from "react-konva";
+import { Stage, Layer, Rect, Text, Image as KonvaImage, Group, Path } from "react-konva";
 import type {
     ArtboardBackgroundImage,
     CornerRadii,
@@ -17,6 +17,7 @@ import { computeImageFitProps } from "@/utils/imageFitUtils";
 import { getTextTrimMetrics, isTextTrimActive } from "@/utils/layoutEngine";
 import { getEffectiveTextRenderHeight, shouldUseTextEllipsis } from "@/utils/textContainerLimits";
 import { normalizePaint, paintToKonvaProps } from "@/utils/paint";
+import { subpathsToPathData, hasRenderableGeometry } from "@/utils/vectorGeometry";
 import { AlignedStrokeRect } from "@/components/editor/canvas/AlignedStrokeRect";
 import Konva from "konva";
 
@@ -172,6 +173,40 @@ function PreviewLayer({ layer, allLayers, loadedImages, imageStatuses, renderX, 
                     </FlipLayerContent>
                 </Group>
             );
+        case "vector": {
+            const useSubpaths = hasRenderableGeometry(layer.subpaths);
+            const pathData = useSubpaths
+                ? subpathsToPathData(layer.subpaths, layer.width, layer.height)
+                : layer.rawSvgPath ?? "";
+            const rawScaleX = !useSubpaths && layer.viewBoxWidth ? layer.width / layer.viewBoxWidth : 1;
+            const rawScaleY = !useSubpaths && layer.viewBoxHeight ? layer.height / layer.viewBoxHeight : 1;
+            const strokeColor = layer.strokeEnabled
+                ? (() => {
+                    if (layer.stroke === undefined || layer.stroke === "") return undefined;
+                    const np = normalizePaint(layer.stroke);
+                    return np.kind === "solid" ? np.color : np.stops[0]?.color;
+                })()
+                : undefined;
+            return (
+                <Group {...commonProps}>
+                    <FlipLayerContent layer={layer}>
+                        <Path
+                            data={pathData}
+                            scaleX={rawScaleX}
+                            scaleY={rawScaleY}
+                            {...(layer.fillEnabled === false
+                                ? { fillEnabled: false }
+                                : paintToKonvaProps(layer.fill, layer.width, layer.height))}
+                            fillRule={layer.fillRule ?? "nonzero"}
+                            stroke={strokeColor}
+                            strokeWidth={strokeColor ? layer.strokeWidth ?? 0 : 0}
+                            lineJoin={layer.strokeJoin ?? "miter"}
+                            strokeScaleEnabled={false}
+                        />
+                    </FlipLayerContent>
+                </Group>
+            );
+        }
         case "badge":
             return (
                 <Group {...commonProps}>

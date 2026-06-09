@@ -16,6 +16,7 @@ import {
     Clipboard,
     ClipboardPaste,
     Image,
+    FileCode,
     Scissors,
     LayoutList,
     Pin,
@@ -170,12 +171,14 @@ export function buildLayerContextMenuItems(
         cutLayers?: () => void;
         pasteLayers?: () => void;
         copyAsPng?: () => void;
+        copyAsSvg?: () => void;
         wrapInAutoLayout?: () => void;
         toggleFixedAsset?: () => void;
         createSwatchFromFill?: () => void;
     },
     options?: {
         isImageLayer?: boolean;
+        isVectorLayer?: boolean;
         isFixedAsset?: boolean;
         isTemplateMode?: boolean;
     }
@@ -213,6 +216,13 @@ export function buildLayerContextMenuItems(
             icon: <Image size={13} />,
             shortcut: "⌘⇧C",
             onClick: actions.copyAsPng,
+        });
+    }
+    if (actions.copyAsSvg) {
+        items.push({
+            label: "Копировать как SVG",
+            icon: <FileCode size={13} />,
+            onClick: actions.copyAsSvg,
         });
     }
     if (items.length > 0) {
@@ -298,8 +308,8 @@ export function buildLayerContextMenuItems(
         );
     }
 
-    // Fixed template asset toggle (only for image layers in template editing mode)
-    if (options?.isTemplateMode && options?.isImageLayer && actions.toggleFixedAsset) {
+    // Fixed template asset toggle (image + vector layers in template editing mode)
+    if (options?.isTemplateMode && (options?.isImageLayer || options?.isVectorLayer) && actions.toggleFixedAsset) {
         items.push(
             { separator: true },
             {
