@@ -1,20 +1,15 @@
 import { v4 as uuid } from "uuid";
 import {
-    DEFAULT_CONSTRAINTS,
     type AdaptationDiagnostic,
     type AdaptationDiagnosticCode,
     type FrameLayer,
     type Layer,
     type LayerBinding,
-    type LayerConstraints,
     type ResizeFormat,
-    type TextLayer,
 } from "@/types";
-import { computeConstrainedPosition } from "@/store/canvas/helpers";
-import { applyAllAutoLayouts, measureTextLayer } from "@/utils/layoutEngine";
-import { applyTextContainerLimits } from "@/utils/textContainerLimits";
-import { shrinkTextToFitBox } from "@/utils/textFit";
-import { resolveConstraints, type Box } from "@/utils/constraintInference";
+import { AdaptationPresets, runAdaptationPipeline } from "@/services/adaptationPipeline";
+import type { ArtboardSize } from "@/services/adaptationProjection";
+export { projectTree } from "@/services/adaptationProjection";
 
 /** @deprecated Use AdaptationDiagnostic from @/types */
 export type CustomResizeDiagnosticCode = AdaptationDiagnosticCode;
@@ -66,13 +61,10 @@ interface CloneResult {
     reverseIdMap: Map<string, string>;
 }
 
-interface ArtboardSize {
-    width: number;
-    height: number;
-}
-
-const GEOMETRY_EPSILON = 1;
-
+/**
+ * Orchestrates «create new format» in the studio: source selection, clone,
+ * `runAdaptationPipeline`, bindings, and adaptation metadata.
+ */
 export function generateCustomResize(
     state: CustomResizeState,
     input: GenerateCustomResizeInput,
@@ -105,16 +97,13 @@ export function generateCustomResize(
     const sourceSize = { width: source.resize.width, height: source.resize.height };
     const targetSize = { width, height };
     const cloned = cloneLayerTreeWithMap(source.layers);
-    const projected = projectTree(cloned.layers, sourceSize, targetSize);
-    // Pass the projected layers as the baseline so the auto-layout pass repacks
-    // auto-layout frames without the constraint cascade re-projecting the
-    // non-auto children we just positioned in projectTree.
-    const layouted = preserveStretchedRootAutoLayoutGeometry(
-        projected,
-        applyAllAutoLayouts(projected),
+    const { layers: validated, diagnostics: pipelineDiagnostics } = runAdaptationPipeline(
+        cloned.layers,
+        sourceSize,
+        targetSize,
+        AdaptationPresets.full,
     );
-    const remeasured = applyTextFitShrink(applyTextContainerLimitsToLayers(remeasureAdaptedTextBoxes(layouted)));
-    const validated = validateAndApplyHide(remeasured, targetSize, diagnostics);
+    diagnostics.push(...pipelineDiagnostics);
     const master = resolveMasterFormat(state);
     const masterLayers = master ? getLayersForResize(state, master) : [];
     const layerBindings = master
@@ -251,385 +240,6 @@ function cloneLayerTreeWithMap(layers: Layer[]): CloneResult {
         layers: cloned,
         idMap,
         reverseIdMap: new Map(Array.from(idMap.entries()).map(([oldId, newId]) => [newId, oldId])),
-    };
-}
-
-/**
- * Projects an ENTIRE layer tree from a source artboard to a target artboard.
- *
- * Root layers are projected against the artboard (honouring background/fluid/
- * fixed behaviours, otherwise explicit-or-inferred constraints). Children of
- * NON-auto-layout frames are then projected recursively against their parent
- * frame's old→new box, so nested content adapts instead of clinging to the
- * top-left. Auto-layout frames keep their children untouched here — they are
- * repacked afterwards by `applyAllAutoLayouts`.
- */
-export function projectTree(
-    layers: Layer[],
-    sourceSize: ArtboardSize,
-    targetSize: ArtboardSize,
-    options: { scaleFonts?: boolean } = {},
-): Layer[] {
-    const scaleFonts = options.scaleFonts ?? true;
-    const sizeUnchanged =
-        Math.abs(sourceSize.width - targetSize.width) < 0.01 &&
-        Math.abs(sourceSize.height - targetSize.height) < 0.01;
-    if (sizeUnchanged) return layers;
-
-    const byId = new Map(layers.map((layer) => [layer.id, layer]));
-    const childIdSet = new Set<string>();
-    for (const layer of layers) {
-        if (layer.type === "frame") {
-            for (const childId of (layer as FrameLayer).childIds) childIdSet.add(childId);
-        }
-        const parentId = (layer as Layer & { parentId?: string }).parentId;
-        if (parentId) childIdSet.add(layer.id);
-    }
-
-    const newGeom = new Map<string, Pick<Layer, "x" | "y" | "width" | "height">>();
-
-    // 1. Roots — projected against the artboard.
-    for (const layer of layers) {
-        if (childIdSet.has(layer.id)) continue;
-        newGeom.set(layer.id, projectRootRect(layer, sourceSize, targetSize));
-    }
-
-    // 2. Non-auto-layout frame children — projected against the parent frame.
-    const projectChildren = (frameId: string, oldBox: Box, newBox: Box) => {
-        const frame = byId.get(frameId);
-        if (!frame || frame.type !== "frame") return;
-        if (frame.layoutMode && frame.layoutMode !== "none") return; // auto-layout repacks later
-
-        const delta = {
-            oldX: oldBox.x, oldY: oldBox.y, oldWidth: oldBox.width, oldHeight: oldBox.height,
-            newX: newBox.x, newY: newBox.y, newWidth: newBox.width, newHeight: newBox.height,
-        };
-
-        for (const childId of (frame as FrameLayer).childIds) {
-            const child = byId.get(childId);
-            if (!child) continue;
-            const childOld: Box = { x: child.x, y: child.y, width: child.width, height: child.height };
-            const constraints = adaptationConstraints(child, oldBox);
-            const projected = computeConstrainedPosition({ ...childOld, constraints }, delta);
-            newGeom.set(childId, projected);
-            if (child.type === "frame") {
-                projectChildren(childId, childOld, projected);
-            }
-        }
-    };
-
-    for (const layer of layers) {
-        if (childIdSet.has(layer.id) || layer.type !== "frame") continue;
-        const oldBox: Box = { x: layer.x, y: layer.y, width: layer.width, height: layer.height };
-        const ng = newGeom.get(layer.id);
-        if (!ng) continue;
-        projectChildren(layer.id, oldBox, { x: ng.x, y: ng.y, width: ng.width, height: ng.height });
-    }
-
-    const fontScale = getScale(sourceSize, targetSize).font;
-
-    // 3. Scale auto-layout padding/spacing with the artboard so inner gaps stay
-    // proportional across formats (horizontal pad/spacing by width ratio,
-    // vertical by height ratio). Only on the adaptation path, never interactive.
-    const padScaleX = targetSize.width / Math.max(1, sourceSize.width);
-    const padScaleY = targetSize.height / Math.max(1, sourceSize.height);
-    const padOverrides = new Map<string, Partial<FrameLayer>>();
-    for (const layer of layers) {
-        if (layer.type !== "frame") continue;
-        const frame = layer as FrameLayer;
-        if (!frame.layoutMode || frame.layoutMode === "none") continue;
-        const horizontal = frame.layoutMode === "horizontal";
-        const o: Partial<FrameLayer> = {};
-        if (typeof frame.paddingLeft === "number") o.paddingLeft = round2(frame.paddingLeft * padScaleX);
-        if (typeof frame.paddingRight === "number") o.paddingRight = round2(frame.paddingRight * padScaleX);
-        if (typeof frame.paddingTop === "number") o.paddingTop = round2(frame.paddingTop * padScaleY);
-        if (typeof frame.paddingBottom === "number") o.paddingBottom = round2(frame.paddingBottom * padScaleY);
-        if (typeof frame.spacing === "number") o.spacing = round2(frame.spacing * (horizontal ? padScaleX : padScaleY));
-        padOverrides.set(layer.id, o);
-    }
-
-    return layers.map((layer) => {
-        const geom = newGeom.get(layer.id);
-        const pad = padOverrides.get(layer.id);
-        const next = (geom || pad) ? ({ ...layer, ...geom, ...pad } as Layer) : layer;
-        return scaleFonts ? scaleFontIfNeeded(next, layer, fontScale) : next;
-    });
-}
-
-function round2(value: number): number {
-    return Math.round(value * 100) / 100;
-}
-
-/** Keep projected stretch geometry on root hug auto-layout frames after repack. */
-function preserveStretchedRootAutoLayoutGeometry(
-    projected: Layer[],
-    layouted: Layer[],
-): Layer[] {
-    const projectedById = new Map(projected.map((layer) => [layer.id, layer]));
-    const childIdSet = new Set<string>();
-    for (const layer of layouted) {
-        if (layer.type !== "frame") continue;
-        for (const childId of (layer as FrameLayer).childIds) childIdSet.add(childId);
-    }
-
-    return layouted.map((layer) => {
-        if (childIdSet.has(layer.id) || layer.type !== "frame") return layer;
-        const frame = layer as FrameLayer;
-        if (!frame.layoutMode || frame.layoutMode === "none") return layer;
-        const constraints = frame.constraints;
-        if (constraints?.horizontal !== "stretch" || constraints?.vertical !== "stretch") {
-            return layer;
-        }
-        const source = projectedById.get(layer.id);
-        if (!source) return layer;
-        return {
-            ...layer,
-            x: source.x,
-            y: source.y,
-            width: source.width,
-            height: source.height,
-        };
-    });
-}
-
-/**
- * Constraints used on the adaptation path. Identical to `resolveConstraints`,
- * except an auto-layout frame whose `layoutSizingWidth/Height` is "fill" is
- * forced to stretch on that axis so it fills its parent (artboard or enclosing
- * frame) instead of pinning to an inferred edge.
- */
-function adaptationConstraints(
-    layer: Layer,
-    parent: Box,
-): LayerConstraints {
-    const base = resolveConstraints(layer, parent);
-    if (layer.type !== "frame") return base;
-    const frame = layer as FrameLayer;
-    if (!frame.layoutMode || frame.layoutMode === "none") return base;
-    return {
-        horizontal: frame.layoutSizingWidth === "fill"
-            ? "stretch"
-            : frame.layoutSizingWidth === "hug"
-                ? "scale"
-                : base.horizontal,
-        vertical: frame.layoutSizingHeight === "fill"
-            ? "stretch"
-            : frame.layoutSizingHeight === "hug"
-                ? "scale"
-                : base.vertical,
-    };
-}
-
-function getScale(sourceSize: ArtboardSize, targetSize: ArtboardSize) {
-    const scaleX = targetSize.width / Math.max(1, sourceSize.width);
-    const scaleY = targetSize.height / Math.max(1, sourceSize.height);
-    return {
-        x: scaleX,
-        y: scaleY,
-        font: Math.sqrt(scaleX * scaleY),
-    };
-}
-
-function projectRootRect(
-    layer: Layer,
-    sourceSize: ArtboardSize,
-    targetSize: ArtboardSize,
-): Pick<Layer, "x" | "y" | "width" | "height"> {
-    const behavior = layer.responsive?.behavior ?? "auto";
-    const scale = getScale(sourceSize, targetSize);
-
-    if (behavior === "background") {
-        return { x: 0, y: 0, width: targetSize.width, height: targetSize.height };
-    }
-
-    if (behavior === "fluid") {
-        return {
-            x: layer.x * scale.x,
-            y: layer.y * scale.y,
-            width: layer.width * scale.x,
-            height: layer.height * scale.y,
-        };
-    }
-
-    if (behavior === "fixed") {
-        return computeFixedPosition(layer, sourceSize, targetSize);
-    }
-
-    // auto / unset — explicit constraints win, otherwise infer
-    // from geometry so default adaptation is sensible.
-    const artboardOld: Box = { x: 0, y: 0, width: sourceSize.width, height: sourceSize.height };
-    const constraints = adaptationConstraints(layer, artboardOld);
-    return computeConstrainedPosition(
-        { x: layer.x, y: layer.y, width: layer.width, height: layer.height, constraints },
-        {
-            oldX: 0,
-            oldY: 0,
-            oldWidth: sourceSize.width,
-            oldHeight: sourceSize.height,
-            newX: 0,
-            newY: 0,
-            newWidth: targetSize.width,
-            newHeight: targetSize.height,
-        },
-    );
-}
-
-function computeFixedPosition(
-    layer: Pick<Layer, "x" | "y" | "width" | "height" | "constraints">,
-    sourceSize: ArtboardSize,
-    targetSize: ArtboardSize,
-): Pick<Layer, "x" | "y" | "width" | "height"> {
-    const constraints = layer.constraints ?? DEFAULT_CONSTRAINTS;
-    return {
-        x: computeFixedAxis(
-            layer.x,
-            layer.width,
-            sourceSize.width,
-            targetSize.width,
-            constraints.horizontal,
-        ),
-        y: computeFixedAxis(
-            layer.y,
-            layer.height,
-            sourceSize.height,
-            targetSize.height,
-            constraints.vertical,
-        ),
-        width: layer.width,
-        height: layer.height,
-    };
-}
-
-function computeFixedAxis(
-    start: number,
-    size: number,
-    sourceAxis: number,
-    targetAxis: number,
-    constraint: LayerConstraints["horizontal"] | LayerConstraints["vertical"],
-): number {
-    if (constraint === "right" || constraint === "bottom") {
-        const endGap = sourceAxis - (start + size);
-        return targetAxis - endGap - size;
-    }
-    if (constraint === "center") {
-        const centerRatio = (start + size / 2) / Math.max(1, sourceAxis);
-        return centerRatio * targetAxis - size / 2;
-    }
-    if (constraint === "scale") {
-        return start * (targetAxis / Math.max(1, sourceAxis));
-    }
-    return start;
-}
-
-function applyTextContainerLimitsToLayers(layers: Layer[]): Layer[] {
-    return layers.map((layer) => (
-        layer.type === "text" ? applyTextContainerLimits(layer as TextLayer) : layer
-    ));
-}
-
-function applyTextFitShrink(layers: Layer[]): Layer[] {
-    return layers.map((layer) => (
-        layer.type === "text" ? shrinkTextToFitBox(layer as TextLayer) : layer
-    ));
-}
-
-/** Re-sync text container boxes after font scaling on the adaptation path. */
-function remeasureAdaptedTextBoxes(layers: Layer[]): Layer[] {
-    return layers.map((layer) => {
-        if (layer.type !== "text") return layer;
-        const text = layer as TextLayer;
-        const adj = text.textAdjust ?? "auto_width";
-
-        if (adj === "auto_width") {
-            const size = measureTextLayer(text);
-            return { ...text, width: size.width, height: size.height };
-        }
-        if (adj === "auto_height") {
-            const size = measureTextLayer(text, text.width);
-            return { ...text, height: size.height };
-        }
-
-        const size = measureTextLayer(text, text.width);
-        return { ...text, height: size.height };
-    });
-}
-
-function scaleFontIfNeeded(layer: Layer, base: Layer, fontScale: number): Layer {
-    if (layer.responsive?.behavior === "fixed") return layer;
-
-    if (layer.type !== "text" && layer.type !== "badge") return layer;
-    const baseFontSize = base.type === layer.type && "fontSize" in base
-        ? base.fontSize
-        : layer.fontSize;
-    const minFontSize = layer.responsive?.minFontSize ?? 8;
-    const maxFontSize = layer.responsive?.maxFontSize;
-    const nextFontSize = clamp(
-        baseFontSize * fontScale,
-        minFontSize,
-        maxFontSize,
-    );
-
-    if (Math.abs(nextFontSize - layer.fontSize) < 0.01) return layer;
-    return { ...layer, fontSize: Math.round(nextFontSize * 100) / 100 } as Layer;
-}
-
-function clamp(value: number, min: number, max: number | undefined): number {
-    const lower = Math.max(min, value);
-    return typeof max === "number" && Number.isFinite(max)
-        ? Math.min(max, lower)
-        : lower;
-}
-
-function validateAndApplyHide(
-    layers: Layer[],
-    targetSize: ArtboardSize,
-    diagnostics: AdaptationDiagnostic[],
-): Layer[] {
-    let changed = false;
-    const nextLayers = layers.map((layer) => {
-        const diagnostic = getLayerDiagnostic(layer, targetSize);
-        if (!diagnostic) return layer;
-
-        diagnostics.push(diagnostic);
-        if (layer.responsive?.canHide) {
-            changed = true;
-            return { ...layer, visible: false } as Layer;
-        }
-        return layer;
-    });
-
-    return changed ? nextLayers : layers;
-}
-
-function getLayerDiagnostic(layer: Layer, targetSize: ArtboardSize): AdaptationDiagnostic | null {
-    const hasInvalidGeometry = ![layer.x, layer.y, layer.width, layer.height].every(Number.isFinite)
-        || layer.width <= 0
-        || layer.height <= 0;
-    if (hasInvalidGeometry) {
-        return {
-            code: "invalid-layer-geometry",
-            severity: "warning",
-            layerId: layer.id,
-            layerName: layer.name,
-            message: `Layer "${layer.name}" has invalid geometry after resize generation.`,
-        };
-    }
-
-    if (layer.responsive?.behavior === "background") return null;
-
-    const outOfBounds =
-        layer.x < -GEOMETRY_EPSILON ||
-        layer.y < -GEOMETRY_EPSILON ||
-        layer.x + layer.width > targetSize.width + GEOMETRY_EPSILON ||
-        layer.y + layer.height > targetSize.height + GEOMETRY_EPSILON;
-
-    if (!outOfBounds) return null;
-    return {
-        code: "layer-out-of-bounds",
-        severity: "warning",
-        layerId: layer.id,
-        layerName: layer.name,
-        message: `Layer "${layer.name}" extends outside the generated artboard.`,
     };
 }
 

@@ -14,6 +14,8 @@ npx vitest run \
   src/utils/__tests__/textContainerLimits.test.ts \
   src/components/editor/canvas/textTransformUtils.test.ts \
   src/services/customResizeService.test.ts \
+  src/utils/__tests__/adaptationPipeline.test.ts \
+  src/services/templateAdaptationService.test.ts \
   src/utils/constraintInference.test.ts \
   src/utils/__tests__/constraintKernel.test.ts \
   src/store/canvas/__tests__/createSmartResize.test.ts \

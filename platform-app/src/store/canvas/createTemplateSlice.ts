@@ -100,15 +100,27 @@ export const createTemplateSlice: StateCreator<CanvasStore, [], [], TemplateSlic
     },
 
     applySmartResize: (templatePack, mappings) => {
-        const { generateSmartResizes } = require("@/services/smartResizeService") as typeof import("@/services/smartResizeService");
+        const { generateTemplateResizes } = require("@/services/templateAdaptationService") as typeof import("@/services/templateAdaptationService");
         const state = get();
-        const result = generateSmartResizes(state.masterComponents, templatePack, mappings);
+        const masterFormat = state.resizes.find((r) => r.id === "master") ?? state.resizes[0];
+        const masterSize = {
+            width: masterFormat?.width ?? state.canvasWidth,
+            height: masterFormat?.height ?? state.canvasHeight,
+        };
+        const result = generateTemplateResizes(
+            state.masterComponents,
+            state.layers,
+            masterSize,
+            templatePack,
+            mappings,
+        );
 
         const existingResizeIds = new Set(state.resizes.map(r => r.id));
         const newResizes = result.resizes.filter(r => !existingResizeIds.has(r.id));
         const mergedResizes = [...state.resizes, ...newResizes];
         const mergedInstances = [...state.componentInstances, ...result.instances];
         const firstNewResize = newResizes[0];
+        const usesSnapshot = Boolean(firstNewResize?.layerSnapshot?.length);
 
         set({
             resizes: mergedResizes,
@@ -116,9 +128,12 @@ export const createTemplateSlice: StateCreator<CanvasStore, [], [], TemplateSlic
             activeResizeId: firstNewResize?.id || state.activeResizeId,
             canvasWidth: firstNewResize?.width || state.canvasWidth,
             canvasHeight: firstNewResize?.height || state.canvasHeight,
+            ...(usesSnapshot && firstNewResize?.layerSnapshot
+                ? { layers: firstNewResize.layerSnapshot.map((layer) => ({ ...layer })) }
+                : {}),
         });
 
-        if (firstNewResize) {
+        if (firstNewResize && !usesSnapshot) {
             get().syncLayersToResize();
         }
 
