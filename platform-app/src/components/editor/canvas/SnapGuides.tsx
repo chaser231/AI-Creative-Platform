@@ -157,6 +157,7 @@ export function SnapGuides({ snapLines, distanceMeasurements, spacingGuides, sel
                 const h = Math.abs(drawingBox.currentY - drawingBox.startY);
                 if (w < 1 && h < 1) return null;
                 const isFrame = activeTool === "frame";
+                const isSlice = activeTool === "slice";
                 return (
                     <Fragment>
                         <Rect
@@ -164,10 +165,10 @@ export function SnapGuides({ snapLines, distanceMeasurements, spacingGuides, sel
                             y={y}
                             width={w}
                             height={h}
-                            fill={isFrame ? "rgba(99, 102, 241, 0.06)" : "rgba(229, 231, 235, 0.5)"}
-                            stroke={isFrame ? "#6366F1" : "#9CA3AF"}
+                            fill={isFrame ? "rgba(99, 102, 241, 0.06)" : isSlice ? "rgba(249, 115, 22, 0.06)" : "rgba(229, 231, 235, 0.5)"}
+                            stroke={isFrame ? "#6366F1" : isSlice ? "#F97316" : "#9CA3AF"}
                             strokeWidth={1}
-                            dash={isFrame ? [6, 3] : undefined}
+                            dash={isFrame || isSlice ? [6, 3] : undefined}
                             listening={false}
                         />
                         <Rect
@@ -175,7 +176,7 @@ export function SnapGuides({ snapLines, distanceMeasurements, spacingGuides, sel
                             y={y + h + 6}
                             width={48}
                             height={18}
-                            fill={isFrame ? "#6366F1" : "#6B7280"}
+                            fill={isFrame ? "#6366F1" : isSlice ? "#F97316" : "#6B7280"}
                             cornerRadius={4}
                             listening={false}
                         />

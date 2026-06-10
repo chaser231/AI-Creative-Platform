@@ -14,6 +14,7 @@ import type {
     BadgeLayer,
     FrameLayer,
     VectorLayer,
+    SliceLayer,
     ToolType,
     MasterComponent,
     ComponentInstance,
@@ -50,6 +51,7 @@ export type {
     BadgeLayer,
     FrameLayer,
     VectorLayer,
+    SliceLayer,
     ToolType,
     MasterComponent,
     ComponentInstance,
@@ -238,6 +240,8 @@ export interface CanvasStore {
     addBadgeLayer: (overrides?: Partial<BadgeLayer>) => void;
     addFrameLayer: (overrides?: Partial<FrameLayer>) => void;
     addVectorLayer: (overrides?: Partial<VectorLayer>) => string;
+    addSliceLayer: (overrides?: Partial<SliceLayer>) => string;
+    addSliceLayers: (slices: Array<Partial<SliceLayer>>) => string[];
     updateLayer: (id: string, updates: LayerUpdate) => void;
     removeLayer: (id: string) => void;
     selectLayer: (id: string | string[] | null) => void;

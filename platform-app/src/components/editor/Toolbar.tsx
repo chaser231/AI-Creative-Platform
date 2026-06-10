@@ -12,6 +12,8 @@ import {
     Magnet,
     Workflow,
     PenTool,
+    Slice,
+    Grid3x3,
 } from "lucide-react";
 import { useCanvasStore } from "@/store/canvasStore";
 import { useShallow } from "zustand/react/shallow";
@@ -21,6 +23,7 @@ import { useRef, useState } from "react";
 import { Popover } from "@/components/ui/Popover";
 import { Select } from "@/components/ui/Select";
 import { useProjectLibrary } from "@/hooks/useProjectLibrary";
+import { SliceGridModal } from "./SliceGridModal";
 
 const TOOLS: { id: ToolType; icon: React.ReactNode; label: string }[] = [
     { id: "select", icon: <MousePointer2 size={18} />, label: "Выбор" },
@@ -30,6 +33,7 @@ const TOOLS: { id: ToolType; icon: React.ReactNode; label: string }[] = [
     { id: "frame", icon: <SquareDashed size={18} />, label: "Фрейм" },
     { id: "badge", icon: <Award size={18} />, label: "Бейдж" },
     { id: "image", icon: <ImagePlus size={18} />, label: "Изображение" },
+    { id: "slice", icon: <Slice size={18} />, label: "Слайс (область экспорта)" },
 ];
 
 interface ToolbarProps {
@@ -70,6 +74,7 @@ export function Toolbar({
     const { registerFile } = useProjectLibrary();
     const fileRef = useRef<HTMLInputElement>(null);
     const [showSnapConfig, setShowSnapConfig] = useState(false);
+    const [showSliceGrid, setShowSliceGrid] = useState(false);
 
     const handleToolClick = (toolId: ToolType) => {
         if (toolId === "image") {
@@ -151,6 +156,15 @@ export function Toolbar({
 
                 {/* Divider */}
                 <div className="w-px h-6 bg-border-primary mx-1" />
+
+                {/* Procedural slice grid */}
+                <button
+                    onClick={() => setShowSliceGrid(true)}
+                    title="Разрезать на слайсы"
+                    className="p-2.5 rounded-[var(--radius-lg)] transition-all cursor-pointer text-text-secondary hover:bg-bg-tertiary/60 hover:text-text-primary"
+                >
+                    <Grid3x3 size={18} />
+                </button>
 
                 {/* Snap Config */}
                 <div className="relative">
@@ -244,6 +258,8 @@ export function Toolbar({
                 className="hidden"
                 onChange={handleImageUpload}
             />
+
+            {showSliceGrid && <SliceGridModal onClose={() => setShowSliceGrid(false)} />}
         </>
     );
 }

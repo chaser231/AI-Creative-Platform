@@ -170,7 +170,7 @@ export const FORMAT_PACKS: FormatPack[] = [
 ];
 
 // ─── Creative Component (Master/Instance) ───────────────
-export type ComponentType = "text" | "image" | "rectangle" | "badge" | "frame" | "vector";
+export type ComponentType = "text" | "image" | "rectangle" | "badge" | "frame" | "vector" | "slice";
 
 export interface BaseComponentProps {
     x: number;
@@ -410,6 +410,7 @@ export const CONTENT_SOURCE_KEYS: Record<ComponentType, string[]> = {
     rectangle: [],
     frame: [],
     vector: [],
+    slice: [],
 };
 
 /**
@@ -461,13 +462,13 @@ export interface BrandKit {
 }
 
 // ─── Tool ───────────────────────────────────────────────
-export type ToolType = "select" | "text" | "rectangle" | "image" | "badge" | "frame" | "pen";
+export type ToolType = "select" | "text" | "rectangle" | "image" | "badge" | "frame" | "pen" | "slice";
 
 // ─── Editor Mode ────────────────────────────────────────
 export type EditorMode = "wizard" | "studio";
 
 // ─── Legacy Layer compat (used by Canvas renderer) ──────
-export type LayerType = "text" | "image" | "rectangle" | "badge" | "frame" | "vector";
+export type LayerType = "text" | "image" | "rectangle" | "badge" | "frame" | "vector" | "slice";
 
 export type TemplateSlotRole = 'headline' | 'subhead' | 'cta' | 'background' | 'image-primary' | 'logo' | 'none';
 
@@ -694,7 +695,18 @@ export interface VectorLayer extends BaseLayer {
     src?: string;
 }
 
-export type Layer = TextLayer | RectangleLayer | ImageLayer | BadgeLayer | FrameLayer | VectorLayer;
+// ─── Slice (export region, Figma-like) ──────────────────
+
+/**
+ * A slice marks a rectangular export region on the artboard. It renders only
+ * as a studio-mode overlay (dashed outline + label), never appears in the
+ * exported content itself, and is always top-level (never a frame child).
+ */
+export interface SliceLayer extends BaseLayer {
+    type: "slice";
+}
+
+export type Layer = TextLayer | RectangleLayer | ImageLayer | BadgeLayer | FrameLayer | VectorLayer | SliceLayer;
 
 /** Accepts any subset of layer properties without requiring the `type` discriminant. */
 export type LayerUpdate = Partial<BaseLayer>

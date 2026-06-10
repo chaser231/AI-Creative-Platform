@@ -13,6 +13,7 @@ import {
     ChevronDown,
     GripVertical,
     Pin,
+    Slice,
 } from "lucide-react";
 import { useCanvasStore } from "@/store/canvasStore";
 import { useShallow } from "zustand/react/shallow";
@@ -32,6 +33,7 @@ const layerIcons: Record<string, React.ReactNode> = {
     image: <ImageIcon size={14} />,
     badge: <Award size={14} />,
     frame: <SquareDashed size={14} />,
+    slice: <Slice size={14} />,
 };
 
 /* ─── Drag-and-drop context ─────────────────────────── */

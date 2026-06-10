@@ -13,6 +13,7 @@ import { LayersPanel } from "@/components/editor/LayersPanel";
 import { PropertiesPanel } from "@/components/editor/properties";
 import { PaintInput } from "@/components/editor/properties/PaintInput";
 import { ExportModal } from "@/components/editor/ExportModal";
+import { OPEN_EXPORT_MODAL_EVENT, type OpenExportModalDetail } from "@/components/editor/exportEvents";
 import { ResizePanel } from "@/components/editor/ResizePanel";
 import { SwatchesPanel } from "@/components/editor/swatches/SwatchesPanel";
 import { TemplatePanel } from "@/components/editor/TemplatePanel";
@@ -79,6 +80,7 @@ export default function EditorPage({ params }: EditorPageProps) {
     const isTemplateMode = searchParams.get("source") === "template";
 
     const [exportOpen, setExportOpen] = useState(false);
+    const [exportInitialTarget, setExportInitialTarget] = useState<string | null>(null);
     const [templatesOpen, setTemplatesOpen] = useState(false);
     const [aiPanelOpen, setAiPanelOpen] = useState(false);
     const [aiChatOpen, setAiChatOpen] = useState(false);
@@ -98,6 +100,17 @@ export default function EditorPage({ params }: EditorPageProps) {
         missing: RequiredFont[];
         available: string[];
     } | null>(null);
+    // "Export this slice" requests from deep components (properties panel)
+    useEffect(() => {
+        const handler = (e: Event) => {
+            const detail = (e as CustomEvent<OpenExportModalDetail>).detail;
+            setExportInitialTarget(detail?.targetId ?? null);
+            setExportOpen(true);
+        };
+        window.addEventListener(OPEN_EXPORT_MODAL_EVENT, handler);
+        return () => window.removeEventListener(OPEN_EXPORT_MODAL_EVENT, handler);
+    }, []);
+
     const projects = useProjectStore((s) => s.projects);
     const updateProject = useProjectStore((s) => s.updateProject);
     const { editorMode, setEditorMode, undo, redo, history, future, artboardProps, updateArtboardProps } = useCanvasStore(useShallow((s) => ({
@@ -1089,8 +1102,12 @@ export default function EditorPage({ params }: EditorPageProps) {
             {/* Modals */}
             <ExportModal
                 open={!isWizardMode && exportOpen}
-                onClose={() => setExportOpen(false)}
+                onClose={() => {
+                    setExportOpen(false);
+                    setExportInitialTarget(null);
+                }}
                 stageRef={stageRef}
+                initialTarget={exportInitialTarget}
             />
             <TemplatePanel
                 open={templatesOpen}

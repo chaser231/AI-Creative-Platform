@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { layersToEps } from "../epsExport";
+import { layersToEps, layersToEpsSliceRegion } from "../epsExport";
 import type { Layer, VectorLayer } from "@/types";
 
 function baseLayer(over: Partial<Layer>): Layer {
@@ -141,5 +141,80 @@ describe("epsExport", () => {
         }) as VectorLayer;
         const eps = layersToEps({ layers: [vector], width: 10, height: 10, artboardFillEnabled: false });
         expect(eps).toContain("eofill");
+    });
+
+    describe("layersToEpsSliceRegion", () => {
+        const triangle = (): VectorLayer => baseLayer({
+            id: "v-slice",
+            type: "vector",
+            x: 250,
+            y: 0,
+            width: 100,
+            height: 100,
+            fill: "#000000",
+            fillEnabled: true,
+            subpaths: [
+                {
+                    closed: true,
+                    points: [
+                        { x: 0, y: 0, type: "corner" },
+                        { x: 1, y: 0, type: "corner" },
+                        { x: 0.5, y: 1, type: "corner" },
+                    ],
+                },
+            ],
+        }) as VectorLayer;
+
+        it("sizes the BoundingBox to the slice rect", () => {
+            const eps = layersToEpsSliceRegion({
+                layers: [],
+                width: 900,
+                height: 300,
+                artboardFillEnabled: false,
+                rect: { x: 300, y: 0, width: 300, height: 300 },
+            });
+            expect(eps).toContain("%%BoundingBox: 0 0 300 300");
+            expect(eps).toContain("0 300 translate");
+            expect(eps).toContain("1 -1 scale");
+        });
+
+        it("installs a rect clip and translates the region origin to (0,0)", () => {
+            const eps = layersToEpsSliceRegion({
+                layers: [],
+                width: 900,
+                height: 300,
+                artboardFillEnabled: false,
+                rect: { x: 300, y: 50, width: 300, height: 250 },
+            });
+            expect(eps).toContain("newpath 0 0 moveto 300 0 lineto 300 250 lineto 0 250 lineto closepath clip");
+            expect(eps).toContain("-300 -50 translate");
+        });
+
+        it("keeps vector geometry intact for layers crossing the slice boundary", () => {
+            const eps = layersToEpsSliceRegion({
+                layers: [triangle()],
+                width: 900,
+                height: 300,
+                artboardFillEnabled: false,
+                rect: { x: 300, y: 0, width: 300, height: 300 },
+            });
+            // Layer-local geometry is unchanged — cropping happens via clip.
+            expect(eps).toContain("250 0 translate");
+            expect(eps).toContain("0 0 moveto");
+            expect(eps).toContain("100 0 lineto");
+            expect(eps).toContain("50 100 lineto");
+        });
+
+        it("fills the artboard background sized to the artboard", () => {
+            const eps = layersToEpsSliceRegion({
+                layers: [],
+                width: 900,
+                height: 300,
+                artboardFill: "#ff0000",
+                rect: { x: 300, y: 0, width: 300, height: 300 },
+            });
+            expect(eps).toContain("newpath 0 0 moveto 900 0 lineto 900 300 lineto 0 300 lineto closepath");
+            expect(eps).toContain("1 0 0 setrgbcolor");
+        });
     });
 });
