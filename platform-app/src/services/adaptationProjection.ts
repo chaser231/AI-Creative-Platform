@@ -3,6 +3,7 @@ import {
     type FrameLayer,
     type Layer,
     type LayerConstraints,
+    type VectorLayer,
 } from "@/types";
 import { computeConstrainedPosition } from "@/store/canvas/helpers";
 import { resolveConstraints, type Box } from "@/utils/constraintInference";
@@ -25,9 +26,10 @@ export function projectTree(
     layers: Layer[],
     sourceSize: ArtboardSize,
     targetSize: ArtboardSize,
-    options: { scaleFonts?: boolean } = {},
+    options: { scaleFonts?: boolean; scaleVectors?: boolean } = {},
 ): Layer[] {
     const scaleFonts = options.scaleFonts ?? true;
+    const scaleVectors = options.scaleVectors ?? true;
     const sizeUnchanged =
         Math.abs(sourceSize.width - targetSize.width) < 0.01 &&
         Math.abs(sourceSize.height - targetSize.height) < 0.01;
@@ -102,8 +104,10 @@ export function projectTree(
     return layers.map((layer) => {
         const geom = newGeom.get(layer.id);
         const pad = padOverrides.get(layer.id);
-        const next = (geom || pad) ? ({ ...layer, ...geom, ...pad } as Layer) : layer;
-        return scaleFonts ? scaleFontIfNeeded(next, layer, fontScale) : next;
+        let next = (geom || pad) ? ({ ...layer, ...geom, ...pad } as Layer) : layer;
+        if (scaleFonts) next = scaleFontIfNeeded(next, layer, fontScale);
+        if (scaleVectors) next = scaleVectorIfNeeded(next, layer, fontScale);
+        return next;
     });
 }
 
@@ -249,6 +253,42 @@ function scaleFontIfNeeded(layer: Layer, base: Layer, fontScale: number): Layer 
 
     if (Math.abs(nextFontSize - layer.fontSize) < 0.01) return layer;
     return { ...layer, fontSize: Math.round(nextFontSize * 100) / 100 } as Layer;
+}
+
+/**
+ * Vectors ("сложные векторы") carry no intrinsic font size, so constraint
+ * projection alone keeps a corner-pinned / centred logo at its original pixel
+ * size — it only moves. To make complex vectors adapt like the rest of the
+ * composition, scale their box UNIFORMLY by the same factor used for fonts
+ * (`sqrt(scaleX * scaleY)`), preserving aspect ratio, and keep the
+ * constraint-projected centre fixed so positioning still honours the layer's
+ * anchoring. Explicit `fixed` / `fluid` / `background` behaviours opt out
+ * (their sizing is already resolved in `projectRootRect`).
+ */
+function scaleVectorIfNeeded(layer: Layer, base: Layer, uniformScale: number): Layer {
+    if (layer.type !== "vector") return layer;
+    if ((layer.responsive?.behavior ?? "auto") !== "auto") return layer;
+    if (!(uniformScale > 0) || Math.abs(uniformScale - 1) < 1e-3) return layer;
+
+    const baseWidth = base.type === "vector" ? base.width : layer.width;
+    const baseHeight = base.type === "vector" ? base.height : layer.height;
+    const nextWidth = round2(baseWidth * uniformScale);
+    const nextHeight = round2(baseHeight * uniformScale);
+    if (!(nextWidth > 0) || !(nextHeight > 0)) return layer;
+
+    const centerX = layer.x + layer.width / 2;
+    const centerY = layer.y + layer.height / 2;
+    const vector = layer as VectorLayer;
+    const patch: Partial<VectorLayer> = {
+        width: nextWidth,
+        height: nextHeight,
+        x: round2(centerX - nextWidth / 2),
+        y: round2(centerY - nextHeight / 2),
+    };
+    if (typeof vector.strokeWidth === "number" && vector.strokeWidth > 0) {
+        patch.strokeWidth = round2(vector.strokeWidth * uniformScale);
+    }
+    return { ...layer, ...patch } as Layer;
 }
 
 function clamp(value: number, min: number, max: number | undefined): number {

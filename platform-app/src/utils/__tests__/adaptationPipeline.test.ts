@@ -6,7 +6,7 @@ import {
 } from "@/services/adaptationPipeline";
 import { projectTree } from "@/services/adaptationProjection";
 import { generateCustomResize } from "@/services/customResizeService";
-import type { FrameLayer, Layer, RectangleLayer, ResizeFormat, TextLayer } from "@/types";
+import type { FrameLayer, Layer, RectangleLayer, ResizeFormat, TextLayer, VectorLayer } from "@/types";
 
 function rect(overrides: Partial<RectangleLayer> = {}): RectangleLayer {
     return {
@@ -71,6 +71,31 @@ function frame(overrides: Partial<FrameLayer> = {}): FrameLayer {
         cornerRadius: 0,
         clipContent: false,
         childIds: [],
+        ...overrides,
+    };
+}
+
+function vector(overrides: Partial<VectorLayer> = {}): VectorLayer {
+    return {
+        id: "vec",
+        type: "vector",
+        name: "Logo",
+        x: 0,
+        y: 0,
+        width: 20,
+        height: 20,
+        rotation: 0,
+        visible: true,
+        locked: false,
+        subpaths: [],
+        fill: "#111827",
+        fillEnabled: true,
+        fillRule: "nonzero",
+        stroke: "#000000",
+        strokeEnabled: false,
+        strokeWidth: 0,
+        strokeAlign: "center",
+        strokeJoin: "miter",
         ...overrides,
     };
 }
@@ -180,6 +205,87 @@ describe("runAdaptationPipeline", () => {
         );
 
         expect(geometryByName(piped)).toEqual(geometryByName(custom.resize.layerSnapshot));
+    });
+
+    it("full preset scales a complex vector uniformly around its projected centre", () => {
+        // Centred 20×20 logo on a 100×100 board → 400×400 board (uniform 4×).
+        const layers = [
+            vector({
+                id: "logo",
+                x: 40,
+                y: 40,
+                width: 20,
+                height: 20,
+                strokeEnabled: true,
+                strokeWidth: 2,
+                constraints: { horizontal: "center", vertical: "center" },
+            }),
+        ];
+
+        const { layers: adapted } = runAdaptationPipeline(
+            layers,
+            { width: 100, height: 100 },
+            { width: 400, height: 400 },
+            AdaptationPresets.full,
+        );
+
+        const logo = adapted[0] as VectorLayer;
+        // sqrt(4 * 4) = 4× uniform scale, aspect ratio preserved.
+        expect(logo.width).toBeCloseTo(80, 5);
+        expect(logo.height).toBeCloseTo(80, 5);
+        // Centre stays at the board centre (200, 200).
+        expect(logo.x + logo.width / 2).toBeCloseTo(200, 5);
+        expect(logo.y + logo.height / 2).toBeCloseTo(200, 5);
+        // Stroke weight scales with the box so the outline keeps proportion.
+        expect(logo.strokeWidth).toBeCloseTo(8, 5);
+    });
+
+    it("manualResize preset keeps complex vectors at their original size", () => {
+        const layers = [
+            vector({
+                id: "logo",
+                x: 40,
+                y: 40,
+                width: 20,
+                height: 20,
+                constraints: { horizontal: "center", vertical: "center" },
+            }),
+        ];
+
+        const { layers: adapted } = runAdaptationPipeline(
+            layers,
+            { width: 100, height: 100 },
+            { width: 400, height: 400 },
+            AdaptationPresets.manualResize,
+        );
+
+        const logo = adapted[0] as VectorLayer;
+        expect(logo.width).toBe(20);
+        expect(logo.height).toBe(20);
+    });
+
+    it("does not scale a vector pinned with fixed responsive behaviour", () => {
+        const layers = [
+            vector({
+                id: "logo",
+                x: 40,
+                y: 40,
+                width: 20,
+                height: 20,
+                responsive: { behavior: "fixed" },
+            }),
+        ];
+
+        const { layers: adapted } = runAdaptationPipeline(
+            layers,
+            { width: 100, height: 100 },
+            { width: 400, height: 400 },
+            AdaptationPresets.full,
+        );
+
+        const logo = adapted[0] as VectorLayer;
+        expect(logo.width).toBe(20);
+        expect(logo.height).toBe(20);
     });
 });
 
