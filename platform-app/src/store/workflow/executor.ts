@@ -19,11 +19,18 @@ import {
 import { NODE_PARAM_SCHEMAS } from "@/lib/workflow/nodeParamSchemas";
 import {
     assetOutput as assetOutputHandler,
+    extractFrame as extractFrameHandler,
     imageInput as imageInputHandler,
     paintMask as paintMaskHandler,
     preview as previewHandler,
+    runVideoGeneration,
     type ClientHandlerDeps,
+    type ExtractFrameDeps,
+    type VideoGenerationDeps,
+    type VideoJobSnapshot,
 } from "./clientHandlers";
+import { captureVideoFrame } from "@/utils/videoFrame";
+import { uploadForAI } from "@/utils/imageUpload";
 
 export interface NodeRunResult {
     /** Resolved image URL produced by the node, if any. */
@@ -49,6 +56,10 @@ export interface ExecutorCallbacks {
 export interface ExecutorDeps extends ClientHandlerDeps {
     /** POST /api/workflow/execute-node — injected so tests don't hit the network. */
     executeServerAction: (req: ExecuteNodeRequest) => Promise<ExecuteNodeResponse>;
+    /** Async video generation API — defaults to fetch against /api/ai/video/*. */
+    video?: VideoGenerationDeps;
+    /** Browser frame-capture deps for extractFrame — defaults to <video>+canvas. */
+    frame?: ExtractFrameDeps;
 }
 
 export interface ExecuteGraphParams {
@@ -356,7 +367,12 @@ function validateGenerationPromptInput(
     node: WorkflowNode,
     inputEdges: WorkflowEdge[],
 ): ValidationIssue | null {
-    if (node.type !== "imageGeneration" && node.type !== "textGeneration") {
+    if (
+        node.type !== "imageGeneration" &&
+        node.type !== "textGeneration" &&
+        node.type !== "textToVideo" &&
+        node.type !== "imageToVideo"
+    ) {
         return null;
     }
 
@@ -376,7 +392,9 @@ function validateGenerationPromptInput(
     const message =
         node.type === "imageGeneration"
             ? "Опишите, что нужно сгенерировать, или подключите контекст с текстом."
-            : "Опишите, какой текст нужен, или подключите контекст с текстом.";
+            : node.type === "textToVideo" || node.type === "imageToVideo"
+              ? "Опишите видео в промпте или подключите текстовый вход."
+              : "Опишите, какой текст нужен, или подключите контекст с текстом.";
 
     return {
         nodeId: node.id,
@@ -516,6 +534,37 @@ async function runOne(
             } else if (def.execute.handler === "paintMask") {
                 const out = await paintMaskHandler(node.data.params);
                 result = { url: out.url };
+            } else if (def.execute.handler === "textToVideo") {
+                const out = await runVideoGeneration({
+                    mode: "t2v",
+                    rawParams: node.data.params,
+                    workspaceId,
+                    promptFromInput: inputs["prompt-in"]?.text,
+                    deps: deps.video ?? defaultVideoGenerationDeps,
+                });
+                result = { url: out.url };
+            } else if (def.execute.handler === "imageToVideo") {
+                const startFrame = inputs["image-in"]?.imageUrl;
+                if (!startFrame) throw new Error("imageToVideo: нет стартового кадра");
+                const out = await runVideoGeneration({
+                    mode: "i2v",
+                    rawParams: node.data.params,
+                    workspaceId,
+                    promptFromInput: inputs["prompt-in"]?.text,
+                    startFrameUrl: startFrame,
+                    endFrameUrl: inputs["end-frame-in"]?.imageUrl,
+                    deps: deps.video ?? defaultVideoGenerationDeps,
+                });
+                result = { url: out.url };
+            } else if (def.execute.handler === "extractFrame") {
+                const videoUrl = inputs["video-in"]?.imageUrl;
+                if (!videoUrl) throw new Error("extractFrame: нет входного видео");
+                const out = await extractFrameHandler(
+                    node.data.params,
+                    videoUrl,
+                    deps.frame ?? defaultExtractFrameDeps,
+                );
+                result = { url: out.url };
             } else {
                 // assetOutput — needs the upstream image url
                 const upstream = inputs["image-in"]?.imageUrl;
@@ -597,3 +646,37 @@ export async function fetchExecuteNode(
     });
     return (await res.json()) as ExecuteNodeResponse;
 }
+
+/**
+ * Default async video-generation API used by the textToVideo / imageToVideo
+ * client handlers. Same submit-and-poll endpoints as the video workspace,
+ * so quotas apply automatically.
+ */
+export const defaultVideoGenerationDeps: VideoGenerationDeps = {
+    submitVideoJob: async (body) => {
+        const res = await fetch("/api/ai/video/generate", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(body),
+        });
+        const data = (await res.json()) as { job?: VideoJobSnapshot; error?: string };
+        if (!res.ok || !data.job) {
+            throw new Error(data.error || "Не удалось запустить видео-генерацию");
+        }
+        return data.job;
+    },
+    pollVideoJob: async (jobId) => {
+        const res = await fetch(`/api/ai/video/jobs/${encodeURIComponent(jobId)}`);
+        const data = (await res.json()) as { job?: VideoJobSnapshot; error?: string };
+        if (!res.ok || !data.job) {
+            throw new Error(data.error || "Не удалось получить статус видео-задачи");
+        }
+        return data.job;
+    },
+};
+
+/** Default extractFrame deps — browser <video>+canvas capture, S3 upload. */
+export const defaultExtractFrameDeps: ExtractFrameDeps = {
+    captureFrame: (videoUrl, timeSec) => captureVideoFrame(videoUrl, timeSec, "image/png"),
+    uploadDataUrl: (dataUrl) => uploadForAI(dataUrl, "workflow-frames"),
+};

@@ -74,18 +74,21 @@ export const projectRouter = createTRPCRouter({
         orderBy: { updatedAt: "desc" },
       });
 
-      // Photo-generation projects don't render on a canvas, so they never
-      // populate `thumbnail` via the canvas auto-save path. Back-fill the
-      // preview from the most recent generated asset so dashboard cards
-      // show an image instead of a placeholder icon.
-      const photoProjectIds = projects
-        .filter((p) => p.goal === "photo" && !p.thumbnail)
+      // Photo- and video-generation projects don't render on a canvas, so
+      // they never populate `thumbnail` via the canvas auto-save path.
+      // Back-fill the preview from the most recent generated IMAGE asset so
+      // dashboard cards show an image instead of a placeholder icon. (Video
+      // projects normally get a thumbnail from the client-side frame capture
+      // after the first generation; this covers older/edge-case projects via
+      // their uploaded start frames.)
+      const generativeProjectIds = projects
+        .filter((p) => (p.goal === "photo" || p.goal === "video") && !p.thumbnail)
         .map((p) => p.id);
 
-      if (photoProjectIds.length > 0) {
+      if (generativeProjectIds.length > 0) {
         const recentAssets = await ctx.prisma.asset.findMany({
           where: {
-            projectId: { in: photoProjectIds },
+            projectId: { in: generativeProjectIds },
             type: "IMAGE",
           },
           select: { projectId: true, url: true, createdAt: true },
@@ -100,7 +103,7 @@ export const projectRouter = createTRPCRouter({
         }
 
         return projects.map((p) => {
-          if (p.goal === "photo" && !p.thumbnail) {
+          if ((p.goal === "photo" || p.goal === "video") && !p.thumbnail) {
             const url = thumbnailByProject.get(p.id);
             if (url) return { ...p, thumbnail: url };
           }

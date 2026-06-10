@@ -24,6 +24,8 @@ import type {
     LoraWeightParam,
 } from "@/lib/workflow/nodeParamSchemas";
 import { getLoraSpec } from "@/lib/ai-models";
+import { VIDEO_MODEL_REGISTRY, VIDEO_TIER_LABELS } from "@/lib/video-models";
+import { VIDEO_MOTION_PRESETS } from "@/lib/video-presets";
 import { Button } from "@/components/ui/Button";
 import { LoraSelectorPicker } from "@/components/ui/LoraSelectorPicker";
 import { LoraTriggerHint } from "@/components/ui/LoraTriggerHint";
@@ -78,6 +80,12 @@ const PARAM_LABELS: Record<string, string> = {
     maskUrl: "URL маски",
     targetWidth: "Ширина (px)",
     targetHeight: "Высота (px)",
+    // video nodes
+    duration: "Длительность (сек)",
+    resolution: "Разрешение",
+    audio: "Аудио",
+    presetId: "Движение камеры",
+    timeSec: "Время кадра (сек)",
 };
 
 /**
@@ -160,7 +168,26 @@ const ENUM_OPTION_LABELS: Record<string, Record<string, string>> = {
         urgent: "Срочный",
         neutral: "Нейтральный",
     },
+    resolution: {
+        auto: "Авто (по модели)",
+        "480p": "480p",
+        "540p": "540p",
+        "720p": "720p",
+        "1080p": "1080p",
+    },
+    presetId: {
+        none: "Без пресета",
+        ...Object.fromEntries(
+            VIDEO_MOTION_PRESETS.map((p) => [p.id, `${p.glyph} ${p.label}`]),
+        ),
+    },
 };
+
+// Video model ids share the `model` enum key with image models — append
+// their labels (with tier) from the registry instead of hand-maintaining.
+for (const m of VIDEO_MODEL_REGISTRY) {
+    ENUM_OPTION_LABELS.model[m.id] = `${m.label} — ${VIDEO_TIER_LABELS[m.tier]}`;
+}
 
 function InspectorSection({
     title,

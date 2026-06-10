@@ -29,6 +29,7 @@ const goalMeta: Record<string, { label: string; icon: React.ReactNode }> = {
 /** Route to the appropriate workspace based on a project's goal. */
 function getProjectHref(project: { id: string; goal?: string }): string {
     if (project.goal === "photo") return `/photo/${project.id}`;
+    if (project.goal === "video") return `/video/${project.id}`;
     return `/editor/${project.id}`;
 }
 

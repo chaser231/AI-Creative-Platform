@@ -496,6 +496,49 @@ model AIMessage {
   @@index([sessionId])
 }
 
+// ─── VIDEO GENERATION ────────────────────────────────────
+// Async fal.ai video jobs: submit returns a fal queue request id, the client
+// polls /api/ai/video/jobs/[id] until the queue completes. Daily per-user
+// quota = count of non-FAILED jobs per (userId, modelId) since UTC midnight.
+model VideoJob {
+  id          String  @id @default(cuid())
+  userId      String
+  workspaceId String
+  projectId   String?
+  sessionId   String? // AISession to attach the resulting AIMessage to (no FK — session may be deleted independently)
+
+  modelId String // video model registry id (lib/video-models.ts)
+  mode    String // "t2v" | "i2v"
+  params  Json   // prompt, duration, resolution, aspectRatio, audio, presetId, startFrameUrl, endFrameUrl
+
+  falRequestId   String
+  falStatusUrl   String
+  falResponseUrl String
+
+  status    String  @default("QUEUED") // QUEUED | RUNNING | COMPLETED | FAILED
+  resultUrl String? // persisted S3 URL of the generated video
+  error     String?
+  costUnits Float?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, modelId, createdAt])
+  @@index([projectId, createdAt])
+}
+
+// Per-model daily generation limits, editable from the admin panel.
+// Rows are lazily seeded from lib/video-quotas.ts defaults on first read.
+model VideoModelQuota {
+  id         String  @id @default(cuid())
+  modelId    String  @unique
+  dailyLimit Int?    // null = unlimited
+  enabled    Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
 // ─── PLATFORM EVENTS (Analytics Foundation) ──────────────
 model PlatformEvent {
   id          String   @id @default(cuid())

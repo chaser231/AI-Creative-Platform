@@ -27,6 +27,9 @@ const workflowNodeTypeSchema = z.enum([
     "assetOutput",
     "aiInpaint",
     "paintMask",
+    "textToVideo",
+    "imageToVideo",
+    "extractFrame",
 ]) satisfies z.ZodType<WorkflowNodeType>;
 
 export const workflowNodeSchema = z.object({

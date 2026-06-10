@@ -316,13 +316,16 @@ describe("NODE_PARAM_SCHEMAS", () => {
                 "aiInpaint",
                 "assetOutput",
                 "blur",
+                "extractFrame",
                 "imageGeneration",
                 "imageInput",
+                "imageToVideo",
                 "mask",
                 "paintMask",
                 "preview",
                 "removeBackground",
                 "textGeneration",
+                "textToVideo",
             ].sort(),
         );
     });

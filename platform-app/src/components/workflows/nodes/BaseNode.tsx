@@ -18,6 +18,7 @@ import {
     ArrowRight,
     ArrowUp,
     Check,
+    Clapperboard,
     FileText,
     Image as ImageIcon,
     Loader2,
@@ -268,19 +269,34 @@ function NodeImagePreview({
         >
             {preview ? (
                 <>
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                        src={preview.url ?? ""}
-                        alt={alt}
-                        className="h-full w-full object-contain"
-                    />
+                    {preview.isVideo ? (
+                        <video
+                            src={preview.url ?? ""}
+                            className="nodrag h-full w-full object-contain"
+                            controls
+                            muted
+                            playsInline
+                            preload="metadata"
+                        />
+                    ) : (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                            src={preview.url ?? ""}
+                            alt={alt}
+                            className="h-full w-full object-contain"
+                        />
+                    )}
                     <div className="absolute left-2 top-2 rounded-[var(--radius-full)] border border-border-primary bg-bg-surface/90 px-2 py-0.5 text-[10px] font-medium text-text-secondary shadow-[var(--shadow-sm)] backdrop-blur">
                         {preview.source === "input" ? "Источник" : "Результат"}
                     </div>
                 </>
             ) : (
                 <div className="flex h-full flex-col items-center justify-center gap-2 bg-bg-secondary/80 text-text-tertiary">
-                    <ImageIcon className="h-5 w-5" />
+                    {type === "textToVideo" || type === "imageToVideo" || type === "extractFrame" ? (
+                        <Clapperboard className="h-5 w-5" />
+                    ) : (
+                        <ImageIcon className="h-5 w-5" />
+                    )}
                     <span className="text-[11px]">
                         {type === "imageInput" ? "Выберите изображение" : "Нет результата"}
                     </span>
