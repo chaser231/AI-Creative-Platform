@@ -11,7 +11,7 @@ interface VideoPageProps {
 export default function VideoPage({ params }: VideoPageProps) {
     const { id } = use(params);
     return (
-        <AppShell>
+        <AppShell hideSidebar>
             <VideoWorkspace projectId={id} />
         </AppShell>
     );
