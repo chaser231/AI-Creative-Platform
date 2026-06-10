@@ -1,4 +1,4 @@
-import type Konva from "konva";
+import Konva from "konva";
 import type * as Ot from "opentype.js";
 import type { Layer, TextLayer } from "@/types";
 import { resolvePreinstalledFontUrl, resolveManifestFontFile, preinstalledFontCandidates } from "@/services/preinstalledFontResolver";
@@ -8,15 +8,21 @@ import { resolvePreinstalledFontUrl, resolveManifestFontFile, preinstalledFontCa
  *
  * Converts text layers into resolution-independent vector paths so SVG/EPS
  * exports don't depend on the viewer having the font (and so Cyrillic survives
- * the PostScript pipeline, which can't encode it otherwise). Line breaking,
- * alignment and baseline are read straight from the live Konva node so the
- * outline matches exactly what's on the canvas.
+ * the PostScript pipeline). Line breaking and alignment are read from the live
+ * Konva node. Glyph positions mirror Konva's `_sceneFunc` layout, then the
+ * merged path is transformed into layer-group coordinates (offsetY, trim, flip).
  */
 
 export interface OutlinedText {
-    /** Merged SVG path data in layer-local coordinates. */
-    d: string;
+    /** Merged SVG path data in layer-group coordinates. Absent when the font
+     * could not be resolved and the caller should render live `<text>`. */
+    d?: string;
     fill: string;
+    /** Group-local baseline of the first rendered line — lets the `<text>`
+     * fallback land where Konva actually draws it (offsetY / trim included). */
+    fallbackFirstBaselineY?: number;
+    /** Group-local line advance for subsequent `<text>` lines. */
+    fallbackLineHeightPx?: number;
 }
 
 // ─── opentype.js loading (dynamic, browser-only) ────────
@@ -35,8 +41,6 @@ function loadOpentype(): Promise<OpentypeModule | null> {
 
 // ─── Font resolution ────────────────────────────────────
 
-const fontCache = new Map<string, Ot.Font | null>();
-
 interface CssFontEntry {
     family: string;
     weight: number;
@@ -45,16 +49,36 @@ interface CssFontEntry {
 }
 let cssRegistry: CssFontEntry[] | null = null;
 
+const NAMED_WEIGHTS: Record<string, number> = {
+    thin: 100,
+    hairline: 100,
+    extralight: 200,
+    "extra light": 200,
+    ultralight: 200,
+    light: 300,
+    regular: 400,
+    normal: 400,
+    book: 400,
+    medium: 500,
+    semibold: 600,
+    "semi bold": 600,
+    demibold: 600,
+    bold: 700,
+    extrabold: 800,
+    "extra bold": 800,
+    heavy: 800,
+    ultrabold: 800,
+    black: 900,
+};
+
 function parseWeightToken(token: string | undefined): number {
     if (!token) return 400;
-    const t = token.trim().toLowerCase();
-    if (t === "bold") return 700;
-    if (t === "normal") return 400;
+    const t = token.trim().toLowerCase().replace(/\s+/g, " ");
+    if (NAMED_WEIGHTS[t] != null) return NAMED_WEIGHTS[t];
     const num = parseInt(t, 10);
     return Number.isFinite(num) ? num : 400;
 }
 
-/** Parse the layer's combined weight/style string (e.g. "700 italic"). */
 function parseFontStyle(fontWeight: string | undefined): { weight: number; italic: boolean } {
     const italic = /italic|oblique/i.test(fontWeight ?? "");
     const weightToken = (fontWeight ?? "").replace(/italic|oblique|normal/gi, "").trim();
@@ -65,8 +89,20 @@ function stripFamily(name: string): string {
     return name.replace(/['"]/g, "").trim().toLowerCase();
 }
 
+/**
+ * The Konva node's `fontFamily()` can be a CSS stack ("YS Compressed", sans-serif).
+ * Manifest/registry lookups need just the primary family, so take the first
+ * segment and drop quotes.
+ */
+function primaryFamily(name: string): string {
+    return (name.split(",")[0] ?? name).replace(/['"]/g, "").trim();
+}
+
 function buildCssRegistry(): CssFontEntry[] {
-    if (cssRegistry) return cssRegistry;
+    // Don't cache an empty registry: it may have been built before the app's
+    // @font-face stylesheets finished loading. Retrying keeps the live browser
+    // font mapping (the most accurate source) available at export time.
+    if (cssRegistry && cssRegistry.length > 0) return cssRegistry;
     const entries: CssFontEntry[] = [];
     if (typeof document === "undefined") {
         cssRegistry = entries;
@@ -77,7 +113,7 @@ function buildCssRegistry(): CssFontEntry[] {
         try {
             rules = sheet.cssRules;
         } catch {
-            continue; // cross-origin sheet — not readable
+            continue;
         }
         if (!rules) continue;
         for (const rule of Array.from(rules)) {
@@ -86,7 +122,6 @@ function buildCssRegistry(): CssFontEntry[] {
             const family = stripFamily(style.getPropertyValue("font-family"));
             const src = style.getPropertyValue("src");
             if (!family || !src) continue;
-            // Prefer an outline-parseable format (ttf/otf/woff; woff2 is not supported by opentype.js).
             const urlMatch = src.match(/url\(\s*['"]?([^'")]+\.(?:ttf|otf|woff))['"]?\s*\)/i);
             if (!urlMatch) continue;
             entries.push({
@@ -112,73 +147,135 @@ async function fetchFont(opentype: OpentypeModule, url: string): Promise<Ot.Font
     }
 }
 
-async function resolveFont(family: string, weight: number, italic: boolean): Promise<Ot.Font | null> {
-    const key = `${family}__${weight}__${italic ? 1 : 0}`;
-    if (fontCache.has(key)) return fontCache.get(key) ?? null;
+function isMissingGlyph(glyph: Ot.Glyph | undefined): boolean {
+    if (!glyph) return true;
+    if (glyph.name === ".notdef" || glyph.name === ".null") return true;
+    // index 0 is .notdef in most fonts; avoid rejecting valid glyphs on other indices.
+    if (glyph.index === 0 && (glyph.unicode === undefined || glyph.unicode === 0)) return true;
+    return false;
+}
 
-    const opentype = await loadOpentype();
-    if (!opentype) {
-        fontCache.set(key, null);
-        return null;
+function fontSupportsChars(font: Ot.Font, chars: string): boolean {
+    if (!chars) return true;
+    for (const ch of chars) {
+        if (ch === "\n" || ch === "\r" || ch === "\t" || ch === " ") continue;
+        if (isMissingGlyph(font.charToGlyph(ch))) return false;
     }
+    return true;
+}
+
+async function collectFontCandidates(
+    familyRaw: string,
+    weight: number,
+    italic: boolean,
+): Promise<string[]> {
+    const family = primaryFamily(familyRaw);
+    const urls: string[] = [];
+    const manifestFile = resolveManifestFontFile(family, weight, italic);
+    if (manifestFile) urls.push(`/fonts/${encodeURIComponent(manifestFile)}`);
+
+    const preinstalledUrl = await resolvePreinstalledFontUrl(family, weight, italic);
+    if (preinstalledUrl) urls.push(preinstalledUrl);
 
     const target = stripFamily(family);
-    let font: Ot.Font | null = null;
-
-    // 1. Generated manifest (fast, exact filename).
-    const manifestFile = resolveManifestFontFile(family, weight, italic);
-    if (manifestFile) {
-        font = await fetchFont(opentype, `/fonts/${encodeURIComponent(manifestFile)}`);
+    const collapsed = target.replace(/\s+/g, "");
+    const registry = buildCssRegistry().filter(
+        (e) => e.family === target || e.family.replace(/\s+/g, "") === collapsed,
+    );
+    const styleMatches = registry.filter((e) => e.italic === italic);
+    const pool = styleMatches.length > 0 ? styleMatches : registry;
+    pool.sort((a, b) => Math.abs(a.weight - weight) - Math.abs(b.weight - weight));
+    for (const entry of pool) {
+        const encoded = entry.url.includes(" ")
+            ? entry.url.split("/").map((p, i, a) => (i === a.length - 1 ? encodeURIComponent(p) : p)).join("/")
+            : entry.url;
+        urls.push(encoded);
     }
 
-    // 2. HEAD/GET probe fallback.
-    if (!font) {
-        const preinstalledUrl = await resolvePreinstalledFontUrl(family, weight, italic);
-        if (preinstalledUrl) font = await fetchFont(opentype, preinstalledUrl);
+    for (const filename of preinstalledFontCandidates(family, weight, italic)) {
+        urls.push(`/fonts/${encodeURIComponent(filename)}`);
+        const otf = filename.replace(/\.ttf$/i, ".otf");
+        if (otf !== filename) urls.push(`/fonts/${encodeURIComponent(otf)}`);
     }
 
-    // 3. @font-face registry from fonts.css (encoded URLs).
-    if (!font) {
-        const registry = buildCssRegistry().filter((e) => e.family === target);
-        if (registry.length > 0) {
-            const styleMatches = registry.filter((e) => e.italic === italic);
-            const pool = styleMatches.length > 0 ? styleMatches : registry;
-            pool.sort((a, b) => Math.abs(a.weight - weight) - Math.abs(b.weight - weight));
-            for (const entry of pool) {
-                const encoded = entry.url.includes(" ") ? entry.url.split("/").map((p, i, a) =>
-                    i === a.length - 1 ? encodeURIComponent(p) : p,
-                ).join("/") : entry.url;
-                font = await fetchFont(opentype, encoded);
-                if (font) break;
-            }
-        }
-    }
+    return [...new Set(urls)];
+}
 
-    // 4. Brute-force filename candidates (covers registry misses).
-    if (!font) {
-        for (const filename of preinstalledFontCandidates(family, weight, italic)) {
-            font = await fetchFont(opentype, `/fonts/${encodeURIComponent(filename)}`);
-            if (font) break;
-        }
-    }
+/**
+ * Parsed fonts cached by URL — not by "(family, weight, text)". The old keying
+ * collided whenever two different strings shared the same family/weight and the
+ * same `text.length`: the font chosen for the first string (which only had to
+ * cover ITS glyphs) was reused for the second, so e.g. a Latin run could hand a
+ * Latin-only face to a Cyrillic run → `.notdef` glyphs → garbage outlines.
+ * A URL is a stable identity for the actual file, so this cache is collision-free.
+ */
+const fontFileCache = new Map<string, Ot.Font | null>();
 
-    // 5. User fonts in IndexedDB.
-    if (!font) {
-        try {
-            const { getUserFonts, normalizeFontFamilyName } = await import("@/lib/customFonts");
-            const userFonts = await getUserFonts();
-            const match = userFonts.find((f) => stripFamily(normalizeFontFamilyName(f.name)) === target);
-            if (match) font = opentype.parse(match.buffer);
-        } catch {
-            font = null;
-        }
-    }
-
-    fontCache.set(key, font);
+async function loadFontFile(opentype: OpentypeModule, url: string): Promise<Ot.Font | null> {
+    if (fontFileCache.has(url)) return fontFileCache.get(url) ?? null;
+    const font = await fetchFont(opentype, url);
+    fontFileCache.set(url, font);
     return font;
 }
 
-// ─── Canvas vertical metrics (match Konva exactly) ──────
+// Comprehensive Cyrillic+Latin faces shipped in /public/fonts. Used only as a
+// last resort so a layer whose exact face can't be matched still outlines with
+// REAL glyphs (curves) instead of falling back to a `<text>` element.
+const GLOBAL_FALLBACK_FONT_FILES = [
+    "YS Text-Regular.ttf",
+    "YS Text-Medium.ttf",
+    "YS Text-Bold.ttf",
+    "YS Display-Regular.ttf",
+    "YS Display-Medium.ttf",
+];
+
+async function resolveFontForText(
+    family: string,
+    weight: number,
+    italic: boolean,
+    sampleText: string,
+): Promise<Ot.Font | null> {
+    const opentype = await loadOpentype();
+    if (!opentype) return null;
+
+    const uniqueChars = [...new Set(sampleText.replace(/\s/g, ""))].join("");
+
+    // 1) Family-specific candidates, in best-weight order. Accept the first one
+    //    that FULLY covers the text — never a partial match (which renders
+    //    `.notdef` and looks like a smeared blob in the export).
+    const urls = await collectFontCandidates(family, weight, italic);
+    for (const url of urls) {
+        const candidate = await loadFontFile(opentype, url);
+        if (candidate && fontSupportsChars(candidate, uniqueChars)) return candidate;
+    }
+
+    // 2) User-uploaded font matching the family.
+    try {
+        const { getUserFonts, normalizeFontFamilyName } = await import("@/lib/customFonts");
+        const userFonts = await getUserFonts();
+        const target = stripFamily(primaryFamily(family));
+        const match = userFonts.find((f) => stripFamily(normalizeFontFamilyName(f.name)) === target);
+        if (match) {
+            const parsed = opentype.parse(match.buffer);
+            if (parsed && fontSupportsChars(parsed, uniqueChars)) return parsed;
+        }
+    } catch {
+        // ignore and fall through to the global fallback
+    }
+
+    // 3) Global Cyrillic-capable fallback — keeps the "everything becomes curves"
+    //    guarantee even when the exact face is unknown. Substitutes the typeface
+    //    only when nothing better exists; coverage is still required so we never
+    //    emit garbage.
+    for (const file of GLOBAL_FALLBACK_FONT_FILES) {
+        const candidate = await loadFontFile(opentype, `/fonts/${encodeURIComponent(file)}`);
+        if (candidate && fontSupportsChars(candidate, uniqueChars)) return candidate;
+    }
+
+    return null;
+}
+
+// ─── Canvas vertical metrics (Konva-compatible fallback) ─
 
 let measureCanvas: HTMLCanvasElement | null = null;
 function measureVMetrics(fontShorthand: string): { ascent: number; descent: number } {
@@ -195,6 +292,99 @@ function measureVMetrics(fontShorthand: string): { ascent: number; descent: numb
 
 function quoteFamily(family: string): string {
     return /\s/.test(family) ? `"${family}"` : family;
+}
+
+function readKonvaMetrics(node: Konva.Text, fontShorthand: string): { ascent: number; descent: number } {
+    const measureSize = (node as Konva.Text & { measureSize?: (t: string) => {
+        fontBoundingBoxAscent?: number;
+        fontBoundingBoxDescent?: number;
+        actualBoundingBoxAscent?: number;
+        actualBoundingBoxDescent?: number;
+    } }).measureSize;
+    if (measureSize) {
+        const m = measureSize.call(node, "M");
+        const ascent = m.fontBoundingBoxAscent ?? m.actualBoundingBoxAscent ?? 0;
+        const descent = m.fontBoundingBoxDescent ?? m.actualBoundingBoxDescent ?? 0;
+        if (ascent > 0 || descent > 0) return { ascent, descent };
+    }
+    return measureVMetrics(fontShorthand);
+}
+
+function appendGlyphRun(
+    fullPath: Ot.Path,
+    font: Ot.Font,
+    text: string,
+    startX: number,
+    baselineY: number,
+    fontSize: number,
+    letterSpacing: number,
+): void {
+    const unitsPerEm = font.unitsPerEm || 1000;
+    const glyphs = font.stringToGlyphs(text);
+    let x = startX;
+    let prevGlyph: Ot.Glyph | null = null;
+    for (const glyph of glyphs) {
+        if (prevGlyph && font.getKerningValue) {
+            const kern = font.getKerningValue(prevGlyph, glyph);
+            if (kern) x += (kern / unitsPerEm) * fontSize;
+        }
+        const gp = glyph.getPath(x, baselineY, fontSize);
+        fullPath.extend(gp);
+        x += ((glyph.advanceWidth ?? 0) / unitsPerEm) * fontSize + letterSpacing;
+        prevGlyph = glyph;
+    }
+}
+
+function textToGroupTransform(textNode: Konva.Text, group: Konva.Node): Konva.Transform {
+    return group.getAbsoluteTransform().copy().invert().multiply(textNode.getAbsoluteTransform());
+}
+
+function mapPathCommands(
+    path: Ot.Path,
+    mapPoint: (x: number, y: number) => { x: number; y: number },
+): void {
+    for (const cmd of path.commands) {
+        switch (cmd.type) {
+            case "M":
+            case "L": {
+                const p = mapPoint(cmd.x, cmd.y);
+                cmd.x = p.x;
+                cmd.y = p.y;
+                break;
+            }
+            case "Q": {
+                const p1 = mapPoint(cmd.x1, cmd.y1);
+                const p = mapPoint(cmd.x, cmd.y);
+                cmd.x1 = p1.x;
+                cmd.y1 = p1.y;
+                cmd.x = p.x;
+                cmd.y = p.y;
+                break;
+            }
+            case "C": {
+                const p1 = mapPoint(cmd.x1, cmd.y1);
+                const p2 = mapPoint(cmd.x2, cmd.y2);
+                const p = mapPoint(cmd.x, cmd.y);
+                cmd.x1 = p1.x;
+                cmd.y1 = p1.y;
+                cmd.x2 = p2.x;
+                cmd.y2 = p2.y;
+                cmd.x = p.x;
+                cmd.y = p.y;
+                break;
+            }
+            default:
+                break;
+        }
+    }
+}
+
+function transformOutlinePath(path: Ot.Path, transform: Konva.Transform): void {
+    const m = transform.getMatrix();
+    mapPathCommands(path, (x, y) => ({
+        x: m[0] * x + m[2] * y + m[4],
+        y: m[1] * x + m[3] * y + m[5],
+    }));
 }
 
 // ─── Outlining a single text layer ──────────────────────
@@ -214,18 +404,18 @@ async function outlineTextLayer(layer: TextLayer, group: Konva.Node): Promise<Ou
     const verticalAlign = node.verticalAlign();
     const letterSpacing = node.letterSpacing() || 0;
     const padding = node.padding() || 0;
-    const totalWidth = node.getWidth();
-    const totalHeight = node.getHeight();
-    const offsetY = node.offsetY() || 0;
+    // Mirror Konva `_sceneFunc` exactly: glyph layout uses the node's own width
+    // and height. Vertical-trim offsetY lives in the node's transform, so the
+    // `text → group` matrix below carries it into the final coordinates without
+    // any manual box math (which previously fought the renderer and clipped).
+    const totalWidth = node.width();
+    const totalHeight = node.height();
     const family = node.fontFamily();
-    // Konva stores weight in fontStyle ("800", "bold", "normal"); layer.fontWeight is authoritative.
     const weightSource = layer.fontWeight || node.fontStyle() || "400";
     const { weight, italic } = parseFontStyle(weightSource);
-    const font = await resolveFont(family, weight, italic);
-    if (!font) return null;
 
     const fontShorthand = `${weightSource} ${fontSize}px ${quoteFamily(family)}`;
-    const { ascent, descent } = measureVMetrics(fontShorthand);
+    const { ascent, descent } = readKonvaMetrics(node, fontShorthand);
     const translateY0 = (ascent - descent) / 2 + lineHeightPx / 2;
 
     let alignY = 0;
@@ -235,11 +425,30 @@ async function outlineTextLayer(layer: TextLayer, group: Konva.Node): Promise<Ou
         alignY = totalHeight - lines.length * lineHeightPx - padding * 2;
     }
 
+    const firstLineIndex = lines.findIndex((l) => l.text);
+    if (firstLineIndex < 0) return null;
+
+    // Group-local baseline metrics — used to position the live `<text>` safety
+    // net on the rare path where no font file can be parsed at all.
+    const t2g = textToGroupTransform(node, container);
+    const firstBaselineLocalY = alignY + padding + translateY0 + firstLineIndex * lineHeightPx;
+    const baselineP0 = t2g.point({ x: 0, y: firstBaselineLocalY });
+    const baselineP1 = t2g.point({ x: 0, y: firstBaselineLocalY + lineHeightPx });
+    const fallbackFirstBaselineY = baselineP0.y;
+    const fallbackLineHeightPx = baselineP1.y - baselineP0.y;
+
+    const sampleText = lines.map((l) => l.text).join("");
+    const font = await resolveFontForText(family, weight, italic, sampleText);
+    if (!font) {
+        return { fill: layer.fill, fallbackFirstBaselineY, fallbackLineHeightPx };
+    }
+
     const opentype = await loadOpentype();
-    if (!opentype) return null;
+    if (!opentype) {
+        return { fill: layer.fill, fallbackFirstBaselineY, fallbackLineHeightPx };
+    }
 
     const fullPath = new opentype.Path();
-    const unitsPerEm = font.unitsPerEm || 1000;
 
     lines.forEach((line, n) => {
         const text = line.text;
@@ -247,32 +456,26 @@ async function outlineTextLayer(layer: TextLayer, group: Konva.Node): Promise<Ou
         let lineX = padding;
         if (align === "right") lineX += totalWidth - line.width - padding * 2;
         else if (align === "center") lineX += (totalWidth - line.width - padding * 2) / 2;
-        const baselineY = alignY + padding + translateY0 + n * lineHeightPx - offsetY;
 
-        if (letterSpacing === 0) {
-            const p = font.getPath(text, lineX, baselineY, fontSize);
-            fullPath.extend(p);
-        } else {
-            // Per-glyph placement so letterSpacing matches the canvas.
-            const glyphs = font.stringToGlyphs(text);
-            let x = lineX;
-            for (const g of glyphs) {
-                const gp = g.getPath(x, baselineY, fontSize);
-                fullPath.extend(gp);
-                x += ((g.advanceWidth ?? 0) / unitsPerEm) * fontSize + letterSpacing;
-            }
-        }
+        // Glyph baseline mirrors Konva `_sceneFunc` exactly (alphabetic
+        // baseline). opentype places the same baseline at the same Y, so once
+        // the path goes through the live `text → group` transform there is no
+        // residual drift to "correct" — keep the geometry untouched.
+        const baselineY = alignY + padding + translateY0 + n * lineHeightPx;
+        appendGlyphRun(fullPath, font, text, lineX, baselineY, fontSize, letterSpacing);
     });
 
-    const d = fullPath.toPathData(2);
-    if (!d) return null;
-    return { d, fill: layer.fill };
+    transformOutlinePath(fullPath, t2g);
+
+    const d = fullPath.toPathData(3);
+    if (!d || /NaN|Infinity/.test(d)) {
+        return { fill: layer.fill, fallbackFirstBaselineY, fallbackLineHeightPx };
+    }
+    return { d, fill: layer.fill, fallbackFirstBaselineY, fallbackLineHeightPx };
 }
 
 /**
- * Build outlined-text path data for every text layer on the stage. Returns a map
- * keyed by layer id; layers whose font can't be resolved are omitted (callers
- * fall back to `<text>`).
+ * Build outlined-text path data for every text layer on the stage.
  */
 export async function buildOutlinedTextMap(
     stage: Konva.Stage | null,
@@ -289,7 +492,7 @@ export async function buildOutlinedTextMap(
             const outlined = await outlineTextLayer(layer, group);
             if (outlined) result.set(layer.id, outlined);
         } catch {
-            // Skip — fallback handles it.
+            // Skip — caller falls back to <text>.
         }
     }
     return result;

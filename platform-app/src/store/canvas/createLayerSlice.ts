@@ -956,7 +956,8 @@ export const createLayerSlice: StateCreator<CanvasStore, [], [], LayerSlice> = (
     removeLayerFromFrame: (layerId) => {
         pushSnapshot(set as (p: Partial<CanvasStore>) => void, get);
         set((state) => {
-            const newLayers = state.layers.map((l) => {
+            const previousLayers = state.layers;
+            const newLayers = previousLayers.map((l) => {
                 if (l.type === "frame" && (l as FrameLayer).childIds.includes(layerId)) {
                     return { ...l, childIds: (l as FrameLayer).childIds.filter((c) => c !== layerId) } as Layer;
                 }
@@ -964,7 +965,7 @@ export const createLayerSlice: StateCreator<CanvasStore, [], [], LayerSlice> = (
             });
             const newMasters = syncFrameChildIdsToMasters(newLayers, state.masterComponents);
             const newInstances = syncFrameChildIdsToInstances(newLayers, state.masterComponents, state.componentInstances, state.activeResizeId);
-            return { layers: applyAllAutoLayouts(newLayers), masterComponents: newMasters, componentInstances: newInstances };
+            return { layers: applyAllAutoLayouts(newLayers, previousLayers), masterComponents: newMasters, componentInstances: newInstances };
         });
     },
 
