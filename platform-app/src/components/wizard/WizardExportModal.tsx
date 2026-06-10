@@ -15,6 +15,7 @@ import {
 } from "@/components/wizard/WizardContentWorkspace";
 import { projectExpansionToResize, type LayerExpansionOverride } from "@/utils/wizardExpand";
 import { downloadDataUrl, sanitizeExportFileName, zipPngDataUrls } from "@/utils/exportImage";
+import { withEditorChromeHidden } from "@/utils/stageExportCapture";
 import type { TemplatePackV2 } from "@/services/templateService";
 import type { ArtboardProps } from "@/store/canvas/types";
 
@@ -148,14 +149,14 @@ export function WizardExportModal({
         stage.scale({ x: 1, y: 1 });
         stage.position({ x: 0, y: 0 });
         stage.batchDraw();
-        return stage.toDataURL({
+        return withEditorChromeHidden(stage, () => stage.toDataURL({
             x: 0,
             y: 0,
             width: exportSource.width,
             height: exportSource.height,
             pixelRatio: scale,
             mimeType: "image/png",
-        });
+        }));
     };
 
     const handleSingleExport = async () => {
@@ -189,14 +190,14 @@ export function WizardExportModal({
                 stage.scale({ x: 1, y: 1 });
                 stage.position({ x: 0, y: 0 });
                 stage.batchDraw();
-                const dataUrl = stage.toDataURL({
+                const dataUrl = withEditorChromeHidden(stage, () => stage.toDataURL({
                     x: 0,
                     y: 0,
                     width: format.width,
                     height: format.height,
                     pixelRatio: scale,
                     mimeType: "image/png",
-                });
+                }));
                 const base = sanitizeExportFileName(format.name || format.label || format.id);
                 entriesForZip.push({
                     fileName: `${base}-${format.width}x${format.height}@${scale}x.png`,

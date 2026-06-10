@@ -74,7 +74,8 @@ async function captureTemplateThumbnail(ownerId: string): Promise<string | undef
         stage.position({ x: 0, y: 0 });
         stage.draw();
 
-        const dataUrl = stage.toDataURL({
+        const { withEditorChromeHidden } = await import("@/utils/stageExportCapture");
+        const dataUrl = withEditorChromeHidden(stage, () => stage.toDataURL({
             x: 0,
             y: 0,
             width: state.canvasWidth,
@@ -82,7 +83,7 @@ async function captureTemplateThumbnail(ownerId: string): Promise<string | undef
             pixelRatio: 0.5,
             mimeType: "image/jpeg",
             quality: 0.82,
-        });
+        }));
 
         const { persistImageToS3 } = await import("@/utils/imageUpload");
         const url = await persistImageToS3(dataUrl, ownerId);
