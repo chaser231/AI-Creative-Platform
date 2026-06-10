@@ -10,6 +10,7 @@
 import type { Layer, FrameLayer } from "@/types";
 import { layersToSvgFragment } from "@/services/svgExport";
 import Konva from "konva";
+import { withEditorChromeHidden } from "@/utils/stageExportCapture";
 
 // ─── Clipboard Data Format ─────────────────────────────
 
@@ -210,14 +211,14 @@ export async function copyLayerAsPng(
             const maxX = Math.max(...targetLayers.map(l => l.x + l.width));
             const maxY = Math.max(...targetLayers.map(l => l.y + l.height));
 
-            dataURL = stage.toDataURL({
+            dataURL = withEditorChromeHidden(stage, () => stage.toDataURL({
                 x: minX,
                 y: minY,
                 width: maxX - minX,
                 height: maxY - minY,
                 pixelRatio: 2,
                 mimeType: "image/png",
-            });
+            }));
         }
 
         // Restore transform

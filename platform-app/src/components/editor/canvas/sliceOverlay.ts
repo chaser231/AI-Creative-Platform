@@ -8,20 +8,14 @@
  */
 
 import type Konva from "konva";
+import { withEditorChromeHiddenAsync } from "@/utils/stageExportCapture";
 
 export const SLICE_OVERLAY_NAME = "slice-overlay";
 
-/** Hide slice overlays, run `fn` (e.g. a toDataURL capture), then restore. */
+/** Hide studio chrome (selection handles, slice overlays, …), capture, restore. */
 export async function withSliceOverlaysHidden<T>(
     stage: Konva.Stage,
     fn: () => T | Promise<T>,
 ): Promise<T> {
-    const nodes = stage.find(`.${SLICE_OVERLAY_NAME}`);
-    const prevVisible = nodes.map((node) => node.visible());
-    nodes.forEach((node) => node.visible(false));
-    try {
-        return await fn();
-    } finally {
-        nodes.forEach((node, i) => node.visible(prevVisible[i]));
-    }
+    return withEditorChromeHiddenAsync(stage, fn);
 }

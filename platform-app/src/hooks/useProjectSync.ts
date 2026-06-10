@@ -23,6 +23,7 @@ import { useCanvasStore } from "@/store/canvasStore";
 import { DEFAULT_RESIZE } from "@/store/canvas/types";
 import { useWorkspace } from "@/providers/WorkspaceProvider";
 import { getCanvasStateForSave, normalizeCanvasStateForLoad } from "@/utils/canvasState";
+import { withEditorChromeHidden } from "@/utils/stageExportCapture";
 import {
   saveLocalDraft,
   loadLocalDraft,
@@ -203,7 +204,7 @@ export function useCanvasAutoSave(
       stage.draw(); // Synchronous draw to apply transform safely
 
       // Capture exact artboard coordinates at higher resolution
-      const dataUrl = stage.toDataURL({
+      const dataUrl = withEditorChromeHidden(stage, () => stage.toDataURL({
         x: 0,
         y: 0,
         width: w,
@@ -211,7 +212,7 @@ export function useCanvasAutoSave(
         pixelRatio: 0.5, // Higher quality preview
         mimeType: "image/jpeg",
         quality: 0.8
-      });
+      }));
 
       // Restore zoom/pan immediately
       stage.scale({ x: oldScaleX, y: oldScaleY });

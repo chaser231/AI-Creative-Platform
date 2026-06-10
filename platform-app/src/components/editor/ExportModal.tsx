@@ -15,7 +15,7 @@ import { getCanvasStateForSave } from "@/utils/canvasState";
 import { layersToSvg, layersToSvgFragment, layersToSvgSliceRegion } from "@/services/svgExport";
 import { layersToEps, layersToEpsFragment, layersToEpsSliceRegion } from "@/services/epsExport";
 import { collectLayerTree } from "@/utils/clipboardUtils";
-import { SLICE_OVERLAY_NAME } from "@/components/editor/canvas/sliceOverlay";
+import { hideEditorChromeForCapture } from "@/utils/stageExportCapture";
 import type { Layer } from "@/types";
 
 interface ExportModalProps {
@@ -130,13 +130,7 @@ export function ExportModal({ open, onClose, stageRef, initialTarget }: ExportMo
     }, [exportTarget, canvasWidth, canvasHeight, layers]);
 
     const captureDataUrl = useCallback((stage: Konva.Stage, bounds: { x: number; y: number; width: number; height: number }) => {
-        const restore: Array<() => void> = [];
-        // Slice overlays are studio-only chrome — never bake them into rasters.
-        stage.find(`.${SLICE_OVERLAY_NAME}`).forEach((node) => {
-            const prevVisible = node.visible();
-            restore.push(() => node.visible(prevVisible));
-            node.visible(false);
-        });
+        const restore: Array<() => void> = [hideEditorChromeForCapture(stage)];
         stage.find(".export-artboard-fill").forEach((node) => {
             const shape = node as Konva.Shape;
             const prevShadowBlur = shape.shadowBlur();
