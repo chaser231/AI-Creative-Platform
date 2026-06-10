@@ -66,6 +66,13 @@ import type {
 import { DEFAULT_CONSTRAINTS, IMAGE_FIT_MODE_LABELS } from "@/types";
 import { cn } from "@/lib/cn";
 import { PREINSTALLED_FONTS, getUserFonts, normalizeFontFamilyName, saveUserFont } from "@/lib/customFonts";
+import {
+    autoLayoutAxesToScreenAlign,
+    screenAlignToAutoLayoutAxes,
+    swapAlignmentsForDirectionChange,
+    type ScreenHAlign,
+    type ScreenVAlign,
+} from "@/utils/autoLayoutAlignGrid";
 import { clearTextMeasureCache } from "@/utils/layoutEngine";
 import { weightLabel } from "@/utils/fontWeight";
 import { getAvailableFontFamiliesSync } from "@/utils/fontUtils";
@@ -695,7 +702,7 @@ function compactResponsiveSettings(settings: LayerResponsiveSettings): LayerResp
 
 function AutoLayoutChildSection({ layer, onChange }: { layer: Layer; onChange: (updates: Partial<Layer>) => void }) {
     return (
-        <InspectorSection title="Авторазметка" icon={<LayoutDashboard size={13} />}>
+        <InspectorSection title="Авто-лейаут" icon={<LayoutDashboard size={13} />}>
             <ToggleButton
                 active={!!layer.isAbsolutePositioned}
                 label="Абсолютная позиция"
@@ -711,19 +718,36 @@ function FrameLayoutSection({ layer, onChange }: { layer: FrameLayer; onChange: 
     const horizontalPadding = layer.paddingLeft ?? layer.paddingRight ?? 0;
     const verticalPadding = layer.paddingTop ?? layer.paddingBottom ?? 0;
     return (
-        <InspectorSection title="Авторазметка" icon={<LayoutDashboard size={13} />}>
+        <InspectorSection title="Авто-лейаут" icon={<LayoutDashboard size={13} />}>
             <div className="grid grid-cols-3 overflow-hidden rounded-[var(--radius-md)] border border-border-primary">
                 {(["none", "horizontal", "vertical"] as const).map((mode) => (
                     <button
                         key={mode}
-                        onClick={() => onChange({ layoutMode: mode })}
+                        onClick={() => {
+                            const prev = layer.layoutMode || "none";
+                            if (
+                                prev !== mode
+                                && prev !== "none"
+                                && mode !== "none"
+                                && (prev === "horizontal" || prev === "vertical")
+                                && (mode === "horizontal" || mode === "vertical")
+                            ) {
+                                const swapped = swapAlignmentsForDirectionChange(
+                                    layer.primaryAxisAlignItems || "flex-start",
+                                    layer.counterAxisAlignItems || "flex-start",
+                                );
+                                onChange({ layoutMode: mode, ...swapped });
+                                return;
+                            }
+                            onChange({ layoutMode: mode });
+                        }}
                         className={cn(
                             "flex h-8 items-center justify-center border-r border-border-primary text-[10px] transition-colors last:border-r-0 cursor-pointer",
                             (layer.layoutMode || "none") === mode
                                 ? "bg-accent-primary/10 text-accent-primary"
                                 : "text-text-tertiary hover:text-text-primary hover:bg-bg-tertiary",
                         )}
-                        title={mode === "none" ? "Авторазметка выключена" : mode === "horizontal" ? "Горизонтально" : "Вертикально"}
+                        title={mode === "none" ? "Авто-лейаут выключен" : mode === "horizontal" ? "Горизонтально" : "Вертикально"}
                     >
                         {mode === "none" ? <Grid3X3 size={13} /> : mode === "horizontal" ? <ArrowRight size={14} /> : <ArrowDown size={14} />}
                     </button>
@@ -732,6 +756,7 @@ function FrameLayoutSection({ layer, onChange }: { layer: FrameLayer; onChange: 
             {enabled && (
                 <>
                     <AutoLayoutAlignmentGrid
+                        layoutMode={layer.layoutMode === "vertical" ? "vertical" : "horizontal"}
                         primary={layer.primaryAxisAlignItems || "flex-start"}
                         counter={layer.counterAxisAlignItems || "flex-start"}
                         onChange={(updates) => onChange(updates)}
@@ -1826,32 +1851,45 @@ function PercentField({ value, onChange, disabled }: { value: number; onChange: 
 }
 
 function AutoLayoutAlignmentGrid({
+    layoutMode,
     primary,
     counter,
     onChange,
 }: {
+    layoutMode: "horizontal" | "vertical";
     primary: NonNullable<FrameLayer["primaryAxisAlignItems"]>;
     counter: NonNullable<FrameLayer["counterAxisAlignItems"]>;
     onChange: (updates: Partial<FrameLayer>) => void;
 }) {
-    const rows: Array<NonNullable<FrameLayer["counterAxisAlignItems"]>> = ["flex-start", "center", "flex-end"];
-    const cols: Array<Exclude<NonNullable<FrameLayer["primaryAxisAlignItems"]>, "space-between">> = ["flex-start", "center", "flex-end"];
+    const screenRows: ScreenVAlign[] = ["top", "center", "bottom"];
+    const screenCols: ScreenHAlign[] = ["left", "center", "right"];
+    const activeScreen = autoLayoutAxesToScreenAlign(layoutMode, primary, counter);
+    const primaryLabel = layoutMode === "horizontal" ? "По горизонтали" : "По вертикали";
+    const counterLabel = layoutMode === "horizontal" ? "По вертикали" : "По горизонтали";
+
     return (
         <div className="grid grid-cols-[72px_1fr] gap-2">
-            <div className="grid h-[72px] grid-cols-3 grid-rows-3 gap-1 rounded-[var(--radius-md)] bg-bg-secondary p-2">
-                {rows.map((row) => cols.map((col) => {
-                    const active = counter === row && primary === col;
+            <div className="relative grid h-[72px] grid-cols-3 grid-rows-3 gap-1 rounded-[var(--radius-md)] bg-bg-secondary p-2">
+                {screenRows.map((v) => screenCols.map((h) => {
+                    const active = activeScreen?.h === h && activeScreen?.v === v;
                     return (
                         <button
-                            key={`${row}-${col}`}
+                            key={`${v}-${h}`}
                             type="button"
-                            onClick={() => onChange({ primaryAxisAlignItems: col, counterAxisAlignItems: row })}
+                            onClick={() => onChange(screenAlignToAutoLayoutAxes(layoutMode, h, v))}
                             className={cn(
-                                "rounded-[3px] border border-border-primary transition-colors",
-                                active ? "border-accent-primary bg-accent-primary" : "bg-bg-tertiary hover:border-border-secondary",
+                                "relative rounded-[3px] border border-border-primary transition-colors",
+                                active ? "border-accent-primary bg-accent-primary/15" : "bg-bg-tertiary hover:border-border-secondary",
                             )}
-                            title={`${col} / ${row}`}
-                        />
+                            title={`${h} / ${v}`}
+                        >
+                            <AutoLayoutAlignCellIndicator
+                                h={h}
+                                v={v}
+                                layoutMode={layoutMode}
+                                active={active}
+                            />
+                        </button>
                     );
                 }))}
             </div>
@@ -1860,6 +1898,7 @@ function AutoLayoutAlignmentGrid({
                     size="xs"
                     value={primary}
                     onChange={(value) => onChange({ primaryAxisAlignItems: value as FrameLayer["primaryAxisAlignItems"] })}
+                    aria-label={primaryLabel}
                     options={[
                         { value: "flex-start", label: "В начало" },
                         { value: "center", label: "По центру" },
@@ -1871,6 +1910,7 @@ function AutoLayoutAlignmentGrid({
                     size="xs"
                     value={counter}
                     onChange={(value) => onChange({ counterAxisAlignItems: value as FrameLayer["counterAxisAlignItems"] })}
+                    aria-label={counterLabel}
                     options={[
                         { value: "flex-start", label: "В начало" },
                         { value: "center", label: "По центру" },
@@ -1880,6 +1920,38 @@ function AutoLayoutAlignmentGrid({
                 />
             </div>
         </div>
+    );
+}
+
+function AutoLayoutAlignCellIndicator({
+    h,
+    v,
+    layoutMode,
+    active,
+}: {
+    h: ScreenHAlign;
+    v: ScreenVAlign;
+    layoutMode: "horizontal" | "vertical";
+    active: boolean;
+}) {
+    const stroke = active ? "bg-accent-primary" : "bg-text-tertiary/60";
+    const hPos = h === "left" ? "left-0.5" : h === "right" ? "right-0.5" : "left-1/2 -translate-x-1/2";
+    const vPos = v === "top" ? "top-0.5" : v === "bottom" ? "bottom-0.5" : "top-1/2 -translate-y-1/2";
+    const flowIsHorizontal = layoutMode === "horizontal";
+
+    return (
+        <span className="absolute inset-0">
+            <span className={cn("absolute h-1 w-1 rounded-full", stroke, hPos, vPos)} />
+            <span
+                className={cn(
+                    "absolute rounded-full",
+                    stroke,
+                    flowIsHorizontal
+                        ? cn("top-1/2 h-px w-3 -translate-y-1/2", h === "left" ? "left-1" : h === "right" ? "right-1" : "left-1/2 -translate-x-1/2")
+                        : cn("left-1/2 w-px h-3 -translate-x-1/2", v === "top" ? "top-1" : v === "bottom" ? "bottom-1" : "top-1/2 -translate-y-1/2"),
+                )}
+            />
+        </span>
     );
 }
 

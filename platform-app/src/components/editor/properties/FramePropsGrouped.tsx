@@ -26,14 +26,14 @@ export function FramePropsGrouped({
             <div className="relative">
                 <PopoverButton
                     icon={<LayoutDashboard size={12} />}
-                    label="Авторазметка"
+                    label="Авто-лейаут"
                     isActive={activePopover === "layout"}
                     onClick={() => togglePopover("layout")}
                 />
                 <Popover isOpen={activePopover === "layout"} onClose={() => setActivePopover(null)}>
                     <div className="space-y-4">
                         <div className="flex items-center justify-between">
-                            <label className="text-[10px] text-text-primary font-medium">Авторазметка</label>
+                            <label className="text-[10px] text-text-primary font-medium">Авто-лейаут</label>
                             <Select
                                 size="xs"
                                 value={layer.layoutMode || "none"}
