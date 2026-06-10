@@ -8,6 +8,7 @@ export type { ArtboardSize };
 
 export type AdaptationPipelineOptions = {
     scaleFonts?: boolean;
+    scaleVectors?: boolean;
     applyTextFit?: boolean;
     applyContainerLimits?: boolean;
     validateAndHide?: boolean;
@@ -17,6 +18,7 @@ export type AdaptationPipelineOptions = {
 export const AdaptationPresets = {
     full: {
         scaleFonts: true,
+        scaleVectors: true,
         applyTextFit: true,
         applyContainerLimits: true,
         validateAndHide: true,
@@ -24,6 +26,7 @@ export const AdaptationPresets = {
     },
     manualResize: {
         scaleFonts: false,
+        scaleVectors: false,
         applyTextFit: false,
         applyContainerLimits: false,
         validateAndHide: false,
@@ -35,6 +38,7 @@ const GEOMETRY_EPSILON = 1;
 
 const DEFAULT_OPTIONS: Required<AdaptationPipelineOptions> = {
     scaleFonts: true,
+    scaleVectors: true,
     applyTextFit: true,
     applyContainerLimits: true,
     validateAndHide: true,
@@ -53,6 +57,7 @@ export function runAdaptationPipeline(
 
     const projected = projectTree(layers, sourceSize, targetSize, {
         scaleFonts: resolved.scaleFonts,
+        scaleVectors: resolved.scaleVectors,
     });
 
     let layouted = applyAllAutoLayouts(projected);
