@@ -6,6 +6,7 @@ import {
     Users, Building2, FolderKanban, LayoutTemplate, Sparkles, DollarSign,
     Search, Shield, ShieldCheck, MoreHorizontal, ShieldX,
     UserCheck, UserX, Clock, ChevronLeft, ChevronRight, X,
+    Clapperboard, Check, Infinity as InfinityIcon,
 } from "lucide-react";
 import { AppShell } from "@/components/layout/AppShell";
 import { TopBar } from "@/components/layout/TopBar";
@@ -295,6 +296,169 @@ function CostAnalyticsSection({ data, period, onPeriodChange, customFrom, custom
                         )}
                     </tbody>
                 </table>
+            </div>
+        </section>
+    );
+}
+
+/* ─── Video Quotas Section ─────────────────────────────── */
+
+const VIDEO_TIER_BADGES: Record<string, string> = {
+    premium: "bg-amber-500/15 border-amber-500/25 text-amber-500",
+    advanced: "bg-violet-500/15 border-violet-500/25 text-violet-400",
+    standard: "bg-emerald-500/15 border-emerald-500/25 text-emerald-500",
+};
+
+function VideoQuotaRow({ quota, onSave, saving }: {
+    quota: {
+        modelId: string;
+        label: string;
+        tier: string;
+        pricePerSecondUsd: number;
+        dailyLimit: number | null;
+        enabled: boolean;
+        usedToday: number;
+    };
+    onSave: (input: { modelId: string; dailyLimit: number | null; enabled: boolean }) => void;
+    saving: boolean;
+}) {
+    const [limitDraft, setLimitDraft] = useState(
+        quota.dailyLimit === null ? "" : String(quota.dailyLimit),
+    );
+    const [enabledDraft, setEnabledDraft] = useState(quota.enabled);
+
+    const parsedLimit = limitDraft.trim() === "" ? null : Math.max(0, parseInt(limitDraft, 10) || 0);
+    const dirty = parsedLimit !== quota.dailyLimit || enabledDraft !== quota.enabled;
+
+    return (
+        <tr className={`border-b border-border-primary/50 transition-colors ${enabledDraft ? "hover:bg-bg-secondary/30" : "opacity-55"}`}>
+            <td className="px-4 py-3 font-medium text-text-primary">{quota.label}</td>
+            <td className="px-4 py-3">
+                <span className={`px-2 py-0.5 rounded-md border text-[10px] font-semibold capitalize ${VIDEO_TIER_BADGES[quota.tier] ?? VIDEO_TIER_BADGES.standard}`}>
+                    {quota.tier}
+                </span>
+            </td>
+            <td className="px-4 py-3 text-right font-mono text-text-secondary">
+                ${quota.pricePerSecondUsd.toFixed(2)}/с
+            </td>
+            <td className="px-4 py-3 text-center text-text-secondary">{quota.usedToday}</td>
+            <td className="px-4 py-3">
+                <div className="flex items-center justify-center gap-1.5">
+                    <input
+                        type="number"
+                        min={0}
+                        value={limitDraft}
+                        onChange={(e) => setLimitDraft(e.target.value)}
+                        placeholder="∞"
+                        className="h-8 w-20 px-2 text-center text-xs rounded-lg border border-border-primary bg-bg-surface text-text-primary focus:outline-none focus:border-border-focus"
+                        aria-label={`Дневной лимит для ${quota.label}`}
+                    />
+                    {parsedLimit === null && (
+                        <InfinityIcon size={13} className="text-text-tertiary" aria-label="Без лимита" />
+                    )}
+                </div>
+            </td>
+            <td className="px-4 py-3 text-center">
+                <button
+                    type="button"
+                    role="switch"
+                    aria-checked={enabledDraft}
+                    onClick={() => setEnabledDraft((v) => !v)}
+                    className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors cursor-pointer ${
+                        enabledDraft ? "bg-emerald-500" : "bg-bg-tertiary border border-border-primary"
+                    }`}
+                    title={enabledDraft ? "Модель включена" : "Модель отключена"}
+                >
+                    <span
+                        className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${
+                            enabledDraft ? "translate-x-[18px]" : "translate-x-[2px]"
+                        }`}
+                    />
+                </button>
+            </td>
+            <td className="px-3 py-3 text-right">
+                <button
+                    onClick={() => onSave({ modelId: quota.modelId, dailyLimit: parsedLimit, enabled: enabledDraft })}
+                    disabled={!dirty || saving}
+                    className={`inline-flex items-center gap-1 h-8 px-2.5 rounded-lg text-[11px] font-medium transition-colors ${
+                        dirty
+                            ? "bg-accent-primary text-text-inverse cursor-pointer hover:opacity-90"
+                            : "bg-bg-secondary text-text-tertiary cursor-default"
+                    } disabled:opacity-50`}
+                    title="Сохранить лимит"
+                >
+                    <Check size={12} />
+                    Сохранить
+                </button>
+            </td>
+        </tr>
+    );
+}
+
+function VideoQuotasSection() {
+    const utils = trpc.useUtils();
+    const { data: quotas, isLoading } = trpc.video.listQuotas.useQuery();
+    const { data: videoStats } = trpc.video.stats.useQuery();
+    const updateMutation = trpc.video.updateQuota.useMutation({
+        onSuccess: () => {
+            utils.video.listQuotas.invalidate();
+            utils.video.myQuotas.invalidate();
+        },
+    });
+
+    return (
+        <section>
+            <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+                <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-lg bg-rose-500/15 text-rose-400 flex items-center justify-center">
+                        <Clapperboard size={15} />
+                    </div>
+                    <h2 className="text-lg font-semibold text-text-primary">Видео-квоты</h2>
+                    <span className="text-xs text-text-tertiary">Дневные лимиты генераций на пользователя</span>
+                </div>
+                {videoStats && (
+                    <div className="flex items-center gap-2 text-xs">
+                        <span className="text-text-tertiary">Сегодня:</span>
+                        <span className="font-semibold text-text-primary">{videoStats.jobsToday}</span>
+                        <span className="text-text-tertiary ml-2">За неделю:</span>
+                        <span className="font-semibold text-text-primary">{videoStats.jobsThisWeek}</span>
+                        <span className="text-text-tertiary ml-2">Завершено всего:</span>
+                        <span className="font-semibold text-text-primary">{videoStats.totalCompleted}</span>
+                        <span className="text-text-tertiary ml-2">Затраты:</span>
+                        <span className="font-semibold text-green-400">${videoStats.totalCostUsd.toFixed(2)}</span>
+                    </div>
+                )}
+            </div>
+
+            <div className="bg-bg-surface border border-border-primary rounded-2xl overflow-hidden">
+                <table className="w-full text-xs">
+                    <thead>
+                        <tr className="border-b border-border-primary bg-bg-secondary/50">
+                            <th className="text-left px-4 py-3 font-medium text-text-tertiary">Модель</th>
+                            <th className="text-left px-4 py-3 font-medium text-text-tertiary">Тир</th>
+                            <th className="text-right px-4 py-3 font-medium text-text-tertiary">Цена</th>
+                            <th className="text-center px-4 py-3 font-medium text-text-tertiary">Сегодня (все)</th>
+                            <th className="text-center px-4 py-3 font-medium text-text-tertiary">Лимит/день</th>
+                            <th className="text-center px-4 py-3 font-medium text-text-tertiary">Доступна</th>
+                            <th className="w-28"></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {isLoading ? (
+                            <tr><td colSpan={7} className="px-4 py-8 text-center text-text-tertiary">Загрузка...</td></tr>
+                        ) : quotas?.map((q) => (
+                            <VideoQuotaRow
+                                key={q.modelId}
+                                quota={q}
+                                saving={updateMutation.isPending && updateMutation.variables?.modelId === q.modelId}
+                                onSave={(input) => updateMutation.mutate(input)}
+                            />
+                        ))}
+                    </tbody>
+                </table>
+                <div className="px-4 py-2.5 border-t border-border-primary/50 bg-bg-secondary/20 text-[11px] text-text-tertiary">
+                    Пустое поле лимита = без ограничений. Лимит 0 полностью блокирует модель для всех. Счётчик сбрасывается в полночь UTC.
+                </div>
             </div>
         </section>
     );
@@ -733,6 +897,9 @@ export default function AdminDashboardPage() {
                             onCustomToChange={setCustomTo}
                         />
                     )}
+
+                    {/* Video Quotas Section */}
+                    <VideoQuotasSection />
 
                     {/* Workspaces Table */}
                     <section>

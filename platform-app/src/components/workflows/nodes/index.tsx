@@ -54,6 +54,18 @@ export function AiInpaintNode({ id, selected }: NodeProps) {
     return <BaseNode id={id} type="aiInpaint" selected={selected} />;
 }
 
+export function TextToVideoNode({ id, selected }: NodeProps) {
+    return <BaseNode id={id} type="textToVideo" selected={selected} />;
+}
+
+export function ImageToVideoNode({ id, selected }: NodeProps) {
+    return <BaseNode id={id} type="imageToVideo" selected={selected} />;
+}
+
+export function ExtractFrameNode({ id, selected }: NodeProps) {
+    return <BaseNode id={id} type="extractFrame" selected={selected} />;
+}
+
 export const nodeTypes = {
     imageInput: ImageInputNode,
     imageGeneration: ImageGenerationNode,
@@ -66,4 +78,7 @@ export const nodeTypes = {
     assetOutput: AssetOutputNode,
     paintMask: PaintMaskNode,
     aiInpaint: AiInpaintNode,
+    textToVideo: TextToVideoNode,
+    imageToVideo: ImageToVideoNode,
+    extractFrame: ExtractFrameNode,
 } as const;

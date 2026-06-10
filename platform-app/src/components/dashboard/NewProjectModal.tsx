@@ -111,7 +111,9 @@ export function NewProjectModal({ open, onClose, workspaceId }: NewProjectModalP
                 router.push(
                     goal === "photo"
                         ? `/photo/${backendProject.id}`
-                        : `/editor/${backendProject.id}?mode=${mode}`
+                        : goal === "video"
+                            ? `/video/${backendProject.id}`
+                            : `/editor/${backendProject.id}?mode=${mode}`
                 );
                 return;
             }
@@ -127,7 +129,9 @@ export function NewProjectModal({ open, onClose, workspaceId }: NewProjectModalP
         router.push(
             goal === "photo"
                 ? `/photo/${localProject.id}`
-                : `/editor/${localProject.id}?mode=${mode}`
+                : goal === "video"
+                    ? `/video/${localProject.id}`
+                    : `/editor/${localProject.id}?mode=${mode}`
         );
     };
 

@@ -216,6 +216,48 @@ export const assetRouter = createTRPCRouter({
       return asset;
     }),
 
+  /** Register a generated video URL as a project asset (mirror of saveGeneratedImage). */
+  saveGeneratedVideo: protectedProcedure
+    .input(
+      z.object({
+        projectId: z.string(),
+        url: z.string().url(),
+        prompt: z.string().optional(),
+        model: z.string().optional(),
+        source: z.string().default("video-generation"),
+        mimeType: z.string().default("video/mp4"),
+        sizeBytes: z.number().default(0),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const { project } = await assertProjectAccess(ctx, input.projectId, "USER");
+
+      const existing = await ctx.prisma.asset.findFirst({
+        where: { projectId: input.projectId, url: input.url },
+      });
+      if (existing) return existing;
+
+      const filename = `${input.source}-${Date.now()}.${input.mimeType.split("/")[1] ?? "mp4"}`;
+
+      return ctx.prisma.asset.create({
+        data: {
+          type: "VIDEO",
+          filename,
+          url: input.url,
+          mimeType: input.mimeType,
+          sizeBytes: input.sizeBytes,
+          metadata: {
+            source: input.source,
+            ...(input.prompt && { prompt: input.prompt.slice(0, 2000) }),
+            ...(input.model && { model: input.model }),
+          },
+          workspaceId: project.workspaceId,
+          uploadedById: ctx.user.id,
+          projectId: input.projectId,
+        },
+      });
+    }),
+
   /**
    * Register an existing S3 URL as a project asset.
    *

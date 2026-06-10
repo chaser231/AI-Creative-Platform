@@ -20,9 +20,12 @@ export type WorkflowNodeType =
     | "preview"
     | "assetOutput"
     | "aiInpaint"
-    | "paintMask";
+    | "paintMask"
+    | "textToVideo"
+    | "imageToVideo"
+    | "extractFrame";
 
-export type PortType = "image" | "mask" | "text" | "number" | "any";
+export type PortType = "image" | "mask" | "text" | "number" | "video" | "any";
 
 export interface Port {
     id: string;
@@ -63,7 +66,17 @@ export interface WorkflowGraph {
 export type NodeExecutor =
     | {
           kind: "client";
-          handler: "imageInput" | "assetOutput" | "preview" | "paintMask";
+          // Video nodes are client-kind on purpose: generation takes 1–10
+          // minutes (beyond the 300s serverless ceiling), so the handlers
+          // drive the async submit-and-poll API from the browser.
+          handler:
+              | "imageInput"
+              | "assetOutput"
+              | "preview"
+              | "paintMask"
+              | "textToVideo"
+              | "imageToVideo"
+              | "extractFrame";
       }
     | {
           kind: "server";
@@ -204,19 +217,21 @@ export const NODE_REGISTRY: Record<WorkflowNodeType, NodeDefinition> = {
     preview: {
         type: "preview",
         displayName: "Превью",
-        description: "Отображает изображение без сохранения в ассеты.",
+        description: "Отображает изображение или видео без сохранения в ассеты.",
         category: "output",
-        inputs: [{ id: "image-in", type: "image", label: "Изображение", required: true }],
-        outputs: [{ id: "image-out", type: "image", label: "Изображение" }],
+        // `any` так что и image-, и video-выходы можно подключить; хэндлер
+        // просто пробрасывает URL, а BaseNode рендерит <img> или <video>.
+        inputs: [{ id: "image-in", type: "any", label: "Изображение / Видео", required: true }],
+        outputs: [{ id: "image-out", type: "any", label: "Изображение / Видео" }],
         defaultParams: {},
         execute: { kind: "client", handler: "preview" },
     },
     assetOutput: {
         type: "assetOutput",
         displayName: "Сохранить в библиотеку",
-        description: "Записывает итоговое изображение как Asset воркспейса.",
+        description: "Записывает итоговое изображение или видео как Asset воркспейса.",
         category: "output",
-        inputs: [{ id: "image-in", type: "image", label: "Изображение", required: true }],
+        inputs: [{ id: "image-in", type: "any", label: "Изображение / Видео", required: true }],
         outputs: [],
         defaultParams: { name: "Workflow output" },
         execute: { kind: "client", handler: "assetOutput" },
@@ -256,6 +271,58 @@ export const NODE_REGISTRY: Record<WorkflowNodeType, NodeDefinition> = {
             quality: "high",
         },
         execute: { kind: "server", actionId: "ai_inpaint" },
+    },
+    textToVideo: {
+        type: "textToVideo",
+        displayName: "Текст → Видео",
+        description:
+            "Генерирует видео по текстовому промпту (fal.ai: Kling, Veo, Sora и др.). Квоты применяются как в видео-режиме.",
+        category: "ai",
+        inputs: [
+            { id: "prompt-in", type: "text", label: "Промпт", role: "prompt" },
+        ],
+        outputs: [{ id: "video-out", type: "video", label: "Видео" }],
+        defaultParams: {
+            prompt: "",
+            model: "kling-2.5-turbo-pro",
+            duration: "5",
+            aspectRatio: "16:9",
+            audio: true,
+            presetId: "none",
+        },
+        execute: { kind: "client", handler: "textToVideo" },
+    },
+    imageToVideo: {
+        type: "imageToVideo",
+        displayName: "Изображение → Видео",
+        description:
+            "Оживляет изображение: стартовый кадр + промпт, опционально финальный кадр (если модель поддерживает).",
+        category: "ai",
+        inputs: [
+            { id: "image-in", type: "image", label: "Стартовый кадр", required: true },
+            { id: "end-frame-in", type: "image", label: "Финальный кадр" },
+            { id: "prompt-in", type: "text", label: "Промпт", role: "prompt" },
+        ],
+        outputs: [{ id: "video-out", type: "video", label: "Видео" }],
+        defaultParams: {
+            prompt: "",
+            model: "kling-2.5-turbo-pro",
+            duration: "5",
+            audio: true,
+            presetId: "none",
+        },
+        execute: { kind: "client", handler: "imageToVideo" },
+    },
+    extractFrame: {
+        type: "extractFrame",
+        displayName: "Кадр из видео",
+        description:
+            "Извлекает кадр из видео в заданный момент времени — для цепочек видео → кадр → видео.",
+        category: "transform",
+        inputs: [{ id: "video-in", type: "video", label: "Видео", required: true }],
+        outputs: [{ id: "image-out", type: "image", label: "Изображение" }],
+        defaultParams: { timeSec: 0 },
+        execute: { kind: "client", handler: "extractFrame" },
     },
 };
 

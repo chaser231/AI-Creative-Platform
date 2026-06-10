@@ -117,6 +117,56 @@ export async function uploadFromExternalUrl(
 }
 
 /**
+ * Re-upload an external VIDEO URL (fal.media temporary link) to our S3
+ * bucket. Same SSRF guard as images; uploadImagePolicy already allows
+ * `video/` MIME and bodies up to 256 MB.
+ *
+ * Key prefix: video-generations/{workspaceId}/{uuid}.{ext}
+ */
+export async function uploadVideoFromExternalUrl(
+    url: string,
+    opts: { workspaceId: string },
+): Promise<UploadResult> {
+    const response = await safeFetch(
+        url,
+        { signal: AbortSignal.timeout(120_000) },
+        uploadImagePolicy(),
+    );
+    if (!response.ok) {
+        throw new Error(`External video URL fetch failed: ${response.status}`);
+    }
+
+    const contentType = response.headers.get("content-type") || "video/mp4";
+    if (!contentType.startsWith("video/")) {
+        throw new Error(`Non-video content-type from provider: ${contentType}`);
+    }
+
+    const buffer = Buffer.from(await response.arrayBuffer());
+    if (buffer.length === 0) {
+        throw new Error("Provider returned empty video body");
+    }
+
+    const ext = (contentType.split("/")[1] || "mp4").split(";")[0].trim();
+    const key = `video-generations/${opts.workspaceId}/${randomUUID()}.${ext}`;
+
+    await getS3Client().send(
+        new PutObjectCommand({
+            Bucket: getBucket(),
+            Key: key,
+            Body: buffer,
+            ContentType: contentType,
+        }),
+    );
+
+    return {
+        s3Url: `${getS3Endpoint()}/${getBucket()}/${key}`,
+        s3Key: key,
+        contentType,
+        sizeBytes: buffer.length,
+    };
+}
+
+/**
  * Upload a raw image buffer (from sharp pipelines etc.) to S3 under the
  * same `workflow-runs/{workspaceId}/{uuid}.{ext}` prefix used for AI outputs.
  */

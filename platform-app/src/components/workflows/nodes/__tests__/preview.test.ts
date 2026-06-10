@@ -25,6 +25,21 @@ describe("getWorkflowNodePreview", () => {
         ).toEqual({
             url: "https://example.com/result.png",
             source: "result",
+            isVideo: false,
+        });
+    });
+
+    it("marks video result urls so BaseNode renders a <video>", () => {
+        expect(
+            getWorkflowNodePreview(
+                "textToVideo",
+                { prompt: "ocean waves" },
+                { url: "https://example.com/result.mp4" },
+            ),
+        ).toEqual({
+            url: "https://example.com/result.mp4",
+            source: "result",
+            isVideo: true,
         });
     });
 

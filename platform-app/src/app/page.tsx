@@ -174,6 +174,8 @@ export default function DashboardPage() {
       const goal = (data as { goal?: string }).goal;
       if (goal === "photo") {
         router.push(`/photo/${data.id}`);
+      } else if (goal === "video") {
+        router.push(`/video/${data.id}`);
       } else {
         router.push(`/editor/${data.id}`);
       }
@@ -187,7 +189,6 @@ export default function DashboardPage() {
         setModalOpen(true);
         break;
       case "text":
-      case "video":
         setToast("В разработке");
         break;
       case "photo":
@@ -195,6 +196,15 @@ export default function DashboardPage() {
           createProjectMutation.mutate({
             name: "Генерация фото",
             goal: "photo",
+            workspaceId,
+          });
+        }
+        break;
+      case "video":
+        if (workspaceId) {
+          createProjectMutation.mutate({
+            name: "Генерация видео",
+            goal: "video",
             workspaceId,
           });
         }

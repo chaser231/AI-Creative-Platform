@@ -670,6 +670,98 @@ async function falSubmitAndPoll(
     throw new Error(`fal.ai prediction timed out after ${maxPollSeconds} seconds`);
 }
 
+// ─── fal.ai Queue Async Helpers (submit-only + status, no blocking poll) ────
+//
+// Video generation runs 1–10 minutes — far beyond the 300s serverless route
+// ceiling — so the video pipeline never blocks on falSubmitAndPoll. Instead
+// the submit route stores the queue URLs in VideoJob and the client polls
+// /api/ai/video/jobs/[id], which calls falGetQueueStatus once per request.
+
+export interface FalQueueSubmission {
+    requestId: string;
+    statusUrl: string;
+    responseUrl: string;
+}
+
+/** Submit a request to the fal.ai queue and return immediately (no polling). */
+export async function falSubmitOnly(
+    endpoint: string,
+    input: Record<string, unknown>,
+): Promise<FalQueueSubmission> {
+    const apiKey = process.env.FAL_KEY;
+    if (!apiKey) {
+        throw new Error("fal.ai API key not configured. Set FAL_KEY in .env.local");
+    }
+    const submitRes = await fetch(`https://queue.fal.run/${endpoint}`, {
+        method: "POST",
+        headers: {
+            "Authorization": `Key ${apiKey}`,
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify(input),
+    });
+    if (!submitRes.ok) {
+        const errBody = await submitRes.text();
+        throw new Error(`fal.ai submit failed (${submitRes.status}): ${errBody.slice(0, 300)}`);
+    }
+    const data = await submitRes.json() as Record<string, unknown>;
+    const requestId = data.request_id as string | undefined;
+    if (!requestId) {
+        throw new Error(`fal.ai ${endpoint}: queue submit returned no request_id`);
+    }
+    return {
+        requestId,
+        statusUrl: (data.status_url as string | undefined)
+            ?? `https://queue.fal.run/${endpoint}/requests/${requestId}/status`,
+        responseUrl: (data.response_url as string | undefined)
+            ?? `https://queue.fal.run/${endpoint}/requests/${requestId}`,
+    };
+}
+
+export type FalQueueStatusResult =
+    | { status: "IN_QUEUE" }
+    | { status: "IN_PROGRESS" }
+    | { status: "COMPLETED"; payload: Record<string, unknown> }
+    | { status: "FAILED"; error: string };
+
+/** Single status check against a fal queue request (no waiting). */
+export async function falGetQueueStatus(
+    statusUrl: string,
+    responseUrl: string,
+): Promise<FalQueueStatusResult> {
+    const apiKey = process.env.FAL_KEY;
+    if (!apiKey) {
+        throw new Error("fal.ai API key not configured. Set FAL_KEY in .env.local");
+    }
+    const statusRes = await fetch(statusUrl, {
+        headers: { "Authorization": `Key ${apiKey}` },
+    });
+    if (!statusRes.ok) {
+        // Transient queue hiccup — report as still-in-progress, the client
+        // will simply poll again.
+        if (statusRes.status >= 500 || statusRes.status === 429) {
+            return { status: "IN_PROGRESS" };
+        }
+        const errText = await statusRes.text();
+        return { status: "FAILED", error: `fal.ai status check failed (${statusRes.status}): ${errText.slice(0, 300)}` };
+    }
+    const status = await statusRes.json() as { status?: string; error?: unknown };
+    if (status.status === "COMPLETED") {
+        const resultRes = await fetch(responseUrl, {
+            headers: { "Authorization": `Key ${apiKey}` },
+        });
+        if (!resultRes.ok) {
+            const errText = await resultRes.text();
+            return { status: "FAILED", error: `fal.ai result fetch failed (${resultRes.status}): ${errText.slice(0, 300)}` };
+        }
+        return { status: "COMPLETED", payload: await resultRes.json() as Record<string, unknown> };
+    }
+    if (status.status === "FAILED") {
+        return { status: "FAILED", error: `fal.ai prediction failed: ${String(status.error ?? "unknown")}` };
+    }
+    return { status: status.status === "IN_QUEUE" ? "IN_QUEUE" : "IN_PROGRESS" };
+}
+
 /**
  * Module-scope invoker for workflow node executors.
  *

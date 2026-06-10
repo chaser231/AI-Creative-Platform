@@ -12,6 +12,8 @@
 
 import { z } from "zod";
 import type { WorkflowNodeType } from "@/server/workflow/types";
+import { VIDEO_MODEL_REGISTRY } from "@/lib/video-models";
+import { VIDEO_MOTION_PRESETS } from "@/lib/video-presets";
 
 export const imageInputParamsSchema = z
     .object({
@@ -241,6 +243,39 @@ export const aiInpaintParamsSchema = z.object({
     quality: z.enum(["auto", "high"]).default("high"),
 });
 
+// ─── Video nodes ─────────────────────────────────────────────────────────────
+
+const videoModelIds = VIDEO_MODEL_REGISTRY.map((m) => m.id) as [string, ...string[]];
+const motionPresetIds = ["none", ...VIDEO_MOTION_PRESETS.map((p) => p.id)] as [
+    string,
+    ...string[],
+];
+
+/**
+ * Shared video generation knobs. Duration / aspect / resolution support
+ * differs per model, so values here stay permissive — the generate API
+ * clamps anything unsupported to the model defaults instead of erroring.
+ */
+const videoGenerationBaseShape = {
+    prompt: z.string().trim().max(1200).default(""),
+    model: z.enum(videoModelIds).default("kling-2.5-turbo-pro"),
+    duration: z.string().trim().max(8).default("5"),
+    aspectRatio: z
+        .enum(["16:9", "9:16", "1:1", "4:3", "3:4", "21:9"])
+        .default("16:9"),
+    resolution: z.enum(["auto", "480p", "540p", "720p", "1080p"]).default("auto"),
+    audio: z.boolean().default(true),
+    presetId: z.enum(motionPresetIds).default("none"),
+};
+
+export const textToVideoParamsSchema = z.object(videoGenerationBaseShape);
+
+export const imageToVideoParamsSchema = z.object(videoGenerationBaseShape);
+
+export const extractFrameParamsSchema = z.object({
+    timeSec: z.number().min(0).max(60).default(0),
+});
+
 /**
  * Dispatch table — Inspector resolves the schema by node type.
  * `z.ZodTypeAny` (not a parameterised mapped type) keeps the table flat;
@@ -260,6 +295,9 @@ export const NODE_PARAM_SCHEMAS: Record<WorkflowNodeType, z.ZodTypeAny> = {
     assetOutput: assetOutputParamsSchema,
     paintMask: paintMaskParamsSchema,
     aiInpaint: aiInpaintParamsSchema,
+    textToVideo: textToVideoParamsSchema,
+    imageToVideo: imageToVideoParamsSchema,
+    extractFrame: extractFrameParamsSchema,
 };
 
 export type ImageInputParams = z.infer<typeof imageInputParamsSchema>;
@@ -274,3 +312,6 @@ export type PreviewParams = z.infer<typeof previewParamsSchema>;
 export type AssetOutputParams = z.infer<typeof assetOutputParamsSchema>;
 export type PaintMaskParams = z.infer<typeof paintMaskParamsSchema>;
 export type AiInpaintParams = z.infer<typeof aiInpaintParamsSchema>;
+export type TextToVideoParams = z.infer<typeof textToVideoParamsSchema>;
+export type ImageToVideoParams = z.infer<typeof imageToVideoParamsSchema>;
+export type ExtractFrameParams = z.infer<typeof extractFrameParamsSchema>;

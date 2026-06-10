@@ -162,7 +162,7 @@ export const aiRouter = createTRPCRouter({
         sessionId: z.string(),
         role: z.enum(["user", "assistant", "system"]),
         content: z.string(),
-        type: z.enum(["text", "image", "error", "template_choices", "canvas_action", "preset_choices", "data", "fallback_actions", "plan"]),
+        type: z.enum(["text", "image", "video", "error", "template_choices", "canvas_action", "preset_choices", "data", "fallback_actions", "plan"]),
         model: z.string().optional(),
         costUnits: z.number().optional(),
         metadata: z.any().optional(),
