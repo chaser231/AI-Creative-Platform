@@ -33,6 +33,7 @@ import {
     Plus,
     RotateCw,
     Scissors,
+    Slice,
     SlidersHorizontal,
     Square,
     Type,
@@ -45,6 +46,7 @@ import { useShallow } from "zustand/react/shallow";
 import { Select } from "@/components/ui/Select";
 import { SmartNumberInput, useNumberScrub } from "@/components/ui/SmartNumberInput";
 import { useCanvasStore } from "@/store/canvasStore";
+import { requestOpenExportModal } from "@/components/editor/exportEvents";
 import { enterVectorEditMode } from "@/utils/vectorEdit";
 import type {
     BadgeLayer,
@@ -354,6 +356,39 @@ function LayerInspector({
 
     const lockAspectRatio = !!layer.lockAspectRatio;
     const aspect = layer.height !== 0 ? layer.width / layer.height : 1;
+
+    // Slices are export regions — only position, size and export action apply.
+    if (layer.type === "slice") {
+        return (
+            <div className="space-y-3">
+                <InspectorSection title="Позиция" icon={<Move size={13} />}>
+                    <TwoColumn>
+                        <NumberField label="X" value={Math.round(layer.x)} onChange={(x) => onChange({ x } as Partial<Layer>)} />
+                        <NumberField label="Y" value={Math.round(layer.y)} onChange={(y) => onChange({ y } as Partial<Layer>)} />
+                    </TwoColumn>
+                </InspectorSection>
+                <InspectorSection title="Размер" icon={<Maximize2 size={13} />}>
+                    <TwoColumn>
+                        <NumberField label="W" value={Math.round(layer.width)} min={1} onChange={(width) => onChange({ width: Math.max(1, width) } as Partial<Layer>)} />
+                        <NumberField label="H" value={Math.round(layer.height)} min={1} onChange={(height) => onChange({ height: Math.max(1, height) } as Partial<Layer>)} />
+                    </TwoColumn>
+                </InspectorSection>
+                <InspectorSection title="Слайс" icon={<Slice size={13} />}>
+                    <p className="text-[10px] text-text-tertiary leading-relaxed">
+                        Область экспорта: слайс не попадает в результат, а вырезает участок макета в отдельный файл (PNG / SVG / EPS).
+                    </p>
+                    <button
+                        type="button"
+                        onClick={() => requestOpenExportModal(layer.id)}
+                        className="w-full h-8 flex items-center justify-center gap-1.5 rounded-[var(--radius-md)] border border-border-primary text-xs text-text-primary hover:bg-bg-tertiary transition-colors cursor-pointer"
+                    >
+                        <Upload size={12} />
+                        Экспортировать слайс
+                    </button>
+                </InspectorSection>
+            </div>
+        );
+    }
 
     const handleSizeChange = (axis: "width" | "height", value: number) => {
         const base = resolveManualSizeUpdate(layer, axis, value, axis === "width" ? widthModeConfig : heightModeConfig);

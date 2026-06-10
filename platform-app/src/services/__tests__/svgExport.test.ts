@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { layersToSvg, layersToSvgFragment } from "../svgExport";
+import { layersToSvg, layersToSvgFragment, layersToSvgSliceRegion } from "../svgExport";
 import type { Layer, RectangleLayer, VectorLayer } from "@/types";
 
 function baseLayer(over: Partial<Layer>): Layer {
@@ -163,5 +163,92 @@ describe("svgExport", () => {
         expect(svg).toContain('height="50"');
         // The single layer shifts to origin.
         expect(svg).toContain("translate(0 0)");
+    });
+
+    describe("layersToSvgSliceRegion", () => {
+        const triangle = (): VectorLayer => baseLayer({
+            id: "v-slice",
+            type: "vector",
+            x: 250,
+            y: 0,
+            width: 100,
+            height: 100,
+            fill: "#ff0000",
+            fillEnabled: true,
+            subpaths: [
+                {
+                    closed: true,
+                    points: [
+                        { x: 0, y: 0, type: "corner" },
+                        { x: 1, y: 0, type: "corner" },
+                        { x: 0.5, y: 1, type: "corner" },
+                    ],
+                },
+            ],
+        }) as VectorLayer;
+
+        it("sizes the document to the slice rect, not the artboard", () => {
+            const svg = layersToSvgSliceRegion({
+                layers: [triangle()],
+                width: 900,
+                height: 300,
+                background: false,
+                rect: { x: 300, y: 0, width: 300, height: 300 },
+            });
+            expect(svg).toContain('width="300"');
+            expect(svg).toContain('height="300"');
+            expect(svg).toContain('viewBox="0 0 300 300"');
+        });
+
+        it("installs a root rect clipPath and shifts via a wrapper group", () => {
+            const svg = layersToSvgSliceRegion({
+                layers: [triangle()],
+                width: 900,
+                height: 300,
+                background: false,
+                rect: { x: 300, y: 0, width: 300, height: 300 },
+            });
+            expect(svg).toMatch(/<clipPath id="sliceClip\d+"><rect x="0" y="0" width="300" height="300" \/><\/clipPath>/);
+            expect(svg).toMatch(/<g clip-path="url\(#sliceClip\d+\)"><g transform="translate\(-300 0\)">/);
+        });
+
+        it("keeps vector geometry intact for layers crossing the slice boundary", () => {
+            // The triangle (x 250..350) straddles the boundary at x=300, yet its
+            // path data must stay identical to the unclipped export.
+            const svg = layersToSvgSliceRegion({
+                layers: [triangle()],
+                width: 900,
+                height: 300,
+                background: false,
+                rect: { x: 300, y: 0, width: 300, height: 300 },
+            });
+            expect(svg).toContain("M 0 0 L 100 0 L 50 100 L 0 0 Z");
+            // The layer keeps its own absolute transform inside the shifted group.
+            expect(svg).toContain("translate(250 0)");
+        });
+
+        it("includes the artboard background sized to the artboard", () => {
+            const svg = layersToSvgSliceRegion({
+                layers: [],
+                width: 900,
+                height: 300,
+                artboardFill: "#ABCDEF",
+                rect: { x: 300, y: 0, width: 300, height: 300 },
+            });
+            expect(svg).toContain('<rect x="0" y="0" width="900" height="300" fill="#ABCDEF"');
+        });
+
+        it("does not render slice layers themselves", () => {
+            const slice = baseLayer({ id: "s1", type: "slice", x: 0, y: 0, width: 300, height: 300 }) as Layer;
+            const svg = layersToSvgSliceRegion({
+                layers: [slice],
+                width: 900,
+                height: 300,
+                background: false,
+                rect: { x: 0, y: 0, width: 300, height: 300 },
+            });
+            // The shift wrapper stays empty — the slice produced no content.
+            expect(svg).toMatch(/<g transform="translate\(0 0\)"><\/g>/);
+        });
     });
 });

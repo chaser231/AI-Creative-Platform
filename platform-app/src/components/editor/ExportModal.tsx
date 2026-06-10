@@ -4,23 +4,26 @@ import { useState, useCallback } from "react";
 import { Modal } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
 import { Select } from "@/components/ui/Select";
-import { Download, Layers, Package } from "lucide-react";
+import { Download, Layers, Package, Slice } from "lucide-react";
 import Konva from "konva";
 import { useCanvasStore } from "@/store/canvasStore";
 import { useShallow } from "zustand/react/shallow";
-import type { FrameLayer } from "@/types";
+import type { FrameLayer, SliceLayer } from "@/types";
 import { cn } from "@/lib/cn";
-import { downloadDataUrl, zipPngDataUrls, zipTextFiles } from "@/utils/exportImage";
+import { downloadDataUrl, sanitizeExportFileName, zipPngDataUrls, zipTextFiles } from "@/utils/exportImage";
 import { getCanvasStateForSave } from "@/utils/canvasState";
-import { layersToSvg, layersToSvgFragment } from "@/services/svgExport";
-import { layersToEps, layersToEpsFragment } from "@/services/epsExport";
+import { layersToSvg, layersToSvgFragment, layersToSvgSliceRegion } from "@/services/svgExport";
+import { layersToEps, layersToEpsFragment, layersToEpsSliceRegion } from "@/services/epsExport";
 import { collectLayerTree } from "@/utils/clipboardUtils";
+import { SLICE_OVERLAY_NAME } from "@/components/editor/canvas/sliceOverlay";
 import type { Layer } from "@/types";
 
 interface ExportModalProps {
     open: boolean;
     onClose: () => void;
     stageRef: React.RefObject<Konva.Stage | null>;
+    /** Preselect an export target (e.g. a slice id) when the modal opens. */
+    initialTarget?: string | null;
 }
 
 function TransparentBackgroundOption({
@@ -48,15 +51,16 @@ function TransparentBackgroundOption({
     );
 }
 
-type ExportTarget = "artboard" | string; // "artboard" or frame id
-type ExportMode = "single" | "batch" | "template";
+type ExportTarget = "artboard" | string; // "artboard", frame id, or slice id
+type ExportMode = "single" | "batch" | "slices" | "template";
 
-export function ExportModal({ open, onClose, stageRef }: ExportModalProps) {
+export function ExportModal({ open, onClose, stageRef, initialTarget }: ExportModalProps) {
     const [scale, setScale] = useState(1);
     const [exportMode, setExportMode] = useState<ExportMode>("single");
     const [exportTarget, setExportTarget] = useState<ExportTarget>("artboard");
     const [exportFormat, setExportFormat] = useState<"png" | "svg" | "eps">("png");
     const [selectedResizes, setSelectedResizes] = useState<Set<string>>(new Set());
+    const [selectedSlices, setSelectedSlices] = useState<Set<string>>(new Set());
     const [isExporting, setIsExporting] = useState(false);
     const [transparentBackground, setTransparentBackground] = useState(false);
 
@@ -68,6 +72,19 @@ export function ExportModal({ open, onClose, stageRef }: ExportModalProps) {
 
     // Get all frames for export target selector
     const frames = layers.filter((l) => l.type === "frame") as FrameLayer[];
+    const slices = layers.filter((l) => l.type === "slice") as SliceLayer[];
+
+    // Apply preselected target (e.g. "export this slice" from the properties
+    // panel) — render-phase state adjustment, per the React docs pattern.
+    const [appliedInitialTarget, setAppliedInitialTarget] = useState<string | null>(null);
+    if (open && initialTarget && initialTarget !== appliedInitialTarget && layers.some((l) => l.id === initialTarget)) {
+        setAppliedInitialTarget(initialTarget);
+        setExportMode("single");
+        setExportTarget(initialTarget);
+    }
+    if (!open && appliedInitialTarget !== null) {
+        setAppliedInitialTarget(null);
+    }
 
     // Initialize selected resizes on open
     const allResizeIds = resizes.map((r) => r.id);
@@ -104,16 +121,22 @@ export function ExportModal({ open, onClose, stageRef }: ExportModalProps) {
         if (exportTarget === "artboard") {
             return { x: 0, y: 0, width: canvasWidth, height: canvasHeight };
         }
-        // Export a specific frame
-        const frame = layers.find((l) => l.id === exportTarget) as FrameLayer | undefined;
-        if (frame) {
-            return { x: frame.x, y: frame.y, width: frame.width, height: frame.height };
+        // Export a specific frame or slice
+        const target = layers.find((l) => l.id === exportTarget);
+        if (target) {
+            return { x: target.x, y: target.y, width: target.width, height: target.height };
         }
         return { x: 0, y: 0, width: canvasWidth, height: canvasHeight };
     }, [exportTarget, canvasWidth, canvasHeight, layers]);
 
     const captureDataUrl = useCallback((stage: Konva.Stage, bounds: { x: number; y: number; width: number; height: number }) => {
         const restore: Array<() => void> = [];
+        // Slice overlays are studio-only chrome — never bake them into rasters.
+        stage.find(`.${SLICE_OVERLAY_NAME}`).forEach((node) => {
+            const prevVisible = node.visible();
+            restore.push(() => node.visible(prevVisible));
+            node.visible(false);
+        });
         stage.find(".export-artboard-fill").forEach((node) => {
             const shape = node as Konva.Shape;
             const prevShadowBlur = shape.shadowBlur();
@@ -193,9 +216,10 @@ export function ExportModal({ open, onClose, stageRef }: ExportModalProps) {
     }, []);
 
     const handleSvgExport = useCallback(async () => {
+        const targetLayer = layers.find((l) => l.id === exportTarget);
         const targetName = exportTarget === "artboard"
             ? "artboard"
-            : (layers.find((l) => l.id === exportTarget)?.name || "frame");
+            : (targetLayer?.name || "frame");
         setIsExporting(true);
         try {
             const [{ buildOutlinedTextMap }, { buildEmbeddedImageMap }] = await Promise.all([
@@ -221,6 +245,18 @@ export function ExportModal({ open, onClose, stageRef }: ExportModalProps) {
                     embeddedImages,
                     stage: stageRef.current,
                 });
+            } else if (targetLayer?.type === "slice") {
+                svg = layersToSvgSliceRegion({
+                    layers: exportLayers,
+                    width: canvasWidth,
+                    height: canvasHeight,
+                    artboardFill: artboardProps.fill,
+                    artboardFillEnabled: !transparentBackground && artboardProps.fillEnabled !== false,
+                    outlinedText,
+                    embeddedImages,
+                    stage: stageRef.current,
+                    rect: { x: targetLayer.x, y: targetLayer.y, width: targetLayer.width, height: targetLayer.height },
+                });
             } else {
                 const subtree = collectLayerTree([exportTarget], exportLayers);
                 svg = subtree.length ? layersToSvgFragment(subtree, outlinedText) : "";
@@ -233,9 +269,10 @@ export function ExportModal({ open, onClose, stageRef }: ExportModalProps) {
     }, [exportTarget, layers, canvasWidth, canvasHeight, artboardProps, transparentBackground, downloadSvg, onClose, stageRef]);
 
     const handleEpsExport = useCallback(async () => {
+        const targetLayer = layers.find((l) => l.id === exportTarget);
         const targetName = exportTarget === "artboard"
             ? "artboard"
-            : (layers.find((l) => l.id === exportTarget)?.name || "frame");
+            : (targetLayer?.name || "frame");
         setIsExporting(true);
         try {
             const [{ buildOutlinedTextMap }, { promoteFigmaVectorImagesForExport }] = await Promise.all([
@@ -248,7 +285,18 @@ export function ExportModal({ open, onClose, stageRef }: ExportModalProps) {
             const outlinedText = await buildOutlinedTextMap(stageRef.current, exportLayers);
 
             let eps: string;
-            if (exportTarget !== "artboard") {
+            if (targetLayer?.type === "slice") {
+                eps = layersToEpsSliceRegion({
+                    layers: exportLayers,
+                    width: canvasWidth,
+                    height: canvasHeight,
+                    artboardFill: artboardProps.fill,
+                    artboardFillEnabled: !transparentBackground && artboardProps.fillEnabled !== false,
+                    outlinedText,
+                    stage: stageRef.current,
+                    rect: { x: targetLayer.x, y: targetLayer.y, width: targetLayer.width, height: targetLayer.height },
+                });
+            } else if (exportTarget !== "artboard") {
                 const subtree = collectLayerTree([exportTarget], exportLayers);
                 eps = layersToEpsFragment(subtree, outlinedText);
             } else {
@@ -392,6 +440,108 @@ export function ExportModal({ open, onClose, stageRef }: ExportModalProps) {
         }
     };
 
+    const toggleSlice = (id: string) => {
+        setSelectedSlices((prev) => {
+            const next = new Set(prev);
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
+            return next;
+        });
+    };
+
+    const handleSlicesExport = async () => {
+        const stage = stageRef.current;
+        if (!stage) return;
+        const slicesToExport = slices.filter((s) => selectedSlices.has(s.id));
+        if (slicesToExport.length === 0) return;
+
+        setIsExporting(true);
+
+        const oldScale = stage.scaleX();
+        const oldX = stage.x();
+        const oldY = stage.y();
+
+        // Duplicate slice names must not silently overwrite each other in the ZIP.
+        const usedNames = new Map<string, number>();
+        const uniqueName = (raw: string) => {
+            const base = sanitizeExportFileName(raw) || "slice";
+            const count = usedNames.get(base) ?? 0;
+            usedNames.set(base, count + 1);
+            return count === 0 ? base : `${base}-${count + 1}`;
+        };
+
+        try {
+            if (exportFormat === "png") {
+                stage.scale({ x: 1, y: 1 });
+                stage.position({ x: 0, y: 0 });
+                stage.batchDraw();
+
+                const pngEntries = slicesToExport.map((s) => ({
+                    fileName: `${uniqueName(s.name)}-${Math.round(s.width)}x${Math.round(s.height)}@${scale}x.png`,
+                    dataUrl: captureDataUrl(stage, { x: s.x, y: s.y, width: s.width, height: s.height }),
+                }));
+
+                if (pngEntries.length === 1) {
+                    downloadDataUrl(pngEntries[0].dataUrl, pngEntries[0].fileName);
+                } else {
+                    await zipPngDataUrls(pngEntries, "slices-export.zip");
+                }
+            } else {
+                const [{ buildOutlinedTextMap }, { buildEmbeddedImageMap }, { promoteFigmaVectorImagesForExport }, { prepareStageForExport }] = await Promise.all([
+                    import("@/services/exportText"),
+                    import("@/services/exportImages"),
+                    import("@/lib/figma/vectorPromotion"),
+                    import("@/services/exportPrep"),
+                ]);
+                await prepareStageForExport(stage);
+                const exportLayers = await promoteFigmaVectorImagesForExport(layers as Layer[]);
+                const outlinedText = await buildOutlinedTextMap(stage, exportLayers);
+                const embeddedImages = exportFormat === "svg"
+                    ? await buildEmbeddedImageMap(exportLayers)
+                    : undefined;
+
+                const common = {
+                    layers: exportLayers,
+                    width: canvasWidth,
+                    height: canvasHeight,
+                    artboardFill: artboardProps.fill,
+                    artboardFillEnabled: !transparentBackground && artboardProps.fillEnabled !== false,
+                    outlinedText,
+                    stage,
+                };
+
+                const vectorEntries = slicesToExport.map((s) => {
+                    const rect = { x: s.x, y: s.y, width: s.width, height: s.height };
+                    return {
+                        fileName: `${uniqueName(s.name)}-${Math.round(s.width)}x${Math.round(s.height)}.${exportFormat}`,
+                        content: exportFormat === "svg"
+                            ? layersToSvgSliceRegion({ ...common, embeddedImages, rect })
+                            : layersToEpsSliceRegion({ ...common, rect }),
+                    };
+                });
+
+                if (vectorEntries.length === 1) {
+                    const mime = exportFormat === "svg" ? "image/svg+xml" : "application/postscript";
+                    const blob = new Blob([vectorEntries[0].content], { type: mime });
+                    const url = URL.createObjectURL(blob);
+                    const link = document.createElement("a");
+                    link.href = url;
+                    link.download = vectorEntries[0].fileName;
+                    link.click();
+                    URL.revokeObjectURL(url);
+                } else {
+                    await zipTextFiles(vectorEntries, `slices-export-${exportFormat}.zip`);
+                }
+            }
+        } finally {
+            stage.scale({ x: oldScale, y: oldScale });
+            stage.position({ x: oldX, y: oldY });
+            stage.batchDraw();
+            setIsExporting(false);
+            onClose();
+        }
+    };
+
     const bounds = getExportBounds();
 
     return (
@@ -416,6 +566,14 @@ export function ExportModal({ open, onClose, stageRef }: ExportModalProps) {
                             disabled={selectedResizes.size === 0 || isExporting}
                         >
                             {isExporting ? "Экспорт..." : `Скачать ${selectedResizes.size} файл(ов)`}
+                        </Button>
+                    ) : exportMode === "slices" ? (
+                        <Button
+                            onClick={handleSlicesExport}
+                            icon={<Slice size={16} />}
+                            disabled={selectedSlices.size === 0 || isExporting}
+                        >
+                            {isExporting ? "Экспорт..." : `Скачать ${selectedSlices.size} слайс(ов)`}
                         </Button>
                     ) : (
                         <Button
@@ -476,6 +634,23 @@ export function ExportModal({ open, onClose, stageRef }: ExportModalProps) {
                         <Layers size={12} />
                         Пакетный
                     </button>
+                    {slices.length > 0 && (
+                        <button
+                            onClick={() => {
+                                setExportMode("slices");
+                                setSelectedSlices(new Set(slices.map((s) => s.id)));
+                            }}
+                            className={cn(
+                                "flex-1 flex items-center justify-center gap-1.5 h-8 rounded-[var(--radius-md)] text-xs font-medium transition-all cursor-pointer",
+                                exportMode === "slices"
+                                    ? "bg-bg-surface text-text-primary shadow-[var(--shadow-sm)] border border-border-primary"
+                                    : "text-text-secondary hover:text-text-primary"
+                            )}
+                        >
+                            <Slice size={12} />
+                            Слайсы
+                        </button>
+                    )}
                     <button
                         onClick={() => setExportMode("template")}
                         className={cn(
@@ -493,7 +668,7 @@ export function ExportModal({ open, onClose, stageRef }: ExportModalProps) {
                 {exportMode === "single" ? (
                     <>
                         {/* Export target selector */}
-                        {frames.length > 0 && (
+                        {(frames.length > 0 || slices.length > 0) && (
                             <div className="space-y-1.5">
                                 <label className="text-sm font-medium text-text-primary">Объект экспорта</label>
                                 <Select
@@ -504,6 +679,10 @@ export function ExportModal({ open, onClose, stageRef }: ExportModalProps) {
                                         ...frames.map((frame) => ({
                                             value: frame.id,
                                             label: `${frame.name} (${Math.round(frame.width)} × ${Math.round(frame.height)})`,
+                                        })),
+                                        ...slices.map((slice) => ({
+                                            value: slice.id,
+                                            label: `${slice.name} — слайс (${Math.round(slice.width)} × ${Math.round(slice.height)})`,
                                         })),
                                     ]}
                                 />
@@ -664,6 +843,109 @@ export function ExportModal({ open, onClose, stageRef }: ExportModalProps) {
                         <div className="p-3 bg-bg-secondary rounded-[var(--radius-md)] border border-border-primary">
                             <p className="text-xs text-text-secondary">
                                 Будет экспортировано <span className="text-text-primary font-medium">{selectedResizes.size}</span> файл(ов) в формате PNG @{scale}x
+                            </p>
+                        </div>
+                    </>
+                ) : exportMode === "slices" ? (
+                    <>
+                        {/* Format selector (slices) */}
+                        <div className="space-y-1.5">
+                            <label className="text-sm font-medium text-text-primary">Формат</label>
+                            <div className="flex gap-2">
+                                {(["png", "svg", "eps"] as const).map((f) => (
+                                    <button
+                                        key={f}
+                                        onClick={() => setExportFormat(f)}
+                                        className={`flex-1 h-9 rounded-[var(--radius-md)] text-sm font-medium border transition-all cursor-pointer uppercase ${exportFormat === f
+                                            ? "border-accent-primary bg-bg-tertiary text-text-primary"
+                                            : "border-border-primary text-text-secondary hover:border-border-secondary"
+                                            }`}
+                                    >
+                                        {f}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+
+                        {/* Slice list */}
+                        <div className="space-y-1.5">
+                            <div className="flex items-center justify-between">
+                                <label className="text-sm font-medium text-text-primary">Слайсы для экспорта</label>
+                                <div className="flex gap-2">
+                                    <button
+                                        onClick={() => setSelectedSlices(new Set(slices.map((s) => s.id)))}
+                                        className="text-[10px] text-accent-primary hover:underline cursor-pointer"
+                                    >
+                                        Выбрать все
+                                    </button>
+                                    <button
+                                        onClick={() => setSelectedSlices(new Set())}
+                                        className="text-[10px] text-text-tertiary hover:text-text-primary cursor-pointer"
+                                    >
+                                        Снять все
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div className="max-h-48 overflow-y-auto space-y-1 border border-border-primary rounded-[var(--radius-md)] p-2">
+                                {slices.map((slice) => (
+                                    <label
+                                        key={slice.id}
+                                        className={cn(
+                                            "flex items-center gap-2.5 px-2.5 py-2 rounded-[var(--radius-md)] cursor-pointer transition-colors",
+                                            selectedSlices.has(slice.id)
+                                                ? "bg-accent-primary/5 border border-accent-primary/20"
+                                                : "border border-transparent hover:bg-bg-secondary"
+                                        )}
+                                    >
+                                        <input
+                                            type="checkbox"
+                                            checked={selectedSlices.has(slice.id)}
+                                            onChange={() => toggleSlice(slice.id)}
+                                            className="w-3.5 h-3.5 rounded border-border-primary accent-[var(--accent-primary)] cursor-pointer"
+                                        />
+                                        <div className="flex-1 min-w-0">
+                                            <span className="text-xs text-text-primary font-medium">{slice.name}</span>
+                                            <span className="text-[10px] text-text-tertiary ml-2">
+                                                {Math.round(slice.width)} × {Math.round(slice.height)}
+                                            </span>
+                                        </div>
+                                    </label>
+                                ))}
+                            </div>
+                        </div>
+
+                        {/* Scale selector for slices (PNG only) */}
+                        {exportFormat === "png" && (
+                            <div className="space-y-1.5">
+                                <label className="text-sm font-medium text-text-primary">Масштаб</label>
+                                <div className="flex gap-2">
+                                    {[1, 2].map((s) => (
+                                        <button
+                                            key={s}
+                                            onClick={() => setScale(s)}
+                                            className={`flex-1 h-9 rounded-[var(--radius-md)] text-sm font-medium border transition-all cursor-pointer ${scale === s
+                                                ? "border-accent-primary bg-bg-tertiary text-text-primary"
+                                                : "border-border-primary text-text-secondary hover:border-border-secondary"
+                                                }`}
+                                        >
+                                            {s}x
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+                        <TransparentBackgroundOption
+                            checked={transparentBackground}
+                            onChange={setTransparentBackground}
+                        />
+
+                        {/* Slices preview */}
+                        <div className="p-3 bg-bg-secondary rounded-[var(--radius-md)] border border-border-primary">
+                            <p className="text-xs text-text-secondary">
+                                Каждый слайс — отдельный файл {exportFormat.toUpperCase()}.
+                                {selectedSlices.size > 1 ? " Файлы будут собраны в ZIP-архив." : ""}
+                                {exportFormat !== "png" ? " Векторы обрезаются клипом без изменения геометрии." : ""}
                             </p>
                         </div>
                     </>

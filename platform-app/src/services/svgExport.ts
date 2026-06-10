@@ -339,6 +339,53 @@ export function layersToSvg(options: SvgExportOptions): string {
     return `<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" width="${round(width)}" height="${round(height)}" viewBox="0 0 ${round(width)} ${round(height)}">${defsBlock}${bodyParts.join("")}</svg>`;
 }
 
+export interface SliceRegionRect {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+}
+
+/**
+ * Serialize the full layer tree to an SVG cropped to an arbitrary rect region
+ * (a slice). Geometry is NOT modified: layers render at their original
+ * coordinates inside a translated group, and a root-level rectangular
+ * clipPath crops the viewport — the same approach Figma uses for slice
+ * export, so vector paths, outlined text and gradients stay intact.
+ *
+ * `width`/`height` in the options describe the artboard (used for the
+ * background rect); the output document is sized to `rect`.
+ */
+export function layersToSvgSliceRegion(options: SvgExportOptions & { rect: SliceRegionRect }): string {
+    const { layers, width, height, artboardFill, artboardFillEnabled, background = true, rect } = options;
+    const defs: Defs = { items: [], counter: 0 };
+
+    const childIds = new Set<string>();
+    for (const l of layers) {
+        if (l.type === "frame" && Array.isArray((l as FrameLayer).childIds)) {
+            (l as FrameLayer).childIds.forEach((id) => childIds.add(id));
+        }
+    }
+    const topLevel = layers.filter((l) => !childIds.has(l.id));
+
+    const bodyParts: string[] = [];
+    if (background && artboardFillEnabled !== false) {
+        const { fill, fillOpacity } = paintToSvgFill(artboardFill ?? "#FFFFFF", defs, width, height);
+        bodyParts.push(`<rect x="0" y="0" width="${round(width)}" height="${round(height)}" fill="${fill}"${fillOpacity < 1 ? ` fill-opacity="${round(fillOpacity)}"` : ""} />`);
+    }
+    for (const layer of topLevel) {
+        bodyParts.push(renderLayer(layer, layers, defs, options.outlinedText, options.embeddedImages, options.stage));
+    }
+
+    const clipId = `sliceClip${defs.counter++}`;
+    defs.items.push(`<clipPath id="${clipId}"><rect x="0" y="0" width="${round(rect.width)}" height="${round(rect.height)}" /></clipPath>`);
+
+    const defsBlock = `<defs>${defs.items.join("")}</defs>`;
+    const rw = round(rect.width);
+    const rh = round(rect.height);
+    return `<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" width="${rw}" height="${rh}" viewBox="0 0 ${rw} ${rh}">${defsBlock}<g clip-path="url(#${clipId})"><g transform="translate(${round(-rect.x)} ${round(-rect.y)})">${bodyParts.join("")}</g></g></svg>`;
+}
+
 /** Serialize a subset of layers to an SVG sized to their combined bounds. */
 export function layersToSvgFragment(layers: Layer[], outlinedText?: Map<string, OutlinedText>): string {
     if (layers.length === 0) return "";

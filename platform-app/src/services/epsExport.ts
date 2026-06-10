@@ -514,6 +514,63 @@ export function layersToEps(options: EpsExportOptions): string {
     return out.join("\n");
 }
 
+export interface EpsSliceRegionRect {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+}
+
+/**
+ * Serialize the full layer tree to an EPS cropped to an arbitrary rect region
+ * (a slice). Geometry is NOT modified: a rectangular `clip` is installed and
+ * the coordinate system is translated so the region origin maps to (0, 0) —
+ * vector paths and outlined text keep their exact curves, the PostScript
+ * interpreter crops at the region boundary.
+ *
+ * `width`/`height` describe the artboard (used for the background fill); the
+ * BoundingBox is sized to `rect`. Raster image layers are skipped, matching
+ * the regular EPS export.
+ */
+export function layersToEpsSliceRegion(options: EpsExportOptions & { rect: EpsSliceRegionRect }): string {
+    const { layers, width, height, artboardFill, artboardFillEnabled, outlinedText, stage, rect } = options;
+    const out: string[] = [];
+
+    out.push("%!PS-Adobe-3.0 EPSF-3.0");
+    out.push(`%%BoundingBox: 0 0 ${Math.ceil(rect.width)} ${Math.ceil(rect.height)}`);
+    out.push("%%Pages: 1");
+    out.push("%%EndComments");
+    out.push("gsave");
+    out.push(`0 ${n(rect.height)} translate`);
+    out.push("1 -1 scale");
+    // Crop to the slice region, then shift the artboard coordinate system so
+    // the region origin maps to (0, 0).
+    out.push(`newpath 0 0 moveto ${n(rect.width)} 0 lineto ${n(rect.width)} ${n(rect.height)} lineto 0 ${n(rect.height)} lineto closepath clip`);
+    out.push(`${n(-rect.x)} ${n(-rect.y)} translate`);
+
+    const artboardRgb = artboardFillEnabled !== false
+        ? resolveBackdrop(artboardFill, 1, WHITE)
+        : WHITE;
+
+    if (artboardFillEnabled !== false) {
+        fillShape(out, () => roundedRectPath(out, width, height, 0), artboardFill ?? "#FFFFFF", width, height, 1, WHITE);
+    }
+
+    const childIds = new Set<string>();
+    for (const l of layers) {
+        if (l.type === "frame" && Array.isArray((l as FrameLayer).childIds)) {
+            (l as FrameLayer).childIds.forEach((id) => childIds.add(id));
+        }
+    }
+    const topLevel = layers.filter((l) => !childIds.has(l.id));
+    for (const layer of topLevel) emitLayer(out, layer, layers, 1, artboardRgb, outlinedText, stage);
+
+    out.push("grestore");
+    out.push("showpage");
+    out.push("%%EOF");
+    return out.join("\n");
+}
+
 /**
  * Serialize a layer subtree (e.g. a frame + its children) to an EPS sized to the
  * combined bounds. `layers` must already include any frame children referenced

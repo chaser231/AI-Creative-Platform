@@ -5,7 +5,7 @@
 import type { StateCreator } from "zustand";
 import type {
     CanvasStore,
-    Layer, LayerUpdate, TextLayer, RectangleLayer, ImageLayer, BadgeLayer, FrameLayer, VectorLayer,
+    Layer, LayerUpdate, TextLayer, RectangleLayer, ImageLayer, BadgeLayer, FrameLayer, VectorLayer, SliceLayer,
     MasterComponent, ComponentInstance, ComponentProps,
     HistorySnapshot,
 } from "./types";
@@ -99,7 +99,7 @@ function getDefaultTextFontFamily() {
 export type LayerSlice = Pick<CanvasStore,
     | "layers"
     | "addTextLayer" | "addRectangleLayer" | "addImageLayer" | "addBadgeLayer" | "addFrameLayer"
-    | "addVectorLayer"
+    | "addVectorLayer" | "addSliceLayer" | "addSliceLayers"
     | "updateLayer" | "removeLayer"
     | "deleteSelectedLayers" | "duplicateSelectedLayers" | "duplicateLayer"
     | "reorderLayers" | "reorderLayer"
@@ -353,6 +353,47 @@ export const createLayerSlice: StateCreator<CanvasStore, [], [], LayerSlice> = (
             activeTool: "select",
         }));
         return id;
+    },
+
+    addSliceLayer: (overrides = {}) => {
+        pushSnapshot(set as (p: Partial<CanvasStore>) => void, get);
+        const id = uuid();
+        const sliceCount = get().layers.filter((l) => l.type === "slice").length;
+        const layer: SliceLayer = {
+            id,
+            type: "slice",
+            name: `Slice ${sliceCount + 1}`,
+            x: 0, y: 0, width: 200, height: 200,
+            rotation: 0, visible: true, locked: false,
+            ...overrides,
+        };
+        set((s) => ({
+            layers: [...s.layers, layer as Layer],
+            selectedLayerIds: [id],
+            activeTool: "select",
+        }));
+        return id;
+    },
+
+    addSliceLayers: (slices) => {
+        if (slices.length === 0) return [];
+        pushSnapshot(set as (p: Partial<CanvasStore>) => void, get);
+        const sliceCount = get().layers.filter((l) => l.type === "slice").length;
+        const newLayers: SliceLayer[] = slices.map((overrides, i) => ({
+            id: uuid(),
+            type: "slice",
+            name: `Slice ${sliceCount + i + 1}`,
+            x: 0, y: 0, width: 200, height: 200,
+            rotation: 0, visible: true, locked: false,
+            ...overrides,
+        }));
+        const ids = newLayers.map((l) => l.id);
+        set((s) => ({
+            layers: [...s.layers, ...(newLayers as Layer[])],
+            selectedLayerIds: ids,
+            activeTool: "select",
+        }));
+        return ids;
     },
 
     addBadgeLayer: (overrides = {}) => {

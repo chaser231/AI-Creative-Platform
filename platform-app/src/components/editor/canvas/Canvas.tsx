@@ -39,6 +39,7 @@ import { canLayerFitInFrame, collectAncestorFrameIds } from "@/utils/frameDropUt
 import { installLayerBoxGetClientRect } from "@/utils/strokeGeometry";
 import { AlignedStrokeRect } from "./AlignedStrokeRect";
 import { resolveKonvaLayerId } from "./resolveKonvaLayerId";
+import { SLICE_OVERLAY_NAME, withSliceOverlaysHidden } from "./sliceOverlay";
 import {
     FLIP_LAYER_CONTENT_NAME,
     getTextTransformBaseSize,
@@ -290,6 +291,14 @@ const CanvasLayer = memo(function CanvasLayer({
                     commonProps={commonProps}
                 />
             )}
+            {layer.type === "slice" && (
+                <SliceLayerRenderer
+                    groupRef={groupRef}
+                    layer={layer}
+                    commonProps={commonProps}
+                    isSelected={isSelected}
+                />
+            )}
             {layer.type === "frame" && (
                 <FrameLayerRenderer
                     groupRef={groupRef}
@@ -377,6 +386,56 @@ function ImageLayerRenderer({
                     strokeEnabled={layer.strokeEnabled}
                 />
             </FlipLayerContent>
+        </Group>
+    );
+}
+
+/**
+ * Slice overlay renderer — a dashed export-region marker (Figma-like).
+ * Only the dashed border and the name label are interactive, so layers
+ * underneath the slice region stay clickable. The whole group is named
+ * `SLICE_OVERLAY_NAME` and is hidden during raster export captures.
+ */
+function SliceLayerRenderer({
+    groupRef,
+    layer,
+    commonProps,
+    isSelected,
+}: {
+    groupRef: React.RefObject<Konva.Group | null>;
+    layer: LayerType & { type: "slice" };
+    commonProps: Record<string, unknown>;
+    isSelected: boolean;
+}) {
+    const zoom = useCanvasStore((s) => s.zoom);
+    const inv = 1 / Math.max(zoom, 0.01);
+    const accent = isSelected ? "#6366F1" : "#F97316";
+    const labelFontSize = 11 * inv;
+    const labelWidth = Math.max(40 * inv, layer.name.length * labelFontSize * 0.62);
+
+    return (
+        <Group ref={groupRef} name={SLICE_OVERLAY_NAME} {...commonProps}>
+            <Rect
+                width={layer.width}
+                height={layer.height}
+                stroke={accent}
+                strokeWidth={1 * inv}
+                dash={[4 * inv, 4 * inv]}
+                fillEnabled={false}
+                hitStrokeWidth={8 * inv}
+                listening={commonProps.listening as boolean}
+                perfectDrawEnabled={false}
+            />
+            <Text
+                x={0}
+                y={-(labelFontSize + 5 * inv)}
+                width={labelWidth}
+                text={layer.name}
+                fontSize={labelFontSize}
+                fontFamily="Inter, sans-serif"
+                fill={accent}
+                listening={commonProps.listening as boolean}
+            />
         </Group>
     );
 }
@@ -1493,6 +1552,7 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
         addRectangleLayer,
         addFrameLayer,
         addVectorLayer,
+        addSliceLayer,
         removeLayer,
         duplicateLayer,
         bringToFront,
@@ -1540,6 +1600,7 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
         addRectangleLayer: s.addRectangleLayer,
         addFrameLayer: s.addFrameLayer,
         addVectorLayer: s.addVectorLayer,
+        addSliceLayer: s.addSliceLayer,
         removeLayer: s.removeLayer,
         duplicateLayer: s.duplicateLayer,
         bringToFront: s.bringToFront,
@@ -1589,7 +1650,7 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
     const inpaintTargetLayerId = useCanvasStore((s) => s.inpaintTargetLayerId);
     const sharedInpaintMask = useOptionalSharedInpaintMask();
 
-    const isDrawingTool = activeTool === "text" || activeTool === "rectangle" || activeTool === "frame" || activeTool === "pen";
+    const isDrawingTool = activeTool === "text" || activeTool === "rectangle" || activeTool === "frame" || activeTool === "pen" || activeTool === "slice";
     const artboardStrokeImage = useImage(artboardProps.strokeMode === "image" ? artboardProps.strokeImage?.src ?? "" : "");
 
     // Prevent stage pan from competing with expand handles or inpaint brush.
@@ -1616,7 +1677,7 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
     }, [isDrawingTool]);
 
     useEffect(() => {
-        if (activeTool !== "rectangle" && activeTool !== "frame") {
+        if (activeTool !== "rectangle" && activeTool !== "frame" && activeTool !== "slice") {
             drawingStartPoint.current = null;
         }
     }, [activeTool]);
@@ -2116,7 +2177,9 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
             updateLayer(dragUpdates[0].id, dragUpdates[0].changes);
         }
 
-        if (Object.keys(dragStartLocs.current).length === 1) {
+        const draggedLayerType = layers.find((l) => l.id === id)?.type;
+        // Slices are export regions — never parent them into frames on drop.
+        if (Object.keys(dragStartLocs.current).length === 1 && draggedLayerType !== "slice") {
             const sceneWidth = e.target.width() * e.target.scaleX();
             const sceneHeight = e.target.height() * e.target.scaleY();
             const centerX = currentSceneX + sceneWidth / 2;
@@ -2507,7 +2570,7 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
         }
 
         // ── Drawing tool interception ──
-        if (activeTool === "text" || activeTool === "rectangle" || activeTool === "frame") {
+        if (activeTool === "text" || activeTool === "rectangle" || activeTool === "frame" || activeTool === "slice") {
             const stage = e.target.getStage();
             if (!stage) return;
             const pointer = stage.getPointerPosition();
@@ -2782,8 +2845,8 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
             return;
         }
 
-        // Drawing box rubber-banding (rectangle/frame drawing mode)
-        if (drawingStartPoint.current && (activeTool === "rectangle" || activeTool === "frame")) {
+        // Drawing box rubber-banding (rectangle/frame/slice drawing mode)
+        if (drawingStartPoint.current && (activeTool === "rectangle" || activeTool === "frame" || activeTool === "slice")) {
             const start = drawingStartPoint.current;
             let drawX = currentSceneX;
             let drawY = currentSceneY;
@@ -2830,7 +2893,7 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
         }
 
         // ── Drawing tool completion ──
-        if (drawingStartPoint.current && (activeTool === "rectangle" || activeTool === "frame")) {
+        if (drawingStartPoint.current && (activeTool === "rectangle" || activeTool === "frame" || activeTool === "slice")) {
             const start = drawingStartPoint.current;
             const stage = e.target.getStage();
             if (stage) {
@@ -2857,17 +2920,21 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
                         // Click without drag — create with default size at click point
                         if (activeTool === "rectangle") {
                             addRectangleLayer({ x: start.x, y: start.y });
+                        } else if (activeTool === "slice") {
+                            addSliceLayer({ x: start.x, y: start.y });
                         } else {
                             addFrameLayer({ x: start.x, y: start.y });
                         }
                     } else {
                         if (activeTool === "rectangle") {
                             addRectangleLayer({ x, y, width: w, height: h });
+                        } else if (activeTool === "slice") {
+                            addSliceLayer({ x, y, width: w, height: h });
                         } else {
                             // Frame: auto-parent layers that are fully contained
                             const containedChildIds = layers
                                 .filter(l => {
-                                    if (!l.visible || l.locked) return false;
+                                    if (!l.visible || l.locked || l.type === "slice") return false;
                                     // Only top-level layers (not already in a frame)
                                     const isChild = layers.some(
                                         p => p.type === "frame" && (p as FrameLayer).childIds.includes(l.id)
@@ -2946,7 +3013,7 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
             }
             setSelectionBox(null);
         }
-    }, [selectionBox, layers, addToSelection, isPanning, artboardProps.clipContent, canvasWidth, canvasHeight, activeTool, addRectangleLayer, addFrameLayer, setDrawingBox, setActiveTool]);
+    }, [selectionBox, layers, addToSelection, isPanning, artboardProps.clipContent, canvasWidth, canvasHeight, activeTool, addRectangleLayer, addFrameLayer, addSliceLayer, setDrawingBox, setActiveTool]);
 
     const handleContextMenu = useCallback(
         (e: Konva.KonvaEventObject<MouseEvent>) => {
@@ -3226,42 +3293,44 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
             return { name: `${safeName}.png`, blob };
         };
 
-        if (targetLayers.length === 1) {
-            // Single layer → direct download
-            const { name, blob } = await exportSingleLayer(targetLayers[0]);
-            const url = URL.createObjectURL(blob);
-            const link = document.createElement("a");
-            link.download = name;
-            link.href = url;
-            link.click();
-            URL.revokeObjectURL(url);
-        } else {
-            // Multiple layers → ZIP
-            const JSZip = (await import("jszip")).default;
-            const { saveAs } = await import("file-saver");
-            const zip = new JSZip();
+        await withSliceOverlaysHidden(stage, async () => {
+            if (targetLayers.length === 1) {
+                // Single layer → direct download
+                const { name, blob } = await exportSingleLayer(targetLayers[0]);
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement("a");
+                link.download = name;
+                link.href = url;
+                link.click();
+                URL.revokeObjectURL(url);
+            } else {
+                // Multiple layers → ZIP
+                const JSZip = (await import("jszip")).default;
+                const { saveAs } = await import("file-saver");
+                const zip = new JSZip();
 
-            // Deduplicate filenames to prevent overwrites in ZIP
-            const usedNames = new Set<string>();
-            for (const layer of targetLayers) {
-                let { name, blob } = await exportSingleLayer(layer);
+                // Deduplicate filenames to prevent overwrites in ZIP
+                const usedNames = new Set<string>();
+                for (const layer of targetLayers) {
+                    let { name, blob } = await exportSingleLayer(layer);
 
-                // Ensure unique filename
-                if (usedNames.has(name)) {
-                    const ext = name.lastIndexOf(".") > 0 ? name.slice(name.lastIndexOf(".")) : ".png";
-                    const base = name.slice(0, name.lastIndexOf(".") > 0 ? name.lastIndexOf(".") : name.length);
-                    let counter = 2;
-                    while (usedNames.has(`${base}_${counter}${ext}`)) counter++;
-                    name = `${base}_${counter}${ext}`;
+                    // Ensure unique filename
+                    if (usedNames.has(name)) {
+                        const ext = name.lastIndexOf(".") > 0 ? name.slice(name.lastIndexOf(".")) : ".png";
+                        const base = name.slice(0, name.lastIndexOf(".") > 0 ? name.lastIndexOf(".") : name.length);
+                        let counter = 2;
+                        while (usedNames.has(`${base}_${counter}${ext}`)) counter++;
+                        name = `${base}_${counter}${ext}`;
+                    }
+                    usedNames.add(name);
+
+                    zip.file(name, blob);
                 }
-                usedNames.add(name);
 
-                zip.file(name, blob);
+                const content = await zip.generateAsync({ type: "blob" });
+                saveAs(content, `export-${targetLayers.length}-layers.zip`);
             }
-
-            const content = await zip.generateAsync({ type: "blob" });
-            saveAs(content, `export-${targetLayers.length}-layers.zip`);
-        }
+        });
     }, [layers, stageRef]);
 
     const editingLayer = useMemo(() => {
