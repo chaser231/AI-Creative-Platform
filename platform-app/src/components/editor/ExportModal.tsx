@@ -203,6 +203,8 @@ export function ExportModal({ open, onClose, stageRef }: ExportModalProps) {
                 import("@/services/exportImages"),
             ]);
             const { promoteFigmaVectorImagesForExport } = await import("@/lib/figma/vectorPromotion");
+            const { prepareStageForExport } = await import("@/services/exportPrep");
+            await prepareStageForExport(stageRef.current);
             const exportLayers = await promoteFigmaVectorImagesForExport(layers as Layer[]);
             const outlinedText = await buildOutlinedTextMap(stageRef.current, exportLayers);
             const embeddedImages = await buildEmbeddedImageMap(exportLayers);
@@ -217,6 +219,7 @@ export function ExportModal({ open, onClose, stageRef }: ExportModalProps) {
                     artboardFillEnabled: !transparentBackground && artboardProps.fillEnabled !== false,
                     outlinedText,
                     embeddedImages,
+                    stage: stageRef.current,
                 });
             } else {
                 const subtree = collectLayerTree([exportTarget], exportLayers);
@@ -239,6 +242,8 @@ export function ExportModal({ open, onClose, stageRef }: ExportModalProps) {
                 import("@/services/exportText"),
                 import("@/lib/figma/vectorPromotion"),
             ]);
+            const { prepareStageForExport } = await import("@/services/exportPrep");
+            await prepareStageForExport(stageRef.current);
             const exportLayers = await promoteFigmaVectorImagesForExport(layers as Layer[]);
             const outlinedText = await buildOutlinedTextMap(stageRef.current, exportLayers);
 
@@ -254,6 +259,7 @@ export function ExportModal({ open, onClose, stageRef }: ExportModalProps) {
                     artboardFill: artboardProps.fill,
                     artboardFillEnabled: !transparentBackground && artboardProps.fillEnabled !== false,
                     outlinedText,
+                    stage: stageRef.current,
                 });
             }
             const blob = new Blob([eps], { type: "application/postscript" });
@@ -302,16 +308,18 @@ export function ExportModal({ open, onClose, stageRef }: ExportModalProps) {
 
         try {
             if (exportFormat === "svg" || exportFormat === "eps") {
-                const [{ buildOutlinedTextMap }, { buildEmbeddedImageMap }, { promoteFigmaVectorImagesForExport }] = await Promise.all([
+                const [{ buildOutlinedTextMap }, { buildEmbeddedImageMap }, { promoteFigmaVectorImagesForExport }, { prepareStageForExport }] = await Promise.all([
                     import("@/services/exportText"),
                     import("@/services/exportImages"),
                     import("@/lib/figma/vectorPromotion"),
+                    import("@/services/exportPrep"),
                 ]);
                 const vectorEntries: Array<{ fileName: string; content: string }> = [];
 
                 for (const resize of resizesToExport) {
                     setActiveResize(resize.id);
                     await new Promise((resolve) => setTimeout(resolve, 300));
+                    await prepareStageForExport(stage);
 
                     const state = useCanvasStore.getState();
                     const exportLayers = await promoteFigmaVectorImagesForExport(state.layers as Layer[]);
@@ -329,14 +337,16 @@ export function ExportModal({ open, onClose, stageRef }: ExportModalProps) {
                             artboardFillEnabled: !transparentBackground && state.artboardProps.fillEnabled !== false,
                             outlinedText,
                             embeddedImages,
+                            stage,
                         })
                         : layersToEps({
-                            layers: state.layers as Layer[],
+                            layers: exportLayers,
                             width: state.canvasWidth,
                             height: state.canvasHeight,
                             artboardFill: state.artboardProps.fill,
                             artboardFillEnabled: !transparentBackground && state.artboardProps.fillEnabled !== false,
                             outlinedText,
+                            stage,
                         });
 
                     vectorEntries.push({

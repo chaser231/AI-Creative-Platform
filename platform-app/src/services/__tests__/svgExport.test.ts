@@ -105,6 +105,28 @@ describe("svgExport", () => {
         expect(svg).not.toContain("<text");
     });
 
+    it("emits numeric font-weight for named weights in the <text> fallback", () => {
+        const text = baseLayer({
+            id: "tw",
+            type: "text",
+            width: 200,
+            height: 60,
+            text: "МАРКЕТА",
+            fill: "#000000",
+            fillEnabled: true,
+            fontSize: 40,
+            fontFamily: "YS Compressed",
+            fontWeight: "Heavy",
+            align: "left",
+            lineHeight: 1.2,
+            letterSpacing: 0,
+        }) as Layer;
+        const svg = layersToSvg({ layers: [text], width: 200, height: 100, background: false });
+        expect(svg).toContain("<text");
+        expect(svg).toContain('font-weight="800"');
+        expect(svg).not.toContain('font-weight="Heavy"');
+    });
+
     it("embeds raster images as data-URIs when provided", () => {
         const image = baseLayer({
             id: "i1",
@@ -117,6 +139,21 @@ describe("svgExport", () => {
         const svg = layersToSvg({ layers: [image], width: 100, height: 100, background: false, embeddedImages: images });
         expect(svg).toContain("data:image/png;base64,AAAA");
         expect(svg).not.toContain("https://example.com/pic.png");
+    });
+
+    it("flattens inlineSvg vectors into a transformed group (Figma-friendly)", () => {
+        const vector: VectorLayer = baseLayer({
+            id: "v2",
+            type: "vector",
+            width: 200,
+            height: 200,
+            fill: "#fff",
+            fillEnabled: true,
+            inlineSvg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="10 20 80 60"><path d="M10 20 H90 V80 H10 Z" fill="#fff"/></svg>',
+        }) as VectorLayer;
+        const svg = layersToSvg({ layers: [vector], width: 200, height: 200, background: false });
+        expect(svg).toContain("<g transform=");
+        expect(svg).not.toContain("<svg x=");
     });
 
     it("sizes a fragment to the combined layer bounds", () => {

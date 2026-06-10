@@ -1,7 +1,10 @@
 import type { FrameLayer, GradientPaint, Layer, Paint, VectorLayer } from "@/types";
 import { normalizePaint } from "@/utils/paint";
 import { hasRenderableGeometry, parseSvgPathToAbsSubpaths } from "@/utils/vectorGeometry";
+import { parseSvgToEditableSubpaths } from "@/utils/svgImport";
+import type Konva from "konva";
 import type { OutlinedText } from "@/services/exportText";
+import { resolveLayerPosition } from "@/services/exportCoords";
 
 /**
  * Client-side EPS (Encapsulated PostScript) export.
@@ -31,6 +34,7 @@ export interface EpsExportOptions {
     artboardFill?: Paint;
     artboardFillEnabled?: boolean;
     outlinedText?: Map<string, OutlinedText>;
+    stage?: Konva.Stage | null;
 }
 
 function n(v: number): string {
@@ -140,6 +144,20 @@ function vectorAbsSubpaths(layer: VectorLayer): AbsSubpath[] {
                 ...(p.outX !== undefined ? { outX: p.outX * width, outY: (p.outY ?? 0) * height } : {}),
             })),
         }));
+    }
+    if (layer.inlineSvg) {
+        const subpaths = parseSvgToEditableSubpaths(layer.inlineSvg);
+        if (subpaths?.length) {
+            return subpaths.map((sp) => ({
+                closed: sp.closed,
+                points: sp.points.map((p) => ({
+                    x: p.x * width,
+                    y: p.y * height,
+                    ...(p.inX !== undefined ? { inX: p.inX * width, inY: (p.inY ?? 0) * height } : {}),
+                    ...(p.outX !== undefined ? { outX: p.outX * width, outY: (p.outY ?? 0) * height } : {}),
+                })),
+            }));
+        }
     }
     if (layer.rawSvgPath) {
         const sx = layer.viewBoxWidth ? width / layer.viewBoxWidth : 1;
@@ -312,12 +330,26 @@ function resolveBackdrop(paint: Paint | undefined, alpha: number, parent: Rgb): 
 
 // ─── Layer emit ─────────────────────────────────────────
 
-function emitLayer(out: string[], layer: Layer, all: Layer[], alpha: number, backdrop: Rgb, outlined?: Map<string, OutlinedText>) {
+function childPositionInFrame(child: Layer, frame: FrameLayer, stage?: Konva.Stage | null): { x: number; y: number } {
+    if (stage) return resolveLayerPosition(child, stage);
+    return { x: child.x - frame.x, y: child.y - frame.y };
+}
+
+function emitLayer(
+    out: string[],
+    layer: Layer,
+    all: Layer[],
+    alpha: number,
+    backdrop: Rgb,
+    outlined?: Map<string, OutlinedText>,
+    stage?: Konva.Stage | null,
+) {
     if (layer.visible === false) return;
     const a = alpha * (layer.opacity ?? 1);
+    const pos = resolveLayerPosition(layer, stage);
 
     out.push("gsave");
-    out.push(`${n(layer.x)} ${n(layer.y)} translate`);
+    out.push(`${n(pos.x)} ${n(pos.y)} translate`);
     if (layer.rotation) out.push(`${n(layer.rotation)} rotate`);
     if (layer.flipX || layer.flipY) {
         const sx = layer.flipX ? -1 : 1;
@@ -354,7 +386,7 @@ function emitLayer(out: string[], layer: Layer, all: Layer[], alpha: number, bac
                 fillShape(out, () => roundedRectPath(out, layer.width, layer.height, radius), layer.fill, layer.width, layer.height, a, backdrop);
             }
             const ot = outlined?.get(layer.id);
-            if (ot) {
+            if (ot?.d) {
                 const abs = parseSvgPathToAbsSubpaths(ot.d);
                 fillShape(out, () => emitSubpaths(out, abs), ot.fill, layer.width, layer.height, a, backdrop);
             } else {
@@ -364,7 +396,7 @@ function emitLayer(out: string[], layer: Layer, all: Layer[], alpha: number, bac
         }
         case "text": {
             const ot = outlined?.get(layer.id);
-            if (ot) {
+            if (ot?.d) {
                 const abs = parseSvgPathToAbsSubpaths(ot.d);
                 if (abs.length > 0) {
                     fillShape(out, () => emitSubpaths(out, abs), ot.fill, layer.width, layer.height, a, backdrop);
@@ -398,7 +430,10 @@ function emitLayer(out: string[], layer: Layer, all: Layer[], alpha: number, bac
             const childIds = Array.isArray(frame.childIds) ? frame.childIds : [];
             for (const id of childIds) {
                 const child = all.find((l) => l.id === id);
-                if (child) emitLayer(out, { ...child, x: child.x - frame.x, y: child.y - frame.y }, all, a, childBackdrop, outlined);
+                if (child) {
+                    const rel = childPositionInFrame(child, frame, stage);
+                    emitLayer(out, { ...child, x: rel.x, y: rel.y }, all, a, childBackdrop, outlined, stage);
+                }
             }
             break;
         }
@@ -443,7 +478,7 @@ function emitTextFallback(
 }
 
 export function layersToEps(options: EpsExportOptions): string {
-    const { layers, width, height, artboardFill, artboardFillEnabled, outlinedText } = options;
+    const { layers, width, height, artboardFill, artboardFillEnabled, outlinedText, stage } = options;
     const out: string[] = [];
 
     out.push("%!PS-Adobe-3.0 EPSF-3.0");
@@ -471,7 +506,7 @@ export function layersToEps(options: EpsExportOptions): string {
         }
     }
     const topLevel = layers.filter((l) => !childIds.has(l.id));
-    for (const layer of topLevel) emitLayer(out, layer, layers, 1, artboardRgb, outlinedText);
+    for (const layer of topLevel) emitLayer(out, layer, layers, 1, artboardRgb, outlinedText, stage);
 
     out.push("grestore");
     out.push("showpage");

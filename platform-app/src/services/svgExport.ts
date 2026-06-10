@@ -6,7 +6,10 @@ import type {
 } from "@/types";
 import { normalizePaint } from "@/utils/paint";
 import { subpathsToPathData, hasRenderableGeometry } from "@/utils/vectorGeometry";
+import { parseInlineSvgViewBox } from "@/utils/svgImport";
+import type Konva from "konva";
 import type { OutlinedText } from "@/services/exportText";
+import { resolveLayerPosition } from "@/services/exportCoords";
 
 /**
  * SVG export. Walks a `Layer[]` tree into a standalone SVG document.
@@ -31,6 +34,8 @@ export interface SvgExportOptions {
     /** Pre-fetched base64 data-URIs for image layers (layer id -> data URI), so
      * the SVG is self-contained and renders offline. */
     embeddedImages?: Map<string, string>;
+    /** Live Konva stage — when set, layer transforms use rendered positions. */
+    stage?: Konva.Stage | null;
 }
 
 function escapeXml(s: string): string {
@@ -94,8 +99,14 @@ function strokeColor(paint: Paint | undefined): string | null {
     return np.kind === "solid" ? np.color : np.stops[0]?.color ?? null;
 }
 
-function layerTransform(layer: Layer): string {
-    const parts: string[] = [`translate(${round(layer.x)} ${round(layer.y)})`];
+function childPositionInFrame(child: Layer, frame: FrameLayer, stage?: Konva.Stage | null): { x: number; y: number } {
+    if (stage) return resolveLayerPosition(child, stage);
+    return { x: child.x - frame.x, y: child.y - frame.y };
+}
+
+function layerTransform(layer: Layer, stage?: Konva.Stage | null): string {
+    const pos = resolveLayerPosition(layer, stage);
+    const parts: string[] = [`translate(${round(pos.x)} ${round(pos.y)})`];
     if (layer.rotation) parts.push(`rotate(${round(layer.rotation)})`);
     if (layer.flipX || layer.flipY) {
         const sx = layer.flipX ? -1 : 1;
@@ -133,7 +144,24 @@ function renderRectLike(
     return `<rect ${attrs.join(" ")} />`;
 }
 
-function renderText(layer: Layer & { type: "text" }): string {
+const NAMED_FONT_WEIGHTS: Record<string, number> = {
+    thin: 100, hairline: 100, extralight: 200, ultralight: 200, light: 300,
+    regular: 400, normal: 400, book: 400, medium: 500, semibold: 600,
+    demibold: 600, bold: 700, extrabold: 800, ultrabold: 800, heavy: 800,
+    black: 900,
+};
+
+/** Normalize a (possibly named) font weight to a numeric CSS weight string. */
+function cssFontWeight(fontWeight: string | undefined): string {
+    if (!fontWeight) return "400";
+    const cleaned = fontWeight.replace(/italic|oblique/gi, "").trim().toLowerCase().replace(/\s+/g, "");
+    if (!cleaned) return "400";
+    if (NAMED_FONT_WEIGHTS[cleaned] != null) return String(NAMED_FONT_WEIGHTS[cleaned]);
+    const num = parseInt(cleaned, 10);
+    return Number.isFinite(num) ? String(num) : "400";
+}
+
+function renderText(layer: Layer & { type: "text" }, fallback?: OutlinedText): string {
     const lines = (layer.textTransform === "uppercase"
         ? layer.text.toUpperCase()
         : layer.textTransform === "lowercase"
@@ -143,12 +171,15 @@ function renderText(layer: Layer & { type: "text" }): string {
     const anchor = layer.align === "center" ? "middle" : layer.align === "right" ? "end" : "start";
     const xPos = layer.align === "center" ? layer.width / 2 : layer.align === "right" ? layer.width : 0;
     const fillVisible = layer.fillEnabled !== false;
-    const lineHeight = (layer.lineHeight || 1.2) * layer.fontSize;
+    // Prefer the live Konva baseline (carries vertical-trim offset); otherwise
+    // fall back to a naive first-baseline at the font's em height.
+    const firstBaseline = fallback?.fallbackFirstBaselineY ?? layer.fontSize;
+    const lineAdvance = fallback?.fallbackLineHeightPx ?? (layer.lineHeight || 1.2) * layer.fontSize;
     const tspans = lines
-        .map((line, i) => `<tspan x="${round(xPos)}" dy="${i === 0 ? round(layer.fontSize) : round(lineHeight)}">${escapeXml(line)}</tspan>`)
+        .map((line, i) => `<tspan x="${round(xPos)}" dy="${i === 0 ? round(firstBaseline) : round(lineAdvance)}">${escapeXml(line)}</tspan>`)
         .join("");
     const fontStyle = /italic/i.test(layer.fontWeight) ? ` font-style="italic"` : "";
-    const weight = layer.fontWeight ? ` font-weight="${escapeXml(layer.fontWeight.replace(/italic/i, "").trim() || "400")}"` : "";
+    const weight = ` font-weight="${cssFontWeight(layer.fontWeight)}"`;
     return `<text x="${round(xPos)}" y="0" font-family="${escapeXml(layer.fontFamily)}" font-size="${round(layer.fontSize)}"${weight}${fontStyle} fill="${fillVisible ? layer.fill : "none"}" text-anchor="${anchor}"${layer.letterSpacing ? ` letter-spacing="${round(layer.letterSpacing)}"` : ""}>${tspans}</text>`;
 }
 
@@ -157,9 +188,13 @@ function renderInlineSvgVector(layer: VectorLayer): string {
     const inner = layer.inlineSvg
         .replace(/^[\s\S]*?<svg[^>]*>/i, "")
         .replace(/<\/svg>\s*$/i, "");
-    const vbMatch = layer.inlineSvg.match(/viewBox="([^"]+)"/i);
-    const viewBox = vbMatch?.[1] ?? `0 0 ${round(layer.viewBoxWidth ?? layer.width)} ${round(layer.viewBoxHeight ?? layer.height)}`;
-    return `<svg x="0" y="0" width="${round(layer.width)}" height="${round(layer.height)}" viewBox="${viewBox}" overflow="visible">${inner}</svg>`;
+    const vb = parseInlineSvgViewBox(layer.inlineSvg);
+    if (!vb) {
+        return `<g>${inner}</g>`;
+    }
+    const sx = layer.width / vb.width;
+    const sy = layer.height / vb.height;
+    return `<g transform="translate(${round(-vb.x * sx)} ${round(-vb.y * sy)}) scale(${round(sx)} ${round(sy)})">${inner}</g>`;
 }
 
 function renderVector(layer: VectorLayer, defs: Defs): string {
@@ -198,11 +233,18 @@ function renderVector(layer: VectorLayer, defs: Defs): string {
     return `<path ${attrs.join(" ")} />`;
 }
 
-function renderLayer(layer: Layer, all: Layer[], defs: Defs, outlined?: Map<string, OutlinedText>, images?: Map<string, string>): string {
+function renderLayer(
+    layer: Layer,
+    all: Layer[],
+    defs: Defs,
+    outlined?: Map<string, OutlinedText>,
+    images?: Map<string, string>,
+    stage?: Konva.Stage | null,
+): string {
     if (layer.visible === false) return "";
     const opacity = layer.opacity ?? 1;
     const opacityAttr = opacity < 1 ? ` opacity="${round(opacity)}"` : "";
-    const transform = layerTransform(layer);
+    const transform = layerTransform(layer, stage);
     let body = "";
 
     switch (layer.type) {
@@ -221,7 +263,9 @@ function renderLayer(layer: Layer, all: Layer[], defs: Defs, outlined?: Map<stri
         }
         case "text": {
             const ot = outlined?.get(layer.id);
-            body = ot ? `<path d="${escapeXml(ot.d)}" fill="${escapeXml(ot.fill)}" />` : renderText(layer);
+            body = ot?.d
+                ? `<path d="${escapeXml(ot.d)}" fill="${escapeXml(ot.fill)}" fill-rule="nonzero" />`
+                : renderText(layer, ot);
             break;
         }
         case "badge": {
@@ -242,8 +286,10 @@ function renderLayer(layer: Layer, all: Layer[], defs: Defs, outlined?: Map<stri
             const children = childIds
                 .map((id) => all.find((l) => l.id === id))
                 .filter((l): l is Layer => !!l)
-                // Children are positioned absolutely; render relative to the frame origin.
-                .map((child) => renderLayer({ ...child, x: child.x - frame.x, y: child.y - frame.y }, all, defs, outlined, images))
+                .map((child) => {
+                    const rel = childPositionInFrame(child, frame, stage);
+                    return renderLayer({ ...child, x: rel.x, y: rel.y }, all, defs, outlined, images, stage);
+                })
                 .join("");
             let inner = fillRect + children;
             if (frame.clipContent) {
@@ -286,7 +332,7 @@ export function layersToSvg(options: SvgExportOptions): string {
         bodyParts.push(`<rect x="0" y="0" width="${round(width)}" height="${round(height)}" fill="${fill}"${fillOpacity < 1 ? ` fill-opacity="${round(fillOpacity)}"` : ""} />`);
     }
     for (const layer of topLevel) {
-        bodyParts.push(renderLayer(layer, layers, defs, options.outlinedText, options.embeddedImages));
+        bodyParts.push(renderLayer(layer, layers, defs, options.outlinedText, options.embeddedImages, options.stage));
     }
 
     const defsBlock = defs.items.length > 0 ? `<defs>${defs.items.join("")}</defs>` : "";
