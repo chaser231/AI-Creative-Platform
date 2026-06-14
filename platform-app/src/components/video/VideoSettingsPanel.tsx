@@ -130,7 +130,10 @@ export function VideoSettingsPanel({ projectId }: VideoSettingsPanelProps) {
                 <section>
                     <SectionLabel>Длительность</SectionLabel>
                     <PillRow
-                        options={durations.map((d) => ({ value: d, label: `${durationToSeconds(d)}с` }))}
+                        options={durations.map((d) => ({
+                            value: d,
+                            label: d === "auto" ? "Авто" : `${durationToSeconds(d)}с`,
+                        }))}
                         value={duration}
                         onChange={setDuration}
                     />

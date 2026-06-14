@@ -106,7 +106,7 @@ describe("buildFalVideoInput", () => {
         ).toThrow(/startFrameUrl/);
     });
 
-    it("i2v: kling uses tail_image_url for the end frame and drops aspect_ratio", () => {
+    it("i2v: kling 2.5 uses image_url + tail_image_url and drops aspect_ratio", () => {
         const kling = getVideoModelById("kling-2.5-turbo-pro")!;
         const input = buildFalVideoInput(kling, "i2v", {
             prompt: "animate",
@@ -117,11 +117,28 @@ describe("buildFalVideoInput", () => {
         });
         expect(input.image_url).toBe("https://s3/start.png");
         expect(input.tail_image_url).toBe("https://s3/end.png");
+        expect(input.start_image_url).toBeUndefined();
         expect(input.end_image_url).toBeUndefined();
         expect(input.aspect_ratio).toBeUndefined();
     });
 
-    it("i2v: seedance uses end_image_url for the end frame", () => {
+    it("i2v: kling 3.0 pro uses start_image_url + end_image_url (not tail_image_url)", () => {
+        const kling = getVideoModelById("kling-3.0-pro")!;
+        const input = buildFalVideoInput(kling, "i2v", {
+            prompt: "animate",
+            duration: "5",
+            aspectRatio: "16:9",
+            startFrameUrl: "https://s3/start.png",
+            endFrameUrl: "https://s3/end.png",
+        });
+        expect(input.start_image_url).toBe("https://s3/start.png");
+        expect(input.end_image_url).toBe("https://s3/end.png");
+        expect(input.image_url).toBeUndefined();
+        expect(input.tail_image_url).toBeUndefined();
+        expect(input.aspect_ratio).toBeUndefined();
+    });
+
+    it("i2v: seedance 1.0 uses end_image_url for the end frame", () => {
         const seedance = getVideoModelById("seedance-1.0-pro")!;
         const input = buildFalVideoInput(seedance, "i2v", {
             prompt: "animate",
@@ -131,6 +148,22 @@ describe("buildFalVideoInput", () => {
         });
         expect(input.end_image_url).toBe("https://s3/end.png");
         expect(input.tail_image_url).toBeUndefined();
+    });
+
+    it("i2v: seedance 2.0 uses end_image_url and drops aspect on i2v", () => {
+        const seedance = getVideoModelById("seedance-2.0")!;
+        const input = buildFalVideoInput(seedance, "i2v", {
+            prompt: "animate",
+            duration: "5",
+            aspectRatio: "16:9",
+            startFrameUrl: "https://s3/start.png",
+            endFrameUrl: "https://s3/end.png",
+            audio: true,
+        });
+        expect(input.image_url).toBe("https://s3/start.png");
+        expect(input.end_image_url).toBe("https://s3/end.png");
+        expect(input.generate_audio).toBe(true);
+        expect(input.aspect_ratio).toBeUndefined();
     });
 
     it("i2v: ignores endFrameUrl when the model does not support it", () => {
