@@ -102,7 +102,7 @@ export const VIDEO_MODEL_REGISTRY: VideoModelEntry[] = [
             t2v: "fal-ai/kling-video/v3/pro/text-to-video",
             i2v: "fal-ai/kling-video/v3/pro/image-to-video",
         },
-        durations: ["3", "5", "8", "10", "12", "15"],
+        durations: ["3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15"],
         defaultDuration: "5",
         i2vDurations: ["5", "10"],
         aspectRatios: ["16:9", "9:16", "1:1"],
@@ -111,6 +111,25 @@ export const VIDEO_MODEL_REGISTRY: VideoModelEntry[] = [
         supportsEndFrame: true,
         supportsNegativePrompt: true,
         pricePerSecondUsd: 0.28,
+    },
+    {
+        id: "seedance-2.0",
+        label: "Seedance 2.0",
+        description: "ByteDance — кино + нативный звук, start/end кадры, до 15с",
+        tier: "premium",
+        endpoints: {
+            t2v: "bytedance/seedance-2.0/text-to-video",
+            i2v: "bytedance/seedance-2.0/image-to-video",
+        },
+        durations: ["auto", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15"],
+        defaultDuration: "5",
+        aspectRatios: ["auto", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16"],
+        defaultAspectRatio: "16:9",
+        resolutions: ["480p", "720p", "1080p"],
+        defaultResolution: "720p",
+        supportsAudio: true,
+        supportsEndFrame: true,
+        pricePerSecondUsd: 0.30,
     },
 
     // ── Advanced ─────────────────────────────────────────────────────────
@@ -334,19 +353,26 @@ export function buildFalVideoInput(
         if (!params.startFrameUrl) {
             throw new Error("startFrameUrl is required for image-to-video");
         }
-        input.image_url = params.startFrameUrl;
+
+        // fal model families use different field names for start/end frames.
+        // Kling 2.x: image_url + tail_image_url
+        // Kling 3.x: start_image_url + end_image_url  (NOT tail_image_url!)
+        // Seedance / most others: image_url + end_image_url
+        const isKlingV3 = model.id === "kling-3.0-pro" || Boolean(model.endpoints.i2v?.includes("/v3/"));
+        const startKey = isKlingV3 ? "start_image_url" : "image_url";
+        input[startKey] = params.startFrameUrl;
+
         if (model.supportsEndFrame && params.endFrameUrl) {
-            // Kling uses tail_image_url, Seedance uses end_image_url.
-            if (model.id.startsWith("kling")) {
-                input.tail_image_url = params.endFrameUrl;
-            } else {
-                input.end_image_url = params.endFrameUrl;
-            }
+            const endKey = isKlingV3 ? "end_image_url" : model.id.startsWith("kling") ? "tail_image_url" : "end_image_url";
+            input[endKey] = params.endFrameUrl;
         }
-        // Kling / Hailuo / Sora i2v infer the aspect from the input image —
-        // drop the field to avoid strict input validation errors. Veo 3.1
-        // i2v does accept aspect_ratio (default "auto"), so it stays.
+
+        // Kling / Hailuo / Sora i2v infer aspect from the start image.
         if (model.id.startsWith("kling") || model.id.startsWith("hailuo") || model.id.startsWith("sora")) {
+            delete input.aspect_ratio;
+        }
+        // Seedance i2v defaults to aspect_ratio "auto" inferred from the image.
+        if (model.id.startsWith("seedance") && mode === "i2v") {
             delete input.aspect_ratio;
         }
     }
