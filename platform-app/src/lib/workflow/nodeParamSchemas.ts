@@ -266,6 +266,10 @@ const videoGenerationBaseShape = {
     resolution: z.enum(["auto", "480p", "540p", "720p", "1080p"]).default("auto"),
     audio: z.boolean().default(true),
     presetId: z.enum(motionPresetIds).default("none"),
+    multiShotEnabled: z.boolean().default(false),
+    multiShotType: z.enum(["customize", "intelligent"]).default("customize"),
+    /** One line per shot: "duration|prompt" (e.g. "5|wide city shot"). */
+    multiShotLines: z.string().trim().max(4000).default(""),
 };
 
 export const textToVideoParamsSchema = z.object(videoGenerationBaseShape);

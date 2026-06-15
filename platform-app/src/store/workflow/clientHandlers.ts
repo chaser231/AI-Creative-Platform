@@ -29,6 +29,8 @@ import {
     type PaintMaskParams,
     type TextToVideoParams,
 } from "@/lib/workflow/nodeParamSchemas";
+import { buildMultiShotConfigFromWorkflowParams, isMultiShotCustomize } from "@/lib/video-multishot";
+import { getVideoModelById } from "@/lib/video-models";
 
 /** Resolved output of an imageInput node — the executor pipes `.url` downstream. */
 export interface ImageInputResult {
@@ -232,19 +234,24 @@ export function buildVideoGenerateBody(opts: {
         .filter(Boolean)
         .join("\n");
 
+    const multiShot = buildMultiShotConfigFromWorkflowParams({
+        multiShotEnabled: params.multiShotEnabled,
+        multiShotType: params.multiShotType,
+        multiShotLines: params.multiShotLines,
+    });
+
     return {
         modelId: params.model,
         mode,
         prompt,
         duration: params.duration,
         aspectRatio: params.aspectRatio,
-        // "auto"/"none" are UI-only sentinel values — the API expects the
-        // field to be absent so it falls back to the model defaults.
         ...(params.resolution !== "auto" ? { resolution: params.resolution } : {}),
         audio: params.audio,
         ...(params.presetId !== "none" ? { presetId: params.presetId } : {}),
         ...(startFrameUrl ? { startFrameUrl } : {}),
         ...(endFrameUrl ? { endFrameUrl } : {}),
+        ...(multiShot ? { multiShot } : {}),
         workspaceId,
     };
 }
@@ -282,7 +289,12 @@ export async function runVideoGeneration(opts: {
         startFrameUrl: opts.startFrameUrl,
         endFrameUrl: opts.endFrameUrl,
     });
-    if (!String(body.prompt ?? "").trim()) {
+    const model = getVideoModelById(params.model);
+    const multiShot = body.multiShot as ReturnType<typeof buildMultiShotConfigFromWorkflowParams>;
+    const customizeMulti = Boolean(
+        model && multiShot && isMultiShotCustomize(multiShot, model),
+    );
+    if (!customizeMulti && !String(body.prompt ?? "").trim()) {
         throw new Error("Видео-нода: укажите промпт или подключите текстовый вход");
     }
     if (opts.mode === "i2v" && !opts.startFrameUrl) {

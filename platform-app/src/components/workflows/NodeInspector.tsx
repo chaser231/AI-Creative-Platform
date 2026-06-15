@@ -86,6 +86,9 @@ const PARAM_LABELS: Record<string, string> = {
     audio: "Аудио",
     presetId: "Движение камеры",
     timeSec: "Время кадра (сек)",
+    multiShotEnabled: "Multi-shot",
+    multiShotType: "Тип multi-shot",
+    multiShotLines: "Шоты (duration|prompt на строку)",
 };
 
 /**

@@ -16,6 +16,9 @@ const BASE_PARAMS = {
     resolution: "auto" as const,
     audio: true,
     presetId: "none",
+    multiShotEnabled: false,
+    multiShotType: "customize" as const,
+    multiShotLines: "",
 };
 
 function makeDeps(overrides: Partial<VideoGenerationDeps> = {}): VideoGenerationDeps {
@@ -75,6 +78,28 @@ describe("buildVideoGenerateBody", () => {
         });
         expect(body.resolution).toBe("1080p");
         expect(body.presetId).toBe("dolly-in");
+    });
+
+    it("includes multiShot when enabled on the node", () => {
+        const body = buildVideoGenerateBody({
+            mode: "t2v",
+            params: {
+                ...BASE_PARAMS,
+                model: "kling-3.0-pro",
+                multiShotEnabled: true,
+                multiShotType: "customize",
+                multiShotLines: "5|wide\n5|close",
+            },
+            workspaceId: "ws-1",
+        });
+        expect(body.multiShot).toMatchObject({
+            enabled: true,
+            shotType: "customize",
+            shots: [
+                { durationSec: 5, prompt: "wide" },
+                { durationSec: 5, prompt: "close" },
+            ],
+        });
     });
 
     it("concatenates the local prompt with upstream text input", () => {
