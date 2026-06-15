@@ -20,6 +20,12 @@ import {
     type VideoMode,
     type VideoGenerationParams,
 } from "@/lib/video-models";
+import {
+    isMultiShotCustomize,
+    parseMultiShotConfig,
+    resolveEffectiveDuration,
+    validateMultiShot,
+} from "@/lib/video-multishot";
 import { applyMotionPreset, getMotionPresetById } from "@/lib/video-presets";
 import { checkVideoQuota } from "@/server/video/quota";
 import { toVideoJobView } from "@/server/video/jobs";
@@ -33,6 +39,24 @@ function isHttpsUrl(value: unknown): value is string {
     } catch {
         return false;
     }
+}
+
+function applyPresetToMultiShot(
+    multiShot: NonNullable<VideoGenerationParams["multiShot"]>,
+    presetId: string | undefined,
+    strategy: "api" | "prompt",
+): NonNullable<VideoGenerationParams["multiShot"]> {
+    if (!presetId || multiShot.shotType === "intelligent") return multiShot;
+    if (strategy === "api") {
+        return {
+            ...multiShot,
+            shots: multiShot.shots.map((s) => ({
+                ...s,
+                prompt: applyMotionPreset(s.prompt, presetId),
+            })),
+        };
+    }
+    return multiShot;
 }
 
 export async function POST(req: NextRequest) {
@@ -55,7 +79,7 @@ export async function POST(req: NextRequest) {
         const body = await req.json() as Record<string, unknown>;
         const {
             modelId, mode, prompt, duration, aspectRatio, resolution,
-            audio, negativePrompt, presetId,
+            audio, negativePrompt, presetId, multiShot: multiShotRaw,
             startFrameUrl, endFrameUrl,
             workspaceId, projectId, sessionId,
         } = body;
@@ -63,14 +87,25 @@ export async function POST(req: NextRequest) {
         if (typeof workspaceId !== "string" || !workspaceId) {
             return NextResponse.json({ error: "workspaceId required", requestId }, { status: 400 });
         }
-        if (typeof prompt !== "string" || !prompt.trim()) {
-            return NextResponse.json({ error: "Prompt is required", requestId }, { status: 400 });
-        }
+
         const model = getVideoModelById(typeof modelId === "string" ? modelId : "");
         if (!model) {
             return NextResponse.json({ error: `Unknown video model: ${modelId}`, requestId }, { status: 400 });
         }
+
+        const multiShot = parseMultiShotConfig(multiShotRaw);
         const videoMode: VideoMode = mode === "i2v" ? "i2v" : "t2v";
+        const customizeMulti = multiShot && isMultiShotCustomize(multiShot, model);
+        const intelligentMulti = multiShot?.enabled && multiShot.shotType === "intelligent";
+
+        const promptText = typeof prompt === "string" ? prompt.trim() : "";
+        if (!customizeMulti && !intelligentMulti && !promptText) {
+            return NextResponse.json({ error: "Prompt is required", requestId }, { status: 400 });
+        }
+        if (intelligentMulti && !promptText) {
+            return NextResponse.json({ error: "Prompt is required for intelligent multi-shot", requestId }, { status: 400 });
+        }
+
         const endpoint = model.endpoints[videoMode];
         if (!endpoint) {
             return NextResponse.json({ error: `Модель ${model.label} не поддерживает режим ${videoMode}`, requestId }, { status: 400 });
@@ -82,10 +117,18 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ error: `Unknown motion preset: ${presetId}`, requestId }, { status: 400 });
         }
 
+        if (multiShot) {
+            const multiErr = validateMultiShot(model, multiShot, videoMode);
+            if (multiErr) {
+                return NextResponse.json({ error: multiErr, requestId }, { status: 400 });
+            }
+        }
+
         const allowedDurations = getModelDurations(model, videoMode);
-        const resolvedDuration = typeof duration === "string" && allowedDurations.includes(duration)
+        const fallbackDuration = typeof duration === "string" && allowedDurations.includes(duration)
             ? duration
             : (allowedDurations.includes(model.defaultDuration) ? model.defaultDuration : allowedDurations[0]);
+        const resolvedDuration = resolveEffectiveDuration(model, multiShot ?? undefined, fallbackDuration);
         const resolvedAspect = model.aspectRatios && typeof aspectRatio === "string" && model.aspectRatios.includes(aspectRatio)
             ? aspectRatio
             : model.defaultAspectRatio;
@@ -99,7 +142,6 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ error: "Forbidden workspace", requestId }, { status: 403 });
         }
 
-        // ── Daily quota ────────────────────────────────────────────────
         const quota = await checkVideoQuota(userId, model.id);
         if (!quota.allowed) {
             const message = quota.reason === "model-disabled"
@@ -116,9 +158,16 @@ export async function POST(req: NextRequest) {
             );
         }
 
-        // ── Build input + submit to fal queue ──────────────────────────
+        const presetKey = typeof presetId === "string" ? presetId : undefined;
+        let resolvedMultiShot = multiShot;
+        if (multiShot && model.multiShot) {
+            resolvedMultiShot = applyPresetToMultiShot(multiShot, presetKey, model.multiShot.strategy);
+        }
+
         const params: VideoGenerationParams & { presetId?: string } = {
-            prompt: applyMotionPreset(prompt.trim(), typeof presetId === "string" ? presetId : undefined),
+            prompt: customizeMulti
+                ? ""
+                : applyMotionPreset(promptText, presetKey),
             duration: resolvedDuration,
             aspectRatio: resolvedAspect,
             resolution: resolvedResolution,
@@ -126,13 +175,15 @@ export async function POST(req: NextRequest) {
             negativePrompt: typeof negativePrompt === "string" && negativePrompt.trim() ? negativePrompt.trim() : undefined,
             startFrameUrl: isHttpsUrl(startFrameUrl) ? startFrameUrl : undefined,
             endFrameUrl: isHttpsUrl(endFrameUrl) ? endFrameUrl : undefined,
-            ...(typeof presetId === "string" && presetId ? { presetId } : {}),
+            multiShot: resolvedMultiShot ?? undefined,
+            ...(presetKey ? { presetId: presetKey } : {}),
         };
         const falInput = buildFalVideoInput(model, videoMode, params);
 
         console.log("[/api/ai/video/generate] submit", {
             requestId, userId, modelId: model.id, mode: videoMode, endpoint,
             duration: resolvedDuration, aspect: resolvedAspect, resolution: resolvedResolution,
+            multiShot: Boolean(resolvedMultiShot?.enabled),
         });
 
         const submission = await falSubmitOnly(endpoint, falInput);
@@ -145,9 +196,11 @@ export async function POST(req: NextRequest) {
                 sessionId: typeof sessionId === "string" && sessionId ? sessionId : null,
                 modelId: model.id,
                 mode: videoMode,
-                // Store the original user prompt (preset already merged into
-                // the fal input) so the feed shows what the user typed.
-                params: { ...params, prompt: prompt.trim() },
+                params: {
+                    ...params,
+                    prompt: promptText,
+                    ...(resolvedMultiShot ? { multiShot: resolvedMultiShot } : {}),
+                } as object,
                 falRequestId: submission.requestId,
                 falStatusUrl: submission.statusUrl,
                 falResponseUrl: submission.responseUrl,

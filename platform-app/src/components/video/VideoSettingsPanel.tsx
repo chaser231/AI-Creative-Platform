@@ -23,6 +23,8 @@ import {
 } from "@/lib/video-models";
 import { VIDEO_MOTION_PRESETS } from "@/lib/video-presets";
 import { compressImageFile, uploadForAI } from "@/utils/imageUpload";
+import { MultiShotSection } from "./MultiShotSection";
+import { isMultiShotCustomize, sumShotDurationSec } from "@/lib/video-multishot";
 
 const TIER_BADGE_CLASSES: Record<VideoTier, string> = {
     premium: "bg-amber-500/15 text-amber-500 border-amber-500/25",
@@ -56,6 +58,9 @@ export function VideoSettingsPanel({ projectId }: VideoSettingsPanelProps) {
     const setAudio = useVideoStore((s) => s.setAudio);
     const presetId = useVideoStore((s) => s.presetId);
     const setPresetId = useVideoStore((s) => s.setPresetId);
+    const multiShotEnabled = useVideoStore((s) => s.multiShotEnabled);
+    const multiShots = useVideoStore((s) => s.multiShots);
+    const shotType = useVideoStore((s) => s.shotType);
 
     const quotasQuery = trpc.video.myQuotas.useQuery(undefined, {
         refetchOnWindowFocus: false,
@@ -74,7 +79,16 @@ export function VideoSettingsPanel({ projectId }: VideoSettingsPanelProps) {
 
     const durations = getModelDurations(model, mode);
     const selectedQuota = quotaByModel.get(model.id);
-    const estCost = estimateVideoCostUsd(model, duration);
+    const multiConfig = model.multiShot
+        ? { enabled: multiShotEnabled, shots: multiShots, shotType }
+        : undefined;
+    const hideDurationPills = Boolean(
+        multiConfig && isMultiShotCustomize(multiConfig, model),
+    );
+    const estDuration = hideDurationPills
+        ? String(sumShotDurationSec(multiShots))
+        : duration;
+    const estCost = estimateVideoCostUsd(model, estDuration, multiConfig);
 
     return (
         <aside className="w-[300px] shrink-0 border-r border-border-primary bg-bg-surface flex flex-col min-h-0">
@@ -126,7 +140,10 @@ export function VideoSettingsPanel({ projectId }: VideoSettingsPanelProps) {
                     </section>
                 )}
 
+                {model.multiShot && <MultiShotSection model={model} />}
+
                 {/* Duration */}
+                {!hideDurationPills && (
                 <section>
                     <SectionLabel>Длительность</SectionLabel>
                     <PillRow
@@ -138,6 +155,7 @@ export function VideoSettingsPanel({ projectId }: VideoSettingsPanelProps) {
                         onChange={setDuration}
                     />
                 </section>
+                )}
 
                 {/* Aspect ratio */}
                 {model.aspectRatios && (

@@ -1,11 +1,17 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { ArrowUp, Loader2 } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { useVideoStore } from "@/store/videoStore";
 import { getVideoModelById } from "@/lib/video-models";
 import { getMotionPresetById } from "@/lib/video-presets";
+import {
+    compileSeedanceMultiShotPrompt,
+    isMultiShotCustomize,
+    sumShotDurationSec,
+    validateMultiShot,
+} from "@/lib/video-multishot";
 
 interface VideoPromptBarProps {
     projectId: string;
@@ -33,6 +39,10 @@ export function VideoPromptBar({ projectId, workspaceId }: VideoPromptBarProps) 
     const presetId = useVideoStore((s) => s.presetId);
     const startFrameUrl = useVideoStore((s) => s.startFrameUrl);
     const endFrameUrl = useVideoStore((s) => s.endFrameUrl);
+    const multiShotEnabled = useVideoStore((s) => s.multiShotEnabled);
+    const multiShots = useVideoStore((s) => s.multiShots);
+    const shotType = useVideoStore((s) => s.shotType);
+    const getMultiShotConfig = useVideoStore((s) => s.getMultiShotConfig);
     const addActiveJob = useVideoStore((s) => s.addActiveJob);
 
     const [prompt, setPrompt] = useState("");
@@ -45,8 +55,34 @@ export function VideoPromptBar({ projectId, workspaceId }: VideoPromptBarProps) 
 
     const model = getVideoModelById(selectedModelId);
     const preset = presetId ? getMotionPresetById(presetId) : undefined;
+    const multiShotConfig = getMultiShotConfig();
+    const customizeMulti = Boolean(model && multiShotConfig && isMultiShotCustomize(multiShotConfig, model));
+    const intelligentMulti = Boolean(multiShotConfig?.enabled && shotType === "intelligent");
     const needsStartFrame = mode === "i2v" && !startFrameUrl;
-    const canSubmit = !!prompt.trim() && !needsStartFrame && !submitting;
+
+    const displayDuration = useMemo(() => {
+        if (customizeMulti && model) {
+            return String(sumShotDurationSec(multiShots));
+        }
+        return duration.replace(/s$/i, "");
+    }, [customizeMulti, model, multiShots, duration]);
+
+    const compiledPreview = useMemo(() => {
+        if (!customizeMulti || model?.multiShot?.strategy !== "prompt") return null;
+        const text = compileSeedanceMultiShotPrompt(multiShots);
+        return text.trim() ? text : null;
+    }, [customizeMulti, model, multiShots]);
+
+    const multiValidationError = useMemo(() => {
+        if (!model || !multiShotConfig?.enabled) return null;
+        return validateMultiShot(model, multiShotConfig, mode);
+    }, [model, multiShotConfig, mode]);
+
+    const hasPromptInput = customizeMulti
+        ? multiShots.every((s) => s.prompt.trim())
+        : !!prompt.trim();
+
+    const canSubmit = hasPromptInput && !needsStartFrame && !submitting && !multiValidationError;
 
     const ensureSession = async (): Promise<string | null> => {
         if (activeSessionId) return activeSessionId;
@@ -70,10 +106,14 @@ export function VideoPromptBar({ projectId, workspaceId }: VideoPromptBarProps) 
             return;
         }
 
-        const submittedPrompt = prompt.trim();
+        const submittedPrompt = customizeMulti
+            ? (compiledPreview ?? multiShots.map((s) => s.prompt.trim()).join(" | "))
+            : prompt.trim();
+        const apiMultiShot = multiShotConfig?.enabled ? multiShotConfig : undefined;
+        const apiDuration = customizeMulti ? String(sumShotDurationSec(multiShots)) : duration;
+
         setSubmitting(true);
         try {
-            // User message first — feed shows the request immediately.
             await addMessageMutation.mutateAsync({
                 sessionId,
                 role: "user",
@@ -83,11 +123,12 @@ export function VideoPromptBar({ projectId, workspaceId }: VideoPromptBarProps) 
                     kind: "video",
                     model: model.id,
                     mode,
-                    duration,
+                    duration: apiDuration,
                     aspectRatio,
                     resolution,
                     presetId: presetId ?? undefined,
                     startFrameUrl: mode === "i2v" ? startFrameUrl : undefined,
+                    multiShot: apiMultiShot ? { enabled: true, shotType, shotCount: multiShots.length } : undefined,
                 },
             });
             utils.ai.getMessages.invalidate({ sessionId });
@@ -98,12 +139,13 @@ export function VideoPromptBar({ projectId, workspaceId }: VideoPromptBarProps) 
                 body: JSON.stringify({
                     modelId: model.id,
                     mode,
-                    prompt: submittedPrompt,
-                    duration,
+                    prompt: customizeMulti ? "" : submittedPrompt,
+                    duration: apiDuration,
                     aspectRatio,
                     resolution,
                     audio: model.supportsAudio ? audio : undefined,
                     presetId: presetId ?? undefined,
+                    multiShot: apiMultiShot,
                     startFrameUrl: mode === "i2v" ? startFrameUrl : undefined,
                     endFrameUrl: mode === "i2v" && model.supportsEndFrame ? endFrameUrl : undefined,
                     workspaceId,
@@ -128,7 +170,7 @@ export function VideoPromptBar({ projectId, workspaceId }: VideoPromptBarProps) 
                 createdAt: Date.now(),
             });
             utils.video.myQuotas.invalidate();
-            setPrompt("");
+            if (!customizeMulti) setPrompt("");
         } catch (err) {
             setErrorMsg(err instanceof Error ? err.message : "Не удалось запустить генерацию");
         } finally {
@@ -138,34 +180,55 @@ export function VideoPromptBar({ projectId, workspaceId }: VideoPromptBarProps) 
 
     return (
         <div className="w-full">
-            {errorMsg && (
+            {(errorMsg || multiValidationError) && (
                 <div className="mb-2 px-3 py-2 rounded-[var(--radius-md)] bg-red-500/10 border border-red-500/30 text-red-400 text-[11.5px]">
-                    {errorMsg}
+                    {errorMsg ?? multiValidationError}
                 </div>
             )}
             <div className="rounded-[var(--radius-xl)] border border-border-primary bg-bg-surface shadow-[var(--shadow-lg)] p-2.5">
-                <textarea
-                    value={prompt}
-                    onChange={(e) => setPrompt(e.target.value)}
-                    onKeyDown={(e) => {
-                        if (e.key === "Enter" && !e.shiftKey) {
-                            e.preventDefault();
-                            void handleSubmit();
+                {customizeMulti ? (
+                    <div className="px-1.5 pt-1 pb-2 text-[12px] text-text-secondary leading-relaxed">
+                        <p className="text-text-tertiary text-[11px] mb-1">
+                            Multi-shot: заполните шоты в панели слева
+                        </p>
+                        {compiledPreview ? (
+                            <p className="text-[11px] text-text-tertiary line-clamp-3">{compiledPreview}</p>
+                        ) : (
+                            <p className="text-[11px] text-amber-500">Добавьте описание хотя бы в один шот</p>
+                        )}
+                    </div>
+                ) : (
+                    <textarea
+                        value={prompt}
+                        onChange={(e) => setPrompt(e.target.value)}
+                        onKeyDown={(e) => {
+                            if (e.key === "Enter" && !e.shiftKey) {
+                                e.preventDefault();
+                                void handleSubmit();
+                            }
+                        }}
+                        placeholder={
+                            intelligentMulti
+                                ? "Опишите сцену — модель сама разобьёт на планы…"
+                                : mode === "i2v"
+                                    ? "Опишите, как анимировать кадр…"
+                                    : "Опишите сцену для видео…"
                         }
-                    }}
-                    placeholder={
-                        mode === "i2v"
-                            ? "Опишите, как анимировать кадр…"
-                            : "Опишите сцену для видео…"
-                    }
-                    rows={2}
-                    className="w-full resize-none bg-transparent text-[13px] text-text-primary placeholder:text-text-tertiary outline-none px-1.5 pt-1"
-                />
+                        rows={2}
+                        className="w-full resize-none bg-transparent text-[13px] text-text-primary placeholder:text-text-tertiary outline-none px-1.5 pt-1"
+                    />
+                )}
                 <div className="flex items-center justify-between gap-2 mt-1">
                     <div className="flex items-center gap-1.5 min-w-0 text-[10.5px] text-text-tertiary px-1.5 truncate">
                         <span className="font-medium text-text-secondary">{model?.label}</span>
                         <span>·</span>
-                        <span>{duration.replace(/s$/i, "")}с</span>
+                        <span>{displayDuration}с</span>
+                        {multiShotEnabled && (
+                            <>
+                                <span>·</span>
+                                <span>multi-shot</span>
+                            </>
+                        )}
                         {preset && (
                             <>
                                 <span>·</span>

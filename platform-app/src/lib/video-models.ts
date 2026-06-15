@@ -13,6 +13,23 @@
  * No server-side dependencies — safe to import in the browser.
  */
 
+import type { MultiShotConfig, VideoMultiShotCapabilities } from "./video-multishot";
+import {
+    compileSeedanceMultiShotPrompt,
+    isMultiShotCustomize,
+    sumShotDurationSec,
+} from "./video-multishot";
+
+export type { MultiShotConfig, VideoMultiShotCapabilities, VideoShot, ShotType } from "./video-multishot";
+export {
+    compileSeedanceMultiShotPrompt,
+    createDefaultShots,
+    validateMultiShot,
+    parseMultiShotConfig,
+    sumShotDurationSec,
+    isMultiShotCustomize,
+} from "./video-multishot";
+
 export type VideoTier = "premium" | "advanced" | "standard";
 export type VideoMode = "t2v" | "i2v";
 
@@ -47,6 +64,8 @@ export interface VideoModelEntry {
     supportsNegativePrompt?: boolean;
     /** Approximate price per output second (USD) — UI display + costUnits. */
     pricePerSecondUsd: number;
+    /** Multi-shot storyboarding capabilities (omit = not supported). */
+    multiShot?: VideoMultiShotCapabilities;
 }
 
 // ─── Registry ───────────────────────────────────────────────────────────────
@@ -111,6 +130,15 @@ export const VIDEO_MODEL_REGISTRY: VideoModelEntry[] = [
         supportsEndFrame: true,
         supportsNegativePrompt: true,
         pricePerSecondUsd: 0.28,
+        multiShot: {
+            strategy: "api",
+            maxShots: 6,
+            minShots: 2,
+            shotDurationRange: [1, 15],
+            totalDurationCap: 15,
+            shotTypeOptions: ["customize", "intelligent"],
+            defaultShotType: "customize",
+        },
     },
     {
         id: "seedance-2.0",
@@ -130,6 +158,13 @@ export const VIDEO_MODEL_REGISTRY: VideoModelEntry[] = [
         supportsAudio: true,
         supportsEndFrame: true,
         pricePerSecondUsd: 0.30,
+        multiShot: {
+            strategy: "prompt",
+            maxShots: 6,
+            minShots: 2,
+            shotDurationRange: [1, 15],
+            totalDurationCap: 15,
+        },
     },
 
     // ── Advanced ─────────────────────────────────────────────────────────
@@ -191,6 +226,13 @@ export const VIDEO_MODEL_REGISTRY: VideoModelEntry[] = [
         supportsAudio: false,
         supportsEndFrame: true,
         pricePerSecondUsd: 0.062,
+        multiShot: {
+            strategy: "prompt",
+            maxShots: 4,
+            minShots: 2,
+            shotDurationRange: [1, 12],
+            totalDurationCap: 12,
+        },
     },
 
     // ── Standard ─────────────────────────────────────────────────────────
@@ -300,7 +342,15 @@ export function durationToSeconds(duration: string): number {
     return Number.isFinite(n) ? n : 5;
 }
 
-export function estimateVideoCostUsd(model: VideoModelEntry, duration: string): number {
+export function estimateVideoCostUsd(
+    model: VideoModelEntry,
+    duration: string,
+    multiShot?: MultiShotConfig,
+): number {
+    if (multiShot?.enabled && isMultiShotCustomize(multiShot, model) && multiShot.shots.length > 0) {
+        const secs = sumShotDurationSec(multiShot.shots);
+        return Math.round(model.pricePerSecondUsd * secs * 100) / 100;
+    }
     return Math.round(model.pricePerSecondUsd * durationToSeconds(duration) * 100) / 100;
 }
 
@@ -318,6 +368,8 @@ export interface VideoGenerationParams {
     startFrameUrl?: string;
     /** i2v end/tail frame (public URL), when model.supportsEndFrame. */
     endFrameUrl?: string;
+    /** Multi-shot config when model.multiShot is set. */
+    multiShot?: MultiShotConfig;
 }
 
 /**
@@ -331,10 +383,38 @@ export function buildFalVideoInput(
     mode: VideoMode,
     params: VideoGenerationParams,
 ): Record<string, unknown> {
+    const multi = params.multiShot;
+    const caps = model.multiShot;
+    const multiActive = Boolean(multi?.enabled && caps);
+    const shotType = multi?.shotType ?? caps?.defaultShotType ?? "customize";
+    const customizeMulti = multiActive && shotType === "customize" && (multi?.shots.length ?? 0) > 0;
+
+    let effectivePrompt = params.prompt;
+    let effectiveDuration = params.duration;
+
+    if (customizeMulti && caps!.strategy === "prompt") {
+        effectivePrompt = compileSeedanceMultiShotPrompt(multi!.shots);
+        effectiveDuration = String(sumShotDurationSec(multi!.shots));
+    } else if (customizeMulti && caps!.strategy === "api") {
+        effectiveDuration = String(sumShotDurationSec(multi!.shots));
+    }
+
     const input: Record<string, unknown> = {
-        prompt: params.prompt,
-        duration: params.duration,
+        duration: effectiveDuration,
     };
+
+    if (customizeMulti && caps!.strategy === "api") {
+        input.multi_prompt = multi!.shots.map((s) => ({
+            prompt: s.prompt,
+            duration: String(s.durationSec),
+        }));
+        input.shot_type = shotType;
+    } else {
+        input.prompt = effectivePrompt;
+        if (multiActive && caps!.strategy === "api" && shotType === "intelligent") {
+            input.shot_type = "intelligent";
+        }
+    }
 
     if (model.aspectRatios && params.aspectRatio) {
         input.aspect_ratio = params.aspectRatio;

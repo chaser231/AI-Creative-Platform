@@ -194,6 +194,65 @@ describe("buildFalVideoInput", () => {
         expect(withNeg.negative_prompt).toBe("blurry");
         expect(withoutNeg.negative_prompt).toBeUndefined();
     });
+
+    it("kling 3.0 customize multi-shot sends multi_prompt without top-level prompt", () => {
+        const kling = getVideoModelById("kling-3.0-pro")!;
+        const input = buildFalVideoInput(kling, "t2v", {
+            prompt: "",
+            duration: "10",
+            multiShot: {
+                enabled: true,
+                shotType: "customize",
+                shots: [
+                    { prompt: "wide shot", durationSec: 5 },
+                    { prompt: "close-up", durationSec: 5 },
+                ],
+            },
+        });
+        expect(input.prompt).toBeUndefined();
+        expect(input.multi_prompt).toEqual([
+            { prompt: "wide shot", duration: "5" },
+            { prompt: "close-up", duration: "5" },
+        ]);
+        expect(input.shot_type).toBe("customize");
+        expect(input.duration).toBe("10");
+    });
+
+    it("seedance 2.0 customize multi-shot compiles prompt with timestamps", () => {
+        const seedance = getVideoModelById("seedance-2.0")!;
+        const input = buildFalVideoInput(seedance, "t2v", {
+            prompt: "",
+            duration: "5",
+            multiShot: {
+                enabled: true,
+                shotType: "customize",
+                shots: [
+                    { prompt: "city wide", durationSec: 5 },
+                    { prompt: "street level", durationSec: 5 },
+                ],
+            },
+        });
+        expect(input.prompt).toContain("[0-5s] city wide");
+        expect(input.prompt).toContain("Cut scene to [5-10s]");
+        expect(input.duration).toBe("10");
+        expect(input.multi_prompt).toBeUndefined();
+    });
+
+    it("kling intelligent multi-shot keeps prompt and sets shot_type", () => {
+        const kling = getVideoModelById("kling-3.0-pro")!;
+        const input = buildFalVideoInput(kling, "t2v", {
+            prompt: "A hero walks through rain",
+            duration: "8",
+            multiShot: {
+                enabled: true,
+                shotType: "intelligent",
+                shots: [],
+            },
+        });
+        expect(input.prompt).toBe("A hero walks through rain");
+        expect(input.shot_type).toBe("intelligent");
+        expect(input.multi_prompt).toBeUndefined();
+    });
 });
 
 describe("extractFalVideoUrl", () => {
