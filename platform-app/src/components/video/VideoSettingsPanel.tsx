@@ -22,6 +22,7 @@ import {
     type VideoTier,
 } from "@/lib/video-models";
 import { VIDEO_MOTION_PRESETS } from "@/lib/video-presets";
+import { MotionPresetIcon } from "./MotionPresetIcon";
 import { compressImageFile, uploadForAI } from "@/utils/imageUpload";
 import { MultiShotSection } from "./MultiShotSection";
 import { isMultiShotCustomize, sumShotDurationSec } from "@/lib/video-multishot";
@@ -224,7 +225,7 @@ export function VideoSettingsPanel({ projectId }: VideoSettingsPanelProps) {
                                     : "border-border-primary text-text-tertiary hover:text-text-secondary hover:bg-bg-tertiary"
                             }`}
                         >
-                            <span className="text-[14px] leading-none">—</span>
+                            <MotionPresetIcon name="auto" className="text-current" />
                             <span className="text-[9.5px] font-medium leading-tight">Авто</span>
                         </button>
                         {VIDEO_MOTION_PRESETS.map((p) => (
@@ -238,7 +239,7 @@ export function VideoSettingsPanel({ projectId }: VideoSettingsPanelProps) {
                                         : "border-border-primary text-text-tertiary hover:text-text-secondary hover:bg-bg-tertiary"
                                 }`}
                             >
-                                <span className="text-[14px] leading-none">{p.glyph}</span>
+                                <MotionPresetIcon name={p.icon} className="text-current" />
                                 <span className="text-[9.5px] font-medium leading-tight">{p.label}</span>
                             </button>
                         ))}

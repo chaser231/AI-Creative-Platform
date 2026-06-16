@@ -181,7 +181,7 @@ const ENUM_OPTION_LABELS: Record<string, Record<string, string>> = {
     presetId: {
         none: "Без пресета",
         ...Object.fromEntries(
-            VIDEO_MOTION_PRESETS.map((p) => [p.id, `${p.glyph} ${p.label}`]),
+            VIDEO_MOTION_PRESETS.map((p) => [p.id, p.label]),
         ),
     },
 };
