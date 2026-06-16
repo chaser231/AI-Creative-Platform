@@ -312,3 +312,31 @@ describe("FalProvider — gpt-image-2 inpaint payload", () => {
         expect(body.output_format).toBe("png");
     });
 });
+
+describe("FalProvider — nano-banana-2 inpaint payload", () => {
+    it("maps scale=high to resolution=2K for fal nano-banana edit", async () => {
+        mockFetch.mockResolvedValueOnce(
+            okJson({ images: [{ url: "https://fal.media/inpaint.png" }] }),
+        );
+
+        await generateWithFallback({
+            prompt: "fill masked area",
+            type: "inpainting",
+            model: "nano-banana-2",
+            imageBase64: "https://cdn.example.com/source.png",
+            maskBase64: "https://cdn.example.com/mask.png",
+            scale: "high",
+        });
+
+        const [url, init] = mockFetch.mock.calls[0] as [string, RequestInit];
+        expect(url).toBe("https://queue.fal.run/fal-ai/nano-banana-2/edit");
+
+        const body = JSON.parse(init.body as string);
+        expect(body.image_urls).toEqual([
+            "https://cdn.example.com/source.png",
+            "https://cdn.example.com/mask.png",
+        ]);
+        expect(body.resolution).toBe("2K");
+        expect(body.output_format).toBe("png");
+    });
+});
