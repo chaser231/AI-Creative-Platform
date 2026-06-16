@@ -5,6 +5,7 @@ import { Download, ImagePlus, Loader2, Check } from "lucide-react";
 import { useVideoStore } from "@/store/videoStore";
 import { getVideoModelById } from "@/lib/video-models";
 import { getMotionPresetById } from "@/lib/video-presets";
+import { MotionPresetIcon } from "./MotionPresetIcon";
 import { captureVideoFrame } from "@/utils/videoFrame";
 import { uploadImageToS3 } from "@/utils/imageUpload";
 
@@ -63,7 +64,12 @@ export function VideoResultCard({ url, projectId, model, metadata }: VideoResult
                     {modelEntry && <span className="font-medium text-text-secondary">{modelEntry.label}</span>}
                     {metadata?.duration && <span>{metadata.duration.replace(/s$/i, "")}с</span>}
                     {metadata?.resolution && <span>{metadata.resolution}</span>}
-                    {preset && <span title={preset.description}>{preset.glyph} {preset.label}</span>}
+                    {preset && (
+                        <span className="inline-flex items-center gap-1" title={preset.description}>
+                            <MotionPresetIcon name={preset.icon} size={11} />
+                            {preset.label}
+                        </span>
+                    )}
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
                     <button

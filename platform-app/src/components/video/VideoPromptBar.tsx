@@ -6,6 +6,7 @@ import { trpc } from "@/lib/trpc";
 import { useVideoStore } from "@/store/videoStore";
 import { getVideoModelById } from "@/lib/video-models";
 import { getMotionPresetById } from "@/lib/video-presets";
+import { MotionPresetIcon } from "./MotionPresetIcon";
 import {
     compileSeedanceMultiShotPrompt,
     isMultiShotCustomize,
@@ -232,7 +233,10 @@ export function VideoPromptBar({ projectId, workspaceId }: VideoPromptBarProps) 
                         {preset && (
                             <>
                                 <span>·</span>
-                                <span>{preset.glyph} {preset.label}</span>
+                                <span className="inline-flex items-center gap-1">
+                                    <MotionPresetIcon name={preset.icon} size={11} />
+                                    {preset.label}
+                                </span>
                             </>
                         )}
                         {needsStartFrame && (
