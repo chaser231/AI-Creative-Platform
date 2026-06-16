@@ -319,7 +319,10 @@ class ReplicateProvider implements AIProviderImplementation {
 
             const result = await this.callReplicate(entry, input, token);
             const output = Array.isArray(result) ? result[0] : result;
-            return { content: output as string, format: "url", model: entry.id, provider: "replicate" };
+            if (typeof output !== "string" || output.length === 0) {
+                throw new Error(`Replicate ${entry.slug}: inpaint returned no image URL`);
+            }
+            return { content: output, format: "url", model: entry.id, provider: "replicate" };
         }
 
         // ── Edit (image + prompt → edited image) ────────────────────
@@ -904,6 +907,12 @@ function falImageSizeFromAspectRatio(aspectRatio?: string): string {
         // model auto-select the closest valid size from the prompt.
         default: return "auto";
     }
+}
+
+/** fal nano-banana endpoints require 1K/2K/4K — not GPT-style quality strings. */
+function falGoogleResolution(scale?: string): string {
+    if (scale === "1K" || scale === "2K" || scale === "4K") return scale;
+    return "2K";
 }
 
 class FalProvider implements AIProviderImplementation {
@@ -1692,7 +1701,9 @@ class FalProvider implements AIProviderImplementation {
             input.prompt = prompt;
             input.image_urls = [params.imageBase64, params.maskBase64];
             input.output_format = "png";
-            if (params.scale) input.resolution = params.scale;
+            // Inpaint modal passes scale="high" for GPT Image; nano-banana
+            // expects resolution enum 1K|2K|4K (required on fal.ai).
+            input.resolution = falGoogleResolution(params.scale);
             if (params.count && params.count > 1) {
                 input.num_images = Math.min(params.count, 4);
             }
@@ -1711,11 +1722,13 @@ class FalProvider implements AIProviderImplementation {
     private parseResult(data: Record<string, unknown>, entry: ModelEntry): AIResponse {
         const images = data.images as { url?: string; width?: number; height?: number }[] | undefined;
         const imageObj = images?.[0];
+        const singleImage = data.image as { url?: string; width?: number; height?: number } | undefined;
         const imageUrls = Array.from(new Set([
             ...(images?.map((image) => image.url).filter((url): url is string => Boolean(url)) ?? []),
+            ...(singleImage?.url ? [singleImage.url] : []),
             ...normalizeImageOutputs(data.output),
         ]));
-        const imageUrl = imageObj?.url || imageUrls[0];
+        const imageUrl = imageObj?.url || singleImage?.url || imageUrls[0];
         if (!imageUrl) throw new Error("fal.ai: no image URL in response");
 
         return {
