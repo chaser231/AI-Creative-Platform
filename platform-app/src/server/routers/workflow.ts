@@ -331,11 +331,13 @@ export const workflowRouter = createTRPCRouter({
     .query(async ({ ctx, input }) => {
       await assertWorkspaceAccess(ctx, input.workspaceId, "USER");
 
+      // Workspace-wide: any member with USER access may list and run shared
+      // AI scenarios. Ownership filter applies to the workflow editor list,
+      // not to published scenarioConfig entries.
       const workflows = await ctx.prisma.aIWorkflow.findMany({
         where: {
           workspaceId: input.workspaceId,
           graph: { not: Prisma.DbNull },
-          OR: [{ createdById: ctx.user.id }, { isTemplate: true }],
         },
         orderBy: [{ isTemplate: "desc" }, { updatedAt: "desc" }],
         select: {
