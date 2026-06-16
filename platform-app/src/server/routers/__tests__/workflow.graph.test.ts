@@ -32,6 +32,7 @@ type WorkflowRow = {
     description: string;
     steps: unknown;
     graph: WorkflowGraph | null;
+    scenarioConfig?: unknown;
     isTemplate: boolean;
     createdAt: Date;
     updatedAt: Date;
@@ -342,5 +343,59 @@ describe("workflowRouter — graph procedures", () => {
 
         const all = await caller.list({ workspaceId: "w1", includeLegacy: true });
         expect(all.map((r) => r.id).sort()).toEqual(["wf-graph", "wf-legacy"]);
+    });
+
+    it("listScenarios returns enabled scenarios from other workspace members", async () => {
+        const graph: WorkflowGraph = {
+            version: 1,
+            nodes: [
+                {
+                    id: "n1",
+                    type: "imageInput",
+                    position: { x: 0, y: 0 },
+                    data: { params: {} },
+                },
+            ],
+            edges: [],
+        };
+        const rows: WorkflowRow[] = [
+            {
+                id: "wf-scenario",
+                workspaceId: "w1",
+                createdById: "u-owner",
+                name: "Отражение продукта",
+                description: "Сценарий отражения",
+                steps: [],
+                graph,
+                scenarioConfig: {
+                    enabled: true,
+                    title: "Отражение продукта",
+                    description: "Создает отражение",
+                    surfaces: ["banner", "photo", "asset"],
+                    input: { kind: "layer", required: true },
+                    output: { kind: "image", behavior: "replace-selection" },
+                },
+                isTemplate: false,
+                createdAt: new Date(),
+                updatedAt: new Date(),
+            },
+        ];
+        const { prisma } = makePrismaMock({
+            userId: "u-other",
+            workspaceId: "w1",
+            memberRole: "USER",
+            rows,
+        });
+        const caller = makeCaller(makeCtx(prisma, "u-other"));
+
+        const scenarios = await caller.listScenarios({
+            workspaceId: "w1",
+            surface: "banner",
+            inputKind: "layer",
+        });
+
+        expect(scenarios).toHaveLength(1);
+        expect(scenarios[0]?.id).toBe("wf-scenario");
+        expect(scenarios[0]?.scenarioConfig.title).toBe("Отражение продукта");
     });
 });
