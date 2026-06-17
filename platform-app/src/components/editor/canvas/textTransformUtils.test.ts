@@ -97,8 +97,7 @@ describe("textTransformUtils", () => {
         expect(group.height()).toBe(80);
         expect(bounds.width()).toBe(150);
         expect(bounds.height()).toBe(80);
-        expect(text.width()).toBe(150);
-        expect(text.height()).toBe(80);
+        expect(text.width()).not.toBe(150);
         expect(text.wrap()).toBe("word");
         expect(flip.x()).toBe(150);
     });

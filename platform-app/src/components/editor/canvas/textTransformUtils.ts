@@ -57,10 +57,18 @@ export function syncTextTransformNodes(
     boundsNode?.height(nextHeight);
 
     if (textNode) {
-        textNode.width(nextWidth);
-        textNode.height(nextHeight);
-        if (options.fixedPreview && layer.textAdjust === "auto_width") {
+        const adj = layer.textAdjust || "auto_width";
+        if (adj === "auto_width") {
+            textNode.setAttr("width", undefined);
+            textNode.setAttr("height", undefined);
+            textNode.wrap(options.fixedPreview ? "word" : "none");
+        } else if (adj === "auto_height") {
+            textNode.width(nextWidth);
+            textNode.setAttr("height", undefined);
             textNode.wrap("word");
+        } else {
+            textNode.width(nextWidth);
+            textNode.height(nextHeight);
         }
     }
 

@@ -5,6 +5,9 @@ node_modules/
 .vscode
 *.log
 
+# Local planning / strategy artifacts (kept out of git)
+.planning/
+
 # Environment secrets (defense in depth; canonical rules in platform-app/.gitignore)
 .env
 .env.*
