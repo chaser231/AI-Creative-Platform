@@ -77,6 +77,46 @@ export function clearTextMeasureCache(): void {
 }
 
 /**
+ * Konva renders non-zero letter-spacing per glyph, but `node.width()` uses
+ * whole-string `measureText` + `letterSpacing * length`. That diverges when
+ * per-glyph advances differ from the string metric (common with display fonts
+ * and negative tracking), so the stored box ends up narrower than the paint.
+ */
+function measureKonvaLineRenderedWidth(node: Konva.Text, line: string): number {
+    const letterSpacing = node.letterSpacing() || 0;
+    if (letterSpacing === 0) {
+        return node.measureSize(line).width;
+    }
+    let width = 0;
+    for (const ch of line) {
+        width += node.measureSize(ch).width + letterSpacing;
+    }
+    return width;
+}
+
+function measureKonvaRenderedTextWidth(node: Konva.Text, displayText: string): number {
+    const lines = displayText.split("\n");
+    if (lines.length === 0) return 1;
+    return Math.max(...lines.map((line) => measureKonvaLineRenderedWidth(node, line)));
+}
+
+/** Line-height below 1 shrinks Konva's line box below glyph ink — floor height. */
+function applyTightLineHeightFloor(
+    text: TextLayer,
+    height: number,
+    lineCount: number,
+    node: Konva.Text,
+): number {
+    const lineHeight = text.lineHeight || 1.2;
+    if (lineHeight >= 1 || lineCount <= 0) return height;
+    const sample = node.measureSize("Мg");
+    const inkHeight =
+        (sample.actualBoundingBoxAscent ?? text.fontSize * 0.8)
+        + (sample.actualBoundingBoxDescent ?? text.fontSize * 0.2);
+    return Math.max(height, Math.ceil(inkHeight * lineCount));
+}
+
+/**
  * Measure the rendered size of a text layer.
  * Uses Konva.Text internally so the measurement exactly matches canvas rendering.
  * 
@@ -124,8 +164,14 @@ function estimateTextSizeRaw(
         node.wrap(isAutoWidth ? "none" : "word");
         node.ellipsis(isFixedTruncate);
 
-        const w = isAutoWidth ? node.width() : (isFixedTruncate ? text.width : (measureW ?? text.width));
+        const lineCount = Math.max(1, displayText.split("\n").length);
+        const w = isAutoWidth
+            ? measureKonvaRenderedTextWidth(node, displayText)
+            : (isFixedTruncate ? text.width : (measureW ?? text.width));
         let h = node.height();
+        if (!isFixedTruncate) {
+            h = applyTightLineHeightFloor(text, h, lineCount, node);
+        }
         if (isFixedTruncate) {
             const lineHeightPx = text.fontSize * (text.lineHeight || 1.2);
             h = Math.min(h, lineHeightPx);
