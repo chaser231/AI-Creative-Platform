@@ -403,8 +403,8 @@ model AIPreset {
 // (HuggingFace / CivitAI / fal.media .safetensors) added by workspace members.
 //
 // `family` MUST match a ModelEntry.loraSpec.family ("flux-1" | "flux-2" |
-// "qwen") so the UI can filter weights to the model the user has selected.
-// The path is validated against an SSRF allowlist on write.
+// "qwen" | "flux-kontext") so the UI can filter weights to the model the user
+// has selected. The path is validated against an SSRF allowlist on write.
 model LoraPreset {
   id            String   @id @default(cuid())
   name          String
@@ -414,7 +414,7 @@ model LoraPreset {
   path          String
   // Compatibility family — only models whose loraSpec.family matches will
   // accept this weight. Cross-family LoRAs are not interchangeable.
-  family        String   // "flux-1" | "flux-2" | "qwen"
+  family        String   // "flux-1" | "flux-2" | "qwen" | "flux-kontext"
   // Recommended starting strength (0..2; UI seeds the slider with this).
   defaultScale  Float    @default(1.0)
   // Optional preview image rendered as the picker's thumbnail.

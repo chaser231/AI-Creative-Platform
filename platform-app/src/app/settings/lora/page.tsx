@@ -60,12 +60,14 @@ const FAMILY_TABS: { id: LoraFamily; label: string }[] = [
   { id: "flux-1", label: "FLUX.1" },
   { id: "flux-2", label: "FLUX.2" },
   { id: "qwen", label: "Qwen" },
+  { id: "flux-kontext", label: "FLUX.1 Kontext" },
 ];
 
 const FAMILY_LABEL: Record<LoraFamily, string> = {
   "flux-1": "FLUX.1",
   "flux-2": "FLUX.2",
   qwen: "Qwen",
+  "flux-kontext": "FLUX.1 Kontext",
 };
 
 export default function LoraPresetsPage() {

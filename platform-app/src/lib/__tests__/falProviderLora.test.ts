@@ -193,6 +193,73 @@ describe("FalProvider — LoRA-aware generate path", () => {
         expect(body.image_urls).toEqual(["https://cdn.example.com/product.png"]);
     });
 
+    it("flux-2-lora: edit type with a single source image forwards image_urls", async () => {
+        mockFetch.mockResolvedValueOnce(
+            okJson({ images: [{ url: "https://fal.media/flux2-edit.png" }] }),
+        );
+
+        await generateWithFallback({
+            prompt: "restyle keeping the product",
+            type: "edit",
+            model: "flux-2-lora",
+            imageBase64: "https://cdn.example.com/source.png",
+            loras: [{ path: "https://huggingface.co/f2/style.safetensors", scale: 0.9 }],
+        });
+
+        const [url, init] = mockFetch.mock.calls[0] as [string, RequestInit];
+        expect(url).toBe("https://queue.fal.run/fal-ai/flux-2/lora/edit");
+
+        const body = JSON.parse(init.body as string);
+        expect(body.image_urls).toEqual(["https://cdn.example.com/source.png"]);
+        expect(body.loras).toEqual([
+            { path: "https://huggingface.co/f2/style.safetensors", scale: 0.9 },
+        ]);
+    });
+
+    it("flux-kontext-lora: routes to the i2i endpoint with image_url, strength and LoRA", async () => {
+        mockFetch.mockResolvedValueOnce(
+            okJson({ images: [{ url: "https://fal.media/kontext.png" }] }),
+        );
+
+        await generateWithFallback({
+            prompt: "apply the trained brand style, keep the product identical",
+            type: "edit",
+            model: "flux-kontext-lora",
+            imageBase64: "https://cdn.example.com/product.png",
+            acceleration: "high",
+            loras: [{ path: "https://fal.media/trained/kontext.safetensors", scale: 1.0 }],
+        });
+
+        const [url, init] = mockFetch.mock.calls[0] as [string, RequestInit];
+        expect(url).toBe(
+            "https://queue.fal.run/fal-ai/flux-kontext-lora/image-to-image",
+        );
+
+        const body = JSON.parse(init.body as string);
+        expect(body.image_url).toBe("https://cdn.example.com/product.png");
+        expect(body.strength).toBe(0.88);
+        expect(body.acceleration).toBe("high");
+        expect(body.loras).toEqual([
+            { path: "https://fal.media/trained/kontext.safetensors", scale: 1.0 },
+        ]);
+    });
+
+    it("flux-kontext-lora: rejects when no source image is supplied", async () => {
+        await expect(
+            generateWithFallback({
+                prompt: "apply style",
+                type: "edit",
+                model: "flux-kontext-lora",
+                loras: [{ path: "https://fal.media/trained/kontext.safetensors" }],
+                // No fallback hop so the edit-only guard surfaces directly.
+                disableFallback: true,
+            }),
+        ).rejects.toThrow();
+
+        // The guard fires before any network call.
+        expect(mockFetch).not.toHaveBeenCalled();
+    });
+
     it("respects spec.acceleration whitelist (silently drops unsupported value)", async () => {
         mockFetch.mockResolvedValueOnce(
             okJson({ images: [{ url: "https://fal.media/x.png" }] }),

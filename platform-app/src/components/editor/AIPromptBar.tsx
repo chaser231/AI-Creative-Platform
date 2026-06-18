@@ -56,6 +56,15 @@ const EDIT_MODELS = getImageEditPickerOptions().map((model) => ({
     name: model.label,
 }));
 
+// LoRA-aware models usable in the edit (img2img) tab. These take an uploaded
+// source image plus a LoRA stack and keep the LoRA picker visible in that tab.
+const EDIT_LORA_MODELS = new Set([
+    "qwen-image-edit-lora",
+    "flux-lora",
+    "flux-kontext-lora",
+    "flux-2-lora",
+]);
+
 // Outpaint target aspect ratios (used within the edit tab's "Expand" action)
 const OUTPAINT_RATIOS = [
     { id: "16:9", label: "16:9" },
@@ -413,7 +422,7 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
     const supportsLoraInTab =
         !!loraSpec &&
         (activeTab === "image" ||
-            (activeTab === "edit" && (selectedModel === "qwen-image-edit-lora" || selectedModel === "flux-lora")));
+            (activeTab === "edit" && EDIT_LORA_MODELS.has(selectedModel)));
 
     // Bundle the LoRA-aware request fields into a single object so each
     // generate/edit fetch site doesn't have to enumerate them.
