@@ -11,6 +11,7 @@ import type { CanvasStore, Layer, ComponentProps, ResizeFormat } from "./types";
 import { DEFAULT_RESIZE } from "./types";
 import { v4 as uuid } from "uuid";
 import { applyLayout, applyAllAutoLayouts } from "@/utils/layoutEngine";
+import { applySliceAlignment } from "@/utils/sliceAlignment";
 import { applyConstraints } from "@/utils/resizeUtil";
 import { getContentSourceUpdates } from "./helpers";
 import { cloneLayerTree } from "@/utils/cloneLayerTree";
@@ -274,7 +275,8 @@ export const createResizeSlice: StateCreator<CanvasStore, [], [], ResizeSlice> =
             activeResizeId: resizeId,
             canvasWidth: targetResize.width,
             canvasHeight: targetResize.height,
-            layers: targetLayers,
+            // Re-apply slice alignment for the loaded format snapshot.
+            layers: applySliceAlignment(targetLayers).layers,
             selectedLayerIds: [],
         });
 

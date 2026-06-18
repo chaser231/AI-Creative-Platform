@@ -503,6 +503,34 @@ export interface LayerResponsiveSettings {
     maxHeight?: number;
 }
 
+// ─── Slice alignment (slice-aware automation) ───────────
+// A third automation mechanism, independent of auto-layout and format
+// adaptation: a layer (or its top-level frame) can re-position / re-scale so
+// it does not get clipped by slice cut-lines when slices are created.
+
+/** How a layer reacts to slice cut-lines. */
+export type SliceAlignMode =
+    /** Disabled — slices do not affect this layer. */
+    | "none"
+    /** Minimal shift so no slice cut-line crosses the layer (fully inside one cell). */
+    | "avoid_cut"
+    /** Proportionally scale to fit the nearest slice cell and center inside it. */
+    | "fit";
+
+/** What actually moves/scales when slice alignment applies. */
+export type SliceAlignScope =
+    /** Move/scale the layer's outermost (top-level) frame, keeping inner layout intact. */
+    | "frame"
+    /** Detach this layer (absolute) and move/scale only it. */
+    | "layer";
+
+export interface SliceAlignSettings {
+    mode: SliceAlignMode;
+    scope: SliceAlignScope;
+}
+
+export const DEFAULT_SLICE_ALIGN: SliceAlignSettings = { mode: "none", scope: "frame" };
+
 /**
  * Auxiliary metadata attached to a layer.
  * Currently used for Figma round-trip: preserving the original Figma node ID
@@ -547,6 +575,8 @@ export interface BaseLayer {
     swatchRefs?: SwatchRefs;
     /** Optional authoring hints for generated custom resize formats. */
     responsive?: LayerResponsiveSettings;
+    /** Slice-aware automation: re-position / re-scale relative to slice cut-lines. */
+    sliceAlign?: SliceAlignSettings;
     /** Opaque integration metadata (Figma, future Sketch/XD, etc.) */
     metadata?: LayerMetadata;
     /** When true, resize keeps width/height proportional (Figma chain-link lock). */
