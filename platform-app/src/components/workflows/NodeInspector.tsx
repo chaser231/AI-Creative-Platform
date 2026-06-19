@@ -124,6 +124,8 @@ const ENUM_OPTION_LABELS: Record<string, Record<string, string>> = {
         "flux-lora": "FLUX.1 LoRA",
         "flux-2-lora": "FLUX.2 LoRA",
         "qwen-image-lora": "Qwen Image LoRA",
+        "qwen-image-edit-lora": "Qwen Image Edit LoRA",
+        "flux-kontext-lora": "FLUX.1 Kontext LoRA",
     },
     intent: {
         edit: "Правка (использует промпт)",

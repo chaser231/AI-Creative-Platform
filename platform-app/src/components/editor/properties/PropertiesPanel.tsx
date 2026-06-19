@@ -61,11 +61,17 @@ import type {
     LayerResponsiveBehavior,
     LayerResponsiveSettings,
     RectangleLayer,
+    SliceAlignH,
+    SliceAlignMode,
+    SliceAlignScope,
+    SliceAlignSettings,
+    SliceAlignV,
     TemplateSlotRole,
     TextLayer,
     VectorLayer,
 } from "@/types";
-import { DEFAULT_CONSTRAINTS, IMAGE_FIT_MODE_LABELS } from "@/types";
+import { DEFAULT_CONSTRAINTS, DEFAULT_SLICE_ALIGN, IMAGE_FIT_MODE_LABELS } from "@/types";
+import { describeSliceAlignment } from "@/utils/sliceAlignment";
 import { cn } from "@/lib/cn";
 import { PREINSTALLED_FONTS, getUserFonts, normalizeFontFamilyName, saveUserFont } from "@/lib/customFonts";
 import {
@@ -477,6 +483,7 @@ function LayerInspector({
                 <AutoLayoutChildSection layer={layer} onChange={onChange} />
             )}
             <ConstraintsSection layer={layer} onChange={onChange} />
+            <SliceAlignSection layer={layer} layers={layers} onChange={onChange} />
             <ResponsiveInspectorSection
                 layer={layer}
                 enabled={responsiveControlsOpen}
@@ -582,6 +589,125 @@ function ConstraintsSection({
                     placeholder="ID группового слота"
                     className="w-full h-8 px-2 rounded-[var(--radius-md)] border border-border-primary bg-bg-secondary text-[11px] text-text-primary focus:outline-none focus:ring-1 focus:ring-border-focus placeholder:text-text-tertiary"
                 />
+            )}
+        </InspectorSection>
+    );
+}
+
+function SliceAlignSection({
+    layer,
+    layers,
+    onChange,
+}: {
+    layer: Layer;
+    layers: Layer[];
+    onChange: (updates: Partial<Layer>) => void;
+}) {
+    const sliceAlign = layer.sliceAlign ?? DEFAULT_SLICE_ALIGN;
+    const mode = sliceAlign.mode;
+    const scope = sliceAlign.scope;
+    const alignH = sliceAlign.alignH ?? "center";
+    const alignV = sliceAlign.alignV ?? "center";
+    const avoidOverlap = sliceAlign.avoidOverlap ?? false;
+    const info = useMemo(() => describeSliceAlignment(layer, layers), [layer, layers]);
+
+    const axisLabel = info.axes.x && info.axes.y
+        ? "по обеим осям"
+        : info.axes.x
+            ? "по горизонтали"
+            : info.axes.y
+                ? "по вертикали"
+                : "";
+
+    const patch = (updates: Partial<SliceAlignSettings>) =>
+        onChange({ sliceAlign: { ...sliceAlign, ...updates } } as Partial<Layer>);
+
+    const setMode = (value: SliceAlignMode) => {
+        if (value === "none") {
+            onChange({ sliceAlign: undefined } as Partial<Layer>);
+        } else {
+            patch({ mode: value });
+        }
+    };
+
+    return (
+        <InspectorSection title="Привязка к слайсу" icon={<Slice size={13} />}>
+            <Select
+                size="xs"
+                value={mode}
+                onChange={(value) => setMode(value as SliceAlignMode)}
+                options={[
+                    { value: "none", label: "Нет" },
+                    { value: "avoid_cut", label: "Не резать" },
+                    { value: "fit", label: "Вписать по слайсу" },
+                ]}
+            />
+            {mode !== "none" && (
+                <>
+                    <Select
+                        size="xs"
+                        value={scope}
+                        onChange={(value) => patch({ scope: value as SliceAlignScope })}
+                        options={[
+                            { value: "frame", label: "Двигать фрейм" },
+                            { value: "layer", label: "Двигать слой" },
+                        ]}
+                    />
+                    {mode === "fit" && (
+                        <>
+                            <LabeledControl label="По горизонтали">
+                                <Select
+                                    size="xs"
+                                    value={alignH}
+                                    onChange={(value) => patch({ alignH: value as SliceAlignH })}
+                                    options={[
+                                        { value: "left", label: "Слева" },
+                                        { value: "center", label: "По центру" },
+                                        { value: "right", label: "Справа" },
+                                    ]}
+                                />
+                            </LabeledControl>
+                            <LabeledControl label="По вертикали">
+                                <Select
+                                    size="xs"
+                                    value={alignV}
+                                    onChange={(value) => patch({ alignV: value as SliceAlignV })}
+                                    options={[
+                                        { value: "top", label: "По верху" },
+                                        { value: "center", label: "По центру" },
+                                        { value: "bottom", label: "По низу" },
+                                    ]}
+                                />
+                            </LabeledControl>
+                        </>
+                    )}
+                    {mode === "avoid_cut" && (
+                        <ToggleButton
+                            active={avoidOverlap}
+                            label="Не перекрывать слои"
+                            onClick={() => patch({ avoidOverlap: !avoidOverlap })}
+                        />
+                    )}
+                    {!info.hasGrid ? (
+                        <p className="text-[10px] text-text-tertiary leading-relaxed">
+                            Нет активной сетки слайсов. Создайте слайсы (≥2 по оси), чтобы появились линии реза.
+                        </p>
+                    ) : (
+                        <>
+                            <p className="text-[10px] text-text-tertiary leading-relaxed">
+                                {mode === "avoid_cut"
+                                    ? `Слой сдвигается ${axisLabel}, чтобы не попадать на линию реза.${avoidOverlap ? " Сдвиг ограничен так, чтобы не наезжать на другие слои." : ""}`
+                                    : `Объект масштабируется под ячейку слайса ${axisLabel} и выравнивается по выбранным краям.`}
+                                {scope === "layer" && " Слой будет откреплён от auto-layout."}
+                            </p>
+                            {mode === "avoid_cut" && !info.avoidCutFeasible && (
+                                <p className="text-[10px] text-amber-500 leading-relaxed">
+                                    Слой больше слайса по активной оси — сдвиг невозможен. Используйте «Вписать по слайсу».
+                                </p>
+                            )}
+                        </>
+                    )}
+                </>
             )}
         </InspectorSection>
     );

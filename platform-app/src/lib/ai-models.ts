@@ -34,7 +34,7 @@ export interface LoraSpec {
      * LoRA "family" — only presets whose family matches can be picked.
      * Cross-family weights are not interchangeable.
      */
-    family: "flux-1" | "flux-2" | "qwen";
+    family: "flux-1" | "flux-2" | "qwen" | "flux-kontext";
     /** Default CFG / guidance scale (sent to fal as `guidance_scale`). */
     defaultGuidance: number;
     /** Default sampler steps (sent as `num_inference_steps`). */
@@ -349,7 +349,7 @@ export const MODEL_REGISTRY: ModelEntry[] = [
         label: "FLUX.2 LoRA",
         slug: "fal-ai/flux-2/lora",
         provider: "fal",
-        caps: ["generate", "vision"],
+        caps: ["generate", "edit", "vision"],
         costPerRun: 0.05,
         maxRefs: 3,
         maxOutputs: 4,
@@ -416,6 +416,33 @@ export const MODEL_REGISTRY: ModelEntry[] = [
             supportsAcceleration: true,
             accelerationOptions: ["none", "regular", "high"],
             supportsNegativePrompt: true,
+            pricePerMP: 0.035,
+        },
+    },
+    {
+        // FLUX.1 Kontext [dev] with LoRAs — image-to-image editing model built
+        // for subject/composition consistency. Keeps the uploaded object intact
+        // while applying a trained-style LoRA. Always needs a source image, so
+        // it lives in EDIT_MODELS (no text-to-image variant).
+        // Endpoint: https://fal.run/fal-ai/flux-kontext-lora/image-to-image
+        id: "flux-kontext-lora",
+        label: "FLUX.1 Kontext LoRA",
+        slug: "fal-ai/flux-kontext-lora/image-to-image",
+        provider: "fal",
+        caps: ["edit", "vision"],
+        costPerRun: 0.035,
+        maxRefs: 1,
+        aspectRatios: LORA_ASPECT_RATIOS,
+        loraSpec: {
+            maxCount: 2,
+            family: "flux-kontext",
+            defaultGuidance: 2.5,
+            defaultSteps: 30,
+            guidanceRange: [0, 20],
+            stepsRange: [10, 50],
+            supportsAcceleration: true,
+            accelerationOptions: ["none", "regular", "high"],
+            supportsNegativePrompt: false,
             pricePerMP: 0.035,
         },
     },
@@ -624,6 +651,8 @@ export const IMAGE_EDIT_PICKER_IDS = [
     "gpt-image",
     "qwen-image-edit",
     "qwen-image-edit-lora",
+    "flux-kontext-lora",
+    "flux-2-lora",
 ] as const;
 
 export function isPickerVisibleModel(modelId: string): boolean {

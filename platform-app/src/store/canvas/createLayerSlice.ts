@@ -13,6 +13,7 @@ import { MAX_HISTORY } from "./types";
 import { CONTENT_SOURCE_KEYS } from "@/types";
 import { v4 as uuid } from "uuid";
 import { applyAllAutoLayouts, measureTextLayer } from "@/utils/layoutEngine";
+import { applySliceAlignment } from "@/utils/sliceAlignment";
 import {
     syncFrameChildIdsToMasters,
     syncFrameChildIdsToInstances,
@@ -47,6 +48,8 @@ const LAYOUT_AFFECTING_KEYS: ReadonlySet<string> = new Set<string>([
     "layoutSizingWidth", "layoutSizingHeight", "isAbsolutePositioned", "childIds",
     // parent-resize behaviour
     "constraints",
+    // slice-aware alignment automation
+    "sliceAlign",
 ]);
 
 function updateAffectsLayout(updates: LayerUpdate): boolean {
@@ -368,7 +371,8 @@ export const createLayerSlice: StateCreator<CanvasStore, [], [], LayerSlice> = (
             ...overrides,
         };
         set((s) => ({
-            layers: [...s.layers, layer as Layer],
+            // Re-run slice alignment so flagged layers react to the new cut-lines.
+            layers: applySliceAlignment([...s.layers, layer as Layer]).layers,
             selectedLayerIds: [id],
             activeTool: "select",
         }));
@@ -389,7 +393,9 @@ export const createLayerSlice: StateCreator<CanvasStore, [], [], LayerSlice> = (
         }));
         const ids = newLayers.map((l) => l.id);
         set((s) => ({
-            layers: [...s.layers, ...(newLayers as Layer[])],
+            // Procedural grid creation is the primary trigger: flagged layers
+            // re-align to the freshly created cut-lines.
+            layers: applySliceAlignment([...s.layers, ...(newLayers as Layer[])]).layers,
             selectedLayerIds: ids,
             activeTool: "select",
         }));
@@ -521,8 +527,9 @@ export const createLayerSlice: StateCreator<CanvasStore, [], [], LayerSlice> = (
                 id,
                 updates,
             );
-            const newLayers = updateAffectsLayout(updates)
-                ? applyAllAutoLayouts(updatedLayers, state.layers)
+            const layoutAffecting = updateAffectsLayout(updates);
+            const newLayers = layoutAffecting
+                ? applySliceAlignment(applyAllAutoLayouts(updatedLayers, state.layers)).layers
                 : updatedLayers;
             const layer = newLayers.find((l) => l.id === id);
             const snapshotAwareResizes = syncSnapshotFormats(state.resizes, state.activeResizeId, newLayers, state.layers);
@@ -641,9 +648,12 @@ export const createLayerSlice: StateCreator<CanvasStore, [], [], LayerSlice> = (
             const masterIdsToRemove = new Set(
                 state.layers.filter((l) => idsToRemove.has(l.id) && l.masterId).map((l) => l.masterId!)
             );
+            const removedSlice = state.layers.some((l) => idsToRemove.has(l.id) && l.type === "slice");
             const editExitPatches = getEditModeExitPatchesForRemovedLayers(state, idsToRemove);
+            const laidOut = applyAllAutoLayouts(newLayers);
             return {
-                layers: applyAllAutoLayouts(newLayers),
+                // Removing a slice changes the grid → re-evaluate flagged layers.
+                layers: removedSlice ? applySliceAlignment(laidOut).layers : laidOut,
                 selectedLayerIds: state.selectedLayerIds.filter((sid) => !idsToRemove.has(sid)),
                 masterComponents: state.masterComponents.filter((m) => !masterIdsToRemove.has(m.id)),
                 componentInstances: state.componentInstances.filter((i) => !masterIdsToRemove.has(i.masterId)),
@@ -698,10 +708,13 @@ export const createLayerSlice: StateCreator<CanvasStore, [], [], LayerSlice> = (
             const masterIdsToRemove = new Set(
                 state.layers.filter((l) => idsToRemove.has(l.id) && l.masterId).map((l) => l.masterId!)
             );
+            const removedSlice = state.layers.some((l) => idsToRemove.has(l.id) && l.type === "slice");
             const editExitPatches = getEditModeExitPatchesForRemovedLayers(state, idsToRemove);
+            const laidOut = applyAllAutoLayouts(newLayers);
 
             return {
-                layers: applyAllAutoLayouts(newLayers),
+                // Removing a slice changes the grid → re-evaluate flagged layers.
+                layers: removedSlice ? applySliceAlignment(laidOut).layers : laidOut,
                 selectedLayerIds: [],
                 masterComponents: state.masterComponents.filter((m) => !masterIdsToRemove.has(m.id)),
                 componentInstances: state.componentInstances.filter((i) => !masterIdsToRemove.has(i.masterId)),

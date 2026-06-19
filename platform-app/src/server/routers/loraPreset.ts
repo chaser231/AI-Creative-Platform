@@ -3,7 +3,7 @@
  *
  * CRUD for workspace-scoped custom LoRA URLs that workspace members add to
  * the LoRA-aware fal.ai endpoints (flux-lora, flux-2-lora, qwen-image-lora,
- * qwen-image-edit-lora). Read-only system catalogue from
+ * qwen-image-edit-lora, flux-kontext-lora). Read-only system catalogue from
  * `lib/lora-catalog.ts` is merged in by the `list` query so the picker
  * shows a single unified collection.
  *
@@ -72,7 +72,7 @@ async function assertLoraPath(rawUrl: string): Promise<void> {
 
 // ── shape ─────────────────────────────────────────────────
 
-const familyEnum = z.enum(["flux-1", "flux-2", "qwen"]);
+const familyEnum = z.enum(["flux-1", "flux-2", "qwen", "flux-kontext"]);
 
 /**
  * Unified picker entry — system catalogue and DB rows are merged into a

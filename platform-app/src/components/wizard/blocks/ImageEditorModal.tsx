@@ -52,8 +52,11 @@ const IMAGE_EDIT_MODELS: { id: string; label: string; caps: EditorTool[] }[] = [
     { id: "gpt-image-2", label: "GPT Image 2", caps: ["text-edit"] },
     { id: "gpt-image", label: "GPT Image 1.5", caps: ["text-edit"] },
     { id: "qwen-image-edit", label: "Qwen Image Edit", caps: ["text-edit"] },
-    // LoRA-aware edit model — same Qwen base, supports plug-in LoRA weights
+    // LoRA-aware edit models — keep the subject consistent while applying a
+    // trained-style LoRA on an uploaded image.
     { id: "qwen-image-edit-lora", label: "Qwen Image Edit LoRA", caps: ["text-edit"] },
+    { id: "flux-kontext-lora", label: "FLUX.1 Kontext LoRA", caps: ["text-edit"] },
+    { id: "flux-2-lora", label: "FLUX.2 LoRA", caps: ["text-edit"] },
     { id: "flux-fill", label: "Flux Fill", caps: ["inpaint"] },
     { id: "bria-expand", label: "Bria Expand", caps: ["outpaint"] },
     { id: "bria-rmbg", label: "Bria Remove BG", caps: ["remove-bg"] },

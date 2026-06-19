@@ -2,6 +2,7 @@ import type { AdaptationDiagnostic, FrameLayer, Layer, TextLayer } from "@/types
 import { applyAllAutoLayouts, measureTextLayer } from "@/utils/layoutEngine";
 import { applyTextContainerLimits } from "@/utils/textContainerLimits";
 import { shrinkTextToFitBox } from "@/utils/textFit";
+import { applySliceAlignment } from "@/utils/sliceAlignment";
 import { projectTree, type ArtboardSize } from "@/services/adaptationProjection";
 
 export type { ArtboardSize };
@@ -75,6 +76,10 @@ export function runAdaptationPipeline(
     if (resolved.validateAndHide) {
         next = validateAndApplyHide(next, targetSize, diagnostics);
     }
+
+    // Slice-aware alignment runs last, on top of the adapted geometry, so newly
+    // generated/resized formats with slices keep flagged layers off the cut-lines.
+    next = applySliceAlignment(next).layers;
 
     return { layers: next, diagnostics };
 }

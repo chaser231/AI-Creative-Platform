@@ -840,6 +840,9 @@ const FAL_MODEL_MAP: Record<string, string> = {
     "flux-2-lora":            "fal-ai/flux-2/lora",
     "qwen-image-lora":        "fal-ai/qwen-image-2512/lora",
     "qwen-image-edit-lora":   "fal-ai/qwen-image-edit-lora",
+    // FLUX.1 Kontext LoRA is image-to-image only — base mapping already points
+    // at the i2i endpoint (mirrors qwen-image-edit-lora).
+    "flux-kontext-lora":      "fal-ai/flux-kontext-lora/image-to-image",
 };
 
 /** Model ID → fal.ai /edit endpoint (required for reference images) */
@@ -1278,7 +1281,8 @@ class FalProvider implements AIProviderImplementation {
 
         // ── LoRA-aware endpoints ───────────────────────────────────
         // Centralised branch for fal-ai/flux-lora, fal-ai/flux-2/lora,
-        // fal-ai/qwen-image-2512/lora and fal-ai/qwen-image-edit-lora.
+        // fal-ai/qwen-image-2512/lora, fal-ai/qwen-image-edit-lora and
+        // fal-ai/flux-kontext-lora.
         // These all share a similar input shape (loras[], guidance_scale,
         // num_inference_steps, image_size enum, acceleration, optional
         // negative_prompt) so we route them through one builder rather than
@@ -1517,12 +1521,12 @@ class FalProvider implements AIProviderImplementation {
 
         // Pick endpoint
         let falEndpoint: string;
-        if (modelId === "qwen-image-edit-lora") {
-            // Edit-only model — uses base mapping which already points at the
-            // edit endpoint.
+        if (modelId === "qwen-image-edit-lora" || modelId === "flux-kontext-lora") {
+            // Edit-only models — base mapping already points at the
+            // image-to-image endpoint.
             falEndpoint = FAL_MODEL_MAP[modelId];
             if (!sourceImage) {
-                throw new Error("Qwen Image Edit LoRA requires an input image");
+                throw new Error(`${entry.label} requires an input image`);
             }
         } else if (wantsEdit && FAL_MODEL_MAP_EDIT[modelId]) {
             falEndpoint = FAL_MODEL_MAP_EDIT[modelId];
@@ -1604,10 +1608,15 @@ class FalProvider implements AIProviderImplementation {
                 input.image_urls = refs;
             }
         } else if (sourceImage && falEndpoint.includes("image-to-image")) {
-            // FLUX.1 LoRA i2i takes `image_url` + optional `strength` (0..1).
+            // FLUX.1 LoRA / Kontext LoRA i2i take `image_url` + optional
+            // `strength` (0..1). flux-lora relies on fal's default (0.85).
             input.image_url = sourceImage;
-            // Use a fairly strong strength by default so the LoRA style
-            // visibly applies; fal default is 0.85.
+            if (modelId === "flux-kontext-lora") {
+                // Kontext behaves best at a high strength — keep fal's 0.88
+                // default explicit so the trained style applies fully while the
+                // uploaded subject stays consistent.
+                input.strength = 0.88;
+            }
         } else if (sourceImage && modelId === "qwen-image-edit-lora") {
             input.image_url = sourceImage;
         }
@@ -1801,6 +1810,7 @@ const FAL_ONLY_MODELS = new Set([
     "flux-2-lora",
     "qwen-image-lora",
     "qwen-image-edit-lora",
+    "flux-kontext-lora",
 ]);
 
 
@@ -1838,6 +1848,9 @@ const MODEL_FALLBACK_CHAIN: Record<string, string[]> = {
     "flux-2-lora":            ["flux-2-pro"],
     "qwen-image-lora":        ["qwen-image"],
     "qwen-image-edit-lora":   ["qwen-image-edit"],
+    // Kontext LoRA → same Kontext base model on Replicate, minus the custom
+    // LoRA. Style is lost but subject-consistent editing still works.
+    "flux-kontext-lora":      ["flux-kontext-pro"],
 };
 
 /**
