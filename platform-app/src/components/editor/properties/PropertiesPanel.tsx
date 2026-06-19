@@ -61,8 +61,11 @@ import type {
     LayerResponsiveBehavior,
     LayerResponsiveSettings,
     RectangleLayer,
+    SliceAlignH,
     SliceAlignMode,
     SliceAlignScope,
+    SliceAlignSettings,
+    SliceAlignV,
     TemplateSlotRole,
     TextLayer,
     VectorLayer,
@@ -603,6 +606,9 @@ function SliceAlignSection({
     const sliceAlign = layer.sliceAlign ?? DEFAULT_SLICE_ALIGN;
     const mode = sliceAlign.mode;
     const scope = sliceAlign.scope;
+    const alignH = sliceAlign.alignH ?? "center";
+    const alignV = sliceAlign.alignV ?? "center";
+    const avoidOverlap = sliceAlign.avoidOverlap ?? false;
     const info = useMemo(() => describeSliceAlignment(layer, layers), [layer, layers]);
 
     const axisLabel = info.axes.x && info.axes.y
@@ -613,11 +619,14 @@ function SliceAlignSection({
                 ? "по вертикали"
                 : "";
 
+    const patch = (updates: Partial<SliceAlignSettings>) =>
+        onChange({ sliceAlign: { ...sliceAlign, ...updates } } as Partial<Layer>);
+
     const setMode = (value: SliceAlignMode) => {
         if (value === "none") {
             onChange({ sliceAlign: undefined } as Partial<Layer>);
         } else {
-            onChange({ sliceAlign: { mode: value, scope } } as Partial<Layer>);
+            patch({ mode: value });
         }
     };
 
@@ -638,12 +647,47 @@ function SliceAlignSection({
                     <Select
                         size="xs"
                         value={scope}
-                        onChange={(value) => onChange({ sliceAlign: { mode, scope: value as SliceAlignScope } } as Partial<Layer>)}
+                        onChange={(value) => patch({ scope: value as SliceAlignScope })}
                         options={[
                             { value: "frame", label: "Двигать фрейм" },
                             { value: "layer", label: "Двигать слой" },
                         ]}
                     />
+                    {mode === "fit" && (
+                        <>
+                            <LabeledControl label="По горизонтали">
+                                <Select
+                                    size="xs"
+                                    value={alignH}
+                                    onChange={(value) => patch({ alignH: value as SliceAlignH })}
+                                    options={[
+                                        { value: "left", label: "Слева" },
+                                        { value: "center", label: "По центру" },
+                                        { value: "right", label: "Справа" },
+                                    ]}
+                                />
+                            </LabeledControl>
+                            <LabeledControl label="По вертикали">
+                                <Select
+                                    size="xs"
+                                    value={alignV}
+                                    onChange={(value) => patch({ alignV: value as SliceAlignV })}
+                                    options={[
+                                        { value: "top", label: "По верху" },
+                                        { value: "center", label: "По центру" },
+                                        { value: "bottom", label: "По низу" },
+                                    ]}
+                                />
+                            </LabeledControl>
+                        </>
+                    )}
+                    {mode === "avoid_cut" && (
+                        <ToggleButton
+                            active={avoidOverlap}
+                            label="Не перекрывать слои"
+                            onClick={() => patch({ avoidOverlap: !avoidOverlap })}
+                        />
+                    )}
                     {!info.hasGrid ? (
                         <p className="text-[10px] text-text-tertiary leading-relaxed">
                             Нет активной сетки слайсов. Создайте слайсы (≥2 по оси), чтобы появились линии реза.
@@ -652,8 +696,8 @@ function SliceAlignSection({
                         <>
                             <p className="text-[10px] text-text-tertiary leading-relaxed">
                                 {mode === "avoid_cut"
-                                    ? `Слой сдвигается ${axisLabel}, чтобы не попадать на линию реза.`
-                                    : `Объект масштабируется под ячейку слайса ${axisLabel} и центрируется.`}
+                                    ? `Слой сдвигается ${axisLabel}, чтобы не попадать на линию реза.${avoidOverlap ? " Сдвиг ограничен так, чтобы не наезжать на другие слои." : ""}`
+                                    : `Объект масштабируется под ячейку слайса ${axisLabel} и выравнивается по выбранным краям.`}
                                 {scope === "layer" && " Слой будет откреплён от auto-layout."}
                             </p>
                             {mode === "avoid_cut" && !info.avoidCutFeasible && (

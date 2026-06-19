@@ -524,12 +524,35 @@ export type SliceAlignScope =
     /** Detach this layer (absolute) and move/scale only it. */
     | "layer";
 
+/** Horizontal anchor for "fit" placement / scaling. */
+export type SliceAlignH = "left" | "center" | "right";
+/** Vertical anchor for "fit" placement / scaling. */
+export type SliceAlignV = "top" | "center" | "bottom";
+
 export interface SliceAlignSettings {
     mode: SliceAlignMode;
     scope: SliceAlignScope;
+    /**
+     * "fit" anchor. On an axis constrained by the slice cell, decides where the
+     * scaled object sits inside the cell; on the free axis, decides which edge
+     * stays fixed while scaling. Default center / center.
+     */
+    alignH?: SliceAlignH;
+    alignV?: SliceAlignV;
+    /**
+     * "avoid_cut": also keep the layer from overlapping other content layers
+     * while shifting it off the cut-lines (best-effort, cut-avoidance wins).
+     */
+    avoidOverlap?: boolean;
 }
 
-export const DEFAULT_SLICE_ALIGN: SliceAlignSettings = { mode: "none", scope: "frame" };
+export const DEFAULT_SLICE_ALIGN: SliceAlignSettings = {
+    mode: "none",
+    scope: "frame",
+    alignH: "center",
+    alignV: "center",
+    avoidOverlap: false,
+};
 
 /**
  * Auxiliary metadata attached to a layer.

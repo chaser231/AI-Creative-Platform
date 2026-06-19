@@ -7,6 +7,7 @@ import {
     findContainingCell,
     findNearestCell,
     isBoxCut,
+    placeInRange,
     type Rect,
 } from "../sliceLayout";
 
@@ -150,6 +151,65 @@ describe("computeFitScale / computeFitTransform", () => {
         expect(t.x).toBe(0); // centered in cell width
         // Y inactive: scaled around its own center (50) → newH 100 → y = 50 - 50 = 0
         expect(t.y).toBe(0);
+    });
+});
+
+describe("computeFitTransform anchors", () => {
+    it("anchors the free axis edge (start = keep leading edge, end = keep trailing edge)", () => {
+        // Only Y active → scale 2 (height 50 → 100), free X axis gets anchored.
+        const cellY: Rect = { x: 0, y: 0, width: 400, height: 100 };
+        const b: Rect = { x: 10, y: 10, width: 40, height: 50 }; // newW 80, newH 100
+        const left = computeFitTransform(b, cellY, { x: false, y: true }, "start", "center");
+        const right = computeFitTransform(b, cellY, { x: false, y: true }, "end", "center");
+        expect(left.x).toBe(10); // box left edge fixed
+        expect(right.x).toBe(10 + 40 - 80); // box right edge fixed → -30
+    });
+
+    it("anchors the free axis edge while scaling (end = keep trailing edge)", () => {
+        const cell: Rect = { x: 0, y: 0, width: 100, height: 400 };
+        const box: Rect = { x: 30, y: 100, width: 40, height: 60 }; // X active → scale 2.5 → newH 150
+        const end = computeFitTransform(box, cell, { x: true, y: false }, "center", "end");
+        // trailing edge (100+60=160) stays → y = 160 - 150 = 10
+        expect(end.scale).toBe(2.5);
+        expect(end.y).toBe(10);
+        const start = computeFitTransform(box, cell, { x: true, y: false }, "center", "start");
+        expect(start.y).toBe(100); // leading edge fixed
+    });
+
+    it("aligns inside the cell on the active axis when the box does not fill it", () => {
+        // Both axes active but aspect ratio leaves slack on one axis.
+        const cell: Rect = { x: 0, y: 0, width: 100, height: 100 };
+        const box: Rect = { x: 0, y: 0, width: 200, height: 100 }; // scale 0.5 → 100x50
+        const startStart = computeFitTransform(box, cell, { x: true, y: true }, "start", "start");
+        expect(startStart).toMatchObject({ scale: 0.5, x: 0, y: 0 });
+        const endEnd = computeFitTransform(box, cell, { x: true, y: true }, "end", "end");
+        expect(endEnd.x).toBe(0); // newW 100 == cell width, no slack on X
+        expect(endEnd.y).toBe(50); // newH 50, bottom of 100 cell → 100-50
+    });
+});
+
+describe("placeInRange", () => {
+    it("returns the current position when already free", () => {
+        expect(placeInRange(50, 0, 100, [])).toBe(50);
+    });
+
+    it("clamps into the range when out of bounds", () => {
+        expect(placeInRange(200, 0, 100, [])).toBe(100);
+        expect(placeInRange(-50, 0, 100, [])).toBe(0);
+    });
+
+    it("snaps to the nearest free edge of a forbidden interval", () => {
+        // forbidden start positions (40, 70): current 50 is inside → snap to 40 or 70.
+        expect(placeInRange(50, 0, 100, [[40, 70]])).toBe(40);
+        expect(placeInRange(65, 0, 100, [[40, 70]])).toBe(70);
+    });
+
+    it("returns null when the whole range is forbidden", () => {
+        expect(placeInRange(50, 0, 100, [[-10, 110]])).toBeNull();
+    });
+
+    it("returns null when the range is degenerate (box larger than cell)", () => {
+        expect(placeInRange(0, 0, -5, [])).toBeNull();
     });
 });
 

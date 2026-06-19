@@ -59,7 +59,11 @@ function slice(o: Partial<SliceLayer> = {}): SliceLayer {
     };
 }
 
-const align = (mode: SliceAlignSettings["mode"], scope: SliceAlignSettings["scope"]): SliceAlignSettings => ({ mode, scope });
+const align = (
+    mode: SliceAlignSettings["mode"],
+    scope: SliceAlignSettings["scope"],
+    extra: Partial<SliceAlignSettings> = {},
+): SliceAlignSettings => ({ mode, scope, ...extra });
 
 // Two vertical slices: cell0 = 0..100, cell1 = 100..200 (axisX only).
 const verticalSlices = (): SliceLayer[] => [
@@ -167,6 +171,77 @@ describe("applySliceAlignment — avoid_cut", () => {
     });
 });
 
+describe("applySliceAlignment — avoid_cut + avoidOverlap", () => {
+    // Three vertical columns: cell0 0..100, cell1 100..200, cell2 200..300.
+    const threeColumns = (): SliceLayer[] => [
+        slice({ id: "s0", x: 0, y: 0, width: 100, height: 200 }),
+        slice({ id: "s1", x: 100, y: 0, width: 100, height: 200 }),
+        slice({ id: "s2", x: 200, y: 0, width: 100, height: 200 }),
+    ];
+
+    it("skips an occupied column and lands in the nearest free one", () => {
+        const layers: Layer[] = [
+            ...threeColumns(),
+            // "ПВЗ"-like headline filling columns 0 and 1.
+            rect({ id: "pvz", x: 0, y: 0, width: 190, height: 200 }),
+            // Target straddles the cell1/cell2 cut-line (180..220), overlapping pvz.
+            text({ id: "t", x: 180, y: 10, width: 40, height: 40, sliceAlign: align("avoid_cut", "layer", { avoidOverlap: true }) }),
+        ];
+        const out = applySliceAlignment(layers).layers;
+        const t = out.find((l) => l.id === "t")!;
+        // cell0 / cell1 are blocked by pvz → land at the start of the free cell2.
+        expect(t.x).toBe(200);
+    });
+
+    it("prefers a free neighbouring column over slamming within the occupied one", () => {
+        const layers: Layer[] = [
+            ...verticalSlices(),
+            // Obstacle occupies x 40..70 on the same Y band as the target.
+            rect({ id: "obs", x: 40, y: 0, width: 30, height: 60 }),
+            text({ id: "t", x: 80, y: 10, width: 40, height: 40, sliceAlign: align("avoid_cut", "layer", { avoidOverlap: true }) }),
+        ];
+        const out = applySliceAlignment(layers).layers;
+        const t = out.find((l) => l.id === "t")!;
+        // Staying in cell0 needs x=0 (move 80); cell1 is free at x=100 (move 20) → cell1.
+        expect(t.x).toBe(100);
+    });
+
+    it("ignores obstacles that do not share the vertical band", () => {
+        const layers: Layer[] = [
+            ...verticalSlices(),
+            rect({ id: "obs", x: 40, y: 120, width: 30, height: 60 }), // far below the target's Y band
+            text({ id: "t", x: 80, y: 10, width: 40, height: 40, sliceAlign: align("avoid_cut", "layer", { avoidOverlap: true }) }),
+        ];
+        const out = applySliceAlignment(layers).layers;
+        const t = out.find((l) => l.id === "t")!;
+        expect(t.x).toBe(60); // same as plain avoid_cut — no collision in Y
+    });
+
+    it("falls back to cut-avoidance and warns when every column is blocked", () => {
+        const layers: Layer[] = [
+            ...verticalSlices(),
+            rect({ id: "obs", x: 10, y: 0, width: 180, height: 60 }), // blocks both columns' bands
+            text({ id: "t", x: 80, y: 10, width: 40, height: 40, sliceAlign: align("avoid_cut", "layer", { avoidOverlap: true }) }),
+        ];
+        const result = applySliceAlignment(layers);
+        const t = result.layers.find((l) => l.id === "t")!;
+        expect(t.x).toBe(60); // cut-avoidance still applied (nearest cell)
+        expect(result.diagnostics).toHaveLength(1);
+        expect(result.diagnostics[0]).toMatchObject({ layerId: "t", code: "overlap-unavoidable" });
+    });
+
+    it("does not treat background-behavior layers as obstacles", () => {
+        const layers: Layer[] = [
+            ...verticalSlices(),
+            rect({ id: "bg", x: 0, y: 0, width: 200, height: 200, responsive: { behavior: "background" } }),
+            text({ id: "t", x: 80, y: 10, width: 40, height: 40, sliceAlign: align("avoid_cut", "layer", { avoidOverlap: true }) }),
+        ];
+        const out = applySliceAlignment(layers).layers;
+        const t = out.find((l) => l.id === "t")!;
+        expect(t.x).toBe(60); // background ignored → plain shift
+    });
+});
+
 describe("applySliceAlignment — fit", () => {
     const grid2x2 = (): SliceLayer[] => [
         slice({ id: "s0", x: 0, y: 0, width: 100, height: 100 }),
@@ -208,6 +283,50 @@ describe("applySliceAlignment — fit", () => {
         expect(f).toMatchObject({ x: 0, y: 0, width: 100, height: 100 });
         // child relative offset (10,10) * 2.5 = (25,25); size 20*2.5 = 50
         expect(c).toMatchObject({ x: 25, y: 25, width: 50, height: 50 });
+    });
+});
+
+describe("applySliceAlignment — fit anchors", () => {
+    // Vertical slices: X active, Y free. Icon-like box sitting low in the banner.
+    it("keeps the bottom edge fixed when scaling with alignV=bottom", () => {
+        const layers: Layer[] = [
+            slice({ id: "s0", x: 0, y: 0, width: 100, height: 200 }),
+            slice({ id: "s1", x: 100, y: 0, width: 100, height: 200 }),
+            rect({ id: "r", x: 20, y: 100, width: 40, height: 40, sliceAlign: align("fit", "layer", { alignV: "bottom" }) }),
+        ];
+        const out = applySliceAlignment(layers).layers;
+        const r = out.find((l) => l.id === "r")!;
+        // scale = 100/40 = 2.5 → newH 100; bottom edge 140 stays → y = 40.
+        expect(r).toMatchObject({ width: 100, height: 100, x: 0, y: 40 });
+    });
+
+    it("keeps the top edge fixed with alignV=top", () => {
+        const layers: Layer[] = [
+            slice({ id: "s0", x: 0, y: 0, width: 100, height: 200 }),
+            slice({ id: "s1", x: 100, y: 0, width: 100, height: 200 }),
+            rect({ id: "r", x: 20, y: 100, width: 40, height: 40, sliceAlign: align("fit", "layer", { alignV: "top" }) }),
+        ];
+        const out = applySliceAlignment(layers).layers;
+        const r = out.find((l) => l.id === "r")!;
+        expect(r.y).toBe(100);
+    });
+
+    it("aligns within the cell on the active axis (alignH=right)", () => {
+        const cells: SliceLayer[] = [
+            slice({ id: "s0", x: 0, y: 0, width: 100, height: 100 }),
+            slice({ id: "s1", x: 100, y: 0, width: 100, height: 100 }),
+            slice({ id: "s2", x: 0, y: 100, width: 100, height: 100 }),
+            slice({ id: "s3", x: 100, y: 100, width: 100, height: 100 }),
+        ];
+        const layers: Layer[] = [
+            ...cells,
+            // 40x100 box → fit both axes → scale 1, newW 40 (slack on X), newH 100.
+            rect({ id: "r", x: 0, y: 0, width: 40, height: 100, sliceAlign: align("fit", "layer", { alignH: "right" }) }),
+        ];
+        const out = applySliceAlignment(layers).layers;
+        const r = out.find((l) => l.id === "r")!;
+        // cell0 (0..100), newW 40 → right-aligned x = 100 - 40 = 60.
+        expect(r).toMatchObject({ x: 60, y: 0, width: 40, height: 100 });
     });
 });
 

@@ -21,6 +21,9 @@ export interface Axes {
     y: boolean;
 }
 
+/** Per-axis anchor: leading edge, center, or trailing edge. */
+export type AxisAnchor = "start" | "center" | "end";
+
 export interface SliceGrid {
     /** The slice rects, treated directly as the safe cells. */
     cells: Rect[];
@@ -148,25 +151,168 @@ export function computeFitScale(box: Rect, cell: Rect, axes: Axes): number {
 }
 
 /**
- * Fit transform: proportional scale + new top-left. The box is centered inside
- * the cell on active axes; on inactive axes it scales around its own center so
- * it does not drift.
+ * Anchor a scaled segment on one axis.
+ * - Active axis: position the new segment of `newSize` INSIDE the cell
+ *   [cellStart, cellStart+cellSize] according to the anchor (start/center/end).
+ * - Inactive axis: keep the corresponding EDGE of the original box fixed while
+ *   scaling (start → top/left edge, end → bottom/right edge, center → center),
+ *   so the object does not drift on the free axis.
+ */
+function anchorAxis(
+    active: boolean,
+    anchor: AxisAnchor,
+    cellStart: number,
+    cellSize: number,
+    boxStart: number,
+    boxSize: number,
+    newSize: number,
+): number {
+    if (active) {
+        if (anchor === "start") return cellStart;
+        if (anchor === "end") return cellStart + cellSize - newSize;
+        return cellStart + (cellSize - newSize) / 2;
+    }
+    if (anchor === "start") return boxStart;
+    if (anchor === "end") return boxStart + boxSize - newSize;
+    return boxStart - (newSize - boxSize) / 2;
+}
+
+/**
+ * Fit transform: proportional scale + new top-left, positioned per anchor.
+ * Anchors default to center on both axes (previous behaviour).
  */
 export function computeFitTransform(
     box: Rect,
     cell: Rect,
     axes: Axes,
+    anchorX: AxisAnchor = "center",
+    anchorY: AxisAnchor = "center",
 ): { scale: number; x: number; y: number } {
     const scale = computeFitScale(box, cell, axes);
     const newW = box.width * scale;
     const newH = box.height * scale;
-    const x = axes.x
-        ? cell.x + (cell.width - newW) / 2
-        : box.x - (newW - box.width) / 2;
-    const y = axes.y
-        ? cell.y + (cell.height - newH) / 2
-        : box.y - (newH - box.height) / 2;
+    const x = anchorAxis(axes.x, anchorX, cell.x, cell.width, box.x, box.width, newW);
+    const y = anchorAxis(axes.y, anchorY, cell.y, cell.height, box.y, box.height, newH);
     return { scale, x, y };
+}
+
+/**
+ * Place a 1D segment within [lo, hi], avoiding the given forbidden START
+ * intervals (open), as close as possible to `current`. Returns null when no
+ * feasible position exists. Used to keep a shifted layer off both the cut-lines
+ * (via [lo, hi]) and other layers (via forbidden intervals).
+ */
+export function placeInRange(
+    current: number,
+    lo: number,
+    hi: number,
+    forbidden: Array<[number, number]>,
+): number | null {
+    if (hi < lo - 1e-6) return null;
+
+    // Test against the ORIGINAL intervals (open). Clamp only the candidate
+    // positions into [lo, hi]; clamping the intervals themselves would wrongly
+    // free up a boundary that still overlaps an obstacle reaching past it.
+    const isForbidden = (x: number) => forbidden.some(([a, b]) => x > a + 1e-6 && x < b - 1e-6);
+    const clamp = (x: number) => Math.min(Math.max(x, lo), hi);
+
+    const clampedCurrent = clamp(current);
+    if (!isForbidden(clampedCurrent)) return clampedCurrent;
+
+    const candidates = [lo, hi];
+    for (const [a, b] of forbidden) {
+        candidates.push(a, b);
+    }
+
+    let best: number | null = null;
+    let bestDist = Infinity;
+    for (const candidate of candidates) {
+        const x = clamp(candidate);
+        if (isForbidden(x)) continue;
+        const dist = Math.abs(x - current);
+        if (dist < bestDist) {
+            bestDist = dist;
+            best = x;
+        }
+    }
+    return best;
+}
+
+function rangesOverlap(aStart: number, aEnd: number, bStart: number, bEnd: number): boolean {
+    return aEnd > bStart + 1e-6 && bEnd > aStart + 1e-6;
+}
+
+/**
+ * Place `subject` inside ONE concrete `cell` (cut-avoidance) while staying off
+ * `obstacles` (per active axis, via `placeInRange`). Returns the shift, or null
+ * when overlap cannot be cleared anywhere inside this cell.
+ */
+function solveOverlapFreePlacement(
+    subject: Rect,
+    cell: Rect,
+    axes: Axes,
+    obstacles: Rect[],
+): { dx: number; dy: number } | null {
+    let dx = 0;
+    let dy = 0;
+    if (axes.x) {
+        const forbidden = obstacles
+            .filter((o) => rangesOverlap(subject.y, subject.y + subject.height, o.y, o.y + o.height))
+            .map((o) => [o.x - subject.width, o.x + o.width] as [number, number]);
+        const placed = placeInRange(subject.x, cell.x, cell.x + cell.width - subject.width, forbidden);
+        if (placed == null) return null;
+        dx = placed - subject.x;
+    }
+    if (axes.y) {
+        const movedX = subject.x + dx;
+        const forbidden = obstacles
+            .filter((o) => rangesOverlap(movedX, movedX + subject.width, o.x, o.x + o.width))
+            .map((o) => [o.y - subject.height, o.y + o.height] as [number, number]);
+        const placed = placeInRange(subject.y, cell.y, cell.y + cell.height - subject.height, forbidden);
+        if (placed == null) return null;
+        dy = placed - subject.y;
+    }
+    return { dx, dy };
+}
+
+/**
+ * Overlap-aware avoid-cut shift. Among ALL cells that can contain `subject` on
+ * the active axes, picks the one whose overlap-free placement needs the least
+ * movement — so a column already occupied by an obstacle (e.g. another headline)
+ * is skipped in favour of a free neighbouring column.
+ *
+ * Falls back to the nearest containing cell with plain cut-avoidance (and
+ * `overlapFailed = true`) when no cell admits an overlap-free spot. Returns null
+ * only when no cell can contain the subject at all (caller → "cannot avoid cut").
+ */
+export function computeOverlapAwareDelta(
+    subject: Rect,
+    cells: Rect[],
+    axes: Axes,
+    obstacles: Rect[],
+): { dx: number; dy: number; overlapFailed: boolean } | null {
+    const fits = cells.filter((c) =>
+        (!axes.x || c.width >= subject.width - FIT_EPSILON) &&
+        (!axes.y || c.height >= subject.height - FIT_EPSILON)
+    );
+    if (fits.length === 0) return null;
+
+    let best: { dx: number; dy: number } | null = null;
+    let bestCost = Infinity;
+    for (const cell of fits) {
+        const placement = solveOverlapFreePlacement(subject, cell, axes, obstacles);
+        if (!placement) continue;
+        const cost = Math.abs(placement.dx) + Math.abs(placement.dy);
+        if (cost < bestCost - 1e-6) {
+            bestCost = cost;
+            best = placement;
+        }
+    }
+    if (best) return { ...best, overlapFailed: false };
+
+    const fallback = pickBestCell(subject, fits) as Rect;
+    const { dx, dy } = computeAvoidCutDelta(subject, fallback, axes);
+    return { dx, dy, overlapFailed: true };
 }
 
 /** True when the box is crossed by a cut-line on an active axis (i.e. cut). */

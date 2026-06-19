@@ -17,15 +17,17 @@
  * Orientation (X / Y / both) is derived from the slice geometry, not stored.
  */
 
-import type { FrameLayer, Layer } from "@/types";
+import type { FrameLayer, Layer, SliceAlignH, SliceAlignV } from "@/types";
 import { applyAllAutoLayouts } from "@/utils/layoutEngine";
 import {
     computeAvoidCutDelta,
     computeFitTransform,
+    computeOverlapAwareDelta,
     deriveSliceGrid,
     findContainingCell,
     findNearestCell,
     type Axes,
+    type AxisAnchor,
     type Rect,
     type SliceGrid,
 } from "@/utils/sliceLayout";
@@ -33,7 +35,7 @@ import {
 export interface SliceAlignDiagnostic {
     layerId: string;
     layerName: string;
-    code: "cannot-avoid-cut";
+    code: "cannot-avoid-cut" | "overlap-unavoidable";
     message: string;
 }
 
@@ -177,6 +179,37 @@ function hasActiveAxis(grid: SliceGrid): boolean {
     return grid.axisX || grid.axisY;
 }
 
+function anchorForH(align: SliceAlignH | undefined): AxisAnchor {
+    if (align === "left") return "start";
+    if (align === "right") return "end";
+    return "center";
+}
+
+function anchorForV(align: SliceAlignV | undefined): AxisAnchor {
+    if (align === "top") return "start";
+    if (align === "bottom") return "end";
+    return "center";
+}
+
+/**
+ * Other visible content layers (leaves only, no slices / frames / backgrounds /
+ * the mover subtree) the shifted layer should not run into.
+ */
+function collectObstacles(byId: Map<string, Layer>, moverId: string, targetId: string): Rect[] {
+    const excluded = new Set<string>([moverId, targetId]);
+    for (const id of collectDescendantIds(moverId, byId)) excluded.add(id);
+
+    const obstacles: Rect[] = [];
+    for (const layer of byId.values()) {
+        if (excluded.has(layer.id)) continue;
+        if (layer.type === "slice" || layer.type === "frame") continue;
+        if (!layer.visible) continue;
+        if (layer.responsive?.behavior === "background") continue;
+        obstacles.push(boxOf(layer));
+    }
+    return obstacles;
+}
+
 /**
  * Apply slice-aware alignment to all flagged layers. Pure: returns a new array
  * plus diagnostics. No-op (returns the input array) when there are no slices,
@@ -225,17 +258,46 @@ export function applySliceAlignment(layers: Layer[]): SliceAlignmentResult {
             const targetNow = byId.get(target.id);
             if (!targetNow) continue;
             const subject = boxOf(targetNow);
-            const cell = findContainingCell(subject, grid.cells, axes);
-            if (!cell) {
-                diagnostics.push({
-                    layerId: target.id,
-                    layerName: target.name,
-                    code: "cannot-avoid-cut",
-                    message: `Слой «${target.name}» больше слайса по активной оси — сдвиг невозможен.`,
-                });
-                continue;
+
+            let dx: number;
+            let dy: number;
+            if (settings.avoidOverlap) {
+                // Overlap-aware: cell choice itself avoids occupied columns,
+                // preferring the nearest free one over the most-overlapping one.
+                const obstacles = collectObstacles(byId, moverId, target.id);
+                const solved = computeOverlapAwareDelta(subject, grid.cells, axes, obstacles);
+                if (!solved) {
+                    diagnostics.push({
+                        layerId: target.id,
+                        layerName: target.name,
+                        code: "cannot-avoid-cut",
+                        message: `Слой «${target.name}» больше слайса по активной оси — сдвиг невозможен.`,
+                    });
+                    continue;
+                }
+                dx = solved.dx;
+                dy = solved.dy;
+                if (solved.overlapFailed) {
+                    diagnostics.push({
+                        layerId: target.id,
+                        layerName: target.name,
+                        code: "overlap-unavoidable",
+                        message: `Слой «${target.name}» не помещается без перекрытия — сдвинут только от линии реза.`,
+                    });
+                }
+            } else {
+                const cell = findContainingCell(subject, grid.cells, axes);
+                if (!cell) {
+                    diagnostics.push({
+                        layerId: target.id,
+                        layerName: target.name,
+                        code: "cannot-avoid-cut",
+                        message: `Слой «${target.name}» больше слайса по активной оси — сдвиг невозможен.`,
+                    });
+                    continue;
+                }
+                ({ dx, dy } = computeAvoidCutDelta(subject, cell, axes));
             }
-            const { dx, dy } = computeAvoidCutDelta(subject, cell, axes);
             if (Math.abs(dx) < EPSILON && Math.abs(dy) < EPSILON) continue;
 
             if (mover.type === "frame") {
@@ -252,7 +314,13 @@ export function applySliceAlignment(layers: Layer[]): SliceAlignmentResult {
             const subject = boxOf(moverNow);
             const cell = findNearestCell(subject, grid.cells);
             if (!cell) continue;
-            const { scale, x, y } = computeFitTransform(subject, cell, axes);
+            const { scale, x, y } = computeFitTransform(
+                subject,
+                cell,
+                axes,
+                anchorForH(settings.alignH),
+                anchorForV(settings.alignV),
+            );
             if (!(scale > 0)) continue;
 
             if (moverNow.type === "frame") {
