@@ -26,7 +26,7 @@ export function SnapGuides({ snapLines, distanceMeasurements, spacingGuides, sel
                             ? [guide.position, guide.start, guide.position, guide.end]
                             : [guide.start, guide.position, guide.end, guide.position]
                     }
-                    stroke={guide.type === 'artboard' ? '#6366F1' : '#ff0000'}
+                    stroke={guide.type === 'artboard' ? '#6366F1' : guide.type === 'grid' ? '#06B6D4' : '#ff0000'}
                     strokeWidth={1}
                     dash={[4, 4]}
                     listening={false}

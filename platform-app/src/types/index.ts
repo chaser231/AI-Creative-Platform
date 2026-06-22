@@ -123,6 +123,102 @@ export interface ResizeFormat {
     adaptationDiagnostics?: AdaptationDiagnostic[];
     /** Source format id used for the last smart adaptation. */
     adaptedFromResizeId?: string;
+
+    /**
+     * Layout grids / safe zones for this format (Figma-like). Display-only
+     * overlay guides that also act as snap targets; never exported.
+     */
+    layoutGrids?: LayoutGrid[];
+}
+
+// ─── Layout Grids (safe zones, Figma-like) ──────────────
+
+export type LayoutGridType = "columns" | "rows" | "uniform" | "container";
+
+/** Placement of fixed-size tracks within the available span (columns/rows). */
+export type LayoutGridAlign = "stretch" | "min" | "center" | "max";
+
+export interface LayoutGridMargins {
+    top: number;
+    right: number;
+    bottom: number;
+    left: number;
+}
+
+/**
+ * A single layout grid layer. Multiple grids can be stacked per resize format.
+ * Display-only: the overlay is a visual safe-zone guide and provides snap lines
+ * for content; it is never part of the exported artwork.
+ */
+export interface LayoutGrid {
+    id: string;
+    type: LayoutGridType;
+    /** Per-grid visibility toggle (independent of the global show/hide flag). */
+    visible: boolean;
+    /** Overlay color (hex). */
+    color: string;
+    /** Overlay opacity, 0..1. */
+    opacity: number;
+
+    // ── uniform pixel grid ──
+    /** Cell size in px for the uniform grid. */
+    cellSize?: number;
+
+    // ── columns / rows ──
+    /** Number of tracks (columns or rows). */
+    count?: number;
+    /** Gap between adjacent tracks, px. */
+    gutter?: number;
+    /** Outer margin (left/right for columns, top/bottom for rows), px. */
+    margin?: number;
+    /** Fixed track size (width for columns, height for rows); null = auto/stretch. */
+    trackSize?: number | null;
+    /** Placement of fixed-size tracks within the available span. */
+    align?: LayoutGridAlign;
+
+    // ── container (parametric, slice-like) ──
+    cols?: number;
+    rows?: number;
+    /** Fixed px per column; null entries auto-share remaining width. */
+    colSizes?: Array<number | null>;
+    /** Fixed px per row; same semantics as colSizes. */
+    rowSizes?: Array<number | null>;
+    gapX?: number;
+    gapY?: number;
+    margins?: LayoutGridMargins;
+}
+
+export const DEFAULT_LAYOUT_GRID_COLOR = "#F24E1E";
+export const DEFAULT_LAYOUT_GRID_OPACITY = 0.1;
+
+/** Build a layout grid with sensible per-type defaults. */
+export function createDefaultLayoutGrid(id: string, type: LayoutGridType): LayoutGrid {
+    const base = {
+        id,
+        type,
+        visible: true,
+        color: DEFAULT_LAYOUT_GRID_COLOR,
+        opacity: DEFAULT_LAYOUT_GRID_OPACITY,
+    } as const;
+    switch (type) {
+        case "uniform":
+            return { ...base, cellSize: 8 };
+        case "columns":
+            return { ...base, count: 12, gutter: 16, margin: 0, trackSize: null, align: "stretch" };
+        case "rows":
+            return { ...base, count: 4, gutter: 16, margin: 0, trackSize: null, align: "stretch" };
+        case "container":
+            return {
+                ...base,
+                cols: 3,
+                rows: 1,
+                colSizes: [],
+                rowSizes: [],
+                gapX: 16,
+                gapY: 16,
+                margins: { top: 0, right: 0, bottom: 0, left: 0 },
+            };
+    }
 }
 
 export const PRESET_FORMATS: ResizeFormat[] = [

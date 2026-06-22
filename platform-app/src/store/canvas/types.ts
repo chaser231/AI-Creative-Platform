@@ -34,6 +34,8 @@ import type {
     StrokeAlign,
     StrokeJoin,
     CornerRadii,
+    LayoutGrid,
+    LayoutGridType,
 } from "@/types";
 import type { SnapConfig } from "@/services/snapService";
 import type { SlotMapping } from "@/services/slotMappingService";
@@ -68,6 +70,8 @@ export type {
     TemplatePalette,
     Swatch,
     SwatchType,
+    LayoutGrid,
+    LayoutGridType,
 };
 
 // ─── ArtboardProps (single source of truth) ─────────────
@@ -228,6 +232,9 @@ export interface CanvasStore {
     // Palette (swatches)
     palette: TemplatePalette;
 
+    // Layout grids (safe zones) — global show/hide toggle (per-grid `visible` lives on each grid)
+    layoutGridsVisible: boolean;
+
     // Undo / Redo
     history: HistorySnapshot[];
     historyIndex: number;
@@ -312,6 +319,14 @@ export interface CanvasStore {
     demoteFormatFromMaster: (formatId: string) => void;
     setFormatBindings: (formatId: string, bindings: LayerBinding[]) => void;
     unbindFormat: (formatId: string) => void;
+
+    // Layout grid actions (target the active resize format)
+    addLayoutGrid: (type: LayoutGridType) => string;
+    updateLayoutGrid: (id: string, patch: Partial<LayoutGrid>) => void;
+    removeLayoutGrid: (id: string) => void;
+    reorderLayoutGrid: (id: string, mode: "up" | "down" | "top" | "bottom") => void;
+    toggleLayoutGridsVisible: () => void;
+    setLayoutGridsVisible: (value: boolean) => void;
 
     // Mode
     setEditorMode: (mode: EditorMode) => void;

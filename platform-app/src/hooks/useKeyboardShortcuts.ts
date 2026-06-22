@@ -39,6 +39,7 @@ export function useKeyboardShortcuts() {
         addVectorLayer,
         vectorEditLayerId,
         setVectorEditLayerId,
+        toggleLayoutGridsVisible,
     } = useCanvasStore(useShallow((s) => ({
         selectedLayerIds: s.selectedLayerIds, layers: s.layers,
         isEditingText: s.isEditingText, activeTool: s.activeTool,
@@ -52,6 +53,7 @@ export function useKeyboardShortcuts() {
         addVectorLayer: s.addVectorLayer,
         vectorEditLayerId: s.vectorEditLayerId,
         setVectorEditLayerId: s.setVectorEditLayerId,
+        toggleLayoutGridsVisible: s.toggleLayoutGridsVisible,
     })));
 
     // clipboard state lives in a ref so it persists across renders
@@ -138,6 +140,13 @@ export function useKeyboardShortcuts() {
             if (isMeta && e.shiftKey && e.key === "z") {
                 e.preventDefault();
                 redo();
+                return;
+            }
+
+            // ─── Toggle layout grids: Cmd+Shift+G ────────
+            if (isMeta && e.shiftKey && e.key.toLowerCase() === "g") {
+                e.preventDefault();
+                toggleLayoutGridsVisible();
                 return;
             }
 
@@ -267,7 +276,7 @@ export function useKeyboardShortcuts() {
                 if (didMove) return;
             }
         },
-        [selectedLayerIds, layers, isEditingText, deleteSelectedLayers, duplicateSelectedLayers, updateLayer, undo, redo, selectLayer, reorderLayer, pasteLayers, stageRef, activeTool, setActiveTool, wrapInAutoLayoutFrame, setDrawingBox, vectorEditLayerId, setVectorEditLayerId]
+        [selectedLayerIds, layers, isEditingText, deleteSelectedLayers, duplicateSelectedLayers, updateLayer, undo, redo, selectLayer, reorderLayer, pasteLayers, stageRef, activeTool, setActiveTool, wrapInAutoLayoutFrame, setDrawingBox, vectorEditLayerId, setVectorEditLayerId, toggleLayoutGridsVisible]
     );
 
     // Native paste of external SVG (markup or file) -> editable vector layer.

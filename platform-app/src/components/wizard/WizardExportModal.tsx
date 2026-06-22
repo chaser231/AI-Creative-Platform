@@ -370,6 +370,7 @@ export function WizardExportModal({
                         artboardStrokeWidth={artboardProps.strokeWidth}
                         artboardStrokeAlign={artboardProps.strokeAlign}
                         artboardStrokeJoin={artboardProps.strokeJoin}
+                        showLayoutGrids={false}
                         onImagesReadyChange={(ready) => {
                             readyRef.current = ready;
                         }}

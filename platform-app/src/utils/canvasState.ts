@@ -37,6 +37,14 @@ function cloneResizes(resizes: ResizeFormat[] | undefined): ResizeFormat[] {
             adaptationDiagnostics: resize.adaptationDiagnostics
                 ? resize.adaptationDiagnostics.map((diagnostic) => ({ ...diagnostic }))
                 : resize.adaptationDiagnostics,
+            layoutGrids: resize.layoutGrids
+                ? resize.layoutGrids.map((grid) => ({
+                    ...grid,
+                    margins: grid.margins ? { ...grid.margins } : grid.margins,
+                    colSizes: grid.colSizes ? [...grid.colSizes] : grid.colSizes,
+                    rowSizes: grid.rowSizes ? [...grid.rowSizes] : grid.rowSizes,
+                }))
+                : resize.layoutGrids,
         }))
         : [];
 }

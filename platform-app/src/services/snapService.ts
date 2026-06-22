@@ -58,6 +58,12 @@ export interface NodeBounds {
     rotation: number;
 }
 
+/** Layout-grid snap lines in scene coordinates (vertical = x positions, horizontal = y positions). */
+export interface GridSnapLines {
+    vertical: number[];
+    horizontal: number[];
+}
+
 // ─── Main Snap Function ─────────────────────────────────────
 
 export function computeSnap(
@@ -66,7 +72,8 @@ export function computeSnap(
     config: SnapConfig,
     artboardBounds?: { width: number; height: number },
     showDistances: boolean = false,
-    threshold: number = SNAP_THRESHOLD
+    threshold: number = SNAP_THRESHOLD,
+    gridLines?: GridSnapLines,
 ): SnapResult {
     let snappedX: number | null = null;
     let snappedY: number | null = null;
@@ -120,6 +127,24 @@ export function computeSnap(
             objectSnapDiffY = objectSnap.diffY;
         }
         guides.push(...objectSnap.guides);
+    }
+
+    // ── 3b. Layout Grid Snapping ────────────────────────────
+    // Snap the active node's edges/centers to layout grid lines. Wins over
+    // object snap only when strictly closer, so explicit object alignment is
+    // preferred when both are within threshold.
+    if (gridLines && (gridLines.vertical.length > 0 || gridLines.horizontal.length > 0)) {
+        const gridSnap = getGridSnap(activeNode, gridLines, threshold, artboardBounds);
+        if (gridSnap.x !== null && gridSnap.diffX < objectSnapDiffX) {
+            snappedX = gridSnap.x;
+            objectSnapDiffX = gridSnap.diffX;
+            guides.push(...gridSnap.guides.filter((g) => g.orientation === 'vertical'));
+        }
+        if (gridSnap.y !== null && gridSnap.diffY < objectSnapDiffY) {
+            snappedY = gridSnap.y;
+            objectSnapDiffY = gridSnap.diffY;
+            guides.push(...gridSnap.guides.filter((g) => g.orientation === 'horizontal'));
+        }
     }
 
     // ── 4. Smart Spacing Guides ─────────────────────────────
@@ -194,6 +219,80 @@ export function getSnapLines(
         artboardSnap: false,
     }, undefined, false, threshold);
     return { x: result.x, y: result.y, guides: result.guides };
+}
+
+// ─── Layout Grid Snapping ───────────────────────────────────
+
+function getGridSnap(
+    activeNode: NodeBounds,
+    gridLines: GridSnapLines,
+    threshold: number,
+    artboardBounds?: { width: number; height: number },
+): { x: number | null; y: number | null; diffX: number; diffY: number; guides: SnapGuide[] } {
+    const guides: SnapGuide[] = [];
+    let snappedX: number | null = null;
+    let snappedY: number | null = null;
+    let diffX = Infinity;
+    let diffY = Infinity;
+
+    const activeEdgesX = [
+        { pos: activeNode.x, offset: 0 },
+        { pos: activeNode.x + activeNode.width / 2, offset: -activeNode.width / 2 },
+        { pos: activeNode.x + activeNode.width, offset: -activeNode.width },
+    ];
+    const activeEdgesY = [
+        { pos: activeNode.y, offset: 0 },
+        { pos: activeNode.y + activeNode.height / 2, offset: -activeNode.height / 2 },
+        { pos: activeNode.y + activeNode.height, offset: -activeNode.height },
+    ];
+
+    let bestX: { line: number; offset: number } | null = null;
+    for (const line of gridLines.vertical) {
+        for (const ae of activeEdgesX) {
+            const diff = Math.abs(ae.pos - line);
+            if (diff < diffX) {
+                diffX = diff;
+                bestX = { line, offset: ae.offset };
+            }
+        }
+    }
+    if (bestX && diffX <= threshold) {
+        snappedX = bestX.line + bestX.offset;
+        guides.push({
+            orientation: 'vertical',
+            position: bestX.line,
+            start: 0,
+            end: artboardBounds?.height ?? activeNode.y + activeNode.height,
+            type: 'grid',
+        });
+    } else {
+        diffX = Infinity;
+    }
+
+    let bestY: { line: number; offset: number } | null = null;
+    for (const line of gridLines.horizontal) {
+        for (const ae of activeEdgesY) {
+            const diff = Math.abs(ae.pos - line);
+            if (diff < diffY) {
+                diffY = diff;
+                bestY = { line, offset: ae.offset };
+            }
+        }
+    }
+    if (bestY && diffY <= threshold) {
+        snappedY = bestY.line + bestY.offset;
+        guides.push({
+            orientation: 'horizontal',
+            position: bestY.line,
+            start: 0,
+            end: artboardBounds?.width ?? activeNode.x + activeNode.width,
+            type: 'grid',
+        });
+    } else {
+        diffY = Infinity;
+    }
+
+    return { x: snappedX, y: snappedY, diffX, diffY, guides };
 }
 
 // ─── Object Edge/Center Snapping ────────────────────────────
@@ -720,6 +819,7 @@ export function computeResizeSnap(
     activeEdges: ActiveEdge[],
     artboardBounds?: { width: number; height: number },
     threshold: number = SNAP_THRESHOLD,
+    gridLines?: GridSnapLines,
 ): ResizeSnapResult {
     const guides: SnapGuide[] = [];
     let { x, y, width, height } = resizingNode;
@@ -752,6 +852,14 @@ export function computeResizeSnap(
                 }
             }
         }
+        for (const line of gridLines?.vertical ?? []) {
+            const diff = Math.abs(activeEdgePos - line);
+            if (diff < bestDiff) {
+                bestDiff = diff;
+                bestTarget = line;
+                bestInfo = { start: y, end: y + height, type: 'grid' };
+            }
+        }
         if (bestInfo && bestDiff <= threshold) {
             width = bestTarget - x;
             guides.push({ orientation: 'vertical', position: bestTarget, start: bestInfo.start, end: bestInfo.end, type: bestInfo.type });
@@ -779,6 +887,14 @@ export function computeResizeSnap(
                         type: isArtboard ? 'artboard' : 'edge',
                     };
                 }
+            }
+        }
+        for (const line of gridLines?.vertical ?? []) {
+            const diff = Math.abs(activeEdgePos - line);
+            if (diff < bestDiff) {
+                bestDiff = diff;
+                bestTarget = line;
+                bestInfo = { start: y, end: y + height, type: 'grid' };
             }
         }
         if (bestInfo && bestDiff <= threshold) {
@@ -812,6 +928,14 @@ export function computeResizeSnap(
                 }
             }
         }
+        for (const line of gridLines?.horizontal ?? []) {
+            const diff = Math.abs(activeEdgePos - line);
+            if (diff < bestDiff) {
+                bestDiff = diff;
+                bestTarget = line;
+                bestInfo = { start: x, end: x + width, type: 'grid' };
+            }
+        }
         if (bestInfo && bestDiff <= threshold) {
             height = bestTarget - y;
             guides.push({ orientation: 'horizontal', position: bestTarget, start: bestInfo.start, end: bestInfo.end, type: bestInfo.type });
@@ -839,6 +963,14 @@ export function computeResizeSnap(
                         type: isArtboard ? 'artboard' : 'edge',
                     };
                 }
+            }
+        }
+        for (const line of gridLines?.horizontal ?? []) {
+            const diff = Math.abs(activeEdgePos - line);
+            if (diff < bestDiff) {
+                bestDiff = diff;
+                bestTarget = line;
+                bestInfo = { start: x, end: x + width, type: 'grid' };
             }
         }
         if (bestInfo && bestDiff <= threshold) {

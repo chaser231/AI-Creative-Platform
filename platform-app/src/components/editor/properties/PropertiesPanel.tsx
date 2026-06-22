@@ -91,6 +91,7 @@ import { useWorkspace } from "@/providers/WorkspaceProvider";
 import { ArtboardBackgroundControls } from "./ArtboardBackgroundControls";
 import { ColorInput } from "./ColorInput";
 import { PaintInput } from "./PaintInput";
+import { LayoutGridsSection } from "./LayoutGridsSection";
 import { StrokeControls, type StrokeControlsValue } from "./StrokeControls";
 
 const SYSTEM_FONTS = [
@@ -331,6 +332,7 @@ export function PropertiesPanel() {
                             clipContent={artboardProps.clipContent}
                             onClipChange={(clipContent) => updateArtboardProps({ clipContent })}
                         />
+                        <LayoutGridsSection />
                     </div>
                 )}
             </div>
