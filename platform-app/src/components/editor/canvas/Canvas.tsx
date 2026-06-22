@@ -40,6 +40,10 @@ import { installLayerBoxGetClientRect } from "@/utils/strokeGeometry";
 import { AlignedStrokeRect } from "./AlignedStrokeRect";
 import { resolveKonvaLayerId } from "./resolveKonvaLayerId";
 import { SLICE_OVERLAY_NAME, withSliceOverlaysHidden } from "./sliceOverlay";
+import { LayoutGridLayer } from "./LayoutGridLayer";
+import { EDITOR_CHROME_NAME } from "@/utils/stageExportCapture";
+import { selectActiveLayoutGrids } from "@/store/canvas/createLayoutGridSlice";
+import { getLayoutGridSnapLines } from "@/utils/layoutGrid";
 import {
     FLIP_LAYER_CONTENT_NAME,
     getTextTransformBaseSize,
@@ -1642,6 +1646,16 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
     const expandTargetLayerId = useCanvasStore((s) => s.expandTargetLayerId);
     const exitCanvasEditModes = useCanvasStore((s) => s.exitCanvasEditModes);
 
+    // Layout grids (safe zones) — overlay + snap targets for the active format
+    const layoutGridsVisible = useCanvasStore((s) => s.layoutGridsVisible);
+    const activeLayoutGrids = useCanvasStore(useShallow(selectActiveLayoutGrids));
+    const gridSnapLines = useMemo(
+        () => (layoutGridsVisible
+            ? getLayoutGridSnapLines(activeLayoutGrids, { width: canvasWidth, height: canvasHeight })
+            : { vertical: [], horizontal: [] }),
+        [layoutGridsVisible, activeLayoutGrids, canvasWidth, canvasHeight],
+    );
+
     // Inpaint mode state — the slice carries only the UI flag + target id,
     // brush strokes live in the InpaintProvider hook (see InpaintContext).
     // useOptionalSharedInpaintMask returns null when the editor was mounted
@@ -2069,6 +2083,8 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
                     snapConfig,
                     { width: canvasWidth, height: canvasHeight },
                     isAltPressed.current,
+                    undefined,
+                    gridSnapLines,
                 );
                 setSnapLines(snapResult.guides);
                 setDistanceMeasurements(snapResult.distances);
@@ -2092,6 +2108,8 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
                     snapConfig,
                     { width: canvasWidth, height: canvasHeight },
                     isAltPressed.current,
+                    undefined,
+                    gridSnapLines,
                 );
                 setSnapLines(snapResult.guides);
                 setDistanceMeasurements(snapResult.distances);
@@ -2128,7 +2146,7 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
         } else if (dragIds.length === 1) {
             updateFrameHoverHighlight(stage, id);
         }
-    }, [setHighlightedFrameId, canvasWidth, canvasHeight, updateFrameHoverHighlight]);
+    }, [setHighlightedFrameId, canvasWidth, canvasHeight, updateFrameHoverHighlight, gridSnapLines]);
 
     const handleLayerDragEnd = useCallback((e: Konva.KonvaEventObject<DragEvent>) => {
         const id = resolveKonvaLayerId(e.target);
@@ -2379,6 +2397,8 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
             otherNodes,
             activeEdges,
             { width: canvasWidth, height: canvasHeight },
+            undefined,
+            gridSnapLines,
         );
 
         setSnapLines(snapResult.guides);
@@ -2403,7 +2423,7 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
                 node.setAbsolutePosition({ x: newAbsX, y: newAbsY });
             }
         }
-    }, [canvasWidth, canvasHeight]);
+    }, [canvasWidth, canvasHeight, gridSnapLines]);
 
     const { isPanning, setIsPanning, handleWheel } = usePanZoom({
         stageRef,
@@ -3496,6 +3516,17 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
                                 />
                             ))}
                         </>
+                    )}
+
+                    {/* Layout grids (safe zones) — overlay above content, hidden on export */}
+                    {layoutGridsVisible && (
+                        <LayoutGridLayer
+                            grids={activeLayoutGrids}
+                            width={canvasWidth}
+                            height={canvasHeight}
+                            zoom={zoom}
+                            name={EDITOR_CHROME_NAME}
+                        />
                     )}
 
                     {/* Snap Guides, Distance Measurements, Spacing Guides, Selection Box */}

@@ -10,8 +10,10 @@ import type {
     ImageLayer,
     LayerImageFill,
     Layer as LayerType,
+    LayoutGrid,
     Paint,
 } from "@/types";
+import { LayoutGridLayer } from "@/components/editor/canvas/LayoutGridLayer";
 import type { CornerRadiusValue } from "@/utils/strokeGeometry";
 import { computeImageFitProps } from "@/utils/imageFitUtils";
 import { getTextTrimMetrics, isTextTrimActive } from "@/utils/layoutEngine";
@@ -612,6 +614,10 @@ interface PreviewCanvasProps {
     artboardStrokeWidth?: number;
     artboardStrokeAlign?: ImageLayer["strokeAlign"];
     artboardStrokeJoin?: ImageLayer["strokeJoin"];
+    /** Layout grids (safe zones) for the active format; rendered as a read-only overlay. */
+    layoutGrids?: LayoutGrid[];
+    /** Toggle the layout grid overlay (never shown in `artboard`/export mode). */
+    showLayoutGrids?: boolean;
     onImagesReadyChange?: (ready: boolean) => void;
     onImageLoadStateChange?: (state: { pending: number; failed: number }) => void;
 }
@@ -635,6 +641,8 @@ export const PreviewCanvas = forwardRef<Konva.Stage, PreviewCanvasProps>(functio
     artboardStrokeWidth = 0,
     artboardStrokeAlign,
     artboardStrokeJoin,
+    layoutGrids,
+    showLayoutGrids = true,
     onImagesReadyChange,
     onImageLoadStateChange,
 }, forwardedRef) {
@@ -872,6 +880,14 @@ export const PreviewCanvas = forwardRef<Konva.Stage, PreviewCanvasProps>(functio
                                 imageStatuses={activeImageStatuses}
                             />
                         ))}
+                        {showLayoutGrids && (
+                            <LayoutGridLayer
+                                grids={layoutGrids}
+                                width={artboardWidth}
+                                height={artboardHeight}
+                                zoom={scale}
+                            />
+                        )}
                     </Group>
                 </Group>
                 {showPreviewStatus && (

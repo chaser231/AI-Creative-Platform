@@ -14,6 +14,7 @@ import {
     PenTool,
     Slice,
     Grid3x3,
+    LayoutGrid,
 } from "lucide-react";
 import { useCanvasStore } from "@/store/canvasStore";
 import { useShallow } from "zustand/react/shallow";
@@ -65,11 +66,15 @@ export function Toolbar({
         addVectorLayer,
         snapConfig,
         updateSnapConfig,
+        layoutGridsVisible,
+        toggleLayoutGridsVisible,
     } = useCanvasStore(useShallow((s) => ({
         activeTool: s.activeTool, setActiveTool: s.setActiveTool,
         addImageLayer: s.addImageLayer, addBadgeLayer: s.addBadgeLayer,
         addVectorLayer: s.addVectorLayer,
         snapConfig: s.snapConfig, updateSnapConfig: s.updateSnapConfig,
+        layoutGridsVisible: s.layoutGridsVisible,
+        toggleLayoutGridsVisible: s.toggleLayoutGridsVisible,
     })));
     const { registerFile } = useProjectLibrary();
     const fileRef = useRef<HTMLInputElement>(null);
@@ -164,6 +169,21 @@ export function Toolbar({
                     className="p-2.5 rounded-[var(--radius-lg)] transition-all cursor-pointer text-text-secondary hover:bg-bg-tertiary/60 hover:text-text-primary"
                 >
                     <Grid3x3 size={18} />
+                </button>
+
+                {/* Layout grids (safe zones) visibility */}
+                <button
+                    onClick={toggleLayoutGridsVisible}
+                    title="Показать/скрыть сетки (⇧⌘G)"
+                    className={`
+                        p-2.5 rounded-[var(--radius-lg)] transition-all cursor-pointer
+                        ${layoutGridsVisible
+                            ? "bg-accent-primary/15 text-accent-primary"
+                            : "text-text-secondary hover:bg-bg-tertiary/60 hover:text-text-primary"
+                        }
+                    `}
+                >
+                    <LayoutGrid size={18} />
                 </button>
 
                 {/* Snap Config */}

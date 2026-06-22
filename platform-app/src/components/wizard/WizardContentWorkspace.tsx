@@ -21,6 +21,7 @@ import {
     ZoomOut,
     Maximize2,
     Eraser,
+    Grid2x2,
 } from "lucide-react";
 import { RefAutocompleteTextarea, type RefAutocompleteTextareaHandle } from "@/components/ui/RefAutocompleteTextarea";
 import { ReferenceImageInput, ReferenceImagePreviewTray, getReferenceTrayReserveWidth } from "@/components/ui/ReferenceImageInput";
@@ -76,7 +77,7 @@ import { outpaintWithGptImage2PackPlan } from "@/utils/gptImageOutpaint";
 import { prepareWizardWorkingImage, type WizardWorkingImageLayer } from "@/utils/wizardImageDerivative";
 import { cropToLayerAspect } from "@/utils/cropToLayerAspect";
 import { useThemeStore } from "@/store/themeStore";
-import type { BusinessUnit, ImageFitMode, ImageLayer, Layer, LayerBinding, MasterComponent, TextGenPreset } from "@/types";
+import type { BusinessUnit, ImageFitMode, ImageLayer, Layer, LayerBinding, LayoutGrid, MasterComponent, TextGenPreset } from "@/types";
 import type { TemplatePackV2 } from "@/services/templateService";
 
 /** Resolves `system` the same way as ThemeProvider / editor canvas */
@@ -132,6 +133,7 @@ export interface PreviewFormatSource {
     width: number;
     height: number;
     layerBindings?: LayerBinding[];
+    layoutGrids?: LayoutGrid[];
 }
 
 export interface WizardImageViewOverride {
@@ -386,6 +388,7 @@ export function WizardContentWorkspace({
     const [activeLayerId, setActiveLayerId] = useState(entries[0]?.id ?? "");
     const [sidebarTab, setSidebarTab] = useState<SidebarTab>("layers");
     const [previewZoom, setPreviewZoom] = useState(1);
+    const [gridsVisible, setGridsVisible] = useState(false);
     const [wizardImageMode, setWizardImageMode] = useState<ImagePromptMode>("generate");
     const [wizardInpaintBusy, setWizardInpaintBusy] = useState(false);
     const [aiScenariosOpen, setAiScenariosOpen] = useState(false);
@@ -913,6 +916,19 @@ export function WizardContentWorkspace({
                         <ZoomButton label="100%" onClick={() => setPreviewZoom(1)}>
                             <RotateCcw size={13} />
                         </ZoomButton>
+                        <div className="mx-0.5 h-5 w-px bg-border-primary" />
+                        <button
+                            type="button"
+                            onClick={() => setGridsVisible((value) => !value)}
+                            title={gridsVisible ? "Скрыть сетки" : "Показать сетки"}
+                            className={`flex h-7 w-7 items-center justify-center rounded-full transition-colors cursor-pointer ${
+                                gridsVisible
+                                    ? "bg-accent-lime/20 text-text-primary"
+                                    : "text-text-secondary hover:bg-bg-tertiary hover:text-text-primary"
+                            }`}
+                        >
+                            <Grid2x2 size={14} />
+                        </button>
                     </div>
                     <div
                         ref={previewFrameRef}
@@ -946,6 +962,8 @@ export function WizardContentWorkspace({
                                     artboardStrokeWidth={artboardProps.strokeWidth}
                                     artboardStrokeAlign={artboardProps.strokeAlign}
                                     artboardStrokeJoin={artboardProps.strokeJoin}
+                                    layoutGrids={previewSource.layoutGrids}
+                                    showLayoutGrids={gridsVisible}
                                 />
                                 {wizardImageMode === "inpaint" && activePreviewImageLayer && (
                                     <WizardPreviewInpaintOverlay
@@ -3243,6 +3261,7 @@ function resizeToPreviewSource(
         width: resize.width,
         height: resize.height,
         layerBindings: resize.layerBindings,
+        layoutGrids: (resize as WizardPreviewResize & { layoutGrids?: LayoutGrid[] }).layoutGrids,
     };
 }
 
