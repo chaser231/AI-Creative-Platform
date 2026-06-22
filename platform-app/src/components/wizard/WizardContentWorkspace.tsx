@@ -39,6 +39,8 @@ import { LoraSelectorPicker } from "@/components/ui/LoraSelectorPicker";
 import { LoraTriggerHint } from "@/components/ui/LoraTriggerHint";
 import { ModelSettingsModal, type AdvancedAIParams } from "@/components/ui/ModelSettingsModal";
 import { PreviewCanvas } from "@/components/editor/PreviewCanvas";
+import { WizardOverviewGrid, type WizardOverviewTile } from "@/components/wizard/WizardOverviewGrid";
+import { useCanvasStore } from "@/store/canvasStore";
 import { PaintInput } from "@/components/editor/properties/PaintInput";
 import { ArtboardBackgroundControls } from "@/components/editor/properties/ArtboardBackgroundControls";
 import { applyBackgroundSwatchToArtboardProps } from "@/lib/resolveWizardArtboardProps";
@@ -336,6 +338,8 @@ export function WizardContentWorkspace({
 }: WizardContentWorkspaceProps) {
     const { currentWorkspace } = useWorkspace();
     const canvasAppearance = useResolvedCanvasAppearance();
+    const viewMode = useCanvasStore((s) => s.viewMode);
+    const setViewMode = useCanvasStore((s) => s.setViewMode);
     const fileInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
     const previewFrameRef = useRef<HTMLDivElement | null>(null);
     const { registerFile, registerUrl } = useProjectLibrary();
@@ -520,6 +524,34 @@ export function WizardContentWorkspace({
         layerStyleOverrides,
         layerGeometryOverrides,
     ]);
+
+    // Overview grid tiles — one live preview per visible format, content-bound
+    // through the same draft pipeline as the single preview (sidebar edits flow
+    // into every tile). Geometry/expand projection is intentionally skipped here:
+    // tiles are read-only overview thumbnails, not the active editing surface.
+    const overviewTiles = useMemo<WizardOverviewTile[]>(
+        () =>
+            visiblePreviewFormats.map((format) => ({
+                id: format.id,
+                name: format.name,
+                label: format.label,
+                width: format.width,
+                height: format.height,
+                isMaster: format.isMaster,
+                layoutGrids: format.layoutGrids,
+                layers: buildDraftPreviewLayers(
+                    format.layers,
+                    entries,
+                    textValues,
+                    imageValues,
+                    imageViewOverrides,
+                    layerStyleOverrides,
+                    undefined,
+                    format.layerBindings,
+                ),
+            })),
+        [visiblePreviewFormats, entries, textValues, imageValues, imageViewOverrides, layerStyleOverrides],
+    );
 
     const updateTextValue = (id: string, value: string) => {
         setTextValues((prev) => ({ ...prev, [id]: value }));
@@ -895,6 +927,32 @@ export function WizardContentWorkspace({
                 </aside>
 
                 <main className="relative min-h-0 overflow-hidden p-4">
+                    {viewMode === "overview" ? (
+                        <WizardOverviewGrid
+                            tiles={overviewTiles}
+                            activeId={previewSource?.id ?? ""}
+                            appearance={canvasAppearance}
+                            gridsVisible={gridsVisible}
+                            artboard={{
+                                fill: artboardProps.fill,
+                                fillEnabled: artboardProps.fillEnabled !== false,
+                                backgroundImage: artboardProps.backgroundImage,
+                                cornerRadius: artboardProps.cornerRadius,
+                                stroke: artboardProps.stroke,
+                                strokeMode: artboardProps.strokeMode,
+                                strokeImage: artboardProps.strokeImage,
+                                strokeWidth: artboardProps.strokeWidth,
+                                strokeAlign: artboardProps.strokeAlign,
+                                strokeJoin: artboardProps.strokeJoin,
+                            }}
+                            onSelect={setActivePreviewFormatId}
+                            onOpen={(formatId) => {
+                                setActivePreviewFormatId(formatId);
+                                setViewMode("single");
+                            }}
+                        />
+                    ) : (
+                    <>
                     <div className="absolute left-6 top-6 z-10 rounded-full border border-accent-lime-hover/50 bg-accent-lime/15 px-3 py-1.5 text-xs font-medium text-text-primary shadow-sm">
                         {activeLayer ? `Выбран слой: ${activeLayer.name}` : "Выберите слой"}
                     </div>
@@ -1017,6 +1075,8 @@ export function WizardContentWorkspace({
                         onLayerGeometryChange={setLayerGeometry}
                         onLayerGeometryReset={clearLayerGeometry}
                     />
+                    </>
+                    )}
                 </main>
             </div>
         </div>

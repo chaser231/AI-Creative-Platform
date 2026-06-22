@@ -3,7 +3,7 @@
  */
 
 import type { StateCreator } from "zustand";
-import type { CanvasStore, ArtboardProps, SnapConfig, EditorMode, FrameLayer, ExpandPadding } from "./types";
+import type { CanvasStore, ArtboardProps, SnapConfig, EditorMode, ViewMode, FrameLayer, ExpandPadding } from "./types";
 import type Konva from "konva";
 import { DEFAULT_EXPAND_PADDING } from "./types";
 import { DEFAULT_SNAP_CONFIG } from "@/services/snapService";
@@ -22,6 +22,8 @@ export type ViewportSlice = Pick<CanvasStore,
     | "updateArtboardProps" | "updateSnapConfig"
     | "setHighlightedFrameId" | "setHoveredLayerId" | "getFrameAtPoint"
     | "setEditorMode" | "setActiveTool"
+    | "viewMode" | "overviewZoom" | "overviewX" | "overviewY"
+    | "setViewMode" | "setOverviewZoom" | "setOverviewPosition"
     | "startTextEditing" | "stopTextEditing"
     | "setExpandMode" | "setExpandPadding" | "resetExpandMode"
     | "activeTool"
@@ -49,6 +51,10 @@ export const createViewportSlice: StateCreator<CanvasStore, [], [], ViewportSlic
     keepAspectRatio: false,
     vectorEditLayerId: null,
     editorMode: "studio",
+    viewMode: "single",
+    overviewZoom: 0.2,
+    overviewX: 0,
+    overviewY: 0,
     isEditingText: false,
     editingLayerId: null,
     activeGradientEditorTarget: null,
@@ -152,6 +158,20 @@ export const createViewportSlice: StateCreator<CanvasStore, [], [], ViewportSlic
 
     setEditorMode: (mode: EditorMode) => {
         set({ editorMode: mode });
+    },
+
+    setViewMode: (mode: ViewMode) => {
+        set({ viewMode: mode });
+    },
+
+    // Overview canvas can zoom out much further than the single-artboard view
+    // (whole-project fit), so it uses a wider clamp than `setZoom`.
+    setOverviewZoom: (zoom: number) => {
+        set({ overviewZoom: Math.min(Math.max(zoom, 0.02), 3) });
+    },
+
+    setOverviewPosition: (x: number, y: number) => {
+        set({ overviewX: x, overviewY: y });
     },
 
     startTextEditing: (layerId) => {

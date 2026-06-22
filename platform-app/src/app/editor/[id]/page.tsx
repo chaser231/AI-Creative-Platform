@@ -18,6 +18,8 @@ import { ResizePanel } from "@/components/editor/ResizePanel";
 import { SwatchesPanel } from "@/components/editor/swatches/SwatchesPanel";
 import { TemplatePanel } from "@/components/editor/TemplatePanel";
 import { StudioInpaintWorkspace } from "@/components/editor/StudioInpaintWorkspace";
+import { ViewModeSwitcher } from "@/components/editor/ViewModeSwitcher";
+import { isFocusedOnInput } from "@/utils/keyboard";
 import { EditorStudioChrome } from "@/components/editor/EditorStudioChrome";
 import { AIChatPanel } from "@/components/editor/ai-chat";
 import { VersionHistoryPanel } from "@/components/editor/VersionHistoryPanel";
@@ -57,6 +59,12 @@ import {
 // Dynamic import for Canvas (Konva needs client-only, no SSR)
 const Canvas = dynamic(
     () => import("@/components/editor/canvas").then((mod) => mod.Canvas),
+    { ssr: false }
+);
+
+// Overview (all-formats grid) canvas — also Konva, client-only.
+const StudioOverviewCanvas = dynamic(
+    () => import("@/components/editor/canvas/StudioOverviewCanvas").then((mod) => mod.StudioOverviewCanvas),
     { ssr: false }
 );
 
@@ -113,11 +121,31 @@ export default function EditorPage({ params }: EditorPageProps) {
 
     const projects = useProjectStore((s) => s.projects);
     const updateProject = useProjectStore((s) => s.updateProject);
-    const { editorMode, setEditorMode, undo, redo, history, future, artboardProps, updateArtboardProps } = useCanvasStore(useShallow((s) => ({
+    const { editorMode, setEditorMode, viewMode, setViewMode, undo, redo, history, future, artboardProps, updateArtboardProps } = useCanvasStore(useShallow((s) => ({
         editorMode: s.editorMode, setEditorMode: s.setEditorMode,
+        viewMode: s.viewMode, setViewMode: s.setViewMode,
         undo: s.undo, redo: s.redo, history: s.history, future: s.future,
         artboardProps: s.artboardProps, updateArtboardProps: s.updateArtboardProps,
     })));
+
+    // Shift+G toggles the all-formats overview grid. Studio: always; wizard: only
+    // on the content step (where formats exist — the switcher is hidden elsewhere).
+    // Cmd/Ctrl+Shift+G stays reserved for layout-grid visibility (useKeyboardShortcuts).
+    const overviewToggleAllowed = editorMode === "studio" || wizardHeaderState?.step === "content";
+    useEffect(() => {
+        if (!overviewToggleAllowed) return;
+        const handler = (e: KeyboardEvent) => {
+            if (e.metaKey || e.ctrlKey || e.altKey) return;
+            if (!e.shiftKey || e.key.toLowerCase() !== "g") return;
+            if (isFocusedOnInput(e)) return;
+            if (useCanvasStore.getState().isEditingText) return;
+            e.preventDefault();
+            const { viewMode: current, setViewMode: apply } = useCanvasStore.getState();
+            apply(current === "overview" ? "single" : "overview");
+        };
+        window.addEventListener("keydown", handler);
+        return () => window.removeEventListener("keydown", handler);
+    }, [overviewToggleAllowed]);
     const {
         selectedScenarioImageLayer,
         updateLayer,
@@ -873,6 +901,7 @@ export default function EditorPage({ params }: EditorPageProps) {
                     actions={
                         isWizardMode ? (
                             <div className="flex items-center gap-2">
+                                {wizardHeaderState?.step === "content" && <ViewModeSwitcher />}
                                 {wizardHeaderState?.step === "content" && (
                                     <Button
                                         variant="ghost"
@@ -925,6 +954,7 @@ export default function EditorPage({ params }: EditorPageProps) {
                             </div>
                         ) : (
                         <div className="flex items-center gap-2">
+                            <ViewModeSwitcher />
                             {isTemplateMode && templateQuery.data?.canEdit && (
                                 <Button
                                     variant="primary"
@@ -1008,6 +1038,10 @@ export default function EditorPage({ params }: EditorPageProps) {
             ) : (
                 <StudioInpaintWorkspace>
                 <div className="relative flex-1 min-h-0">
+                    {viewMode === "overview" ? (
+                        <StudioOverviewCanvas />
+                    ) : (
+                    <>
                     {/* Canvas fills the entire area */}
                     <Canvas stageRef={stageRef} projectId={isTemplateMode ? undefined : id} />
 
@@ -1095,6 +1129,8 @@ export default function EditorPage({ params }: EditorPageProps) {
                             <Settings size={14} />
                         </button>
                     </div>
+                    </>
+                    )}
                 </div>
                 </StudioInpaintWorkspace>
             )}

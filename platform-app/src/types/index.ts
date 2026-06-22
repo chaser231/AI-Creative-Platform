@@ -563,6 +563,14 @@ export type ToolType = "select" | "text" | "rectangle" | "image" | "badge" | "fr
 // ─── Editor Mode ────────────────────────────────────────
 export type EditorMode = "wizard" | "studio";
 
+// ─── View Mode (single artboard vs overview grid) ───────
+/**
+ * Orthogonal to `EditorMode`: toggles between editing/previewing a single
+ * active artboard (`single`) and a world-space overview of every format
+ * laid out as a grid (`overview`, à la Figma Slides grid view).
+ */
+export type ViewMode = "single" | "overview";
+
 // ─── Legacy Layer compat (used by Canvas renderer) ──────
 export type LayerType = "text" | "image" | "rectangle" | "badge" | "frame" | "vector" | "slice";
 
