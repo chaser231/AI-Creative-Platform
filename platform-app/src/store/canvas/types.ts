@@ -23,6 +23,7 @@ import type {
     LayerBinding,
     ImageSyncMode,
     EditorMode,
+    ViewMode,
     LayerConstraints,
     ArtboardBackgroundImage,
     TemplatePalette,
@@ -62,6 +63,7 @@ export type {
     LayerBinding,
     ImageSyncMode,
     EditorMode,
+    ViewMode,
     LayerConstraints,
     SnapConfig,
     SlotMapping,
@@ -201,6 +203,13 @@ export interface CanvasStore {
     // Editor mode
     editorMode: EditorMode;
 
+    // View mode (single active artboard vs overview grid of all formats)
+    viewMode: ViewMode;
+    // Overview-canvas viewport (independent from the single-artboard zoom/stage)
+    overviewZoom: number;
+    overviewX: number;
+    overviewY: number;
+
     // Drawing mode preview
     drawingBox: { startX: number; startY: number; currentX: number; currentY: number } | null;
 
@@ -330,6 +339,11 @@ export interface CanvasStore {
 
     // Mode
     setEditorMode: (mode: EditorMode) => void;
+    setViewMode: (mode: ViewMode) => void;
+
+    // Overview-canvas viewport actions
+    setOverviewZoom: (zoom: number) => void;
+    setOverviewPosition: (x: number, y: number) => void;
 
     // Canvas actions
     setActiveTool: (tool: ToolType) => void;
