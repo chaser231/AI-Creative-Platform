@@ -1,9 +1,9 @@
 /**
  * Overview Layout — Pure row-based packing for the world-space overview canvas.
  *
- * Used by `StudioOverviewCanvas` to lay out every project artboard (resize
- * format) in a wrapping grid (Figma Slides–style). Deterministic and side-effect
- * free so it can be unit-tested independently of react-konva.
+ * Used by `Canvas` (overview view mode) to lay out every project artboard
+ * (resize format) in a wrapping grid (Figma Slides–style). Deterministic and
+ * side-effect free so it can be unit-tested independently of react-konva.
  *
  * Algorithm: left→right, top→bottom row packing. The next item wraps to a new
  * row when placing it would push the current row past `rowWidth`. Each row's

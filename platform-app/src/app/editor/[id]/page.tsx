@@ -56,15 +56,12 @@ import {
     studioLeftTopRatioFromPointer,
 } from "@/components/editor/studioPanelLayout";
 
-// Dynamic import for Canvas (Konva needs client-only, no SSR)
+// Dynamic import for Canvas (Konva needs client-only, no SSR).
+// Canvas now renders both single-artboard and all-formats overview views
+// internally — the overview branch reuses the live editor handlers against
+// the active artboard while sibling formats render read-only.
 const Canvas = dynamic(
     () => import("@/components/editor/canvas").then((mod) => mod.Canvas),
-    { ssr: false }
-);
-
-// Overview (all-formats grid) canvas — also Konva, client-only.
-const StudioOverviewCanvas = dynamic(
-    () => import("@/components/editor/canvas/StudioOverviewCanvas").then((mod) => mod.StudioOverviewCanvas),
     { ssr: false }
 );
 
@@ -121,9 +118,8 @@ export default function EditorPage({ params }: EditorPageProps) {
 
     const projects = useProjectStore((s) => s.projects);
     const updateProject = useProjectStore((s) => s.updateProject);
-    const { editorMode, setEditorMode, viewMode, setViewMode, undo, redo, history, future, artboardProps, updateArtboardProps } = useCanvasStore(useShallow((s) => ({
+    const { editorMode, setEditorMode, undo, redo, history, future, artboardProps, updateArtboardProps } = useCanvasStore(useShallow((s) => ({
         editorMode: s.editorMode, setEditorMode: s.setEditorMode,
-        viewMode: s.viewMode, setViewMode: s.setViewMode,
         undo: s.undo, redo: s.redo, history: s.history, future: s.future,
         artboardProps: s.artboardProps, updateArtboardProps: s.updateArtboardProps,
     })));
@@ -1038,17 +1034,15 @@ export default function EditorPage({ params }: EditorPageProps) {
             ) : (
                 <StudioInpaintWorkspace>
                 <div className="relative flex-1 min-h-0">
-                    {viewMode === "overview" ? (
-                        <StudioOverviewCanvas />
-                    ) : (
-                    <>
-                    {/* Canvas fills the entire area */}
+                    {/* Canvas owns both single-artboard editing and the
+                        all-formats overview — chrome (rails, panel, prompt
+                        bar) stays mounted across viewMode changes so a
+                        focus-out → focus-in round-trip doesn't tear down
+                        Konva state, AI sessions, or panel state. */}
                     <Canvas stageRef={stageRef} projectId={isTemplateMode ? undefined : id} />
 
-                    {/* Floating Formats / Palette + Layers rail — left */}
                     <StudioLeftRail />
 
-                    {/* Floating Properties Panel — right */}
                     <div
                         className="absolute top-3 right-3 bottom-3 z-20"
                         style={{ width: STUDIO_RIGHT_RAIL_WIDTH }}
@@ -1098,7 +1092,6 @@ export default function EditorPage({ params }: EditorPageProps) {
                         }}
                     />
 
-                    {/* AI Chat Panel — Right Sidebar */}
                     <AIChatPanel
                         open={aiChatOpen && aiPanelOpen}
                         onClose={() => setAiChatOpen(false)}
@@ -1108,7 +1101,6 @@ export default function EditorPage({ params }: EditorPageProps) {
                         rightOffset={STUDIO_AI_CHAT_RIGHT_OFFSET}
                     />
 
-                    {/* Floating Help/Settings — bottom right (Shifted to left of Properties panel) */}
                     <div
                         className="absolute bottom-3 z-10 flex items-center gap-1"
                         style={{ right: STUDIO_AI_CHAT_RIGHT_OFFSET }}
@@ -1129,8 +1121,6 @@ export default function EditorPage({ params }: EditorPageProps) {
                             <Settings size={14} />
                         </button>
                     </div>
-                    </>
-                    )}
                 </div>
                 </StudioInpaintWorkspace>
             )}

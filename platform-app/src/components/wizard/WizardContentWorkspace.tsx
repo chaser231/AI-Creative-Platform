@@ -441,6 +441,11 @@ export function WizardContentWorkspace({
 
         const updateSize = () => {
             const rect = node.getBoundingClientRect();
+            // Ignore transient zero-size measurements (e.g. while the single-view
+            // frame is unmounted/collapsing during overview). Without this guard the
+            // Math.max floor collapses previewSize to {320,240}, shrinking the
+            // <Stage> so it clips the banner on zoom after grid→single.
+            if (rect.width === 0 || rect.height === 0) return;
             setPreviewSize({
                 width: Math.max(320, Math.floor(rect.width)),
                 height: Math.max(240, Math.floor(rect.height)),
@@ -451,7 +456,9 @@ export function WizardContentWorkspace({
         const observer = new ResizeObserver(updateSize);
         observer.observe(node);
         return () => observer.disconnect();
-    }, []);
+        // `viewMode` is a dep so the observer reconnects to the freshly mounted
+        // previewFrameRef when returning to single view from overview.
+    }, [viewMode]);
 
     const activeLayer = entries.find((entry) => entry.id === activeLayerId) ?? entries[0];
     const activeImageLayer = activeLayer?.type === "image" ? activeLayer : undefined;

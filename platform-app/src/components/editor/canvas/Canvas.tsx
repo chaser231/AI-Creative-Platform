@@ -39,9 +39,18 @@ import { canLayerFitInFrame, collectAncestorFrameIds } from "@/utils/frameDropUt
 import { installLayerBoxGetClientRect } from "@/utils/strokeGeometry";
 import { AlignedStrokeRect } from "./AlignedStrokeRect";
 import { resolveKonvaLayerId } from "./resolveKonvaLayerId";
+import { getPointerArtboardPosition, worldPointToArtboard } from "./getPointerArtboardPosition";
+import { artboardToWorld, worldToArtboard } from "./overviewCoords";
+import { ArtboardGroup } from "./ArtboardContent";
+import { InlineSvgVectorImage } from "./InlineSvgVectorImage";
+import {
+    computeOverviewLayout,
+    DEFAULT_OVERVIEW_GAP,
+    DEFAULT_OVERVIEW_LABEL_HEIGHT,
+} from "./overviewLayout";
 import { SLICE_OVERLAY_NAME, withSliceOverlaysHidden } from "./sliceOverlay";
 import { LayoutGridLayer } from "./LayoutGridLayer";
-import { EDITOR_CHROME_NAME } from "@/utils/stageExportCapture";
+import { EDITOR_CHROME_NAME, EXPORT_ARTBOARD_FRAME_NAME } from "@/utils/stageExportCapture";
 import { selectActiveLayoutGrids } from "@/store/canvas/createLayoutGridSlice";
 import { getLayoutGridSnapLines } from "@/utils/layoutGrid";
 import {
@@ -58,6 +67,26 @@ import { computeLayerBoxClientRect } from "@/utils/strokeGeometry";
 /* ─── Constants ───────────────────────────────────── */
 const FRAME_HIGHLIGHT_STROKE = "#6366F1";
 const FRAME_HIGHLIGHT_WIDTH = 2;
+
+/* ─── Overview layout/zoom constants ──────────────── */
+// Canvas hosts the overview directly. Do not retune in isolation — overview
+// tiles share these values via overviewLayout.computeOverviewLayout.
+const OVERVIEW_ROW_WIDTH = 4500;
+const OVERVIEW_TILE_GAP = DEFAULT_OVERVIEW_GAP;
+const OVERVIEW_LABEL_HEIGHT = DEFAULT_OVERVIEW_LABEL_HEIGHT;
+const OVERVIEW_LABEL_FONT_SIZE = 28;
+const OVERVIEW_LABEL_SUB_FONT_SIZE = 22;
+// Brand UI typeface (loaded via next/font on <body>); overview labels are app
+// chrome, not artboard content, so they use the brand font rather than "Inter".
+const OVERVIEW_LABEL_FONT_FAMILY = "Plus Jakarta Sans, system-ui, sans-serif";
+const OVERVIEW_LABEL_LINE_SPACING = 6;
+const OVERVIEW_LABEL_TOP_PADDING = 16;
+const OVERVIEW_ACCENT_SELECTED = "#7C5CFC";
+const OVERVIEW_ACCENT_HOVER = "#A899FF";
+const OVERVIEW_ZOOM_MIN = 0.02;
+const OVERVIEW_ZOOM_MAX = 3;
+const OVERVIEW_ZOOM_STEP = 1.05;
+const OVERVIEW_AUTO_FIT_PADDING = 96;
 
 /* ─── Pen tool ─────────────────────────────────────── */
 interface PenDraftAnchor {
@@ -467,23 +496,6 @@ function resolveStrokeColor(paint: Paint | undefined): string | undefined {
     return normalized.stops[0]?.color;
 }
 
-/** Renders imported boolean/subtract SVG via native browser SVG rasterization (faithful preview). */
-function InlineSvgVectorImage({ inlineSvg, width, height }: { inlineSvg: string; width: number; height: number }) {
-    const [image, setImage] = useState<HTMLImageElement | null>(null);
-    useEffect(() => {
-        const img = new window.Image();
-        img.onload = () => setImage(img);
-        img.onerror = () => setImage(null);
-        img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(inlineSvg)}`;
-        return () => {
-            img.onload = null;
-            img.onerror = null;
-        };
-    }, [inlineSvg]);
-    if (!image) return null;
-    return <KonvaImage image={image} width={width} height={height} listening={false} perfectDrawEnabled={false} />;
-}
-
 function VectorLayerRenderer({
     groupRef,
     layer,
@@ -501,6 +513,9 @@ function VectorLayerRenderer({
     const height = layer.height;
     const isEditing = vectorEditLayerId === layer.id;
 
+    // The non-editing render priority below (inlineSvg → subpaths → rawSvgPath)
+    // must stay in sync with resolveReadOnlyVectorRenderMode() in
+    // vectorRenderMode.ts, which drives the read-only overview tiles + PreviewCanvas.
     const hasInline = !!layer.inlineSvg;
     const useRaw = !hasInline && !!layer.rawSvgPath;
     const useSubpaths = hasRenderableGeometry(layer.subpaths);
@@ -1498,6 +1513,8 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
     const searchParams = useSearchParams();
     const isTemplateMode = searchParams.get("source") === "template";
 
+    const artboardGroupRef = useRef<Konva.Group | null>(null);
+
     useEffect(() => {
         if (!containerRef.current) return;
         const ro = new ResizeObserver((entries) => {
@@ -1591,6 +1608,15 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
         wrapInAutoLayoutFrame,
         vectorEditLayerId,
         setVectorEditLayerId,
+        resizes,
+        setActiveResize,
+        viewMode,
+        setViewMode,
+        overviewZoom,
+        overviewX,
+        overviewY,
+        setOverviewZoom,
+        setOverviewPosition,
     } = useCanvasStore(useShallow((s) => ({
         layers: s.layers,
         selectedLayerIds: s.selectedLayerIds,
@@ -1639,7 +1665,60 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
         wrapInAutoLayoutFrame: s.wrapInAutoLayoutFrame,
         vectorEditLayerId: s.vectorEditLayerId,
         setVectorEditLayerId: s.setVectorEditLayerId,
+        resizes: s.resizes,
+        setActiveResize: s.setActiveResize,
+        viewMode: s.viewMode,
+        setViewMode: s.setViewMode,
+        overviewZoom: s.overviewZoom,
+        overviewX: s.overviewX,
+        overviewY: s.overviewY,
+        setOverviewZoom: s.setOverviewZoom,
+        setOverviewPosition: s.setOverviewPosition,
     })));
+
+    const isOverview = viewMode === "overview";
+
+    // Active tile is the world offset where the editable artboard renders.
+    // In single view this collapses to {0,0} so all artboard-local math is
+    // unchanged from the pre-overview pipeline.
+    const overviewLayout = useMemo(
+        () =>
+            computeOverviewLayout(
+                resizes.map((r) => ({ id: r.id, width: r.width, height: r.height })),
+                {
+                    gap: OVERVIEW_TILE_GAP,
+                    rowWidth: OVERVIEW_ROW_WIDTH,
+                    labelHeight: OVERVIEW_LABEL_HEIGHT,
+                },
+            ),
+        [resizes],
+    );
+    const activeResizeIndex = resizes.findIndex((r) => r.id === activeResizeId);
+    const activeOverviewTile = overviewLayout.tiles[activeResizeIndex] ?? { x: 0, y: 0 };
+
+    // Hover ring target for sibling tiles in overview. Single-view never sets
+    // this, so the chrome stays inert.
+    const [hoveredOverviewId, setHoveredOverviewId] = useState<string | null>(null);
+    const overviewDraggingRef = useRef(false);
+
+    // Single-view studio is the degenerate tile {0,0}; overview supplies the
+    // active artboard's world offset. The offset Group + the pointer/commit
+    // bridge therefore reuse the existing editor handlers unchanged.
+    const tileOffset = useMemo<{ x: number; y: number }>(
+        () => (isOverview ? { x: activeOverviewTile.x, y: activeOverviewTile.y } : { x: 0, y: 0 }),
+        [isOverview, activeOverviewTile.x, activeOverviewTile.y],
+    );
+
+    // Viewport for DOM overlays (InlineTextEditor, etc.) — picks the correct
+    // stage transform without re-encoding the screen-space formula at each
+    // call site. Identical to {zoom, stageX, stageY} when not in overview.
+    const overlayViewport = useMemo(
+        () =>
+            isOverview
+                ? { zoom: overviewZoom, x: overviewX, y: overviewY }
+                : { zoom, x: stageX, y: stageY },
+        [isOverview, overviewZoom, overviewX, overviewY, zoom, stageX, stageY],
+    );
 
     // Expand mode state
     const expandMode = useCanvasStore((s) => s.expandMode);
@@ -1719,13 +1798,8 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
     }, [stageRef, setStageRef]);
 
     const getPointerScenePosition = useCallback((stage: Konva.Stage) => {
-        const pointer = stage.getPointerPosition();
-        if (!pointer) return null;
-        return {
-            x: (pointer.x - stage.x()) / stage.scaleX(),
-            y: (pointer.y - stage.y()) / stage.scaleY(),
-        };
-    }, []);
+        return getPointerArtboardPosition(stage, tileOffset);
+    }, [tileOffset]);
 
     const resolveFrameHoverTarget = useCallback((stage: Konva.Stage, draggedLayerId: string) => {
         const pointerScene = getPointerScenePosition(stage);
@@ -1796,6 +1870,51 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
         hasCentered.current = true;
     }, [containerDimensions, canvasWidth, canvasHeight, setZoom, setStagePosition]);
 
+    // Overview auto-fit: fit on first entry and whenever the set of formats
+    // changes; re-arm when leaving overview so a re-entry refits the new layout.
+    const overviewAutoFittedRef = useRef(false);
+    const overviewLastFitCountRef = useRef(0);
+    useEffect(() => {
+        if (!isOverview) {
+            overviewAutoFittedRef.current = false;
+            return;
+        }
+        // Never refit while the user is mid-pan: window resize or a
+        // resizes.length change would otherwise snap the viewport out from
+        // under their drag. Re-arm logic below stays intact — the next
+        // qualifying trigger after the drag ends will refit cleanly.
+        if (overviewDraggingRef.current) return;
+        if (containerDimensions.width === 0 || containerDimensions.height === 0) return;
+        if (resizes.length === 0) return;
+        if (overviewLayout.totalWidth === 0 || overviewLayout.totalHeight === 0) return;
+        const countChanged = overviewLastFitCountRef.current !== resizes.length;
+        if (overviewAutoFittedRef.current && !countChanged) return;
+
+        const availableW = Math.max(1, containerDimensions.width - OVERVIEW_AUTO_FIT_PADDING * 2);
+        const availableH = Math.max(1, containerDimensions.height - OVERVIEW_AUTO_FIT_PADDING * 2);
+        const fitScale = Math.min(
+            availableW / overviewLayout.totalWidth,
+            availableH / overviewLayout.totalHeight,
+            1,
+        );
+        const clamped = Math.min(Math.max(fitScale, OVERVIEW_ZOOM_MIN), OVERVIEW_ZOOM_MAX);
+        const cx = (containerDimensions.width - overviewLayout.totalWidth * clamped) / 2;
+        const cy = (containerDimensions.height - overviewLayout.totalHeight * clamped) / 2;
+        setOverviewZoom(clamped);
+        setOverviewPosition(cx, cy);
+        overviewAutoFittedRef.current = true;
+        overviewLastFitCountRef.current = resizes.length;
+    }, [
+        isOverview,
+        containerDimensions.width,
+        containerDimensions.height,
+        overviewLayout.totalWidth,
+        overviewLayout.totalHeight,
+        resizes.length,
+        setOverviewPosition,
+        setOverviewZoom,
+    ]);
+
     /* ─── Layer Interactions ──────────────────────────── */
 
     /**
@@ -1805,12 +1924,15 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
      * Uses the STORE data (not Konva DOM) to reliably determine
      * whether the pointer in canvas-space falls inside the clipping container.
      */
-    const isClickOutsideClipBounds = useCallback((layerId: string, stagePointer: { x: number; y: number } | null): boolean => {
-        if (!stagePointer) return false;
-
-        // Convert screen pointer to canvas coordinates
-        const canvasX = (stagePointer.x - stageX) / zoom;
-        const canvasY = (stagePointer.y - stageY) / zoom;
+    const isClickOutsideClipBounds = useCallback((layerId: string, stage: Konva.Stage | null): boolean => {
+        if (!stage) return false;
+        // Resolve the live pointer in artboard-local coords via the tile-aware
+        // bridge — matches the legacy `(p - stage.x())/stage.scaleX()` math at
+        // tile {0,0}, and stays correct once the overview supplies a real tile.
+        const artboardPoint = getPointerArtboardPosition(stage, tileOffset);
+        if (!artboardPoint) return false;
+        const canvasX = artboardPoint.x;
+        const canvasY = artboardPoint.y;
 
         // 1. Check ARTBOARD clip
         if (artboardProps.clipContent) {
@@ -1836,7 +1958,7 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
         }
 
         return false;
-    }, [artboardProps.clipContent, canvasWidth, canvasHeight, stageX, stageY, zoom]);
+    }, [artboardProps.clipContent, canvasWidth, canvasHeight, tileOffset]);
 
     const handleLayerSelect = useCallback((e: Konva.KonvaEventObject<MouseEvent>) => {
         // Ignore right clicks for selection to preserve multi-selection for context menus
@@ -1929,8 +2051,7 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
         // EXCEPTION: allow if the layer is already selected (Figma-like behavior)
         if (!currentSelectedLayerIds.includes(id)) {
             const stage = e.target.getStage();
-            const pointer = stage?.getPointerPosition() ?? null;
-            if (isClickOutsideClipBounds(id, pointer)) {
+            if (isClickOutsideClipBounds(id, stage ?? null)) {
                 e.target.stopDrag();
                 selectLayer(null);
                 return;
@@ -2049,8 +2170,11 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
         const isMultiDrag = dragIds.length >= 2;
 
         const absPos = e.target.getAbsolutePosition();
-        const currentSceneX = (absPos.x - stage.x()) / stage.scaleX();
-        const currentSceneY = (absPos.y - stage.y()) / stage.scaleY();
+        const worldX = (absPos.x - stage.x()) / stage.scaleX();
+        const worldY = (absPos.y - stage.y()) / stage.scaleY();
+        const artboardPos = worldToArtboard({ x: worldX, y: worldY }, tileOffset);
+        const currentSceneX = artboardPos.x;
+        const currentSceneY = artboardPos.y;
 
         let dx = currentSceneX - startLoc.x;
         let dy = currentSceneY - startLoc.y;
@@ -2129,9 +2253,10 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
             const sLoc = dragStartLocs.current[sid];
             const targetSceneX = sLoc.x + dx;
             const targetSceneY = sLoc.y + dy;
+            const targetWorld = artboardToWorld({ x: targetSceneX, y: targetSceneY }, tileOffset);
             node.setAbsolutePosition({
-                x: targetSceneX * stage.scaleX() + stage.x(),
-                y: targetSceneY * stage.scaleY() + stage.y(),
+                x: targetWorld.x * stage.scaleX() + stage.x(),
+                y: targetWorld.y * stage.scaleY() + stage.y(),
             });
         });
 
@@ -2146,7 +2271,7 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
         } else if (dragIds.length === 1) {
             updateFrameHoverHighlight(stage, id);
         }
-    }, [setHighlightedFrameId, canvasWidth, canvasHeight, updateFrameHoverHighlight, gridSnapLines]);
+    }, [setHighlightedFrameId, canvasWidth, canvasHeight, updateFrameHoverHighlight, gridSnapLines, tileOffset]);
 
     const handleLayerDragEnd = useCallback((e: Konva.KonvaEventObject<DragEvent>) => {
         const id = resolveKonvaLayerId(e.target);
@@ -2175,8 +2300,11 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
         setIsDraggingLayers(false);
 
         const absPos = e.target.getAbsolutePosition();
-        const currentSceneX = (absPos.x - stage.x()) / stage.scaleX();
-        const currentSceneY = (absPos.y - stage.y()) / stage.scaleY();
+        const worldX = (absPos.x - stage.x()) / stage.scaleX();
+        const worldY = (absPos.y - stage.y()) / stage.scaleY();
+        const artboardPos = worldToArtboard({ x: worldX, y: worldY }, tileOffset);
+        const currentSceneX = artboardPos.x;
+        const currentSceneY = artboardPos.y;
 
         const dx = currentSceneX - startLoc.x;
         const dy = currentSceneY - startLoc.y;
@@ -2234,7 +2362,7 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
         }
 
         dragStartLocs.current = {};
-    }, [updateLayer, batchUpdateLayers, moveLayerToFrame, removeLayerFromFrame, setHighlightedFrameId, updateFrameHoverHighlight]);
+    }, [updateLayer, batchUpdateLayers, moveLayerToFrame, removeLayerFromFrame, setHighlightedFrameId, updateFrameHoverHighlight, tileOffset]);
 
     const handleTransformEnd = useCallback((e: Konva.KonvaEventObject<Event>) => {
         isTransforming.current = false;
@@ -2314,8 +2442,11 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
         let newX: number, newY: number;
         if (stage) {
             const absPos = node.getAbsolutePosition();
-            newX = (absPos.x - stage.x()) / stage.scaleX();
-            newY = (absPos.y - stage.y()) / stage.scaleY();
+            const worldX = (absPos.x - stage.x()) / stage.scaleX();
+            const worldY = (absPos.y - stage.y()) / stage.scaleY();
+            const artboardPos = worldToArtboard({ x: worldX, y: worldY }, tileOffset);
+            newX = artboardPos.x;
+            newY = artboardPos.y;
         } else {
             newX = node.x();
             newY = node.y();
@@ -2323,7 +2454,7 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
 
         updateLayer(id, { x: newX, y: newY, width, height, rotation, ...extraProps });
 
-    }, [updateLayer]);
+    }, [updateLayer, tileOffset]);
 
     // ─── Live Resize Snapping ────────────────────────────
     const handleTransform = useCallback((e: Konva.KonvaEventObject<Event>) => {
@@ -2364,8 +2495,11 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
 
         // Get scene position
         const absPos = node.getAbsolutePosition();
-        const currentX = (absPos.x - stage.x()) / stage.scaleX();
-        const currentY = (absPos.y - stage.y()) / stage.scaleY();
+        const worldX = (absPos.x - stage.x()) / stage.scaleX();
+        const worldY = (absPos.y - stage.y()) / stage.scaleY();
+        const artboardPos = worldToArtboard({ x: worldX, y: worldY }, tileOffset);
+        const currentX = artboardPos.x;
+        const currentY = artboardPos.y;
 
         // Determine which edges are active based on the transformer's active anchor
         // We need to get the transformer reference
@@ -2418,14 +2552,15 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
 
             // Update position if left or top edges were snapped
             if (activeEdges.includes('left') || activeEdges.includes('top')) {
-                const newAbsX = snapResult.x * stage.scaleX() + stage.x();
-                const newAbsY = snapResult.y * stage.scaleY() + stage.y();
+                const snappedWorld = artboardToWorld({ x: snapResult.x, y: snapResult.y }, tileOffset);
+                const newAbsX = snappedWorld.x * stage.scaleX() + stage.x();
+                const newAbsY = snappedWorld.y * stage.scaleY() + stage.y();
                 node.setAbsolutePosition({ x: newAbsX, y: newAbsY });
             }
         }
-    }, [canvasWidth, canvasHeight, gridSnapLines]);
+    }, [canvasWidth, canvasHeight, gridSnapLines, tileOffset]);
 
-    const { isPanning, setIsPanning, handleWheel } = usePanZoom({
+    const { isPanning, setIsPanning, handleWheel: handleSingleWheel } = usePanZoom({
         stageRef,
         containerRef,
         zoom,
@@ -2436,6 +2571,41 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
         isEditingText,
         setStageDraggable,
     });
+
+    // Overview wheel: zoom-to-cursor on Ctrl/Cmd, otherwise pan.
+    const handleOverviewWheel = useCallback(
+        (e: Konva.KonvaEventObject<WheelEvent>) => {
+            e.evt.preventDefault();
+            const stage = stageRef.current;
+            if (!stage) return;
+
+            if (e.evt.ctrlKey || e.evt.metaKey) {
+                const pointer = stage.getPointerPosition();
+                if (!pointer) return;
+                const oldScale = overviewZoom;
+                const newScale =
+                    e.evt.deltaY < 0 ? oldScale * OVERVIEW_ZOOM_STEP : oldScale / OVERVIEW_ZOOM_STEP;
+                const clamped = Math.min(Math.max(newScale, OVERVIEW_ZOOM_MIN), OVERVIEW_ZOOM_MAX);
+                const worldPoint = {
+                    x: (pointer.x - overviewX) / oldScale,
+                    y: (pointer.y - overviewY) / oldScale,
+                };
+                setOverviewZoom(clamped);
+                setOverviewPosition(
+                    pointer.x - worldPoint.x * clamped,
+                    pointer.y - worldPoint.y * clamped,
+                );
+            } else {
+                setOverviewPosition(
+                    overviewX - e.evt.deltaX,
+                    overviewY - e.evt.deltaY,
+                );
+            }
+        },
+        [overviewX, overviewY, overviewZoom, setOverviewPosition, setOverviewZoom, stageRef],
+    );
+
+    const handleWheel = isOverview ? handleOverviewWheel : handleSingleWheel;
 
     /* ─── Stage Interaction ───────────────────────────── */
 
@@ -2511,20 +2681,20 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
         }
 
         const isNearActiveGradientGuide = (() => {
+            // Gradient editing is out of Phase 2 overview scope: the guide
+            // proximity test and the handle overlay below both use store
+            // `zoom` and assume single-view artboard math.
+            if (isOverview) return false;
             if (!activeGradientEditorTarget || activeGradientEditorTarget === "artboard") return false;
             if (!selectedLayerIds.includes(activeGradientEditorTarget)) return false;
             const stage = e.target.getStage();
-            const pointer = stage?.getPointerPosition();
-            if (!stage || !pointer) return false;
+            if (!stage) return false;
+            const scenePoint = getPointerArtboardPosition(stage, tileOffset);
+            if (!scenePoint) return false;
             const layer = layers.find((l) => l.id === activeGradientEditorTarget);
             if (!layer || !(layer.type === "rectangle" || layer.type === "badge" || layer.type === "frame" || layer.type === "image")) return false;
             const paint = normalizePaint(layer.type === "image" ? layer.fill ?? "#FFFFFF" : layer.fill);
             if (paint.kind !== "gradient") return false;
-
-            const scenePoint = {
-                x: (pointer.x - stage.x()) / stage.scaleX(),
-                y: (pointer.y - stage.y()) / stage.scaleY(),
-            };
             const center = paint.center ?? { x: 0.5, y: 0.5 };
             const radius = paint.radius ?? 0.7;
             const start = paint.gradientType === "linear"
@@ -2562,13 +2732,17 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
         }
 
         // ── Pen tool interception ──
+        // Overview is a select-only surface (Phase 2 scope): swallow creation
+        // tools so the stage falls through to pan/drag instead of starting a
+        // pen path on whichever tile happens to sit under the cursor.
         if (activeTool === "pen") {
+            if (isOverview) return;
             const stage = e.target.getStage();
             if (!stage) return;
-            const pointer = stage.getPointerPosition();
-            if (!pointer) return;
-            const sceneX = (pointer.x - stage.x()) / stage.scaleX();
-            const sceneY = (pointer.y - stage.y()) / stage.scaleY();
+            const scene = getPointerArtboardPosition(stage, tileOffset);
+            if (!scene) return;
+            const sceneX = scene.x;
+            const sceneY = scene.y;
 
             e.cancelBubble = true;
             setContextMenu(null);
@@ -2591,12 +2765,13 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
 
         // ── Drawing tool interception ──
         if (activeTool === "text" || activeTool === "rectangle" || activeTool === "frame" || activeTool === "slice") {
+            if (isOverview) return;
             const stage = e.target.getStage();
             if (!stage) return;
-            const pointer = stage.getPointerPosition();
-            if (!pointer) return;
-            const sceneX = (pointer.x - stage.x()) / stage.scaleX();
-            const sceneY = (pointer.y - stage.y()) / stage.scaleY();
+            const scene = getPointerArtboardPosition(stage, tileOffset);
+            if (!scene) return;
+            const sceneX = scene.x;
+            const sceneY = scene.y;
 
             if (activeTool === "text") {
                 addTextLayer({ x: sceneX, y: sceneY });
@@ -2629,10 +2804,10 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
         const target = e.target;
         const stage = target.getStage();
         if (stage && target !== stage) {
-            const pointer = stage.getPointerPosition();
-            if (pointer) {
-                const canvasX = (pointer.x - stage.x()) / stage.scaleX();
-                const canvasY = (pointer.y - stage.y()) / stage.scaleY();
+            const scenePoint = getPointerArtboardPosition(stage, tileOffset);
+            if (scenePoint) {
+                const canvasX = scenePoint.x;
+                const canvasY = scenePoint.y;
                 const targetId = resolveKonvaLayerId(target);
 
                 // Skip clip-bounds check if:
@@ -2698,12 +2873,12 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
             if (e.evt.button === 2) return;
 
             if (!stage) return;
-            const pointer = stage.getPointerPosition();
-            if (!pointer) return;
+            const start = getPointerArtboardPosition(stage, tileOffset);
+            if (!start) return;
 
             // Convert to Scene Coordinates for starting point
-            const startSceneX = (pointer.x - stage.x()) / stage.scaleX();
-            const startSceneY = (pointer.y - stage.y()) / stage.scaleY();
+            const startSceneX = start.x;
+            const startSceneY = start.y;
 
             // Exit exclusive edit modes on empty-canvas click with full UI reset.
             if (expandMode || inpaintMode) {
@@ -2759,6 +2934,18 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
                 }
             }
 
+            // Overview: deselect + close menus, but let the draggable stage
+            // own the pan gesture. Skipping the marquee here is what makes
+            // dragging empty mat pan-instead-of-marquee in overview.
+            if (isOverview) {
+                if (!e.evt.shiftKey && !e.evt.metaKey && !e.evt.ctrlKey) {
+                    selectLayer(null);
+                }
+                setContextMenu(null);
+                if (isEditingText) stopTextEditing();
+                return;
+            }
+
             setSelectionBox({
                 x: startSceneX,
                 y: startSceneY,
@@ -2781,19 +2968,22 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
                 stopTextEditing();
             }
         }
-    }, [selectLayer, isEditingText, stopTextEditing, isPanning, activeGradientEditorTarget, selectedLayerIds, layers, zoom, artboardProps.clipContent, canvasWidth, canvasHeight, activeTool, addTextLayer, setActiveTool, setDrawingBox, startTextEditing, expandMode, inpaintMode, exitCanvasEditModes, sharedInpaintMask, penPoints, finalizePenPath]);
+    }, [selectLayer, isEditingText, stopTextEditing, isPanning, activeGradientEditorTarget, selectedLayerIds, layers, zoom, artboardProps.clipContent, canvasWidth, canvasHeight, activeTool, addTextLayer, setActiveTool, setDrawingBox, startTextEditing, expandMode, inpaintMode, exitCanvasEditModes, sharedInpaintMask, penPoints, finalizePenPath, tileOffset, isOverview]);
 
     const handleStageMouseMove = useCallback((e: Konva.KonvaEventObject<MouseEvent>) => {
         const stage = e.target.getStage();
         if (!stage) return;
         const pointer = stage.getPointerPosition();
         if (!pointer) return;
+        const scenePoint = getPointerArtboardPosition(stage, tileOffset);
+        if (!scenePoint) return;
 
-        const currentSceneX = (pointer.x - stage.x()) / stage.scaleX();
-        const currentSceneY = (pointer.y - stage.y()) / stage.scaleY();
+        const currentSceneX = scenePoint.x;
+        const currentSceneY = scenePoint.y;
 
         // Pen tool: drag to add bezier handles, hover for rubber-band preview
         if (activeTool === "pen") {
+            if (isOverview) return;
             if (penDragging.current && penPoints.length > 0) {
                 setPenPoints((prev) => {
                     if (prev.length === 0) return prev;
@@ -2867,6 +3057,7 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
 
         // Drawing box rubber-banding (rectangle/frame/slice drawing mode)
         if (drawingStartPoint.current && (activeTool === "rectangle" || activeTool === "frame" || activeTool === "slice")) {
+            if (isOverview) return;
             const start = drawingStartPoint.current;
             let drawX = currentSceneX;
             let drawY = currentSceneY;
@@ -2897,7 +3088,7 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
                 height: Math.abs(currentSceneY - prev.startY),
             };
         });
-    }, [selectionBox, selectedLayerIds, layers, canvasWidth, canvasHeight, setDrawingBox, activeTool, penPoints]);
+    }, [selectionBox, selectedLayerIds, layers, canvasWidth, canvasHeight, setDrawingBox, activeTool, penPoints, tileOffset, isOverview]);
 
     const handleStageMouseUp = useCallback((e: Konva.KonvaEventObject<MouseEvent>) => {
         if (isPanning) {
@@ -2908,19 +3099,21 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
 
         // ── Pen tool: end of a click/drag adds-handle cycle ──
         if (activeTool === "pen") {
+            if (isOverview) return;
             penDragging.current = false;
             return;
         }
 
         // ── Drawing tool completion ──
         if (drawingStartPoint.current && (activeTool === "rectangle" || activeTool === "frame" || activeTool === "slice")) {
+            if (isOverview) return;
             const start = drawingStartPoint.current;
             const stage = e.target.getStage();
             if (stage) {
-                const pointer = stage.getPointerPosition();
-                if (pointer) {
-                    let endX = (pointer.x - stage.x()) / stage.scaleX();
-                    let endY = (pointer.y - stage.y()) / stage.scaleY();
+                const endScene = getPointerArtboardPosition(stage, tileOffset);
+                if (endScene) {
+                    let endX = endScene.x;
+                    let endY = endScene.y;
 
                     if (e.evt.shiftKey) {
                         const dx = endX - start.x;
@@ -3033,7 +3226,7 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
             }
             setSelectionBox(null);
         }
-    }, [selectionBox, layers, addToSelection, isPanning, artboardProps.clipContent, canvasWidth, canvasHeight, activeTool, addRectangleLayer, addFrameLayer, addSliceLayer, setDrawingBox, setActiveTool]);
+    }, [selectionBox, layers, addToSelection, isPanning, artboardProps.clipContent, canvasWidth, canvasHeight, activeTool, addRectangleLayer, addFrameLayer, addSliceLayer, setDrawingBox, setActiveTool, tileOffset, isOverview]);
 
     const handleContextMenu = useCallback(
         (e: Konva.KonvaEventObject<MouseEvent>) => {
@@ -3045,10 +3238,10 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
 
             // Check if right-click is inside the bounding box of an existing multi-selection
             if (selectedLayerIds.length > 1) {
-                const pointer = stage.getPointerPosition();
-                if (pointer) {
-                    const sceneX = (pointer.x - stage.x()) / stage.scaleX();
-                    const sceneY = (pointer.y - stage.y()) / stage.scaleY();
+                const scene = getPointerArtboardPosition(stage, tileOffset);
+                if (scene) {
+                    const sceneX = scene.x;
+                    const sceneY = scene.y;
 
                     const selectedLayers = layers.filter(l => selectedLayerIds.includes(l.id));
                     if (selectedLayers.length > 0) {
@@ -3110,7 +3303,7 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
                 layerIds: targetIds,
             });
         },
-        [layers, selectLayer, stageRef, selectedLayerIds]
+        [layers, selectLayer, stageRef, selectedLayerIds, tileOffset]
     );
 
     const handleDblClickText = useCallback(
@@ -3154,25 +3347,32 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
     );
 
     /* ─── File Drag & Drop ────────────────────────────── */
+    // File drop is out of Phase 2 overview scope: the positioning math
+    // assumes single-view artboard space, and which tile a drop should
+    // target is a design question we haven't answered yet. Suppress the
+    // drag overlay and the drop handler entirely while in overview.
     const handleDragOver = useCallback((e: React.DragEvent) => {
         e.preventDefault();
         e.stopPropagation();
+        if (isOverview) return;
         if (e.dataTransfer.types.includes("Files")) {
             setIsDraggingFile(true);
         }
-    }, []);
+    }, [isOverview]);
 
     const handleDragLeave = useCallback((e: React.DragEvent) => {
         e.preventDefault();
         e.stopPropagation();
+        if (isOverview) return;
         setIsDraggingFile(false);
-    }, []);
+    }, [isOverview]);
 
     const { registerFile } = useProjectLibrary();
         const handleDrop = useCallback(
         (e: React.DragEvent) => {
             e.preventDefault();
             e.stopPropagation();
+            if (isOverview) return;
             setIsDraggingFile(false);
 
             // Resolve the drop point in scene (artboard-local) coordinates.
@@ -3181,7 +3381,7 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
                 if (stage) {
                     stage.setPointersPositions(e.nativeEvent);
                     const rel = stage.getRelativePointerPosition();
-                    if (rel) return { x: rel.x, y: rel.y };
+                    if (rel) return worldPointToArtboard(stage, rel, tileOffset);
                 }
                 return { x: 100, y: 100 };
             };
@@ -3236,7 +3436,7 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
                 img.src = localPreview;
             }
         },
-        [addImageLayer, addVectorLayer, projectId, registerFile]
+        [addImageLayer, addVectorLayer, projectId, registerFile, tileOffset, isOverview]
     );
 
     /* ─── Export Layers Utility ────────────────────────── */
@@ -3296,8 +3496,8 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
             stage.position({ x: 0, y: 0 });
 
             const dataURL = stage.toDataURL({
-                x: layer.x,
-                y: layer.y,
+                x: layer.x + tileOffset.x,
+                y: layer.y + tileOffset.y,
                 width: layer.width,
                 height: layer.height,
                 pixelRatio: 2,
@@ -3351,7 +3551,7 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
                 saveAs(content, `export-${targetLayers.length}-layers.zip`);
             }
         });
-    }, [layers, stageRef]);
+    }, [layers, stageRef, tileOffset]);
 
     const editingLayer = useMemo(() => {
         if (!isEditingText || !editingLayerId) return undefined;
@@ -3396,9 +3596,9 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
             style={{
                 backgroundImage:
                     "radial-gradient(circle, var(--border-primary) 1px, transparent 1px)",
-                backgroundSize: `${20 * zoom}px ${20 * zoom}px`,
-                backgroundPosition: `${stageX}px ${stageY}px`,
-                cursor: isDrawingTool ? "crosshair" : undefined,
+                backgroundSize: `${20 * overlayViewport.zoom}px ${20 * overlayViewport.zoom}px`,
+                backgroundPosition: `${overlayViewport.x}px ${overlayViewport.y}px`,
+                cursor: isDrawingTool && !isOverview ? "crosshair" : undefined,
             }}
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
@@ -3409,28 +3609,60 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
                 ref={stageRef}
                 width={containerDimensions.width || 1200}
                 height={containerDimensions.height || 800}
-                scaleX={zoom}
-                scaleY={zoom}
-                x={stageX}
-                y={stageY}
+                scaleX={overlayViewport.zoom}
+                scaleY={overlayViewport.zoom}
+                x={overlayViewport.x}
+                y={overlayViewport.y}
                 onWheel={handleWheel}
                 onMouseDown={handleStageMouseDown}
                 onMouseMove={handleStageMouseMove}
                 onMouseUp={handleStageMouseUp}
                 onContextMenu={handleContextMenu}
                 draggable={stageDraggable && !isEditingText && activeTool !== "pen"}
+                onDragStart={(e) => {
+                    if (!isOverview) return;
+                    if (e.target !== e.target.getStage()) return;
+                    overviewDraggingRef.current = true;
+                }}
                 onDragMove={(e) => {
-                    // Stage drag
-                    // We need to differentiate stage drag from shape drag?
-                    // Konva 'draggable' on stage handles it, but verify if check needed
+                    // Overview pans the world via a controlled Stage; without a
+                    // mid-drag store sync, any re-render (auto-fit, hover) would
+                    // snap stage back to its pre-drag position.
+                    if (!isOverview) return;
+                    if (e.target !== e.target.getStage()) return;
+                    const stage = stageRef.current;
+                    if (!stage) return;
+                    setOverviewPosition(stage.x(), stage.y());
                 }}
                 onDragEnd={(e) => {
-                    if (e.target === e.target.getStage()) {
+                    if (e.target !== e.target.getStage()) return;
+                    if (isOverview) {
+                        overviewDraggingRef.current = false;
+                        const stage = stageRef.current;
+                        if (!stage) return;
+                        setOverviewPosition(stage.x(), stage.y());
+                    } else {
                         setStagePosition(e.target.x(), e.target.y());
                     }
                 }}
             >
                 <Layer>
+                    {/* Artboard-local coordinate frame. In single view this is
+                        a visual no-op (tileOffset = {0,0}); in overview the
+                        Group is positioned at the active tile so every child
+                        — background, layers, snap guides, transformers, pen
+                        preview — keeps its artboard-local math unchanged.
+
+                        This editable group is rendered BEFORE the read-only
+                        sibling tiles below so DFS-based lookups like
+                        stage.findOne('#'+id) (used by drag/transform/hover
+                        handlers, the transformer attach effect, and the
+                        export pipeline) resolve to the active artboard's
+                        node first, even if a sibling snapshot happens to
+                        share an id with the active format. Tiles never
+                        spatially overlap, so paint order is visually
+                        irrelevant. */}
+                    <Group ref={artboardGroupRef} name={EXPORT_ARTBOARD_FRAME_NAME} x={tileOffset.x} y={tileOffset.y}>
                     {/* Artboard background */}
                     {artboardProps.clipContent ? (
                         <Group
@@ -3518,13 +3750,16 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
                         </>
                     )}
 
-                    {/* Layout grids (safe zones) — overlay above content, hidden on export */}
+                    {/* Layout grids (safe zones) — overlay above content, hidden on export.
+                        Hairlines must stay 1px on screen regardless of overview zoom,
+                        so we feed the effective stage scale. In single view this
+                        equals store `zoom` (overlayViewport.zoom === zoom). */}
                     {layoutGridsVisible && (
                         <LayoutGridLayer
                             grids={activeLayoutGrids}
                             width={canvasWidth}
                             height={canvasHeight}
-                            zoom={zoom}
+                            zoom={overlayViewport.zoom}
                             name={EDITOR_CHROME_NAME}
                         />
                     )}
@@ -3544,7 +3779,9 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
                         <PenPreview points={penPoints} cursor={penCursor} zoom={zoom} />
                     )}
 
-                    {gradientHandleTarget && (
+                    {/* Gradient handles are gated off in overview: they read store
+                        `zoom` and assume single-view artboard math. */}
+                    {!isOverview && gradientHandleTarget && (
                         <GradientDirectionHandles
                             target={gradientHandleTarget}
                             zoom={zoom}
@@ -3569,7 +3806,7 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
 
                         const node = stageRef.current?.findOne("#" + hoveredLayerId);
                         if (node) {
-                            const rect = node.getClientRect({ skipTransform: false, relativeTo: stageRef.current?.getLayers()[0] });
+                            const rect = node.getClientRect({ skipTransform: false, relativeTo: artboardGroupRef.current ?? undefined });
                             if (rect && rect.width > 0 && rect.height > 0) {
                                 hx = rect.x;
                                 hy = rect.y;
@@ -3587,7 +3824,9 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
                                 height={hh}
                                 rotation={hr}
                                 stroke="#6366F1"
-                                strokeWidth={1.5 / zoom}
+                                // Hairline must remain 1.5 screen px in both views; in
+                                // single view overlayViewport.zoom === zoom (no-op).
+                                strokeWidth={1.5 / overlayViewport.zoom}
                                 cornerRadius={(hLayer.type === 'rectangle' || hLayer.type === 'frame') ? resolveCornerRadius((hLayer as any).cornerRadius || 0, (hLayer as any).cornerRadii) : 0}
                                 listening={false}
                                 perfectDrawEnabled={false}
@@ -3635,18 +3874,187 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
                         return null;
                     })()}
 
-                    {/* Vector point-editing overlay */}
-                    {vectorEditLayerId && (() => {
+                    {/* Vector point-editing overlay — out of scope for overview. */}
+                    {!isOverview && vectorEditLayerId && (() => {
                         const editLayer = layers.find((l) => l.id === vectorEditLayerId && l.type === "vector") as VectorLayer | undefined;
                         if (!editLayer) return null;
                         return <VectorEditOverlay layer={editLayer} zoom={zoom} onChange={updateLayer} />;
                     })()}
 
-                    {/* Expand Overlay — drag handles for generative expand */}
-                    {expandMode && expandTargetLayerId && (
+                    {/* Expand Overlay — drag handles for generative expand.
+                        Out of scope for overview; the overlay positions DOM
+                        elements from store transform and isn't tile-aware. */}
+                    {!isOverview && expandMode && expandTargetLayerId && (
                         <ExpandOverlay layerId={expandTargetLayerId} />
                     )}
 
+                    {/* Active artboard label + selection ring in overview.
+                        Rendered INSIDE the editable group so it shares the
+                        active tile offset; uses the same metrics as siblings
+                        for visual parity. */}
+                    {isOverview && (() => {
+                        const activeFormat = resizes.find((r) => r.id === activeResizeId);
+                        if (!activeFormat) return null;
+                        const ringStrokeWidth = 4 / Math.max(overviewZoom, OVERVIEW_ZOOM_MIN);
+                        const labelY = canvasHeight + OVERVIEW_LABEL_TOP_PADDING;
+                        const subLabelY = labelY + OVERVIEW_LABEL_FONT_SIZE + OVERVIEW_LABEL_LINE_SPACING;
+                        const sizeLabel = `${activeFormat.width} × ${activeFormat.height}`;
+                        const subLabelText = activeFormat.isMaster
+                            ? `${sizeLabel}  •  Мастер`
+                            : sizeLabel;
+                        return (
+                            <Group name={EDITOR_CHROME_NAME} listening={false}>
+                                <Rect
+                                    x={-ringStrokeWidth / 2}
+                                    y={-ringStrokeWidth / 2}
+                                    width={canvasWidth + ringStrokeWidth}
+                                    height={canvasHeight + ringStrokeWidth}
+                                    stroke={OVERVIEW_ACCENT_SELECTED}
+                                    strokeWidth={ringStrokeWidth}
+                                    cornerRadius={Math.max(4, artboardProps.cornerRadius)}
+                                    listening={false}
+                                />
+                                <Text
+                                    x={0}
+                                    y={labelY}
+                                    width={canvasWidth}
+                                    text={activeFormat.name}
+                                    fontSize={OVERVIEW_LABEL_FONT_SIZE}
+                                    fontFamily={OVERVIEW_LABEL_FONT_FAMILY}
+                                    fontStyle="600"
+                                    fill="#111827"
+                                    align="left"
+                                    listening={false}
+                                />
+                                <Text
+                                    x={0}
+                                    y={subLabelY}
+                                    width={canvasWidth}
+                                    text={subLabelText}
+                                    fontSize={OVERVIEW_LABEL_SUB_FONT_SIZE}
+                                    fontFamily={OVERVIEW_LABEL_FONT_FAMILY}
+                                    fill="#6B7280"
+                                    align="left"
+                                    listening={false}
+                                />
+                            </Group>
+                        );
+                    })()}
+
+                    </Group>
+
+                    {/* Read-only sibling tiles for the overview. Active format
+                        is intentionally skipped here — the editable Group
+                        above already rendered the live artboard at the same
+                        world offset. Emitted AFTER the editable group so
+                        DFS-based stage.findOne('#'+id) lookups resolve to
+                        the active artboard's node first; tiles never
+                        spatially overlap, so paint order is visually
+                        irrelevant. */}
+                    {isOverview && resizes.map((format, index) => {
+                        if (format.id === activeResizeId) return null;
+                        const tile = overviewLayout.tiles[index];
+                        if (!tile) return null;
+                        const isHovered = hoveredOverviewId === format.id;
+                        const screenStroke = isHovered ? 2 : 0;
+                        const ringStrokeWidth =
+                            screenStroke > 0
+                                ? screenStroke / Math.max(overviewZoom, OVERVIEW_ZOOM_MIN)
+                                : 0;
+                        const labelY = format.height + OVERVIEW_LABEL_TOP_PADDING;
+                        const subLabelY = labelY + OVERVIEW_LABEL_FONT_SIZE + OVERVIEW_LABEL_LINE_SPACING;
+                        const sizeLabel = `${format.width} × ${format.height}`;
+                        const subLabelText = format.isMaster
+                            ? `${sizeLabel}  •  Мастер`
+                            : sizeLabel;
+                        return (
+                            <Group key={format.id} x={tile.x} y={tile.y}>
+                                <ArtboardGroup
+                                    layers={format.layerSnapshot ?? []}
+                                    width={format.width}
+                                    height={format.height}
+                                    offsetX={0}
+                                    offsetY={0}
+                                    listening={false}
+                                    clip
+                                    fill={artboardProps.fill}
+                                    fillEnabled={artboardProps.fillEnabled}
+                                    backgroundImage={artboardProps.backgroundImage}
+                                    cornerRadius={artboardProps.cornerRadius}
+                                    stroke={artboardProps.stroke}
+                                    strokeMode={artboardProps.strokeMode}
+                                    strokeImage={artboardProps.strokeImage}
+                                    strokeWidth={artboardProps.strokeWidth}
+                                    strokeAlign={artboardProps.strokeAlign}
+                                    strokeJoin={artboardProps.strokeJoin}
+                                />
+                                {ringStrokeWidth > 0 && (
+                                    <Rect
+                                        x={-ringStrokeWidth / 2}
+                                        y={-ringStrokeWidth / 2}
+                                        width={format.width + ringStrokeWidth}
+                                        height={format.height + ringStrokeWidth}
+                                        stroke={OVERVIEW_ACCENT_HOVER}
+                                        strokeWidth={ringStrokeWidth}
+                                        cornerRadius={Math.max(4, artboardProps.cornerRadius)}
+                                        listening={false}
+                                    />
+                                )}
+                                <Text
+                                    x={0}
+                                    y={labelY}
+                                    width={format.width}
+                                    text={format.name}
+                                    fontSize={OVERVIEW_LABEL_FONT_SIZE}
+                                    fontFamily={OVERVIEW_LABEL_FONT_FAMILY}
+                                    fontStyle="500"
+                                    fill="#9CA3AF"
+                                    align="left"
+                                    listening={false}
+                                />
+                                <Text
+                                    x={0}
+                                    y={subLabelY}
+                                    width={format.width}
+                                    text={subLabelText}
+                                    fontSize={OVERVIEW_LABEL_SUB_FONT_SIZE}
+                                    fontFamily={OVERVIEW_LABEL_FONT_FAMILY}
+                                    fill="#6B7280"
+                                    align="left"
+                                    listening={false}
+                                />
+                                {/* Transparent hit area: click activates, dblclick
+                                    enters single view. Sibling layer nodes have
+                                    listening=false so this is the only pointer
+                                    target on the tile. */}
+                                <Rect
+                                    x={0}
+                                    y={0}
+                                    width={format.width}
+                                    height={format.height}
+                                    fill="transparent"
+                                    onClick={() => setActiveResize(format.id)}
+                                    onTap={() => setActiveResize(format.id)}
+                                    onDblClick={() => {
+                                        setActiveResize(format.id);
+                                        setViewMode("single");
+                                    }}
+                                    onDblTap={() => {
+                                        setActiveResize(format.id);
+                                        setViewMode("single");
+                                    }}
+                                    onMouseEnter={() => {
+                                        if (overviewDraggingRef.current) return;
+                                        setHoveredOverviewId(format.id);
+                                    }}
+                                    onMouseLeave={() => {
+                                        if (overviewDraggingRef.current) return;
+                                        setHoveredOverviewId((cur) => (cur === format.id ? null : cur));
+                                    }}
+                                />
+                            </Group>
+                        );
+                    })}
                 </Layer>
             </Stage>
 
@@ -3654,8 +4062,10 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
             {/* Inpaint Mask Overlay — DOM canvas painted on top of the
                 selected image layer. Skipped for rotated layers (MVP — proper
                 rotation support requires unrotating the stroke buffer at
-                export time which we leave for a follow-up). */}
-            {inpaintMode && inpaintTargetLayerId && sharedInpaintMask && (() => {
+                export time which we leave for a follow-up). Out of scope for
+                overview: the DOM positioning math is single-view-only and
+                the inpaint tool itself is gated to single editing. */}
+            {!isOverview && inpaintMode && inpaintTargetLayerId && sharedInpaintMask && (() => {
                 const target = layers.find((l) => l.id === inpaintTargetLayerId);
                 if (!target || target.type !== "image") return null;
                 const rotation = target.rotation || 0;
@@ -3684,9 +4094,8 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
                 <InlineTextEditor
                     layer={editingLayer}
                     stageRef={stageRef}
-                    zoom={zoom}
-                    stageX={stageX}
-                    stageY={stageY}
+                    viewport={overlayViewport}
+                    tileOffset={tileOffset}
                     onCommit={handleTextEditCommit}
                     onUpdate={handleTextEditUpdate}
                     onDimensionsChange={handleTextEditDimensionsChange}

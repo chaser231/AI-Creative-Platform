@@ -4,6 +4,12 @@ import { useRef, useState, useEffect, useCallback } from "react";
 import type { TextLayer } from "@/types";
 import Konva from "konva";
 import { getTextTrimMetrics, isTextTrimActive, measureTextLayer } from "@/utils/layoutEngine";
+import {
+    artboardLengthToScreen,
+    artboardToScreen,
+    type OverviewViewport,
+    type TileOffset,
+} from "./overviewCoords";
 
 /**
  * InlineTextEditor — Figma-like inline text editing overlay.
@@ -19,18 +25,24 @@ import { getTextTrimMetrics, isTextTrimActive, measureTextLayer } from "@/utils/
 export function InlineTextEditor({
     layer,
     stageRef: _stageRef,
-    zoom,
-    stageX,
-    stageY,
+    viewport,
+    tileOffset,
     onCommit,
     onUpdate,
     onDimensionsChange,
 }: {
     layer: TextLayer;
     stageRef: React.RefObject<Konva.Stage | null>;
-    zoom: number;
-    stageX: number;
-    stageY: number;
+    /**
+     * Stage transform used to convert artboard-local coordinates to screen
+     * pixels. Single view feeds `{zoom: stage.zoom, x: stageX, y: stageY}`
+     * (with `tileOffset = {0,0}`) which reduces to the legacy
+     * `layer.x*zoom+stageX` formula; overview feeds the overview transform
+     * plus the active tile's world offset so the textarea lines up with
+     * the moved artboard.
+     */
+    viewport: OverviewViewport;
+    tileOffset: TileOffset;
     /** Called on final commit (blur / Escape with original text) */
     onCommit: (text: string) => void;
     /** Called on every keystroke for real-time canvas sync */
@@ -38,6 +50,7 @@ export function InlineTextEditor({
     /** Called when textarea dimensions change (unscaled layer coordinates) */
     onDimensionsChange?: (dims: { width?: number; height?: number }) => void;
 }) {
+    const zoom = viewport.zoom;
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const [value, setValue] = useState(layer.text);
     const originalText = useRef(layer.text);
@@ -87,11 +100,18 @@ export function InlineTextEditor({
     // Flush any buffered write if the editor unmounts unexpectedly.
     useEffect(() => () => { flushPending(); }, [flushPending]);
 
-    // Calculate the screen position — layer.x/y comes from store (absolute)
-    const screenX = layer.x * zoom + stageX;
-    const screenY = layer.y * zoom + stageY;
-    const fontSizeScaled = layer.fontSize * zoom;
-    const letterSpacingScaled = layer.letterSpacing * zoom;
+    // Artboard-local → screen via the tile-aware bridge. At single-view's
+    // degenerate tile {0,0} this collapses to `layer.x*zoom + stageX` which
+    // matches the legacy formula exactly.
+    const screenPosition = artboardToScreen(
+        { x: layer.x, y: layer.y },
+        viewport,
+        tileOffset,
+    );
+    const screenX = screenPosition.x;
+    const screenY = screenPosition.y;
+    const fontSizeScaled = artboardLengthToScreen(layer.fontSize, viewport);
+    const letterSpacingScaled = artboardLengthToScreen(layer.letterSpacing, viewport);
 
     // Determine caret color — invert the text fill for contrast
     const caretColor = getContrastColor(layer.fill);
@@ -107,11 +127,11 @@ export function InlineTextEditor({
     const trim = isTextTrimActive(layer)
         ? getTextTrimMetrics(layer)
         : { top: 0, bottom: 0, total: 0 };
-    const trimShiftScreen = trim.top * zoom;
+    const trimShiftScreen = artboardLengthToScreen(trim.top, viewport);
 
     // Use the live layer dimensions from the store (updated by auto-layout)
-    const screenW = Math.max(layer.width * zoom, 20);
-    const screenH = Math.max(layer.height * zoom, fontSizeScaled * layer.lineHeight);
+    const screenW = Math.max(artboardLengthToScreen(layer.width, viewport), 20);
+    const screenH = Math.max(artboardLengthToScreen(layer.height, viewport), fontSizeScaled * layer.lineHeight);
     const fixedVerticalAlign = layer.verticalAlign === "bottom"
         ? "flex-end"
         : layer.verticalAlign === "middle"
