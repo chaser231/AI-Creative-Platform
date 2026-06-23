@@ -10,7 +10,7 @@
 import type { Layer, FrameLayer } from "@/types";
 import { layersToSvgFragment } from "@/services/svgExport";
 import Konva from "konva";
-import { withEditorChromeHidden } from "@/utils/stageExportCapture";
+import { getArtboardFrameOffset, withEditorChromeHidden } from "@/utils/stageExportCapture";
 
 // ─── Clipboard Data Format ─────────────────────────────
 
@@ -211,9 +211,13 @@ export async function copyLayerAsPng(
             const maxX = Math.max(...targetLayers.map(l => l.x + l.width));
             const maxY = Math.max(...targetLayers.map(l => l.y + l.height));
 
+            // Layer coords are artboard-local; in overview the active artboard
+            // renders at the active tile's world offset, so shift the crop by it
+            // (0,0 in single view → unchanged).
+            const frameOffset = getArtboardFrameOffset(stage);
             dataURL = withEditorChromeHidden(stage, () => stage.toDataURL({
-                x: minX,
-                y: minY,
+                x: minX + frameOffset.x,
+                y: minY + frameOffset.y,
                 width: maxX - minX,
                 height: maxY - minY,
                 pixelRatio: 2,

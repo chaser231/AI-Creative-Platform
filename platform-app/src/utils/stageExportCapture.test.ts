@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type Konva from "konva";
 
-import { hideEditorChromeForCapture } from "./stageExportCapture";
+import { getArtboardFrameOffset, hideEditorChromeForCapture } from "./stageExportCapture";
 
 function mockNode(visible = true): Konva.Node {
     let isVisible = visible;
@@ -51,5 +51,31 @@ describe("hideEditorChromeForCapture", () => {
         expect(transformer.visible()).toBe(true);
         expect(sliceOverlay.visible()).toBe(true);
         expect(proxy.visible()).toBe(true);
+    });
+});
+
+describe("getArtboardFrameOffset", () => {
+    it("returns the world offset of the editable artboard frame when present", () => {
+        const stage = {
+            findOne: vi.fn((selector: string) => {
+                if (selector === ".export-artboard-frame") {
+                    return {
+                        x: () => 5000,
+                        y: () => 0,
+                    } as unknown as Konva.Node;
+                }
+                return undefined;
+            }),
+        } as unknown as Konva.Stage;
+
+        expect(getArtboardFrameOffset(stage)).toEqual({ x: 5000, y: 0 });
+    });
+
+    it("returns {0,0} when the frame is absent", () => {
+        const stage = {
+            findOne: vi.fn(() => undefined),
+        } as unknown as Konva.Stage;
+
+        expect(getArtboardFrameOffset(stage)).toEqual({ x: 0, y: 0 });
     });
 });

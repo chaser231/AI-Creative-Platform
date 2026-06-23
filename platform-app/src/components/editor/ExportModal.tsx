@@ -15,7 +15,7 @@ import { getCanvasStateForSave } from "@/utils/canvasState";
 import { layersToSvg, layersToSvgFragment, layersToSvgSliceRegion } from "@/services/svgExport";
 import { layersToEps, layersToEpsFragment, layersToEpsSliceRegion } from "@/services/epsExport";
 import { collectLayerTree } from "@/utils/clipboardUtils";
-import { hideEditorChromeForCapture } from "@/utils/stageExportCapture";
+import { getArtboardFrameNode, hideEditorChromeForCapture } from "@/utils/stageExportCapture";
 import type { Layer } from "@/types";
 
 interface ExportModalProps {
@@ -130,8 +130,15 @@ export function ExportModal({ open, onClose, stageRef, initialTarget }: ExportMo
     }, [exportTarget, canvasWidth, canvasHeight, layers]);
 
     const captureDataUrl = useCallback((stage: Konva.Stage, bounds: { x: number; y: number; width: number; height: number }) => {
+        // In overview the stage also hosts read-only sibling tiles that share the
+        // `export-artboard-*` names. Scope the fill/background mutations to the
+        // editable frame so neighbours are never touched, and shift the crop by
+        // the frame's world offset (0,0 in single view) so we grab the right tile.
+        const frame = getArtboardFrameNode(stage);
+        const frameOffset = frame ? { x: frame.x(), y: frame.y() } : { x: 0, y: 0 };
+        const searchRoot: Konva.Container = (frame as Konva.Container | null) ?? stage;
         const restore: Array<() => void> = [hideEditorChromeForCapture(stage)];
-        stage.find(".export-artboard-fill").forEach((node) => {
+        searchRoot.find(".export-artboard-fill").forEach((node) => {
             const shape = node as Konva.Shape;
             const prevShadowBlur = shape.shadowBlur();
             const prevShadowEnabled = shape.shadowEnabled();
@@ -151,7 +158,7 @@ export function ExportModal({ open, onClose, stageRef, initialTarget }: ExportMo
             }
         });
         if (transparentBackground) {
-            stage.find(".export-artboard-background").forEach((node) => {
+            searchRoot.find(".export-artboard-background").forEach((node) => {
                 const prevVisible = node.visible();
                 restore.push(() => node.visible(prevVisible));
                 node.visible(false);
@@ -161,8 +168,8 @@ export function ExportModal({ open, onClose, stageRef, initialTarget }: ExportMo
         stage.batchDraw();
         try {
             return stage.toDataURL({
-                x: bounds.x,
-                y: bounds.y,
+                x: bounds.x + frameOffset.x,
+                y: bounds.y + frameOffset.y,
                 width: bounds.width,
                 height: bounds.height,
                 pixelRatio: scale,

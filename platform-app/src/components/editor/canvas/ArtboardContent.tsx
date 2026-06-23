@@ -19,8 +19,10 @@ import { computeImageFitProps } from "@/utils/imageFitUtils";
 import { getTextTrimMetrics, isTextTrimActive } from "@/utils/layoutEngine";
 import { getEffectiveTextRenderHeight, shouldUseTextEllipsis } from "@/utils/textContainerLimits";
 import { normalizePaint, paintToKonvaProps } from "@/utils/paint";
-import { subpathsToPathData, hasRenderableGeometry } from "@/utils/vectorGeometry";
+import { subpathsToPathData } from "@/utils/vectorGeometry";
 import { AlignedStrokeRect } from "@/components/editor/canvas/AlignedStrokeRect";
+import { InlineSvgVectorImage } from "@/components/editor/canvas/InlineSvgVectorImage";
+import { resolveReadOnlyVectorRenderMode } from "@/components/editor/canvas/vectorRenderMode";
 import { useArtboardImages, type ImageLoadStatus } from "./artboardImages";
 import Konva from "konva";
 
@@ -185,7 +187,14 @@ export function ArtboardLayer({ layer, allLayers, loadedImages, imageStatuses, r
             );
         }
         case "vector": {
-            const useSubpaths = hasRenderableGeometry(layer.subpaths);
+            // Mirror the studio active-path non-editing render priority: complex
+            // Figma boolean/even-odd vectors keep their geometry in `inlineSvg`
+            // (subpaths empty), so a Konva <Path> would paint nothing/garbage.
+            // Prefer the faithful SVG raster when present, otherwise fall back to
+            // subpath/raw-path geometry. Keeps overview sibling tiles + PreviewCanvas
+            // consistent with the active artboard.
+            const renderMode = resolveReadOnlyVectorRenderMode(layer);
+            const useSubpaths = renderMode.kind === "path" && renderMode.source === "subpaths";
             const pathData = useSubpaths
                 ? subpathsToPathData(layer.subpaths, layer.width, layer.height)
                 : layer.rawSvgPath ?? "";
@@ -201,19 +210,23 @@ export function ArtboardLayer({ layer, allLayers, loadedImages, imageStatuses, r
             return (
                 <Group {...commonProps}>
                     <FlipLayerContent layer={layer}>
-                        <Path
-                            data={pathData}
-                            scaleX={rawScaleX}
-                            scaleY={rawScaleY}
-                            {...(layer.fillEnabled === false
-                                ? { fillEnabled: false }
-                                : paintToKonvaProps(layer.fill, layer.width, layer.height))}
-                            fillRule={layer.fillRule ?? "nonzero"}
-                            stroke={strokeColor}
-                            strokeWidth={strokeColor ? layer.strokeWidth ?? 0 : 0}
-                            lineJoin={layer.strokeJoin ?? "miter"}
-                            strokeScaleEnabled={false}
-                        />
+                        {renderMode.kind === "inline" ? (
+                            <InlineSvgVectorImage inlineSvg={layer.inlineSvg!} width={layer.width} height={layer.height} />
+                        ) : (
+                            <Path
+                                data={pathData}
+                                scaleX={rawScaleX}
+                                scaleY={rawScaleY}
+                                {...(layer.fillEnabled === false
+                                    ? { fillEnabled: false }
+                                    : paintToKonvaProps(layer.fill, layer.width, layer.height))}
+                                fillRule={layer.fillRule ?? "nonzero"}
+                                stroke={strokeColor}
+                                strokeWidth={strokeColor ? layer.strokeWidth ?? 0 : 0}
+                                lineJoin={layer.strokeJoin ?? "miter"}
+                                strokeScaleEnabled={false}
+                            />
+                        )}
                     </FlipLayerContent>
                 </Group>
             );

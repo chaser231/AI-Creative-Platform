@@ -71,3 +71,69 @@ describe("overviewCoords — length scaling", () => {
         expect(screenLengthToArtboard(50, VP)).toBe(100);
     });
 });
+
+describe("overviewCoords — drag/transform commit round-trip", () => {
+    // Mirrors the commit path used by drag/transform handlers in Canvas.tsx:
+    //   1. take the node's absolute Konva position `abs`
+    //   2. translate to world via the live stage transform: world = (abs - stagePos) / scale
+    //   3. translate world → artboard via worldToArtboard(world, tile)
+    //   4. (round-trip) artboardToWorld(artboard, tile) * scale + stagePos === abs
+    //
+    // This locks the parity invariant: at tile={0,0} the math degenerates to
+    // the legacy single-view formula, and at a non-zero tile the offset cancels
+    // exactly on the way back. Any drift here = silent drag/transform jitter.
+    function commitRoundTrip(
+        abs: { x: number; y: number },
+        viewport: OverviewViewport,
+        tile: TileOffset,
+    ): { x: number; y: number } {
+        const world = {
+            x: (abs.x - viewport.x) / viewport.zoom,
+            y: (abs.y - viewport.y) / viewport.zoom,
+        };
+        const artboard = worldToArtboard(world, tile);
+        const backWorld = artboardToWorld(artboard, tile);
+        return {
+            x: backWorld.x * viewport.zoom + viewport.x,
+            y: backWorld.y * viewport.zoom + viewport.y,
+        };
+    }
+
+    it("returns the original absolute position at tile {0,0} (single-view degenerate)", () => {
+        const viewport: OverviewViewport = { zoom: 1.75, x: 220, y: -40 };
+        const tile: TileOffset = { x: 0, y: 0 };
+        const abs = { x: 512.5, y: 199.25 };
+        const back = commitRoundTrip(abs, viewport, tile);
+        expect(back.x).toBeCloseTo(abs.x, 9);
+        expect(back.y).toBeCloseTo(abs.y, 9);
+    });
+
+    it("returns the original absolute position at a non-zero tile (overview)", () => {
+        const viewport: OverviewViewport = { zoom: 0.35, x: 88, y: 132 };
+        const tile: TileOffset = { x: 1800, y: 920 };
+        const abs = { x: 941.3, y: 612.8 };
+        const back = commitRoundTrip(abs, viewport, tile);
+        expect(back.x).toBeCloseTo(abs.x, 9);
+        expect(back.y).toBeCloseTo(abs.y, 9);
+    });
+
+    it("matches the legacy `(p - stage.x)/scale` math at tile {0,0}", () => {
+        const viewport: OverviewViewport = { zoom: 2, x: 50, y: 10 };
+        const tile: TileOffset = { x: 0, y: 0 };
+        const abs = { x: 250, y: 110 };
+        // Legacy: world = (abs - stagePos) / scale; tile is zero so artboard === world.
+        const expectedArtboard = {
+            x: (abs.x - viewport.x) / viewport.zoom,
+            y: (abs.y - viewport.y) / viewport.zoom,
+        };
+        const world = {
+            x: (abs.x - viewport.x) / viewport.zoom,
+            y: (abs.y - viewport.y) / viewport.zoom,
+        };
+        expect(worldToArtboard(world, tile)).toEqual(expectedArtboard);
+        // And the commit round-trip is identity.
+        const back = commitRoundTrip(abs, viewport, tile);
+        expect(back.x).toBeCloseTo(abs.x, 9);
+        expect(back.y).toBeCloseTo(abs.y, 9);
+    });
+});

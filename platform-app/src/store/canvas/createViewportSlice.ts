@@ -6,6 +6,7 @@ import type { StateCreator } from "zustand";
 import type { CanvasStore, ArtboardProps, SnapConfig, EditorMode, ViewMode, FrameLayer, ExpandPadding } from "./types";
 import type Konva from "konva";
 import { DEFAULT_EXPAND_PADDING } from "./types";
+import { getFullEditModeExitPatches } from "./editModeHelpers";
 import { DEFAULT_SNAP_CONFIG } from "@/services/snapService";
 
 export type ViewportSlice = Pick<CanvasStore,
@@ -161,6 +162,20 @@ export const createViewportSlice: StateCreator<CanvasStore, [], [], ViewportSlic
     },
 
     setViewMode: (mode: ViewMode) => {
+        // Overview hides the expand/inpaint/vector/gradient overlays but those
+        // store flags would otherwise linger and silently block dragging or
+        // transform on the active artboard (handleLayerDragStart bails on
+        // expand/inpaint; the transformer hides while vector-editing). Retire
+        // the exclusive edit modes on entry so the overview stays fully editable.
+        if (mode === "overview") {
+            set({
+                viewMode: mode,
+                ...getFullEditModeExitPatches(),
+                vectorEditLayerId: null,
+                activeGradientEditorTarget: null,
+            });
+            return;
+        }
         set({ viewMode: mode });
     },
 
