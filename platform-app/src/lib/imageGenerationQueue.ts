@@ -5,7 +5,7 @@ import {
 import { isRetryableGenerationError } from "@/lib/parseGenerationError";
 
 export type ImageJobStatus = "queued" | "running" | "completed" | "failed";
-export type ImageJobSurface = "photo" | "studio" | "wizard";
+export type ImageJobSurface = "photo" | "studio" | "wizard" | "multi";
 
 export interface ImageGenerationJobMeta {
     id: string;

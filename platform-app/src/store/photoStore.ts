@@ -29,6 +29,9 @@ export interface PendingPhotoGeneration {
     prompt: string;
 }
 
+/** Top-level mode of the photo workspace. */
+export type PhotoGenerationMode = "single" | "multi";
+
 export interface PhotoStore {
     // Sessions
     activeSessionId: string | null;
@@ -38,6 +41,17 @@ export interface PhotoStore {
     libraryOpen: boolean;
     setLibraryOpen: (open: boolean) => void;
     toggleLibrary: () => void;
+
+    /**
+     * Single chat-style generation vs "Мульти-генерация" batch mode. Lives in
+     * the store so the sidebar toggle and the workspace center stay in sync.
+     */
+    generationMode: PhotoGenerationMode;
+    setGenerationMode: (mode: PhotoGenerationMode) => void;
+
+    /** Batch currently open in the multi-generation view (DB id). */
+    activeBatchId: string | null;
+    setActiveBatchId: (id: string | null) => void;
 
     // Generate mode
     selectedModelId: string;
@@ -85,6 +99,12 @@ export const usePhotoStore = create<PhotoStore>((set) => ({
     libraryOpen: false,
     setLibraryOpen: (open) => set({ libraryOpen: open }),
     toggleLibrary: () => set((s) => ({ libraryOpen: !s.libraryOpen })),
+
+    generationMode: "single",
+    setGenerationMode: (mode) => set({ generationMode: mode }),
+
+    activeBatchId: null,
+    setActiveBatchId: (id) => set({ activeBatchId: id }),
 
     selectedModelId: "nano-banana-2",
     setSelectedModel: (id) => set({ selectedModelId: id }),
