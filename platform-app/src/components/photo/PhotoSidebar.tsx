@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { Plus, Pencil, Trash2, MessageCircle, Home, Library, ArrowLeft, Loader2, MoreHorizontal } from "lucide-react";
+import { Plus, Pencil, Trash2, MessageCircle, Home, Library, ArrowLeft, Loader2, MoreHorizontal, MessagesSquare, Layers } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { usePhotoStore } from "@/store/photoStore";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
@@ -18,6 +18,10 @@ export function PhotoSidebar({ projectId, projectName }: PhotoSidebarProps) {
     const libraryOpen = usePhotoStore((s) => s.libraryOpen);
     const setLibraryOpen = usePhotoStore((s) => s.setLibraryOpen);
     const clearEditContext = usePhotoStore((s) => s.clearEditContext);
+    const generationMode = usePhotoStore((s) => s.generationMode);
+    const setGenerationMode = usePhotoStore((s) => s.setGenerationMode);
+    const activeBatchId = usePhotoStore((s) => s.activeBatchId);
+    const setActiveBatchId = usePhotoStore((s) => s.setActiveBatchId);
 
     const sessionsQuery = trpc.ai.listSessions.useQuery(
         { projectId },
@@ -37,6 +41,16 @@ export function PhotoSidebar({ projectId, projectName }: PhotoSidebarProps) {
     const deleteSessionMutation = trpc.ai.deleteSession.useMutation({
         onSuccess: () => utils.ai.listSessions.invalidate({ projectId }),
     });
+
+    const batchesQuery = trpc.batch.listByProject.useQuery(
+        { projectId },
+        {
+            enabled: generationMode === "multi",
+            refetchInterval: generationMode === "multi" ? 5000 : false,
+            refetchOnWindowFocus: false,
+        },
+    );
+    const batches = batchesQuery.data ?? [];
 
     const [renamingId, setRenamingId] = useState<string | null>(null);
     const [renameValue, setRenameValue] = useState("");
@@ -114,6 +128,34 @@ export function PhotoSidebar({ projectId, projectName }: PhotoSidebarProps) {
                 <div className="text-[11px] text-text-tertiary mt-0.5">Фото-проект</div>
             </div>
 
+            {/* Mode toggle: chat vs multi-generation */}
+            <div className="px-3 pt-3">
+                <div className="flex rounded-[var(--radius-md)] border border-border-primary p-0.5">
+                    <button
+                        onClick={() => setGenerationMode("single")}
+                        className={`flex flex-1 items-center justify-center gap-1.5 rounded-[var(--radius-sm)] px-2 py-1.5 text-[11px] font-medium transition-colors cursor-pointer ${
+                            generationMode === "single"
+                                ? "bg-accent-lime/15 text-accent-primary"
+                                : "text-text-secondary hover:text-text-primary"
+                        }`}
+                    >
+                        <MessagesSquare size={12} /> Чат
+                    </button>
+                    <button
+                        onClick={() => setGenerationMode("multi")}
+                        className={`flex flex-1 items-center justify-center gap-1.5 rounded-[var(--radius-sm)] px-2 py-1.5 text-[11px] font-medium transition-colors cursor-pointer ${
+                            generationMode === "multi"
+                                ? "bg-accent-lime/15 text-accent-primary"
+                                : "text-text-secondary hover:text-text-primary"
+                        }`}
+                    >
+                        <Layers size={12} /> Мульти
+                    </button>
+                </div>
+            </div>
+
+            {generationMode === "single" && (
+            <>
             {/* New session */}
             <div className="px-3 pt-3 pb-2">
                 <button
@@ -213,6 +255,59 @@ export function PhotoSidebar({ projectId, projectName }: PhotoSidebarProps) {
                     })
                 )}
             </div>
+            </>
+            )}
+
+            {generationMode === "multi" && (
+                <div className="flex-1 overflow-y-auto px-2 pb-2 pt-3">
+                    <div className="px-1 pb-2">
+                        <button
+                            onClick={() => setActiveBatchId(null)}
+                            className="w-full flex items-center gap-2 px-3 py-2 rounded-[var(--radius-md)] text-[12px] font-medium bg-accent-lime-hover text-accent-lime-text hover:bg-accent-lime transition-colors cursor-pointer"
+                        >
+                            <Plus size={13} /> Новый батч
+                        </button>
+                    </div>
+                    <div className="px-2 py-1 text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">
+                        Батчи
+                    </div>
+                    {batchesQuery.isLoading ? (
+                        <div className="flex items-center justify-center py-6">
+                            <Loader2 size={14} className="animate-spin text-text-tertiary" />
+                        </div>
+                    ) : batches.length === 0 ? (
+                        <div className="px-3 py-4 text-[11px] text-text-tertiary text-center">
+                            Нет батчей. Создайте первый.
+                        </div>
+                    ) : (
+                        batches.map((b, index) => {
+                            const isActive = b.id === activeBatchId;
+                            return (
+                                <div
+                                    key={b.id}
+                                    onClick={() => setActiveBatchId(b.id)}
+                                    className={`group relative flex flex-col gap-0.5 px-2 py-1.5 rounded-[var(--radius-md)] cursor-pointer transition-colors ${
+                                        isActive
+                                            ? "bg-accent-lime/15 text-text-primary"
+                                            : "hover:bg-bg-tertiary text-text-secondary"
+                                    }`}
+                                >
+                                    <div className="flex items-center gap-2">
+                                        <Layers size={12} className="shrink-0 text-text-tertiary" />
+                                        <span className="flex-1 min-w-0 text-[12px] truncate">
+                                            {b.name || `Батч ${batches.length - index}`}
+                                        </span>
+                                    </div>
+                                    <div className="pl-[18px] text-[10px] text-text-tertiary">
+                                        {b.completedItems}/{b.totalItems}
+                                        {b.failedItems > 0 ? ` · ${b.failedItems} ош.` : ""}
+                                    </div>
+                                </div>
+                            );
+                        })
+                    )}
+                </div>
+            )}
 
             {/* Footer actions */}
             <div className="border-t border-border-primary px-2 py-2 space-y-0.5">

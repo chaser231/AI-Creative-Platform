@@ -11,6 +11,7 @@ import { PhotoChatView } from "./PhotoChatView";
 import { PhotoPromptBar } from "./PhotoPromptBar";
 import { PhotoLibraryPanel } from "./PhotoLibraryPanel";
 import { PhotoInpaintModal } from "./PhotoInpaintModal";
+import { PhotoMultiGenView } from "./multi/PhotoMultiGenView";
 
 interface PhotoWorkspaceProps {
     projectId: string;
@@ -23,6 +24,7 @@ export function PhotoWorkspace({ projectId }: PhotoWorkspaceProps) {
         { retry: false, refetchOnWindowFocus: false }
     );
     const libraryOpen = usePhotoStore((s) => s.libraryOpen);
+    const generationMode = usePhotoStore((s) => s.generationMode);
     const activeSessionId = usePhotoStore((s) => s.activeSessionId);
     const setActiveSession = usePhotoStore((s) => s.setActiveSession);
     // Guard against Strict-Mode double-invoke + slow network: only create one default session per mount.
@@ -110,12 +112,16 @@ export function PhotoWorkspace({ projectId }: PhotoWorkspaceProps) {
                 <PhotoSidebar projectId={projectId} projectName={project.name} />
 
                 <div className="flex-1 flex min-w-0">
-                    <div className="flex-1 flex flex-col min-w-0 relative">
-                        <PhotoChatView projectId={projectId} />
-                        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-20">
-                            <PhotoPromptBar projectId={projectId} />
+                    {generationMode === "multi" ? (
+                        <PhotoMultiGenView projectId={projectId} />
+                    ) : (
+                        <div className="flex-1 flex flex-col min-w-0 relative">
+                            <PhotoChatView projectId={projectId} />
+                            <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-20">
+                                <PhotoPromptBar projectId={projectId} />
+                            </div>
                         </div>
-                    </div>
+                    )}
 
                     {libraryOpen && (
                         <aside className="w-[360px] shrink-0 border-l border-border-primary bg-bg-surface flex flex-col min-h-0">

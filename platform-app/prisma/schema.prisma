@@ -15,30 +15,31 @@ datasource db {
 // ─── AUTH & USERS ────────────────────────────────────────
 
 model User {
-  id            String     @id @default(cuid())
-  email         String     @unique
+  id            String        @id @default(cuid())
+  email         String        @unique
   emailVerified DateTime?
   name          String
   avatarUrl     String?
-  image         String?   // Required by @auth/prisma-adapter (NextAuth v5)
-  role          GlobalRole @default(USER)
+  image         String? // Required by @auth/prisma-adapter (NextAuth v5)
+  role          GlobalRole    @default(USER)
   status        AccountStatus @default(PENDING)
-  createdAt     DateTime   @default(now())
-  updatedAt     DateTime   @updatedAt
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
 
-  accounts    Account[]
-  sessions    Session[]
-  memberships WorkspaceMember[]
-  projects    Project[]   @relation("ProjectCreator")
-  aiSessions  AISession[]
-  uploads     Asset[]     @relation("AssetUploader")
-  favorites    FavoriteProject[]
-  aiWorkflows  AIWorkflow[] @relation("WorkflowCreator")
-  joinRequests JoinRequest[]
-  sharedTemplates TemplateShare[]
-  aiPresets    AIPreset[]  @relation("PresetCreator")
-  loraPresets  LoraPreset[] @relation("LoraPresetCreator")
-  figmaImports FigmaImport[]
+  accounts         Account[]
+  sessions         Session[]
+  memberships      WorkspaceMember[]
+  projects         Project[]         @relation("ProjectCreator")
+  aiSessions       AISession[]
+  uploads          Asset[]           @relation("AssetUploader")
+  favorites        FavoriteProject[]
+  aiWorkflows      AIWorkflow[]      @relation("WorkflowCreator")
+  joinRequests     JoinRequest[]
+  sharedTemplates  TemplateShare[]
+  aiPresets        AIPreset[]        @relation("PresetCreator")
+  loraPresets      LoraPreset[]      @relation("LoraPresetCreator")
+  figmaImports     FigmaImport[]
+  batchGenerations BatchGeneration[]
 }
 
 model Account {
@@ -83,9 +84,9 @@ enum GlobalRole {
 }
 
 enum AccountStatus {
-  PENDING    // Ожидает одобрения администратора
-  APPROVED   // Одобрен, полный доступ
-  REJECTED   // Отклонён
+  PENDING // Ожидает одобрения администратора
+  APPROVED // Одобрен, полный доступ
+  REJECTED // Отклонён
 }
 
 // ─── WORKSPACES ──────────────────────────────────────────
@@ -101,35 +102,36 @@ model Workspace {
   joinPolicy WorkspaceJoinPolicy @default(OPEN)
 
   // Brand Identity (embedded, no separate BrandKit entity)
-  colors      Json   @default("[]")
-  fonts       Json   @default("[]")
-  toneOfVoice String @default("")
+  colors      Json    @default("[]")
+  fonts       Json    @default("[]")
+  toneOfVoice String  @default("")
   logoUrl     String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  members       WorkspaceMember[]
-  projects      Project[]
-  templates     Template[]
-  assets        Asset[]
-  systemPrompts SystemPrompt[]
-  aiPresets     AIPreset[]
-  loraPresets   LoraPreset[]
-  aiWorkflows   AIWorkflow[]
-  joinRequests  JoinRequest[]
-  figmaImports  FigmaImport[]
+  members          WorkspaceMember[]
+  projects         Project[]
+  templates        Template[]
+  assets           Asset[]
+  systemPrompts    SystemPrompt[]
+  aiPresets        AIPreset[]
+  loraPresets      LoraPreset[]
+  aiWorkflows      AIWorkflow[]
+  joinRequests     JoinRequest[]
+  figmaImports     FigmaImport[]
+  batchGenerations BatchGeneration[]
 }
 
 enum WorkspaceVisibility {
-  VISIBLE   // Shows up in browse/discover
-  HIDDEN    // Only accessible by invite link
+  VISIBLE // Shows up in browse/discover
+  HIDDEN // Only accessible by invite link
 }
 
 enum WorkspaceJoinPolicy {
-  OPEN         // Anyone can join instantly
-  REQUEST      // Must send a request, admin approves
-  INVITE_ONLY  // Can only join via /invite/[slug]
+  OPEN // Anyone can join instantly
+  REQUEST // Must send a request, admin approves
+  INVITE_ONLY // Can only join via /invite/[slug]
 }
 
 model WorkspaceMember {
@@ -153,11 +155,11 @@ enum WorkspaceRole {
 }
 
 model JoinRequest {
-  id          String   @id @default(cuid())
-  status      String   @default("PENDING") // PENDING | APPROVED | REJECTED
-  message     String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id        String   @id @default(cuid())
+  status    String   @default("PENDING") // PENDING | APPROVED | REJECTED
+  message   String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   user        User      @relation(fields: [userId], references: [id])
   userId      String
@@ -195,11 +197,12 @@ model Project {
   createdBy   User      @relation("ProjectCreator", fields: [createdById], references: [id])
   createdById String
 
-  versions     ProjectVersion[]
-  aiSessions   AISession[]
-  favorites    FavoriteProject[]
-  assets       Asset[]
-  figmaImports FigmaImport[]
+  versions         ProjectVersion[]
+  aiSessions       AISession[]
+  favorites        FavoriteProject[]
+  assets           Asset[]
+  figmaImports     FigmaImport[]
+  batchGenerations BatchGeneration[]
 
   @@index([workspaceId, updatedAt])
 }
@@ -225,7 +228,7 @@ enum ProjectStatus {
 }
 
 model ProjectVersion {
-  id      String @id @default(cuid())
+  id      String  @id @default(cuid())
   version Int
   label   String?
 
@@ -244,16 +247,16 @@ model ProjectVersion {
 // ─── TEMPLATES ───────────────────────────────────────────
 
 enum TemplateVisibility {
-  PRIVATE      // Only the author can see
-  WORKSPACE    // All workspace members (default)
-  PUBLIC       // All users across all workspaces
-  SHARED       // Specific users only (via TemplateShare)
+  PRIVATE // Only the author can see
+  WORKSPACE // All workspace members (default)
+  PUBLIC // All users across all workspaces
+  SHARED // Specific users only (via TemplateShare)
 }
 
 enum TemplateEditPermission {
-  AUTHOR_ONLY  // Only the template author can edit (default)
-  WORKSPACE    // Any workspace member can edit
-  SPECIFIC     // Specific users only (Phase 2, via TemplateShare)
+  AUTHOR_ONLY // Only the template author can edit (default)
+  WORKSPACE // Any workspace member can edit
+  SPECIFIC // Specific users only (Phase 2, via TemplateShare)
 }
 
 model Template {
@@ -272,11 +275,11 @@ model Template {
   data Json
 
   // Metadata
-  isOfficial   Boolean            @default(false)
-  visibility   TemplateVisibility @default(WORKSPACE)
+  isOfficial     Boolean                @default(false)
+  visibility     TemplateVisibility     @default(WORKSPACE)
   editPermission TemplateEditPermission @default(AUTHOR_ONLY)
-  thumbnailUrl String?
-  popularity   Int                @default(0)
+  thumbnailUrl   String?
+  popularity     Int                    @default(0)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -286,10 +289,10 @@ model Template {
   author      String // User ID or "system"
 
   // Phase 2: shared visibility
-  sharedWith  TemplateShare[]
+  sharedWith TemplateShare[]
 
   // Fixed assets that ship with this template
-  assets      Asset[]
+  assets Asset[]
 
   @@index([workspaceId])
   @@index([visibility])
@@ -311,11 +314,11 @@ model TemplateShare {
 // ─── ASSETS ──────────────────────────────────────────────
 
 model Asset {
-  id       String    @id @default(cuid())
-  type     AssetType
-  filename String
-  url      String
-  mimeType String
+  id        String    @id @default(cuid())
+  type      AssetType
+  filename  String
+  url       String
+  mimeType  String
   sizeBytes Int
   metadata  Json?
 
@@ -326,8 +329,8 @@ model Asset {
   uploadedBy   User      @relation("AssetUploader", fields: [uploadedById], references: [id])
   uploadedById String
 
-  project    Project?  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  projectId  String?
+  project   Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  projectId String?
 
   template   Template? @relation(fields: [templateId], references: [id], onDelete: Cascade)
   templateId String?
@@ -366,20 +369,20 @@ model SystemPrompt {
 }
 
 model AIPreset {
-  id          String  @id @default(cuid())
-  name        String
-  description String  @default("")
-  type        String // "text", "image"
-  config      Json
-  isActive    Boolean @default(true)
-  isSystem    Boolean @default(false)
-  category    String  @default("custom")  // photography, digital, artistic, tone, length, custom
+  id           String  @id @default(cuid())
+  name         String
+  description  String  @default("")
+  type         String // "text", "image"
+  config       Json
+  isActive     Boolean @default(true)
+  isSystem     Boolean @default(false)
+  category     String  @default("custom") // photography, digital, artistic, tone, length, custom
   thumbnailUrl String?
-  order       Int     @default(0)
+  order        Int     @default(0)
   // "personal"  — visible only to the author
   // "workspace" — visible to all members of the parent workspace (workspace ADMIN or SUPER_ADMIN can set)
   // "global"    — visible to every authenticated user across all workspaces (SUPER_ADMIN only)
-  visibility  String  @default("personal")
+  visibility   String  @default("personal")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -387,7 +390,7 @@ model AIPreset {
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   workspaceId String
 
-  createdBy   User?    @relation("PresetCreator", fields: [createdById], references: [id])
+  createdBy   User?   @relation("PresetCreator", fields: [createdById], references: [id])
   createdById String?
 
   @@index([workspaceId, type, isActive, visibility])
@@ -406,26 +409,26 @@ model AIPreset {
 // "qwen" | "flux-kontext") so the UI can filter weights to the model the user
 // has selected. The path is validated against an SSRF allowlist on write.
 model LoraPreset {
-  id            String   @id @default(cuid())
-  name          String
-  description   String   @default("")
+  id           String   @id @default(cuid())
+  name         String
+  description  String   @default("")
   // Public URL pointing at the .safetensors. Allowlist enforced server-side
   // (huggingface.co, civitai.com, *.fal.media, *.replicate.delivery).
-  path          String
+  path         String
   // Compatibility family — only models whose loraSpec.family matches will
   // accept this weight. Cross-family LoRAs are not interchangeable.
-  family        String   // "flux-1" | "flux-2" | "qwen" | "flux-kontext"
+  family       String // "flux-1" | "flux-2" | "qwen" | "flux-kontext"
   // Recommended starting strength (0..2; UI seeds the slider with this).
-  defaultScale  Float    @default(1.0)
+  defaultScale Float    @default(1.0)
   // Optional preview image rendered as the picker's thumbnail.
-  previewUrl    String?
+  previewUrl   String?
   // Words the user may want to include in their prompt to activate the LoRA
   // (some community LoRAs require explicit triggers like "ohwx man").
-  triggerWords  String[] @default([])
+  triggerWords String[] @default([])
   // Visibility model mirrors AIPreset:
   //   "personal"  — visible only to the author
   //   "workspace" — visible to all members of the parent workspace
-  visibility    String   @default("personal")
+  visibility   String   @default("personal")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -433,7 +436,7 @@ model LoraPreset {
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   workspaceId String
 
-  createdBy   User?    @relation("LoraPresetCreator", fields: [createdById], references: [id])
+  createdBy   User?   @relation("LoraPresetCreator", fields: [createdById], references: [id])
   createdById String?
 
   @@index([workspaceId, family, visibility])
@@ -460,13 +463,13 @@ model AISession {
 // ─── AI WORKFLOWS ────────────────────────────────────────
 
 model AIWorkflow {
-  id          String  @id @default(cuid())
-  name        String
-  description String  @default("")
-  steps       Json    // legacy: AIStep[] — linear LLM-agent actions. Co-exists with graph.
-  graph       Json?   // WorkflowGraph — node-based editor (v1.0+). Nullable for backward compatibility.
+  id             String  @id @default(cuid())
+  name           String
+  description    String  @default("")
+  steps          Json // legacy: AIStep[] — linear LLM-agent actions. Co-exists with graph.
+  graph          Json? // WorkflowGraph — node-based editor (v1.0+). Nullable for backward compatibility.
   scenarioConfig Json? // WorkflowScenarioConfig — exposes graph workflows as reusable AI scenarios.
-  isTemplate  Boolean @default(false) // preset workflow for BU
+  isTemplate     Boolean @default(false) // preset workflow for BU
 
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   workspaceId String
@@ -509,7 +512,7 @@ model VideoJob {
 
   modelId String // video model registry id (lib/video-models.ts)
   mode    String // "t2v" | "i2v"
-  params  Json   // prompt, duration, resolution, aspectRatio, audio, presetId, startFrameUrl, endFrameUrl
+  params  Json // prompt, duration, resolution, aspectRatio, audio, presetId, startFrameUrl, endFrameUrl
 
   falRequestId   String
   falStatusUrl   String
@@ -532,7 +535,7 @@ model VideoJob {
 model VideoModelQuota {
   id         String  @id @default(cuid())
   modelId    String  @unique
-  dailyLimit Int?    // null = unlimited
+  dailyLimit Int? // null = unlimited
   enabled    Boolean @default(true)
 
   createdAt DateTime @default(now())
@@ -542,10 +545,10 @@ model VideoModelQuota {
 // ─── PLATFORM EVENTS (Analytics Foundation) ──────────────
 model PlatformEvent {
   id          String   @id @default(cuid())
-  type        String   // "project_created", "template_applied", "ai_generation", "user_login", etc.
+  type        String // "project_created", "template_applied", "ai_generation", "user_login", etc.
   userId      String?
   workspaceId String?
-  metadata    Json?    // arbitrary event data
+  metadata    Json? // arbitrary event data
   createdAt   DateTime @default(now())
 
   @@index([type, createdAt])
@@ -557,26 +560,26 @@ model PlatformEvent {
 // Tracks asynchronous Figma file imports so the UI can poll progress and show
 // a report of lossy conversions / skipped nodes to the user.
 model FigmaImport {
-  id          String   @id @default(cuid())
+  id          String  @id @default(cuid())
   userId      String
   workspaceId String
-  projectId   String?  // set once the Project has been created
+  projectId   String? // set once the Project has been created
 
-  fileKey     String
-  fileName    String   @default("")
-  pageId      String?
-  sourceUrl   String?
+  fileKey   String
+  fileName  String  @default("")
+  pageId    String?
+  sourceUrl String?
 
-  status      String   @default("PENDING") // PENDING | FETCHING | MAPPING | DOWNLOADING_ASSETS | CREATING_PROJECT | COMPLETED | FAILED
-  progress    Int      @default(0)          // 0..100
-  error       String?
+  status   String  @default("PENDING") // PENDING | FETCHING | MAPPING | DOWNLOADING_ASSETS | CREATING_PROJECT | COMPLETED | FAILED
+  progress Int     @default(0) // 0..100
+  error    String?
 
   // ImportReport (see src/lib/figma/types.ts) and options (preserveVectorsAsImages etc.)
-  options     Json?
-  report      Json?
+  options Json?
+  report  Json?
 
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   // Cascade from User/Workspace so deleting an account doesn't leak import
   // history. SetNull on projectId preserves the FigmaImport row as an audit
@@ -588,4 +591,68 @@ model FigmaImport {
   @@index([userId, createdAt])
   @@index([workspaceId])
   @@index([projectId])
+}
+
+// ─── MULTI-GENERATION (Batch) ────────────────────────────
+// "Мульти-генерация" reprocesses a pack of product photos through one
+// prompt/settings combo. The DB row is the durable source of truth for
+// progress; the browser orchestrates per-item generation through the
+// client-side image queue (lib/imageGenerationQueue.ts) while the tab is
+// open, writing item status back via the `batch` tRPC router. Persisting to
+// the DB lets a partially completed batch survive a refresh and be resumed.
+model BatchGeneration {
+  id          String  @id @default(cuid())
+  userId      String
+  workspaceId String
+  projectId   String
+  sessionId   String? // AISession to surface results in (no FK — session may be deleted independently)
+
+  name   String?
+  status String  @default("DRAFT") // DRAFT | RUNNING | PAUSED | COMPLETED | FAILED | CANCELLED
+  mode   String  @default("img2img") // "img2img" | "t2i"
+  model  String
+  prompt String  @default("")
+
+  // Snapshot of generation settings applied to every item:
+  // { aspectRatio, scale, imageStyleId, loras, advancedParams, countPerItem, negativePrompt }
+  settings Json?
+
+  totalItems     Int   @default(0)
+  completedItems Int   @default(0)
+  failedItems    Int   @default(0)
+  costUnits      Float @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  project   Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  items BatchGenerationItem[]
+
+  @@index([projectId, createdAt])
+  @@index([userId, createdAt])
+}
+
+model BatchGenerationItem {
+  id      String @id @default(cuid())
+  batchId String
+
+  index      Int
+  sourceType String  @default("upload") // "upload" | "zip" | "yadisk"
+  sourceUrl  String // persisted S3 URL of the input image
+  sourceName String?
+
+  status     String  @default("PENDING") // PENDING | RUNNING | COMPLETED | FAILED | SKIPPED
+  resultUrls Json    @default("[]") // String[] of persisted S3 result URLs
+  error      String?
+  costUnits  Float?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  batch BatchGeneration @relation(fields: [batchId], references: [id], onDelete: Cascade)
+
+  @@index([batchId, index])
 }
