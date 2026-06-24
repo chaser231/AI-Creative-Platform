@@ -640,7 +640,7 @@ model BatchGenerationItem {
   batchId String
 
   index      Int
-  sourceType String  @default("upload") // "upload" | "zip" | "yadisk"
+  sourceType String  @default("upload") // "upload" | "zip" | "yadisk" | "url"
   sourceUrl  String // persisted S3 URL of the input image
   sourceName String?
 
