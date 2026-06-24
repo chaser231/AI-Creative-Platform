@@ -1,19 +1,24 @@
 /**
  * Client-side source import for "Мульти-генерация".
  *
- * Turns the three supported input sources — local files, a ZIP archive and a
- * public Yandex.Disk folder link — into a uniform list of S3-backed input
- * images (`ImportedSource`) that the batch runner consumes. All uploads land
- * in our bucket so generation requests reference stable HTTPS URLs.
+ * Turns the supported input sources — local files, a ZIP archive, a public
+ * Yandex.Disk folder link and direct image URLs (one per link, e.g. Yandex
+ * avatarnica) — into a uniform list of S3-backed input images
+ * (`ImportedSource`) that the batch runner consumes. All uploads land in our
+ * bucket so generation requests reference stable HTTPS URLs.
  */
 
-import { compressImageFile, uploadImageToS3 } from "@/utils/imageUpload";
+import {
+    compressImageFile,
+    uploadExternalUrlToS3,
+    uploadImageToS3,
+} from "@/utils/imageUpload";
 import {
     extractImageEntriesFromZip,
     isImageEntryName,
 } from "@/utils/zipImport";
 
-export type SourceType = "upload" | "zip" | "yadisk";
+export type SourceType = "upload" | "zip" | "yadisk" | "url";
 
 export interface ImportedSource {
     /** Permanent S3 URL of the input image. */
@@ -219,4 +224,88 @@ export async function importYandexDiskAsSources(
         failed: data.failed ?? 0,
         errors: data.errors ?? [],
     };
+}
+
+/**
+ * Derive a human-readable label for a direct image URL. Yandex avatarnica
+ * links often have no file extension (e.g. `.../orig`), so we fall back to the
+ * last meaningful path segment and finally to the host.
+ */
+export function deriveSourceNameFromUrl(rawUrl: string): string {
+    try {
+        const u = new URL(rawUrl);
+        const segments = u.pathname.split("/").filter(Boolean);
+        const last = segments[segments.length - 1];
+        if (last) return decodeURIComponent(last);
+        return u.hostname;
+    } catch {
+        // Not a parseable URL — return a trimmed, query-less fallback.
+        const noQuery = rawUrl.split("?")[0]?.trim() ?? rawUrl;
+        const tail = noQuery.split("/").filter(Boolean).pop();
+        return tail || rawUrl;
+    }
+}
+
+/**
+ * Import direct image URLs (one per link). Each link is re-uploaded to our S3
+ * via the server proxy (`uploadExternalUrlToS3` → `/api/upload` url mode),
+ * which runs the `uploadImagePolicy()` SSRF guard. Blank rows are skipped,
+ * duplicates and non-HTTPS links are rejected with a reason.
+ */
+export async function importUrlsAsSources(
+    urls: string[],
+    projectId: string,
+): Promise<ImportResult> {
+    const errors: string[] = [];
+
+    const seen = new Set<string>();
+    const valid: string[] = [];
+    let invalid = 0;
+    for (const raw of urls) {
+        const url = raw.trim();
+        if (!url) continue;
+        let parsed: URL;
+        try {
+            parsed = new URL(url);
+        } catch {
+            invalid += 1;
+            continue;
+        }
+        if (parsed.protocol !== "https:") {
+            invalid += 1;
+            continue;
+        }
+        if (seen.has(url)) continue;
+        seen.add(url);
+        valid.push(url);
+    }
+
+    if (invalid > 0) {
+        errors.push(`Пропущено некорректных ссылок (нужен https): ${invalid}`);
+    }
+
+    const uploaded = await mapWithConcurrency(
+        valid,
+        UPLOAD_CONCURRENCY,
+        async (url): Promise<ImportedSource | null> => {
+            try {
+                const s3Url = await uploadExternalUrlToS3(url, projectId);
+                if (!s3Url) return null;
+                return {
+                    sourceUrl: s3Url,
+                    sourceType: "url",
+                    sourceName: deriveSourceNameFromUrl(url),
+                };
+            } catch {
+                return null;
+            }
+        },
+    );
+
+    const sources = uploaded.filter((s): s is ImportedSource => s !== null);
+    const failedUploads = valid.length - sources.length;
+    if (failedUploads > 0) {
+        errors.push(`Не удалось загрузить по ссылке: ${failedUploads}`);
+    }
+    return { sources, failed: failedUploads + invalid, errors };
 }

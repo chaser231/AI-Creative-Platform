@@ -43,6 +43,7 @@ export function PhotoMultiGenView({ projectId }: PhotoMultiGenViewProps) {
     );
     const [draftSources, setDraftSources] = useState<ImportedSource[]>([]);
     const [exporting, setExporting] = useState(false);
+    const [runError, setRunError] = useState<string | null>(null);
 
     const utils = trpc.useUtils();
     const createMutation = trpc.batch.create.useMutation();
@@ -144,40 +145,47 @@ export function PhotoMultiGenView({ projectId }: PhotoMultiGenViewProps) {
 
     const handleRun = async () => {
         if (draftSources.length === 0 || !settings.prompt.trim()) return;
+        setRunError(null);
         const config = configFromSettings(settings);
-        const created = await createMutation.mutateAsync({
-            projectId,
-            sessionId: activeSessionId ?? undefined,
-            mode: settings.mode,
-            model: settings.model,
-            prompt: config.prompt,
-            settings: {
-                aspectRatio: settings.aspectRatio,
-                scale: settings.scale,
-                countPerItem: settings.countPerItem,
-                imageStyleId: settings.imageStyleId,
-                loras: settings.loras,
-            },
-            status: "RUNNING",
-            items: draftSources.map((s) => ({
-                sourceUrl: s.sourceUrl,
-                sourceType: s.sourceType,
-                sourceName: s.sourceName,
-            })),
-        });
+        try {
+            const created = await createMutation.mutateAsync({
+                projectId,
+                sessionId: activeSessionId ?? undefined,
+                mode: settings.mode,
+                model: settings.model,
+                prompt: config.prompt,
+                settings: {
+                    aspectRatio: settings.aspectRatio,
+                    scale: settings.scale,
+                    countPerItem: settings.countPerItem,
+                    imageStyleId: settings.imageStyleId,
+                    loras: settings.loras,
+                },
+                status: "RUNNING",
+                items: draftSources.map((s) => ({
+                    sourceUrl: s.sourceUrl,
+                    sourceType: s.sourceType,
+                    sourceName: s.sourceName,
+                })),
+            });
 
-        enqueuedRef.current.add(created.id);
-        setActiveBatchId(created.id);
-        setDraftSources([]);
-        enqueueItems(
-            created.id,
-            (created.items ?? []).map((it) => ({
-                id: it.id,
-                sourceUrl: it.sourceUrl,
-            })),
-            config,
-            activeSessionId ?? undefined,
-        );
+            enqueuedRef.current.add(created.id);
+            setActiveBatchId(created.id);
+            setDraftSources([]);
+            enqueueItems(
+                created.id,
+                (created.items ?? []).map((it) => ({
+                    id: it.id,
+                    sourceUrl: it.sourceUrl,
+                })),
+                config,
+                activeSessionId ?? undefined,
+            );
+        } catch (error) {
+            const message =
+                error instanceof Error ? error.message : "Не удалось запустить батч";
+            setRunError(message);
+        }
     };
 
     const handleStop = async () => {
@@ -339,6 +347,12 @@ export function PhotoMultiGenView({ projectId }: PhotoMultiGenViewProps) {
                             running={isCreating}
                             inputCount={draftSources.length}
                         />
+
+                        {runError && (
+                            <p className="text-[12px] text-red-400" role="alert">
+                                {runError}
+                            </p>
+                        )}
                     </>
                 ) : batchQuery.isLoading || !batch ? (
                     <div className="flex items-center justify-center py-16">

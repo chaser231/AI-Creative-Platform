@@ -38,7 +38,7 @@ const batchStatusSchema = z.enum([
     "FAILED",
     "CANCELLED",
 ]);
-const sourceTypeSchema = z.enum(["upload", "zip", "yadisk"]);
+const sourceTypeSchema = z.enum(["upload", "zip", "yadisk", "url"]);
 
 const newItemSchema = z.object({
     sourceUrl: z.string().url(),

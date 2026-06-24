@@ -1,15 +1,24 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { Upload, FileArchive, HardDrive, Loader2 } from "lucide-react";
+import {
+    Upload,
+    FileArchive,
+    HardDrive,
+    Link2,
+    Loader2,
+    Plus,
+    X,
+} from "lucide-react";
 import {
     importFilesAsSources,
     importZipAsSources,
     importYandexDiskAsSources,
+    importUrlsAsSources,
     type ImportedSource,
 } from "@/utils/multiGenImport";
 
-type SourceTab = "upload" | "zip" | "yadisk";
+type SourceTab = "upload" | "zip" | "yadisk" | "url";
 
 interface MultiGenSourcePanelProps {
     projectId: string;
@@ -21,6 +30,7 @@ const TABS: { id: SourceTab; label: string; icon: typeof Upload }[] = [
     { id: "upload", label: "Загрузка", icon: Upload },
     { id: "zip", label: "ZIP-архив", icon: FileArchive },
     { id: "yadisk", label: "Яндекс.Диск", icon: HardDrive },
+    { id: "url", label: "Ссылки", icon: Link2 },
 ];
 
 export function MultiGenSourcePanel({
@@ -32,17 +42,21 @@ export function MultiGenSourcePanel({
     const [importing, setImporting] = useState(false);
     const [errors, setErrors] = useState<string[]>([]);
     const [yadiskUrl, setYadiskUrl] = useState("");
+    const [urlRows, setUrlRows] = useState<string[]>([""]);
     const [dragOver, setDragOver] = useState(false);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const zipInputRef = useRef<HTMLInputElement>(null);
 
-    const runImport = async (fn: () => Promise<{ sources: ImportedSource[]; errors: string[] }>) => {
+    const runImport = async (
+        fn: () => Promise<{ sources: ImportedSource[]; errors: string[] }>,
+    ): Promise<{ sources: ImportedSource[]; errors: string[] }> => {
         setImporting(true);
         setErrors([]);
         try {
             const result = await fn();
             if (result.sources.length > 0) onImported(result.sources);
             setErrors(result.errors);
+            return result;
         } finally {
             setImporting(false);
         }
@@ -62,6 +76,27 @@ export function MultiGenSourcePanel({
     const handleYadisk = () => {
         if (!yadiskUrl.trim()) return;
         void runImport(() => importYandexDiskAsSources(yadiskUrl, projectId));
+    };
+
+    const updateUrlRow = (index: number, value: string) => {
+        setUrlRows((rows) => rows.map((r, i) => (i === index ? value : r)));
+    };
+
+    const addUrlRow = () => setUrlRows((rows) => [...rows, ""]);
+
+    const removeUrlRow = (index: number) => {
+        setUrlRows((rows) => {
+            const next = rows.filter((_, i) => i !== index);
+            return next.length > 0 ? next : [""];
+        });
+    };
+
+    const handleUrls = async () => {
+        if (!urlRows.some((u) => u.trim())) return;
+        const result = await runImport(() =>
+            importUrlsAsSources(urlRows, projectId),
+        );
+        if (result.sources.length > 0) setUrlRows([""]);
     };
 
     const busy = disabled || importing;
@@ -177,6 +212,59 @@ export function MultiGenSourcePanel({
                         <button
                             onClick={handleYadisk}
                             disabled={busy || !yadiskUrl.trim()}
+                            className="px-3 py-2 rounded-[var(--radius-md)] text-[12px] font-medium bg-accent-lime-hover text-accent-lime-text hover:bg-accent-lime transition-colors cursor-pointer disabled:opacity-50"
+                        >
+                            Импортировать
+                        </button>
+                    </div>
+                </div>
+            )}
+
+            {tab === "url" && (
+                <div className="flex flex-col gap-2 px-1 py-2">
+                    <p className="text-[12px] text-text-secondary">
+                        Прямые ссылки на изображения — по одной на строку
+                    </p>
+                    <div className="flex flex-col gap-2">
+                        {urlRows.map((row, i) => (
+                            <div key={i} className="flex items-center gap-2">
+                                <input
+                                    type="url"
+                                    value={row}
+                                    onChange={(e) =>
+                                        updateUrlRow(i, e.target.value)
+                                    }
+                                    onKeyDown={(e) => {
+                                        if (e.key === "Enter") void handleUrls();
+                                    }}
+                                    placeholder="https://avatars.mds.yandex.net/..."
+                                    disabled={busy}
+                                    className="flex-1 min-w-0 bg-bg-tertiary text-[12px] text-text-primary px-3 py-2 rounded-[var(--radius-md)] border border-border-primary focus:border-border-focus outline-none disabled:opacity-60"
+                                />
+                                {urlRows.length > 1 && (
+                                    <button
+                                        onClick={() => removeUrlRow(i)}
+                                        disabled={busy}
+                                        aria-label="Удалить ссылку"
+                                        className="flex items-center justify-center w-8 h-8 rounded-[var(--radius-md)] text-text-tertiary hover:text-text-primary hover:bg-bg-tertiary transition-colors cursor-pointer disabled:opacity-50"
+                                    >
+                                        <X size={14} />
+                                    </button>
+                                )}
+                            </div>
+                        ))}
+                    </div>
+                    <div className="flex items-center justify-between gap-2">
+                        <button
+                            onClick={addUrlRow}
+                            disabled={busy}
+                            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-[var(--radius-md)] text-[12px] font-medium text-text-secondary hover:text-text-primary hover:bg-bg-tertiary transition-colors cursor-pointer disabled:opacity-50"
+                        >
+                            <Plus size={13} /> Добавить ссылку
+                        </button>
+                        <button
+                            onClick={() => void handleUrls()}
+                            disabled={busy || !urlRows.some((u) => u.trim())}
                             className="px-3 py-2 rounded-[var(--radius-md)] text-[12px] font-medium bg-accent-lime-hover text-accent-lime-text hover:bg-accent-lime transition-colors cursor-pointer disabled:opacity-50"
                         >
                             Импортировать
