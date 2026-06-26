@@ -282,6 +282,8 @@ export interface CanvasStore {
     removeLayerFromFrame: (layerId: string) => void;
     pasteLayers: (layers: Layer[]) => void;
     wrapInAutoLayoutFrame: () => void;
+    /** Drop fallback-font text measurements and reflow all auto-sized text (called once fonts are ready). */
+    remeasureAllTextLayers: () => void;
 
     // Undo / Redo actions
     undo: () => void;

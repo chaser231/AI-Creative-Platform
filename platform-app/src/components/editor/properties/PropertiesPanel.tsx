@@ -1072,12 +1072,7 @@ function TextInspectorSection({ layer, onChange }: { layer: TextLayer; onChange:
             <TwoColumn>
                 <TextAdjustSwitcher
                     value={layer.textAdjust || "auto_width"}
-                    onChange={(value) => {
-                        const updates: Partial<TextLayer> = { textAdjust: value as TextLayer["textAdjust"] };
-                        if (value === "auto_width" && layer.layoutSizingWidth === "fill") updates.layoutSizingWidth = "fixed";
-                        if (value === "auto_height" && layer.layoutSizingHeight === "fill") updates.layoutSizingHeight = "fixed";
-                        onChange(updates);
-                    }}
+                    onChange={(value) => onChange({ textAdjust: value as TextLayer["textAdjust"] })}
                 />
                 <Select
                     size="xs"
@@ -2309,34 +2304,25 @@ function resolveManualSizeUpdate(
 ): Partial<Layer> {
     const updates: Partial<Layer> = axis === "width" ? { width: value } : { height: value };
 
-    if (modeConfig && modeConfig.value !== "fixed") {
-        Object.assign(updates, modeConfig.toUpdates("fixed"));
+    // Text: write raw intent only. `normalizeTextLayer` (in the store's
+    // updateLayer) pins the edited axis to fixed and re-derives textAdjust /
+    // layoutSizing so the two sizing models never drift apart.
+    if (layer.type === "text") {
+        return updates;
     }
 
-    if (layer.type === "text" && layer.textAdjust !== "fixed") {
-        (updates as Partial<TextLayer>).textAdjust = "fixed";
+    if (modeConfig && modeConfig.value !== "fixed") {
+        Object.assign(updates, modeConfig.toUpdates("fixed"));
     }
 
     return updates;
 }
 
 function resolveLayoutSizingUpdate(layer: Layer, axis: "width" | "height", value: string): Partial<Layer> {
-    const updates: Partial<Layer> = axis === "width"
+    // Raw intent for both text and non-text. For text, `normalizeTextLayer`
+    // derives the matching textAdjust from this layout-sizing pair; the UI no
+    // longer second-guesses it here (no hidden textAdjust syncs).
+    return axis === "width"
         ? { layoutSizingWidth: value as Layer["layoutSizingWidth"] }
         : { layoutSizingHeight: value as Layer["layoutSizingHeight"] };
-
-    if (layer.type === "text") {
-        const textUpdates = updates as Partial<TextLayer>;
-        if (axis === "width" && value === "fill" && layer.textAdjust === "auto_width") {
-            textUpdates.textAdjust = "auto_height";
-        }
-        if (axis === "height" && value === "fill" && layer.textAdjust === "auto_height") {
-            textUpdates.textAdjust = "fixed";
-        }
-        if (axis === "height" && value === "hug" && layer.textAdjust === "fixed") {
-            textUpdates.textAdjust = "auto_height";
-        }
-    }
-
-    return updates;
 }

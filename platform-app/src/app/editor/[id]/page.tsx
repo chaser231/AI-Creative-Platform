@@ -296,6 +296,22 @@ export default function EditorPage({ params }: EditorPageProps) {
         templateSaveMutation.mutate({ id, data: canvasState });
     }, [isTemplateMode, id, templateSaveMutation]);
 
+    // Text containers are measured against the active font. Before custom
+    // @font-face files finish loading the browser falls back to a wider font;
+    // persisting that geometry makes text wrap onto a 2nd line on reopen. Gate
+    // autosave on font readiness and reflow all auto-sized text once fonts load.
+    const [fontsReady, setFontsReady] = useState(false);
+    useEffect(() => {
+        if (typeof document === "undefined" || !("fonts" in document)) {
+            setFontsReady(true);
+            return;
+        }
+        let cancelled = false;
+        const markReady = () => { if (!cancelled) setFontsReady(true); };
+        document.fonts.ready.then(markReady).catch(markReady);
+        return () => { cancelled = true; };
+    }, []);
+
     // ─── Project mode: load & auto-save ───
     // IMPORTANT: Load canvas state FIRST, then enable auto-save AFTER load completes.
     // This prevents the canvas-clear-on-mount from triggering an empty save.
@@ -317,11 +333,23 @@ export default function EditorPage({ params }: EditorPageProps) {
     }, [isTemplateMode, id, refetchCanvas]);
     const { isSaving, getUnsavedState, saveNowSync } = useCanvasAutoSave(
         isTemplateMode ? "__skip__" : id,
-        !isTemplateMode && canvasLoaded,
+        !isTemplateMode && canvasLoaded && fontsReady,
         stageRef,
         handleVersionConflict,
         { isLeader: tabLeader.isLeader, broadcastSaved: tabLeader.broadcastSaved },
     );
+
+    // Once the project has hydrated AND fonts are ready, reflow every auto-sized
+    // text container so it sizes to the real font instead of the wider fallback
+    // measured during hydration. Runs once per project load.
+    const textReflowedForRef = useRef<string | null>(null);
+    useEffect(() => {
+        if (isTemplateMode) return;
+        if (!canvasLoaded || !fontsReady) return;
+        if (textReflowedForRef.current === id) return;
+        textReflowedForRef.current = id;
+        useCanvasStore.getState().remeasureAllTextLayers();
+    }, [isTemplateMode, canvasLoaded, fontsReady, id]);
 
     // Followers: when the leader broadcasts a `saved`, refetch so we don't
     // sit on stale canvas state.
