@@ -3,7 +3,7 @@
 import { useEffect, useMemo } from "react";
 import { useThemeStore } from "@/store/themeStore";
 import { loadAllCustomFonts, type WorkspaceFontAsset } from "@/lib/customFonts";
-import { clearTextMeasureCache } from "@/utils/layoutEngine";
+import { useCanvasStore } from "@/store/canvasStore";
 import { trpc } from "@/lib/trpc";
 import { useWorkspace } from "@/providers/WorkspaceProvider";
 
@@ -32,14 +32,18 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     }, [workspaceFonts, templateFonts]);
 
     useEffect(() => {
-        // Drop any text measurements taken with a fallback font, then again once
-        // the browser reports every @font-face ready, so text containers size to
-        // the real font instead of a default (avoids wrong padding / wrapping).
+        // Workspace/template fonts load asynchronously and can land AFTER the
+        // editor's initial reflow. Once they're in, reflow every text layer so
+        // containers size to the real font instead of a fallback (fixes wrong
+        // wrapping / padding). `remeasureAllTextLayers` clears the measure cache
+        // itself and is a no-op when there are no text layers (e.g. non-editor
+        // pages), so it's safe to call globally from the provider.
+        const reflowText = () => useCanvasStore.getState().remeasureAllTextLayers();
         loadAllCustomFonts(allFontAssets)
             .catch(err => console.error("Failed to inject custom fonts on load", err))
-            .finally(() => clearTextMeasureCache());
+            .finally(reflowText);
         if (typeof document !== "undefined" && "fonts" in document) {
-            document.fonts.ready.then(() => clearTextMeasureCache()).catch(() => {});
+            document.fonts.ready.then(reflowText).catch(() => {});
         }
 
         const root = document.documentElement;

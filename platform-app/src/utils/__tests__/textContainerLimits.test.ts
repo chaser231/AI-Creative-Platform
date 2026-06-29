@@ -42,6 +42,17 @@ describe("textContainerLimits", () => {
         expect(getMaxLinesCapHeight(layer)).toBe(48);
     });
 
+    it("floors the maxLines cap at 1em per line so line-height < 1 doesn't collapse the box", () => {
+        // Regression: cap = maxLines * fontSize * lineHeight used to collapse with
+        // line-height (e.g. 1% -> ~0.5px), clamping the container into a thin strip
+        // even though glyph ink stays full height. Per-line height is floored to 1em.
+        const tight = makeText({ responsive: { maxLines: 1 }, fontSize: 52, lineHeight: 0.01 });
+        expect(getMaxLinesCapHeight(tight)).toBe(52);
+        // Cap is unchanged for the normal (>= 1) line-height range.
+        const normal = makeText({ responsive: { maxLines: 2 }, fontSize: 52, lineHeight: 1.2 });
+        expect(getMaxLinesCapHeight(normal)).toBeCloseTo(2 * 52 * 1.2, 5);
+    });
+
     it("clamps width and height to responsive min/max", () => {
         const layer = makeText({
             width: 500,

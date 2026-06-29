@@ -22,7 +22,29 @@ export const PREINSTALLED_FONTS: PreinstalledFont[] = PREINSTALLED_FONT_FAMILIES
 
 const DB_NAME = "CreativePlatformDB";
 const STORE_NAME = "customFonts";
+// Family-level dedup for whole-file registrations (workspace/user fonts).
 const loadedFontNames = new Set<string>();
+// (family, weight, style)-level dedup for weight-specific FontFace registrations
+// (e.g. preinstalled families where each weight is a separate file).
+const loadedFontWeightKeys = new Set<string>();
+
+/** Normalize a CSS font-weight token ("normal"/"bold"/"400") to a number. */
+export function parseNumericFontWeight(weight: string | number | undefined | null): number {
+    if (typeof weight === "number" && Number.isFinite(weight)) return weight;
+    if (weight == null) return 400;
+    const token = String(weight).trim().toLowerCase();
+    if (token === "normal" || token === "") return 400;
+    if (token === "bold") return 700;
+    const parsed = parseInt(token, 10);
+    return Number.isFinite(parsed) ? parsed : 400;
+}
+
+export interface RegisterFontOptions {
+    /** When set, registers a weight-specific FontFace (descriptor `weight`). */
+    weight?: string | number;
+    /** FontFace `style` descriptor; defaults to "normal". */
+    style?: string;
+}
 
 // Very simple indexedDB wrapper
 function getDB(): Promise<IDBDatabase> {
@@ -80,17 +102,39 @@ export function normalizeFontFamilyName(name: string): string {
         .trim();
 }
 
-async function registerFont(name: string, source: ArrayBuffer | string): Promise<string | null> {
+export async function registerFont(
+    name: string,
+    source: ArrayBuffer | string,
+    options?: RegisterFontOptions,
+): Promise<string | null> {
     if (typeof window === "undefined" || !("fonts" in document)) return null;
 
     const family = normalizeFontFamilyName(name);
     if (!family) return null;
+
+    const sourceArg = typeof source === "string" ? `url("${source}")` : source;
+
+    // Weight-specific registration: dedup by (family, weight, style) and attach
+    // FontFace weight/style descriptors so `document.fonts.check("700 …")`
+    // resolves the right face instead of a single normal-weight fallback.
+    if (options?.weight != null) {
+        const numericWeight = parseNumericFontWeight(options.weight);
+        const style = options.style || "normal";
+        const key = `${family.toLowerCase()}::${numericWeight}::${style}`;
+        if (loadedFontWeightKeys.has(key)) return family;
+
+        const descriptors: FontFaceDescriptors = { weight: String(numericWeight), style };
+        const fontFace = new FontFace(family, sourceArg, descriptors);
+        const loadedFace = await fontFace.load();
+        document.fonts.add(loadedFace);
+        loadedFontWeightKeys.add(key);
+        return family;
+    }
+
+    // Whole-file registration (workspace/user fonts): dedup by family.
     if (loadedFontNames.has(family)) return family;
 
-    const fontFace = typeof source === "string"
-        ? new FontFace(family, `url("${source}")`)
-        : new FontFace(family, source);
-
+    const fontFace = new FontFace(family, sourceArg);
     const loadedFace = await fontFace.load();
     document.fonts.add(loadedFace);
     loadedFontNames.add(family);

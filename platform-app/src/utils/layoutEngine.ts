@@ -100,19 +100,113 @@ function measureKonvaRenderedTextWidth(node: Konva.Text, displayText: string): n
     return Math.max(...lines.map((line) => measureKonvaLineRenderedWidth(node, line)));
 }
 
+// ─── Unified font metrics ──────────────────────────────────────
+// Single source of vertical font metrics (ascent/descent/ink) shared by height
+// measurement (`applyTightLineHeightFloor`) and vertical-trim geometry
+// (`getTextTrimMetrics`). Both MUST agree with how Konva actually places glyphs,
+// otherwise the render-time `offsetY` (derived from trim) drifts from the box
+// the store measured — the root cause of "text shifts up for some font
+// families". Two things guarantee parity with Konva's renderer:
+//   1. We measure through the same shared Konva.Text node, so `measureSize` uses
+//      Konva's own `_getContextFont()` (identical font resolution), and
+//   2. the Canvas2D fallback builds the font shorthand the SAME way Konva does —
+//      crucially QUOTING multi-word families. An unquoted `400 16px YS Display`
+//      is invalid CSS `font` shorthand, so the canvas silently keeps its
+//      previous font and returns wrong metrics — but only for families whose
+//      name contains spaces, which is exactly the "only some fonts" symptom.
+
+interface SampleFontMetrics {
+    /** font bounding ascent (A) — matches Konva's baseline math */
+    fontAscent: number;
+    /** font bounding descent (D) */
+    fontDescent: number;
+    /** ink (actual bounding) ascent of the measured sample */
+    inkAscent: number;
+    /** ink (actual bounding) descent of the measured sample */
+    inkDescent: number;
+}
+
+// Ratios mirror Konva.Text.measureSize's own fallbacks (91/100, 21/100) so the
+// no-canvas path stays as close as possible to the rendered geometry.
+const FALLBACK_FONT_ASCENT_RATIO = 0.91;
+const FALLBACK_FONT_DESCENT_RATIO = 0.21;
+const FALLBACK_INK_ASCENT_RATIO = 0.72;
+const FALLBACK_INK_DESCENT_RATIO = 0.2;
+
+/** Build a canvas `font` shorthand exactly like Konva (quoted multi-word family). */
+function buildKonvaFontString(text: TextLayer): string {
+    const style = text.fontWeight || "normal";
+    const family = text.fontFamily
+        .split(",")
+        .map((part) => {
+            const fam = part.trim();
+            const hasSpace = fam.indexOf(" ") >= 0;
+            const hasQuotes = fam.indexOf('"') >= 0 || fam.indexOf("'") >= 0;
+            return hasSpace && !hasQuotes ? `"${fam}"` : fam;
+        })
+        .join(", ");
+    return `${style} normal ${text.fontSize}px ${family}`;
+}
+
+function finiteOr(value: number | undefined, fallback: number): number {
+    return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+/**
+ * Measure font + ink metrics for a sample string via the SAME engine Konva
+ * renders with, so trim offsets and the measured box never disagree.
+ */
+function measureSampleFontMetrics(text: TextLayer, sample: string): SampleFontMetrics {
+    const fs = text.fontSize;
+    const K = getKonva();
+    if (K) {
+        const node = getSharedKonvaText(K);
+        node.fontFamily(text.fontFamily);
+        node.fontSize(fs);
+        node.fontStyle(text.fontWeight || "normal");
+        const m = node.measureSize(sample);
+        return {
+            fontAscent: m.fontBoundingBoxAscent,
+            fontDescent: m.fontBoundingBoxDescent,
+            inkAscent: m.actualBoundingBoxAscent,
+            inkDescent: m.actualBoundingBoxDescent,
+        };
+    }
+
+    const ctx = getMeasureCanvas()?.getContext("2d") as
+        | CanvasRenderingContext2D
+        | OffscreenCanvasRenderingContext2D
+        | null;
+    if (!ctx) {
+        return {
+            fontAscent: fs * FALLBACK_FONT_ASCENT_RATIO,
+            fontDescent: fs * FALLBACK_FONT_DESCENT_RATIO,
+            inkAscent: fs * FALLBACK_INK_ASCENT_RATIO,
+            inkDescent: fs * FALLBACK_INK_DESCENT_RATIO,
+        };
+    }
+
+    ctx.font = buildKonvaFontString(text);
+    ctx.textBaseline = "alphabetic";
+    const m = ctx.measureText(sample);
+    return {
+        fontAscent: finiteOr(m.fontBoundingBoxAscent, fs * FALLBACK_FONT_ASCENT_RATIO),
+        fontDescent: finiteOr(m.fontBoundingBoxDescent, fs * FALLBACK_FONT_DESCENT_RATIO),
+        inkAscent: finiteOr(m.actualBoundingBoxAscent, fs * FALLBACK_INK_ASCENT_RATIO),
+        inkDescent: finiteOr(m.actualBoundingBoxDescent, fs * FALLBACK_INK_DESCENT_RATIO),
+    };
+}
+
 /** Line-height below 1 shrinks Konva's line box below glyph ink — floor height. */
 function applyTightLineHeightFloor(
     text: TextLayer,
     height: number,
     lineCount: number,
-    node: Konva.Text,
 ): number {
     const lineHeight = text.lineHeight || 1.2;
     if (lineHeight >= 1 || lineCount <= 0) return height;
-    const sample = node.measureSize("Мg");
-    const inkHeight =
-        (sample.actualBoundingBoxAscent ?? text.fontSize * 0.8)
-        + (sample.actualBoundingBoxDescent ?? text.fontSize * 0.2);
+    const sample = measureSampleFontMetrics(text, "Мg");
+    const inkHeight = sample.inkAscent + sample.inkDescent;
     return Math.max(height, Math.ceil(inkHeight * lineCount));
 }
 
@@ -132,6 +226,10 @@ function estimateTextSizeRaw(
     const textAdjust = text.textAdjust || "auto_width";
     const isFixedTruncate = textAdjust === "fixed" && !!text.truncateText;
 
+    // fixed = no resize by design: the box keeps its stored width/height
+    // regardless of font/line-height (only a maxLines cap may shrink it). Glyphs
+    // are positioned inside this box by Konva via `verticalAlign`; trim is never
+    // applied (see `isTextTrimActive`), so there is no offsetY to drift.
     if (textAdjust === "fixed" && !text.truncateText) {
         const capHeight = getMaxLinesCapHeight(text);
         if (!capHeight) return { width: text.width, height: text.height };
@@ -170,7 +268,7 @@ function estimateTextSizeRaw(
             : (isFixedTruncate ? text.width : (measureW ?? text.width));
         let h = node.height();
         if (!isFixedTruncate) {
-            h = applyTightLineHeightFloor(text, h, lineCount, node);
+            h = applyTightLineHeightFloor(text, h, lineCount);
         }
         if (isFixedTruncate) {
             const lineHeightPx = text.fontSize * (text.lineHeight || 1.2);
@@ -270,51 +368,75 @@ export function isTextTrimActive(text: TextLayer): boolean {
 export function getTextTrimMetrics(text: TextLayer): { top: number; bottom: number; total: number } {
     const L = text.fontSize * (text.lineHeight || 1.2);
     const cutToBaseline = !!text.baselineTrim;
-    const canvas = getMeasureCanvas();
-    const ctx = canvas?.getContext("2d") as
-        | CanvasRenderingContext2D
-        | OffscreenCanvasRenderingContext2D
-        | null;
 
-    let top: number;
-    let bottom: number;
-    if (!ctx) {
-        // SSR / no canvas: assume a symmetric em-box split.
-        const gap = Math.max(0, (L - text.fontSize) / 2);
-        top = gap;
-        bottom = cutToBaseline ? gap + text.fontSize * 0.2 : gap;
-    } else {
-        ctx.font = `${text.fontWeight || "normal"} ${text.fontSize}px ${text.fontFamily}`;
-        ctx.textBaseline = "alphabetic";
-        let display = text.text || "";
-        if (text.textTransform === "uppercase") display = display.toUpperCase();
-        else if (text.textTransform === "lowercase") display = display.toLowerCase();
-        const lines = display.split("\n");
-        const firstLine = lines[0] || "M";
-        const lastLine = lines[lines.length - 1] || "M";
+    let display = text.text || "";
+    if (text.textTransform === "uppercase") display = display.toUpperCase();
+    else if (text.textTransform === "lowercase") display = display.toLowerCase();
+    const lines = display.split("\n");
+    const firstLine = lines[0] || "M";
+    const lastLine = lines[lines.length - 1] || "M";
 
-        const fm = ctx.measureText("M");
-        const A = Number.isFinite(fm.fontBoundingBoxAscent)
-            ? fm.fontBoundingBoxAscent
-            : (Number.isFinite(fm.actualBoundingBoxAscent) ? fm.actualBoundingBoxAscent : text.fontSize * 0.9);
-        const D = Number.isFinite(fm.fontBoundingBoxDescent)
-            ? fm.fontBoundingBoxDescent
-            : (Number.isFinite(fm.actualBoundingBoxDescent) ? fm.actualBoundingBoxDescent : text.fontSize * 0.25);
+    // Font bounding A/D — the same metric Konva uses to place the alphabetic
+    // baseline at (A - D)/2 + L/2 within each line box (see Konva Text
+    // `_sceneFunc`). Measured through the unified provider so it matches render.
+    const fontM = measureSampleFontMetrics(text, "M");
+    const A = fontM.fontAscent;
+    const D = fontM.fontDescent;
 
-        const fa = ctx.measureText(firstLine);
-        const la = ctx.measureText(lastLine);
-        const actualAscent = Number.isFinite(fa.actualBoundingBoxAscent) ? fa.actualBoundingBoxAscent : A;
-        // Baseline trim cuts exactly at the baseline (descent = 0); otherwise hug
-        // the last line's descender bottom.
-        const actualDescent = cutToBaseline
-            ? 0
-            : (Number.isFinite(la.actualBoundingBoxDescent) ? la.actualBoundingBoxDescent : D);
+    const actualAscent = measureSampleFontMetrics(text, firstLine).inkAscent;
+    // Baseline trim cuts exactly at the baseline (descent = 0); otherwise hug the
+    // last line's descender bottom.
+    const actualDescent = cutToBaseline ? 0 : measureSampleFontMetrics(text, lastLine).inkDescent;
 
-        top = Math.max(0, L / 2 + (A - D) / 2 - actualAscent);
-        bottom = Math.max(0, L / 2 - (A - D) / 2 - actualDescent);
-    }
+    const top = Math.max(0, L / 2 + (A - D) / 2 - actualAscent);
+    const bottom = Math.max(0, L / 2 - (A - D) / 2 - actualDescent);
 
     return { top, bottom, total: top + bottom };
+}
+
+/**
+ * Canonical vertical render offset (Konva `offsetY`) for a text layer — the
+ * single source of truth shared by the studio `Canvas`, the read-only
+ * `ArtboardContent` and the inline editor (which mirrors it via CSS
+ * `translateY`). Vector/raster export inherits it for free, because it reads the
+ * offset straight from the live Konva node's transform.
+ *
+ * Two regimes produce a non-zero offset:
+ *
+ *   1. Vertical/baseline trim active → strip the line-box leading above the
+ *      first line so the container hugs the glyphs (existing behaviour). This
+ *      branch stays clamped to `>= 0` — you cannot add negative leading.
+ *
+ *   2. line-height < 1 with trim off → Konva's non-legacy layout centres each
+ *      glyph inside a line box that is now SHORTER than the ink, so the first
+ *      line drifts UP and overflows the container. `applyTightLineHeightFloor`
+ *      already floored the measured box height to the glyph ink, so we pin the
+ *      first line's ink top to the box top with the SAME baseline formula —
+ *      but WITHOUT the `>= 0` clamp, because here the compensation is negative
+ *      (push the content back DOWN). The glyphs then hug the floored box and no
+ *      longer drift above it.
+ *
+ * `fixed` text keeps `offsetY = 0`: its box is never floored or trimmed and the
+ * glyphs are placed by `verticalAlign`, which an offset would fight.
+ */
+export function getTextRenderOffsetY(text: TextLayer): number {
+    if (isTextTrimActive(text)) return getTextTrimMetrics(text).top;
+    if ((text.textAdjust || "auto_width") === "fixed") return 0;
+
+    const lineHeight = text.lineHeight || 1.2;
+    if (lineHeight >= 1) return 0;
+
+    // Anti-drift: unclamped first-line top leading (mirror of getTextTrimMetrics
+    // `top`, which would otherwise clamp this negative value away).
+    const L = text.fontSize * lineHeight;
+    let display = text.text || "";
+    if (text.textTransform === "uppercase") display = display.toUpperCase();
+    else if (text.textTransform === "lowercase") display = display.toLowerCase();
+    const firstLine = display.split("\n")[0] || "M";
+
+    const fontM = measureSampleFontMetrics(text, "M");
+    const inkAscent = measureSampleFontMetrics(text, firstLine).inkAscent;
+    return L / 2 + (fontM.fontAscent - fontM.fontDescent) / 2 - inkAscent;
 }
 
 function applyVerticalTrim(

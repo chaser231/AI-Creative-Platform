@@ -3,7 +3,7 @@
 import { useRef, useState, useEffect, useCallback } from "react";
 import type { TextLayer } from "@/types";
 import Konva from "konva";
-import { getTextTrimMetrics, isTextTrimActive, measureTextLayer } from "@/utils/layoutEngine";
+import { getTextRenderOffsetY, measureTextLayer } from "@/utils/layoutEngine";
 import {
     artboardLengthToScreen,
     artboardToScreen,
@@ -121,13 +121,15 @@ export function InlineTextEditor({
     const isAutoHeight = layer.textAdjust === "auto_height" || !layer.textAdjust;
     const isFixed = layer.textAdjust === "fixed";
 
-    // Vertical trim: the reported height shrinks by the total trimmed leading
-    // and the textarea is shifted up by the top leading so glyphs sit flush with
-    // the top edge — mirroring the static Konva render (natural height + offsetY).
-    const trim = isTextTrimActive(layer)
-        ? getTextTrimMetrics(layer)
-        : { top: 0, bottom: 0, total: 0 };
-    const trimShiftScreen = artboardLengthToScreen(trim.top, viewport);
+    // Mirror the static Konva render's vertical offset (the single canonical
+    // `getTextRenderOffsetY`): positive when vertical trim strips the leading
+    // above the first line, negative when a sub-1 line-height would otherwise
+    // drift the glyphs up. CSS `translateY` is the inverse of Konva `offsetY`
+    // (offsetY moves content up; translateY(-offset) reproduces that, and a
+    // negative offset pushes the textarea back down — no glyph jump on
+    // enter/exit of the editor).
+    const renderOffsetY = getTextRenderOffsetY(layer);
+    const offsetShiftScreen = artboardLengthToScreen(renderOffsetY, viewport);
 
     // Use the live layer dimensions from the store (updated by auto-layout)
     const screenW = Math.max(artboardLengthToScreen(layer.width, viewport), 20);
@@ -262,7 +264,7 @@ export function InlineTextEditor({
                 style={{
                     // Match Konva text rendering exactly
                     display: "block",
-                    transform: trimShiftScreen ? `translateY(${-trimShiftScreen}px)` : undefined,
+                    transform: offsetShiftScreen ? `translateY(${-offsetShiftScreen}px)` : undefined,
                     fontSize: fontSizeScaled,
                     fontFamily: layer.fontFamily,
                     fontWeight: layer.fontWeight || "normal",
