@@ -2429,7 +2429,11 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
             const hasSizedX = Math.abs(width - layer.width) > 0.5;
             const hasSizedY = Math.abs(height - layer.height) > 0.5;
 
-            if (hasSizedX || hasSizedY) {
+            // Non-text: a manual drag-resize pins the dragged axis to fixed.
+            // Text routes through normalizeTextLayer (updateLayer) instead — the
+            // width/height in the update make it derive textAdjust=fixed — so we
+            // must NOT add a second, competing sync here.
+            if ((hasSizedX || hasSizedY) && layer.type !== "text") {
                 if (hasSizedX && (layer.layoutSizingWidth === "fill" || layer.layoutSizingWidth === "hug")) extraProps.layoutSizingWidth = "fixed";
                 if (hasSizedY && (layer.layoutSizingHeight === "fill" || layer.layoutSizingHeight === "hug")) extraProps.layoutSizingHeight = "fixed";
             }

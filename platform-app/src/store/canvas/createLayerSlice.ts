@@ -12,7 +12,8 @@ import type {
 import { MAX_HISTORY } from "./types";
 import { CONTENT_SOURCE_KEYS } from "@/types";
 import { v4 as uuid } from "uuid";
-import { applyAllAutoLayouts, measureTextLayer } from "@/utils/layoutEngine";
+import { applyAllAutoLayouts, measureTextLayer, clearTextMeasureCache } from "@/utils/layoutEngine";
+import { normalizeTextLayer } from "@/utils/normalizeTextLayer";
 import { applySliceAlignment } from "@/utils/sliceAlignment";
 import {
     syncFrameChildIdsToMasters,
@@ -111,6 +112,7 @@ export type LayerSlice = Pick<CanvasStore,
     | "moveLayerToFrame" | "removeLayerFromFrame"
     | "pasteLayers"
     | "wrapInAutoLayoutFrame"
+    | "remeasureAllTextLayers"
 >;
 
 // ─── Helper: create layer + master + instances for all add* actions ──
@@ -522,8 +524,17 @@ export const createLayerSlice: StateCreator<CanvasStore, [], [], LayerSlice> = (
                 });
             };
 
+            // Text carries two sizing models (textAdjust + layoutSizing); the
+            // normalizer is the single place that reconciles the raw UI intent
+            // into a coherent state before measurement/auto-layout run.
+            const mergedLayers = computeUpdatedLayers(state.layers, id, updates);
+            const normalizedLayers = mergedLayers.map((l) =>
+                l.id === id && l.type === "text"
+                    ? normalizeTextLayer(l as TextLayer, Object.keys(updates))
+                    : l
+            );
             const updatedLayers = remeasureStandaloneText(
-                computeUpdatedLayers(state.layers, id, updates),
+                normalizedLayers,
                 id,
                 updates,
             );
@@ -1255,5 +1266,46 @@ export const createLayerSlice: StateCreator<CanvasStore, [], [], LayerSlice> = (
             selectedLayerIds: [frameId],
             activeTool: "select" as const,
         }));
+    },
+
+    // ─── remeasureAllTextLayers ─────────────────────────
+    //
+    // Drops cached text measurements taken with a fallback font, then re-measures
+    // every auto-sized text layer and re-runs auto-layout. Called once fonts are
+    // ready (see ThemeProvider / editor font-ready effect): hydrated geometry is
+    // often measured against a fallback font (wider) before the real @font-face
+    // loads, which persists a too-wide width and makes text wrap onto a second
+    // line on reopen. This re-aligns containers to the real font without a manual
+    // re-edit. Does NOT push history — it's a corrective reflow, not a user edit.
+    remeasureAllTextLayers: () => {
+        clearTextMeasureCache();
+        set((state) => {
+            const hasText = state.layers.some((l) => l.type === "text");
+            if (!hasText) return {};
+
+            const frameChildIds = new Set<string>();
+            for (const l of state.layers) {
+                if (l.type === "frame") {
+                    for (const cid of (l as FrameLayer).childIds) frameChildIds.add(cid);
+                }
+            }
+
+            // Standalone (non-frame-child) auto-sized text is not touched by
+            // applyAllAutoLayouts, so re-measure it explicitly here.
+            const remeasured = state.layers.map((l) => {
+                if (l.type !== "text" || frameChildIds.has(l.id)) return l;
+                const t = l as TextLayer;
+                const adj = t.textAdjust ?? "auto_width";
+                if (adj === "fixed") return l;
+                const size = measureTextLayer(t, adj === "auto_width" ? undefined : t.width);
+                const next = adj === "auto_width"
+                    ? { ...t, width: size.width, height: size.height }
+                    : { ...t, height: size.height };
+                return next as Layer;
+            });
+
+            const laidOut = applyAllAutoLayouts(remeasured, state.layers);
+            return { layers: laidOut };
+        });
     },
 });

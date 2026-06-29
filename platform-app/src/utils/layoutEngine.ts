@@ -711,7 +711,19 @@ function computeAutoLayoutInternal(
         if (originalChild && originalChild.type === "text") {
             const textChild = originalChild as TextLayer;
             const adj = textChild.textAdjust || "auto_width";
-            if (adj === "auto_height") {
+
+            // Did fill/stretch externally constrain this child's WIDTH this pass?
+            // In a vertical frame the counter axis is the width (fill or stretch);
+            // in a horizontal frame the primary axis is the width (fill). When the
+            // width is constrained the text must wrap to it and only its height is
+            // intrinsic — i.e. measure like auto_height. Reverting to the intrinsic
+            // auto_width here is the bug that silently cancels fill/stretch (the
+            // text snaps back to its content width).
+            const widthConstrainedByLayout = isHorizontal
+                ? m.fillPrimary
+                : (m.fillCounter || (counterAxisAlignItems === "stretch" && !counterHug));
+
+            if (adj === "auto_height" || (adj === "auto_width" && widthConstrainedByLayout)) {
                 const est = estimateTextSize(textChild, w);
                 h = est.height;
                 updates[m.id] = { ...updates[m.id], width: w, height: h };
@@ -721,6 +733,7 @@ function computeAutoLayoutInternal(
                 h = est.height;
                 updates[m.id] = { ...updates[m.id], width: w, height: h };
             }
+            // adj === "fixed": keep the fill/stretch-resolved box as-is.
         }
 
         w = Number.isFinite(w) ? Math.max(1, w) : 1;
@@ -839,17 +852,46 @@ function getAutoHeightTextAnchorFactor(text: TextLayer): number {
 }
 
 /**
+ * IDs of layers whose x/y is owned by an auto-layout frame. Their position is
+ * decided by `computeAutoLayout` (counter-axis offset + primary stacking), so
+ * the visual-anchor preservation below must NOT fight it — mirrors the skip in
+ * `applyFrameConstraintCascade`.
+ */
+function buildAutoLayoutManagedChildIds(layers: Layer[]): Set<string> {
+    const managed = new Set<string>();
+    const byId = buildLayerMap(layers);
+    for (const l of layers) {
+        if (l.type !== "frame") continue;
+        const frame = l as FrameLayer;
+        if (!frame.layoutMode || frame.layoutMode === "none") continue;
+        for (const cid of frame.childIds) {
+            const child = byId.get(cid);
+            if (child && !child.isAbsolutePositioned && child.visible) managed.add(cid);
+        }
+    }
+    return managed;
+}
+
+/**
  * Figma keeps the visual anchor of auto-sized text stable while the text box
  * grows: left/top text grows right/down, centered text grows around its center,
- * and right/bottom text preserves the opposite edge.
+ * and right/bottom text preserves the opposite edge. Text managed by an
+ * auto-layout frame is skipped — its position is owned by the layout engine.
  */
 export function preserveAutoWidthTextAnchors(previousLayers: Layer[], nextLayers: Layer[]): Layer[] {
     const previousById = buildLayerMap(previousLayers);
+    const autoLayoutManagedIds = buildAutoLayoutManagedChildIds(nextLayers);
     let changed = false;
 
     const anchored = nextLayers.map((layer) => {
         if (layer.type !== "text") return layer;
         const text = layer as TextLayer;
+
+        // Auto-layout owns this child's position; re-anchoring by paragraph
+        // align would drag the box back toward its previous center/right edge
+        // and override the frame's counter-axis placement (the "text jumps to
+        // center" bug).
+        if (autoLayoutManagedIds.has(layer.id)) return layer;
 
         const previous = previousById.get(layer.id);
         if (!previous || previous.type !== "text") return layer;

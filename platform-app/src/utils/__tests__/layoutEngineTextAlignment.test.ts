@@ -91,7 +91,11 @@ describe("auto-width text alignment anchors", () => {
         expect(text.x + text.width / 2).toBe(70);
     });
 
-    it("keeps managed auto-layout text anchored after intrinsic auto-width measurement changes", () => {
+    it("lets auto-layout own the position of managed text (no paragraph-align re-anchor)", () => {
+        // A right-aligned auto_width text inside a flex-start horizontal frame is
+        // placed at paddingLeft by the layout engine; paragraph align only affects
+        // glyphs inside the (hugged) box, so the box keeps its left edge as the
+        // content grows. Re-anchoring by `align` here would fight the engine.
         const frame = makeFrame("frame", {
             layoutMode: "horizontal",
             childIds: ["text"],
@@ -110,9 +114,46 @@ describe("auto-width text alignment anchors", () => {
         );
         const next = applyAllAutoLayouts(nextInput, prev);
         const nextText = getLayer<TextLayer>(next, "text");
+        const nextFrame = getLayer<FrameLayer>(next, "frame");
 
         expect(nextText.width).toBeGreaterThan(prevText.width);
-        expect(nextText.x + nextText.width).toBeCloseTo(prevText.x + prevText.width, 3);
+        // Left edge stays glued to the auto-layout slot (paddingLeft), it is NOT
+        // re-anchored to the previous right edge.
+        expect(nextText.x).toBeCloseTo(nextFrame.x + (nextFrame.paddingLeft ?? 0), 3);
+        expect(nextText.x).toBeCloseTo(prevText.x, 3);
+    });
+
+    it("does not re-center managed auto-width text in a flex-start vertical frame", () => {
+        // Repro of the "text jumps to center" bug: a center-aligned auto_width
+        // text inside a vertical frame with counterAxisAlignItems=flex-start must
+        // sit at paddingLeft, even when its intrinsic width changes between passes.
+        const frame = makeFrame("frame", {
+            layoutMode: "vertical",
+            width: 400,
+            primaryAxisAlignItems: "flex-start",
+            counterAxisAlignItems: "flex-start",
+            paddingLeft: 0,
+            paddingRight: 0,
+            childIds: ["text"],
+        });
+        const prevInput: Layer[] = [
+            frame,
+            makeText("text", { align: "center", x: 0, y: 0, text: "Much longer heading text" }),
+        ];
+        const prev = applyAllAutoLayouts(prevInput);
+        const prevText = getLayer<TextLayer>(prev, "text");
+
+        // Content shrinks → intrinsic width changes → the old code path would have
+        // re-anchored the box around its previous center.
+        const nextInput = prev.map((layer) =>
+            layer.id === "text" ? ({ ...layer, text: "Hi" } as TextLayer) : layer
+        );
+        const next = applyAllAutoLayouts(nextInput, prev);
+        const nextText = getLayer<TextLayer>(next, "text");
+        const nextFrame = getLayer<FrameLayer>(next, "frame");
+
+        expect(nextText.width).toBeLessThan(prevText.width);
+        expect(nextText.x).toBeCloseTo(nextFrame.x + (nextFrame.paddingLeft ?? 0), 3);
     });
 
     it("keeps bottom and middle aligned auto-height text anchored while height grows", () => {
