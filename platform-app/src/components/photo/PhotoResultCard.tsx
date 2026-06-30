@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { memo, useState, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { Pencil, Image as ImageIcon, Download, Copy, LayoutGrid, CheckCircle2, Loader2, Sparkles, Layers, Maximize2, Minimize2, X } from "lucide-react";
 import { usePhotoStore } from "@/store/photoStore";
@@ -21,7 +21,7 @@ interface PhotoResultCardProps {
     onVariations?: () => void;
 }
 
-export function PhotoResultCard({
+export const PhotoResultCard = memo(function PhotoResultCard({
     url,
     messageId,
     projectId,
@@ -142,6 +142,7 @@ export function PhotoResultCard({
             <img
                 src={url}
                 alt={prompt ?? "generated"}
+                loading="lazy"
                 className="block max-w-full max-h-[420px] object-contain cursor-zoom-in"
                 draggable={false}
                 onClick={() => setMaximized(true)}
@@ -260,7 +261,7 @@ export function PhotoResultCard({
                 )}
         </div>
     );
-}
+});
 
 function MaximizedPreview({
     url,

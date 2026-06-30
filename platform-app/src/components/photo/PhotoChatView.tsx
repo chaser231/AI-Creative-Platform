@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useRef } from "react";
-import { Loader2, Image as ImageIcon, Wand2 } from "lucide-react";
+import { memo, useEffect, useMemo, useRef } from "react";
+import { Loader2, Image as ImageIcon, Wand2, AlertTriangle, RefreshCw } from "lucide-react";
+import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 import { trpc } from "@/lib/trpc";
 import { usePhotoStore } from "@/store/photoStore";
 import { PhotoResultCard } from "./PhotoResultCard";
@@ -23,7 +24,7 @@ interface AIMessageRecord {
 export function PhotoChatView({ projectId }: PhotoChatViewProps) {
     const activeSessionId = usePhotoStore((s) => s.activeSessionId);
     const allPendingGenerations = usePhotoStore((s) => s.pendingGenerations);
-    const scrollRef = useRef<HTMLDivElement>(null);
+    const virtuosoRef = useRef<VirtuosoHandle>(null);
 
     const messagesQuery = trpc.ai.getMessages.useQuery(
         { sessionId: activeSessionId ?? "", limit: 100 },
@@ -49,11 +50,25 @@ export function PhotoChatView({ projectId }: PhotoChatViewProps) {
         [activeSessionId, allPendingGenerations],
     );
 
-    // Auto-scroll to bottom on new messages
+    // Auto-scroll: pending rows live in Footer, not in Virtuoso data.
     useEffect(() => {
-        const el = scrollRef.current;
-        if (!el) return;
-        el.scrollTop = el.scrollHeight;
+        if (messages.length === 0 && pendingGenerations.length === 0) return;
+
+        if (messages.length > 0) {
+            virtuosoRef.current?.scrollToIndex({
+                index: messages.length - 1,
+                align: "end",
+                behavior: "smooth",
+            });
+            return;
+        }
+
+        if (pendingGenerations.length > 0) {
+            virtuosoRef.current?.scrollTo({
+                top: Number.MAX_SAFE_INTEGER,
+                behavior: "smooth",
+            });
+        }
     }, [messages.length, pendingGenerations.length]);
 
     if (!activeSessionId) {
@@ -72,29 +87,66 @@ export function PhotoChatView({ projectId }: PhotoChatViewProps) {
         );
     }
 
-    return (
-        <div ref={scrollRef} className="flex-1 overflow-y-auto min-h-0 pb-[180px]">
-            {messages.length === 0 && pendingGenerations.length === 0 ? (
+    if (messagesQuery.isError) {
+        return (
+            <div className="flex-1 flex flex-col items-center justify-center gap-3 px-6 text-center">
+                <AlertTriangle size={28} className="text-amber-500" />
+                <p className="text-sm text-text-secondary">Не удалось загрузить историю сессии.</p>
+                <button
+                    type="button"
+                    onClick={() => messagesQuery.refetch()}
+                    className="inline-flex items-center gap-1.5 rounded-[var(--radius-md)] border border-border-primary px-3 py-1.5 text-xs font-medium text-text-primary hover:bg-bg-tertiary cursor-pointer"
+                >
+                    <RefreshCw size={12} /> Повторить
+                </button>
+            </div>
+        );
+    }
+
+    if (messages.length === 0 && pendingGenerations.length === 0) {
+        return (
+            <div className="flex-1 overflow-y-auto min-h-0 pb-[180px]">
                 <EmptyState />
-            ) : (
-                <div className="max-w-[720px] mx-auto px-6 py-6 flex flex-col gap-4">
-                    {messages.map((m) => (
+            </div>
+        );
+    }
+
+    return (
+        <div className="flex-1 min-h-0 pb-[180px]">
+            <Virtuoso
+                key={activeSessionId}
+                ref={virtuosoRef}
+                className="h-full"
+                data={messages}
+                initialTopMostItemIndex={Math.max(0, messages.length - 1)}
+                followOutput="smooth"
+                increaseViewportBy={400}
+                itemContent={(_index, message) => (
+                    <div className="max-w-[720px] mx-auto px-6 pb-4">
                         <MessageRow
-                            key={m.id}
-                            message={m}
+                            message={message}
                             projectId={projectId}
                             savedAssetId={
-                                m.role === "assistant" && m.type === "image"
-                                    ? urlToAssetId.get(m.content)
+                                message.role === "assistant" && message.type === "image"
+                                    ? urlToAssetId.get(message.content)
                                     : undefined
                             }
                         />
-                    ))}
-                    {pendingGenerations.map((generation) => (
-                        <PendingGenerationRow key={generation.id} generation={generation} />
-                    ))}
-                </div>
-            )}
+                    </div>
+                )}
+                components={{
+                    Footer: () =>
+                        pendingGenerations.length > 0 ? (
+                            <div className="max-w-[720px] mx-auto px-6 pb-6 flex flex-col gap-4">
+                                {pendingGenerations.map((generation) => (
+                                    <PendingGenerationRow key={generation.id} generation={generation} />
+                                ))}
+                            </div>
+                        ) : (
+                            <div className="h-4" aria-hidden />
+                        ),
+                }}
+            />
         </div>
     );
 }
@@ -153,7 +205,7 @@ function EmptyState() {
     );
 }
 
-function MessageRow({
+const MessageRow = memo(function MessageRow({
     message,
     projectId,
     savedAssetId,
@@ -182,6 +234,7 @@ function MessageRow({
                             <img
                                 src={meta.sourceUrl}
                                 alt="source"
+                                loading="lazy"
                                 className="w-8 h-8 rounded-[var(--radius-sm)] object-cover"
                             />
                         </div>
@@ -194,6 +247,7 @@ function MessageRow({
                                     key={i}
                                     src={ref}
                                     alt={`ref${i}`}
+                                    loading="lazy"
                                     className="w-10 h-10 rounded-[var(--radius-sm)] object-cover border border-border-primary"
                                 />
                             ))}
@@ -238,4 +292,4 @@ function MessageRow({
             </div>
         </div>
     );
-}
+});

@@ -5,6 +5,12 @@ import { useRouter } from "next/navigation";
 import { ArrowLeft, Loader2, AlertTriangle } from "lucide-react";
 import Link from "next/link";
 import { trpc } from "@/lib/trpc";
+import { clearCompletedJobs } from "@/lib/imageGenerationQueue";
+import {
+    pickDefaultPhotoSession,
+    shouldAutoCreatePhotoSession,
+    type PhotoSessionCandidate,
+} from "@/lib/photoSessionUtils";
 import { usePhotoStore } from "@/store/photoStore";
 import { PhotoSidebar } from "./PhotoSidebar";
 import { PhotoChatView } from "./PhotoChatView";
@@ -19,6 +25,7 @@ interface PhotoWorkspaceProps {
 
 export function PhotoWorkspace({ projectId }: PhotoWorkspaceProps) {
     const router = useRouter();
+    const utils = trpc.useUtils();
     const projectQuery = trpc.project.getById.useQuery(
         { id: projectId },
         { retry: false, refetchOnWindowFocus: false }
@@ -29,6 +36,7 @@ export function PhotoWorkspace({ projectId }: PhotoWorkspaceProps) {
     const setActiveSession = usePhotoStore((s) => s.setActiveSession);
     // Guard against Strict-Mode double-invoke + slow network: only create one default session per mount.
     const didAutoCreateRef = useRef(false);
+    const prevProjectIdRef = useRef(projectId);
 
     const sessionsQuery = trpc.ai.listSessions.useQuery(
         { projectId },
@@ -42,15 +50,32 @@ export function PhotoWorkspace({ projectId }: PhotoWorkspaceProps) {
         },
     });
 
-    // Auto-select the first available session, or auto-create one if none exist
+    // Reset client state when navigating between photo projects without unmounting the page shell.
+    useEffect(() => {
+        if (prevProjectIdRef.current === projectId) return;
+        prevProjectIdRef.current = projectId;
+        didAutoCreateRef.current = false;
+        usePhotoStore.getState().resetForProject();
+        void utils.ai.listSessions.invalidate({ projectId });
+    }, [projectId, utils]);
+
+    // Default-open asset library on every photo workspace entry (unmount cleanup closes it).
+    useEffect(() => {
+        usePhotoStore.getState().setLibraryOpen(true);
+    }, [projectId]);
+
+    // Prefer the most populated session; only auto-create when the project has none.
     useEffect(() => {
         if (!sessionsQuery.data) return;
-        const sessions = sessionsQuery.data as Array<{ id: string }>;
+        const sessions = sessionsQuery.data as PhotoSessionCandidate[];
         if (activeSessionId && sessions.some((s) => s.id === activeSessionId)) return;
-        if (sessions.length > 0) {
-            setActiveSession(sessions[0].id);
+
+        const defaultId = pickDefaultPhotoSession(sessions);
+        if (defaultId) {
+            setActiveSession(defaultId);
             return;
         }
+        if (!shouldAutoCreatePhotoSession(sessions)) return;
         if (!didAutoCreateRef.current && !isCreatingSession) {
             didAutoCreateRef.current = true;
             createSession({ projectId });
@@ -64,6 +89,16 @@ export function PhotoWorkspace({ projectId }: PhotoWorkspaceProps) {
             router.replace(`/editor/${projectId}`);
         }
     }, [projectQuery.data, projectGoal, projectId, router]);
+
+    // Prune completed generation jobs so the queue store does not grow without bound.
+    useEffect(() => {
+        clearCompletedJobs(projectId);
+        const interval = window.setInterval(() => clearCompletedJobs(projectId), 60_000);
+        return () => {
+            window.clearInterval(interval);
+            clearCompletedJobs(projectId);
+        };
+    }, [projectId]);
 
     // Reset active session when unmounting
     useEffect(() => {

@@ -27,6 +27,7 @@ import { RefAutocompleteTextarea, type RefAutocompleteTextareaHandle } from "@/c
 import { ReferenceImageInput, ReferenceImagePreviewTray, getReferenceTrayReserveWidth } from "@/components/ui/ReferenceImageInput";
 import { ImageStylePresetPicker, TextStylePresetPicker } from "@/components/ui/StylePresetPicker";
 import { GeneratedImageStrip, type GeneratedImageVariant } from "@/components/ui/GeneratedImageStrip";
+import { capLayerVariants } from "@/lib/generationVariantUtils";
 import { parseGenerationError } from "@/lib/parseGenerationError";
 import {
     formatProjectQueueBadge,
@@ -2122,7 +2123,7 @@ function WizardLayerPromptBar({
                         promptLabel,
                     }))
                     : [{ id: `${batchId}-error`, status: "error" as const, promptLabel }];
-            return { ...prev, [layerKey]: [...kept, ...resolved] };
+            return { ...prev, [layerKey]: capLayerVariants([...kept, ...resolved]) };
         });
     };
 

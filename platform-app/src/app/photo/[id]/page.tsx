@@ -11,7 +11,7 @@ interface PhotoPageProps {
 export default function PhotoPage({ params }: PhotoPageProps) {
     const { id } = use(params);
     return (
-        <AppShell>
+        <AppShell hideSidebar>
             <PhotoWorkspace projectId={id} />
         </AppShell>
     );
