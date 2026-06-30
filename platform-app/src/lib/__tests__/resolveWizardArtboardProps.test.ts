@@ -2,10 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import {
     applyBackgroundSwatchToArtboardProps,
+    applyWizardArtboardPropsToPack,
+    buildWizardArtboardPropsByFormatId,
     resolveWizardArtboardProps,
 } from "@/lib/resolveWizardArtboardProps";
 import type { TemplatePackV2 } from "@/services/templateService";
-import { DEFAULT_ARTBOARD_PROPS } from "@/store/canvas/types";
+import { DEFAULT_ARTBOARD_PROPS, type ArtboardProps } from "@/store/canvas/types";
 
 const baseTemplate = {
     artboardProps: undefined,
@@ -73,6 +75,52 @@ describe("resolveWizardArtboardProps", () => {
         });
         expect(result.backgroundImage?.src).toBe("https://example.com/hero.png");
         expect(result.backgroundImage?.swatchRef).toBe("hero-bg");
+    });
+});
+
+describe("buildWizardArtboardPropsByFormatId", () => {
+    it("builds per-format props from template resizes", () => {
+        const byFormat = buildWizardArtboardPropsByFormatId({
+            artboardProps: { cornerRadius: 8 },
+            palette: { colors: [], backgrounds: [] },
+            resizes: [
+                { id: "master", name: "Master", width: 1080, height: 1080, label: "M", instancesEnabled: false, isMaster: true },
+                {
+                    id: "story",
+                    name: "Story",
+                    width: 1080,
+                    height: 1920,
+                    label: "S",
+                    instancesEnabled: true,
+                    artboardProps: { ...DEFAULT_ARTBOARD_PROPS, cornerRadius: 24 },
+                },
+            ],
+        });
+        expect(byFormat.master?.cornerRadius).toBe(8);
+        expect(byFormat.story?.cornerRadius).toBe(24);
+    });
+});
+
+describe("applyWizardArtboardPropsToPack", () => {
+    it("writes per-format props and master mirror on pack", () => {
+        const pack = applyWizardArtboardPropsToPack(
+            {
+                id: "pack",
+                name: "Pack",
+                artboardProps: { cornerRadius: 0 },
+                palette: { colors: [], backgrounds: [] },
+                resizes: [
+                    { id: "master", name: "Master", width: 1080, height: 1080, label: "M", instancesEnabled: false, isMaster: true },
+                    { id: "banner", name: "Banner", width: 970, height: 250, label: "B", instancesEnabled: true },
+                ],
+            } as unknown as TemplatePackV2,
+            {
+                master: { ...DEFAULT_ARTBOARD_PROPS, cornerRadius: 4 },
+                banner: { ...DEFAULT_ARTBOARD_PROPS, cornerRadius: 16 },
+            },
+        );
+        expect(pack.resizes?.find((r) => r.id === "banner")?.artboardProps?.cornerRadius).toBe(16);
+        expect((pack.artboardProps as ArtboardProps | undefined)?.cornerRadius).toBe(4);
     });
 });
 

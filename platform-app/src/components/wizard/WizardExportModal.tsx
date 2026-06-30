@@ -18,6 +18,8 @@ import { downloadDataUrl, sanitizeExportFileName, zipPngDataUrls } from "@/utils
 import { withEditorChromeHidden } from "@/utils/stageExportCapture";
 import type { TemplatePackV2 } from "@/services/templateService";
 import type { ArtboardProps } from "@/store/canvas/types";
+import { DEFAULT_ARTBOARD_PROPS } from "@/store/canvas/types";
+import { resolvePreviewFormatArtboard } from "@/store/canvas/artboardProps";
 
 type WizardExportMode = "single" | "batch";
 
@@ -26,7 +28,7 @@ interface WizardExportModalProps {
     onClose: () => void;
     selectedTemplate: TemplatePackV2;
     activeFormatId: string;
-    artboardProps: ArtboardProps;
+    formatArtboardProps: Record<string, ArtboardProps>;
     textValues: Record<string, string>;
     imageValues: Record<string, string>;
     imageViewOverrides: Record<string, WizardImageViewOverride>;
@@ -39,7 +41,7 @@ export function WizardExportModal({
     onClose,
     selectedTemplate,
     activeFormatId,
-    artboardProps,
+    formatArtboardProps,
     textValues,
     imageValues,
     imageViewOverrides,
@@ -76,6 +78,11 @@ export function WizardExportModal({
         ?? exportableFormats.find((format) => format.id === activeFormatId)
         ?? exportableFormats[0]
         ?? masterSource;
+    const exportArtboardProps = useMemo(
+        () => formatArtboardProps[exportSource.id]
+            ?? resolvePreviewFormatArtboard(exportSource, DEFAULT_ARTBOARD_PROPS),
+        [exportSource, formatArtboardProps],
+    );
     const entries = useMemo(
         () => getEditableLayerEntries(selectedTemplate, masterSource?.layers ?? []),
         [masterSource?.layers, selectedTemplate],
@@ -360,16 +367,16 @@ export function WizardExportModal({
                         containerWidth={exportSource.width}
                         containerHeight={exportSource.height}
                         renderMode="artboard"
-                        artboardFill={artboardProps.fill}
-                        artboardFillEnabled={artboardProps.fillEnabled !== false}
-                        artboardBackgroundImage={artboardProps.backgroundImage}
-                        artboardCornerRadius={artboardProps.cornerRadius}
-                        artboardStroke={artboardProps.stroke}
-                        artboardStrokeMode={artboardProps.strokeMode}
-                        artboardStrokeImage={artboardProps.strokeImage}
-                        artboardStrokeWidth={artboardProps.strokeWidth}
-                        artboardStrokeAlign={artboardProps.strokeAlign}
-                        artboardStrokeJoin={artboardProps.strokeJoin}
+                        artboardFill={exportArtboardProps.fill}
+                        artboardFillEnabled={exportArtboardProps.fillEnabled !== false}
+                        artboardBackgroundImage={exportArtboardProps.backgroundImage}
+                        artboardCornerRadius={exportArtboardProps.cornerRadius}
+                        artboardStroke={exportArtboardProps.stroke}
+                        artboardStrokeMode={exportArtboardProps.strokeMode}
+                        artboardStrokeImage={exportArtboardProps.strokeImage}
+                        artboardStrokeWidth={exportArtboardProps.strokeWidth}
+                        artboardStrokeAlign={exportArtboardProps.strokeAlign}
+                        artboardStrokeJoin={exportArtboardProps.strokeJoin}
                         showLayoutGrids={false}
                         onImagesReadyChange={(ready) => {
                             readyRef.current = ready;

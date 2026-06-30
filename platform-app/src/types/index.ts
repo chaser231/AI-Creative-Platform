@@ -129,6 +129,12 @@ export interface ResizeFormat {
      * overlay guides that also act as snap targets; never exported.
      */
     layoutGrids?: LayoutGrid[];
+
+    /**
+     * Per-format artboard appearance (fill, stroke, background, rounding, clip).
+     * When absent, falls back to top-level canvas `artboardProps` on load.
+     */
+    artboardProps?: ArtboardProps;
 }
 
 // ─── Layout Grids (safe zones, Figma-like) ──────────────
@@ -914,8 +920,8 @@ export interface SerializedLayerNode {
 export type ArtboardBackgroundFit = "cover" | "contain" | "fill";
 
 /**
- * Global artboard background image. Currently stored once on ArtboardProps
- * (shared across all resizes). Per-resize overrides are a future extension.
+ * Background image on the artboard fill layer. Stored per-format on
+ * `ResizeFormat.artboardProps`; top-level canvas `artboardProps` mirrors master.
  */
 export interface ArtboardBackgroundImage {
     src: string;
@@ -927,6 +933,25 @@ export interface ArtboardBackgroundImage {
     focusY?: number;
     /** If the background was applied from a swatch, keep a backlink for cascade updates */
     swatchRef?: string;
+}
+
+/** Per-format (or legacy top-level) artboard appearance in canvas/template state. */
+export interface ArtboardProps {
+    fill: Paint;
+    fillEnabled?: boolean;
+    /** If the artboard fill was applied from a swatch, keep a backlink for cascade updates. */
+    fillSwatchRef?: string;
+    cornerRadius: number;
+    cornerRadii?: CornerRadii;
+    clipContent: boolean;
+    stroke: Paint;
+    strokeMode?: FillMode;
+    strokeImage?: LayerImageFill;
+    strokeWidth: number;
+    strokeAlign?: StrokeAlign;
+    strokeJoin?: StrokeJoin;
+    /** Optional background image rendered between the solid `fill` and user layers. */
+    backgroundImage?: ArtboardBackgroundImage;
 }
 
 /** Which parts of a layer are driven by a swatch reference. */

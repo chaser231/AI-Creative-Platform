@@ -2,12 +2,18 @@ import type {
     ArtboardBackgroundImage,
     BackgroundSwatchValue,
     Paint,
+    ResizeFormat,
     Swatch,
     TemplatePalette,
 } from "@/types";
 import { DEFAULT_PALETTE } from "@/types";
 import type { TemplatePackV2 } from "@/services/templateService";
 import { DEFAULT_ARTBOARD_PROPS, type ArtboardProps } from "@/store/canvas/types";
+import {
+    cloneArtboardProps,
+    resolvePreviewFormatArtboard,
+    syncTopLevelArtboardPropsFromMaster,
+} from "@/store/canvas/artboardProps";
 import { isPaint } from "@/utils/paint";
 
 function findSwatch(palette: TemplatePalette, id: string): Swatch | undefined {
@@ -73,6 +79,40 @@ export function resolveWizardArtboardProps(
     }
 
     return { ...raw, fill, backgroundImage };
+}
+
+/** Resolve per-format artboard props for wizard preview/editing. */
+export function buildWizardArtboardPropsByFormatId(
+    template: Pick<TemplatePackV2, "artboardProps" | "palette" | "resizes">,
+): Record<string, ArtboardProps> {
+    const defaults = resolveWizardArtboardProps(template);
+    const byFormat: Record<string, ArtboardProps> = {};
+    for (const resize of template.resizes ?? []) {
+        byFormat[resize.id] = cloneArtboardProps(
+            resolvePreviewFormatArtboard(resize, defaults),
+        );
+    }
+    return byFormat;
+}
+
+/** Apply wizard-local per-format artboard edits onto a pack before studio apply. */
+export function applyWizardArtboardPropsToPack(
+    pack: TemplatePackV2,
+    formatArtboardProps: Record<string, ArtboardProps>,
+): TemplatePackV2 {
+    const defaults = resolveWizardArtboardProps(pack);
+    const resizes = (pack.resizes ?? []).map((resize: ResizeFormat) => ({
+        ...resize,
+        artboardProps: cloneArtboardProps(
+            formatArtboardProps[resize.id]
+                ?? resolvePreviewFormatArtboard(resize, defaults),
+        ),
+    }));
+    return {
+        ...pack,
+        resizes,
+        artboardProps: syncTopLevelArtboardPropsFromMaster(resizes, defaults) as unknown as Record<string, unknown>,
+    };
 }
 
 /** Applies a palette background swatch to artboard props (wizard-local, no store). */

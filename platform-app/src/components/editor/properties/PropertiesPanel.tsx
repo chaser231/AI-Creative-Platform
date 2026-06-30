@@ -46,6 +46,7 @@ import { useShallow } from "zustand/react/shallow";
 import { Select } from "@/components/ui/Select";
 import { SmartNumberInput, useNumberScrub } from "@/components/ui/SmartNumberInput";
 import { useCanvasStore } from "@/store/canvasStore";
+import { selectActiveArtboardProps } from "@/store/canvas/artboardProps";
 import { requestOpenExportModal } from "@/components/editor/exportEvents";
 import { enterVectorEditMode } from "@/utils/vectorEdit";
 import type {
@@ -136,7 +137,7 @@ export function PropertiesPanel() {
         updateLayer: s.updateLayer,
         activeResizeId: s.activeResizeId,
         resizes: s.resizes,
-        artboardProps: s.artboardProps,
+        artboardProps: selectActiveArtboardProps(s),
         updateArtboardProps: s.updateArtboardProps,
         alignSelectedLayers: s.alignSelectedLayers,
         canvasWidth: s.canvasWidth,

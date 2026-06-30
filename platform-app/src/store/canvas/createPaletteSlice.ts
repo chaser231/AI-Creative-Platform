@@ -34,6 +34,13 @@ import type {
 import { v4 as uuid } from "uuid";
 import { pushSnapshot } from "./createHistorySlice";
 import { isPaint, normalizePaint } from "@/utils/paint";
+import {
+    cascadeArtboardPropsForSwatchRemove,
+    cascadeArtboardPropsForSwatchUpdateWithSwatch,
+    patchActiveFormatArtboardProps,
+    selectActiveArtboardProps,
+    syncTopLevelArtboardPropsFromMaster,
+} from "./artboardProps";
 
 export type PaletteSlice = Pick<CanvasStore,
     | "palette"
@@ -312,27 +319,18 @@ export const createPaletteSlice: StateCreator<CanvasStore, [], [], PaletteSlice>
                 });
             }
 
-            // Artboard background image swatch: if currently applied, refresh.
-            let artboardProps = s.artboardProps;
-            if (paint !== undefined && artboardProps.fillSwatchRef === id) {
-                artboardProps = { ...artboardProps, fill: paint };
+            // Artboard swatch cascade across all formats.
+            if (paint !== undefined || (updatedSwatch.type === "background" && typeof updatedSwatch.value === "object")) {
+                resizes = cascadeArtboardPropsForSwatchUpdateWithSwatch(
+                    resizes,
+                    s.artboardProps,
+                    id,
+                    paint,
+                    updatedSwatch,
+                    bgImageFromSwatch,
+                );
             }
-            if (
-                updatedSwatch.type === "background"
-                && typeof updatedSwatch.value === "object"
-                && artboardProps.backgroundImage?.swatchRef === id
-            ) {
-                const bg = bgImageFromSwatch(updatedSwatch, artboardProps.backgroundImage);
-                if (bg) {
-                    artboardProps = { ...artboardProps, backgroundImage: bg };
-                } else {
-                    // Swatch switched from image → solid: drop the backgroundImage.
-                    artboardProps = { ...artboardProps, backgroundImage: undefined };
-                    if (paint !== undefined) {
-                        artboardProps = { ...artboardProps, fill: paint };
-                    }
-                }
-            }
+            const artboardProps = syncTopLevelArtboardPropsFromMaster(resizes, s.artboardProps);
 
             return {
                 palette: { ...s.palette, [bucket]: list },
@@ -423,42 +421,37 @@ export const createPaletteSlice: StateCreator<CanvasStore, [], [], PaletteSlice>
                 return changed ? { ...r, layerSnapshot: nextSnap } : r;
             });
 
-            // Artboard background: if driven by this swatch, drop the link.
-            let artboardProps = s.artboardProps;
-            if (artboardProps.fillSwatchRef === id) {
-                if (mode === "replace" && replaceWithId) {
-                    const replacement = findSwatch({ ...s.palette, [bucket]: remaining }, replaceWithId);
-                    const paint = replacement ? resolvePaintFromSwatch(replacement) : undefined;
-                    artboardProps = paint
-                        ? { ...artboardProps, fill: paint, fillSwatchRef: replaceWithId }
-                        : { ...artboardProps, fillSwatchRef: undefined };
-                } else {
-                    artboardProps = { ...artboardProps, fillSwatchRef: undefined };
-                }
-            }
-            if (artboardProps.backgroundImage?.swatchRef === id) {
-                if (mode === "replace" && replaceWithId) {
-                    const replacement = findSwatch({ ...s.palette, [bucket]: remaining }, replaceWithId);
-                    const bg = replacement ? bgImageFromSwatch(replacement, artboardProps.backgroundImage) : undefined;
-                    artboardProps = bg
-                        ? { ...artboardProps, backgroundImage: bg }
-                        : { ...artboardProps, backgroundImage: undefined };
-                } else {
-                    // Detach → keep current image but drop the backlink
-                    artboardProps = {
-                        ...artboardProps,
-                        backgroundImage: { ...artboardProps.backgroundImage, swatchRef: undefined },
-                    };
-                }
-            }
+            let nextResizes = resizes;
+            const replacementSwatch = mode === "replace" && replaceWithId
+                ? findSwatch({ ...s.palette, [bucket]: remaining }, replaceWithId)
+                : undefined;
+            const replacementPaint = replacementSwatch ? resolvePaintFromSwatch(replacementSwatch) : undefined;
+            nextResizes = cascadeArtboardPropsForSwatchRemove(
+                resizes,
+                s.artboardProps,
+                id,
+                mode === "replace" ? "replace" : "detach",
+                mode === "replace" && replacementSwatch
+                    ? {
+                        paint: replacementPaint,
+                        fillSwatchRef: replaceWithId,
+                        resolveBgImage: (existing) => (
+                            replacementSwatch
+                                ? bgImageFromSwatch(replacementSwatch, existing)
+                                : undefined
+                        ),
+                    }
+                    : undefined,
+            );
+            const syncedArtboardProps = syncTopLevelArtboardPropsFromMaster(nextResizes, s.artboardProps);
 
             return {
                 palette: { ...s.palette, [bucket]: remaining },
                 layers,
                 masterComponents: masters,
                 componentInstances: instances,
-                resizes,
-                artboardProps,
+                resizes: nextResizes,
+                artboardProps: syncedArtboardProps,
             } as Partial<CanvasStore>;
         });
 
@@ -631,39 +624,58 @@ export const createPaletteSlice: StateCreator<CanvasStore, [], [], PaletteSlice>
         pushSnapshot(set as (p: Partial<CanvasStore>) => void, get);
 
         set((s) => {
+            const activeProps = selectActiveArtboardProps(s);
             const v = swatch.value as BackgroundSwatchValue;
             if (typeof v !== "object") return s;
             if (v.kind === "solid") {
-                return {
-                    artboardProps: {
-                        ...s.artboardProps,
+                const patched = patchActiveFormatArtboardProps(
+                    s.resizes,
+                    s.activeResizeId,
+                    {
                         fill: v.color,
                         fillSwatchRef: swatch.id,
                         backgroundImage: undefined,
                     },
+                    s.artboardProps,
+                );
+                return {
+                    resizes: patched.resizes,
+                    artboardProps: patched.topLevelArtboardProps,
                 } as Partial<CanvasStore>;
             }
             if (v.kind === "gradient") {
-                return {
-                    artboardProps: {
-                        ...s.artboardProps,
+                const patched = patchActiveFormatArtboardProps(
+                    s.resizes,
+                    s.activeResizeId,
+                    {
                         fill: v.paint,
                         fillSwatchRef: swatch.id,
                         backgroundImage: undefined,
                     },
+                    s.artboardProps,
+                );
+                return {
+                    resizes: patched.resizes,
+                    artboardProps: patched.topLevelArtboardProps,
                 } as Partial<CanvasStore>;
             }
-            // image
             const bg: ArtboardBackgroundImage = {
                 src: v.src,
                 fit: v.fit,
                 focusX: v.focusX,
                 focusY: v.focusY,
-                opacity: s.artboardProps.backgroundImage?.opacity ?? 1,
+                opacity: activeProps.backgroundImage?.opacity ?? 1,
                 swatchRef: swatch.id,
             };
+            const patched = patchActiveFormatArtboardProps(
+                s.resizes,
+                s.activeResizeId,
+                { backgroundImage: bg },
+                s.artboardProps,
+            );
             return {
-                artboardProps: { ...s.artboardProps, backgroundImage: bg },
+                resizes: patched.resizes,
+                artboardProps: patched.topLevelArtboardProps,
             } as Partial<CanvasStore>;
         });
     },
@@ -686,7 +698,8 @@ export const createPaletteSlice: StateCreator<CanvasStore, [], [], PaletteSlice>
 
     createSwatchFromArtboardBackground: (name) => {
         const state = get();
-        const bg = state.artboardProps.backgroundImage;
+        const activeProps = selectActiveArtboardProps(state);
+        const bg = activeProps.backgroundImage;
         const swatchName = name?.trim() || `Фон ${state.palette.backgrounds.length + 1}`;
 
         if (bg?.src) {
@@ -701,20 +714,23 @@ export const createPaletteSlice: StateCreator<CanvasStore, [], [], PaletteSlice>
                     focusY: bg.focusY,
                 },
             });
-            // Backlink the existing background to the new swatch.
-            set((s) => ({
-                artboardProps: {
-                    ...s.artboardProps,
-                    backgroundImage: s.artboardProps.backgroundImage
-                        ? { ...s.artboardProps.backgroundImage, swatchRef: id }
-                        : s.artboardProps.backgroundImage,
+            const patched = patchActiveFormatArtboardProps(
+                get().resizes,
+                get().activeResizeId,
+                {
+                    backgroundImage: { ...bg, swatchRef: id },
                 },
-            }));
+                get().artboardProps,
+            );
+            set({
+                resizes: patched.resizes,
+                artboardProps: patched.topLevelArtboardProps,
+            });
             return id;
         }
 
         // No image background → snapshot the solid fill as a background swatch
-        const fill = state.artboardProps.fill;
+        const fill = activeProps.fill;
         if (!fill || !isPaint(fill)) return null;
         const paint = normalizePaint(fill);
         const id = get().addSwatch({
@@ -724,9 +740,16 @@ export const createPaletteSlice: StateCreator<CanvasStore, [], [], PaletteSlice>
                 ? { kind: "gradient", paint }
                 : { kind: "solid", color: paint.color },
         });
-        set((s) => ({
-            artboardProps: { ...s.artboardProps, fillSwatchRef: id },
-        }));
+        const patched = patchActiveFormatArtboardProps(
+            get().resizes,
+            get().activeResizeId,
+            { fillSwatchRef: id },
+            get().artboardProps,
+        );
+        set({
+            resizes: patched.resizes,
+            artboardProps: patched.topLevelArtboardProps,
+        });
         return id;
     },
 });
