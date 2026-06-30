@@ -75,6 +75,7 @@ function OverviewTileCard({
 }) {
     const previewRef = useRef<HTMLDivElement | null>(null);
     const [previewWidth, setPreviewWidth] = useState<number>(PREVIEW_FALLBACK_WIDTH);
+    const [isVisible, setIsVisible] = useState(false);
 
     useEffect(() => {
         const node = previewRef.current;
@@ -87,6 +88,20 @@ function OverviewTileCard({
         };
         update();
         const observer = new ResizeObserver(update);
+        observer.observe(node);
+        return () => observer.disconnect();
+    }, []);
+
+    // Mount Konva preview only when the tile enters (or nears) the viewport.
+    useEffect(() => {
+        const node = previewRef.current;
+        if (!node) return;
+        const observer = new IntersectionObserver(
+            ([entry]) => {
+                if (entry?.isIntersecting) setIsVisible(true);
+            },
+            { rootMargin: "240px" },
+        );
         observer.observe(node);
         return () => observer.disconnect();
     }, []);
@@ -119,27 +134,34 @@ function OverviewTileCard({
                 className="relative w-full overflow-hidden rounded-[var(--radius-lg)] border border-border-primary bg-bg-canvas"
                 style={{ height: PREVIEW_HEIGHT }}
             >
-                <PreviewCanvas
-                    layers={tile.layers}
-                    artboardWidth={tile.width}
-                    artboardHeight={tile.height}
-                    containerWidth={previewWidth}
-                    containerHeight={PREVIEW_HEIGHT}
-                    zoom={1}
-                    appearance={appearance}
-                    artboardFill={tileArtboard.fill}
-                    artboardFillEnabled={tileArtboard.fillEnabled !== false}
-                    artboardBackgroundImage={tileArtboard.backgroundImage}
-                    artboardCornerRadius={tileArtboard.cornerRadius}
-                    artboardStroke={tileArtboard.stroke}
-                    artboardStrokeMode={tileArtboard.strokeMode}
-                    artboardStrokeImage={tileArtboard.strokeImage}
-                    artboardStrokeWidth={tileArtboard.strokeWidth}
-                    artboardStrokeAlign={tileArtboard.strokeAlign}
-                    artboardStrokeJoin={tileArtboard.strokeJoin}
-                    layoutGrids={tile.layoutGrids}
-                    showLayoutGrids={gridsVisible}
-                />
+                {isVisible ? (
+                    <PreviewCanvas
+                        layers={tile.layers}
+                        artboardWidth={tile.width}
+                        artboardHeight={tile.height}
+                        containerWidth={previewWidth}
+                        containerHeight={PREVIEW_HEIGHT}
+                        zoom={1}
+                        appearance={appearance}
+                        artboardFill={tileArtboard.fill}
+                        artboardFillEnabled={tileArtboard.fillEnabled !== false}
+                        artboardBackgroundImage={tileArtboard.backgroundImage}
+                        artboardCornerRadius={tileArtboard.cornerRadius}
+                        artboardStroke={tileArtboard.stroke}
+                        artboardStrokeMode={tileArtboard.strokeMode}
+                        artboardStrokeImage={tileArtboard.strokeImage}
+                        artboardStrokeWidth={tileArtboard.strokeWidth}
+                        artboardStrokeAlign={tileArtboard.strokeAlign}
+                        artboardStrokeJoin={tileArtboard.strokeJoin}
+                        layoutGrids={tile.layoutGrids}
+                        showLayoutGrids={gridsVisible}
+                    />
+                ) : (
+                    <div
+                        className="h-full w-full animate-pulse bg-bg-secondary"
+                        aria-hidden
+                    />
+                )}
                 {tile.isMaster && (
                     <span className="pointer-events-none absolute left-2 top-2 rounded-full bg-accent-lime px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-accent-lime-text shadow-[var(--shadow-sm)]">
                         Мастер

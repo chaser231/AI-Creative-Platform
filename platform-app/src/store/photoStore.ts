@@ -90,13 +90,16 @@ export interface PhotoStore {
     pendingGenerations: PendingPhotoGeneration[];
     addPendingGeneration: (generation: PendingPhotoGeneration) => void;
     clearPendingGeneration: (id: string) => void;
+
+    /** Reset session-scoped state when navigating to a different photo project. */
+    resetForProject: () => void;
 }
 
 export const usePhotoStore = create<PhotoStore>((set) => ({
     activeSessionId: null,
     setActiveSession: (id) => set({ activeSessionId: id }),
 
-    libraryOpen: false,
+    libraryOpen: true,
     setLibraryOpen: (open) => set({ libraryOpen: open }),
     toggleLibrary: () => set((s) => ({ libraryOpen: !s.libraryOpen })),
 
@@ -139,4 +142,16 @@ export const usePhotoStore = create<PhotoStore>((set) => ({
         set((s) => ({ pendingGenerations: [...s.pendingGenerations, generation] })),
     clearPendingGeneration: (id) =>
         set((s) => ({ pendingGenerations: s.pendingGenerations.filter((generation) => generation.id !== id) })),
+
+    resetForProject: () =>
+        set({
+            activeSessionId: null,
+            pendingGenerations: [],
+            editContext: null,
+            inpaintMode: false,
+            pendingReferences: [],
+            generationMode: "single",
+            activeBatchId: null,
+            libraryOpen: true,
+        }),
 }));

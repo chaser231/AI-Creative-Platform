@@ -11,7 +11,13 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
+import { useSession } from "next-auth/react";
 import { trpc } from "@/lib/trpc";
+import {
+    pickBetterEditorSessionForUser,
+    pickEditorSession,
+    type EditorSessionCandidate,
+} from "@/lib/photoSessionUtils";
 import type { AIChatMessage } from "@/components/editor/ai-chat";
 
 /**
@@ -22,6 +28,9 @@ export function useAISessionSync(projectId: string, enabled: boolean = true) {
   const [messages, setMessages] = useState<AIChatMessage[]>([]);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const sessionInitRef = useRef(false);
+  const prevProjectIdRef = useRef(projectId);
+  const { data: authSession, status: authStatus } = useSession();
+  const currentUserId = authSession?.user?.id;
 
   // Get or create session
   const createSessionMutation = trpc.ai.createSession.useMutation();
@@ -37,6 +46,15 @@ export function useAISessionSync(projectId: string, enabled: boolean = true) {
     }
   );
 
+  // Re-init when navigating between editor projects without remounting the hook consumer.
+  useEffect(() => {
+    if (prevProjectIdRef.current === projectId) return;
+    prevProjectIdRef.current = projectId;
+    sessionInitRef.current = false;
+    setSessionId(null);
+    setMessages([]);
+  }, [projectId]);
+
   // Initialize session — only if project exists in DB
   useEffect(() => {
     if (!enabled) {
@@ -44,6 +62,7 @@ export function useAISessionSync(projectId: string, enabled: boolean = true) {
       return;
     }
     if (sessionInitRef.current) return;
+    if (authStatus === "loading") return;
     if (sessionsQuery.isLoading) return;
 
     // If query errored (project not in DB), stay in local-only mode
@@ -54,10 +73,10 @@ export function useAISessionSync(projectId: string, enabled: boolean = true) {
 
     sessionInitRef.current = true;
 
-    const sessions = sessionsQuery.data || [];
+    const sessions = (sessionsQuery.data || []) as EditorSessionCandidate[];
     if (sessions.length > 0) {
-      // Use latest session
-      setSessionId(sessions[0].id);
+      const defaultId = pickEditorSession(sessions, currentUserId);
+      if (defaultId) setSessionId(defaultId);
     } else {
       // Create new session — may fail if project is local-only
       createSessionMutation
@@ -70,7 +89,23 @@ export function useAISessionSync(projectId: string, enabled: boolean = true) {
         });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionsQuery.isLoading, sessionsQuery.isError, sessionsQuery.data]);
+  }, [
+    enabled,
+    authStatus,
+    sessionsQuery.isLoading,
+    sessionsQuery.isError,
+    sessionsQuery.data,
+    currentUserId,
+  ]);
+
+  // If auth resolved after init picked a colleague's session, switch to the user's best session.
+  useEffect(() => {
+    if (!currentUserId || !sessionsQuery.data || !sessionId) return;
+
+    const sessions = sessionsQuery.data as EditorSessionCandidate[];
+    const betterId = pickBetterEditorSessionForUser(sessions, currentUserId, sessionId);
+    if (betterId) setSessionId(betterId);
+  }, [currentUserId, sessionId, sessionsQuery.data]);
 
   // Load messages when session is ready
   const messagesQuery = trpc.ai.getMessages.useQuery(

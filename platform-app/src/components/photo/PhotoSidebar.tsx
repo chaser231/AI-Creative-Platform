@@ -62,6 +62,7 @@ export function PhotoSidebar({ projectId, projectName }: PhotoSidebarProps) {
         name: string | null;
         updatedAt: Date | string;
         _count: { messages: number };
+        user?: { id: string; name: string | null };
     }>;
 
     const handleCreate = () => {
@@ -196,6 +197,7 @@ export function PhotoSidebar({ projectId, projectName }: PhotoSidebarProps) {
                                 onClick={() => !isRenaming && handleSelect(s.id)}
                             >
                                 <MessageCircle size={12} className="shrink-0 text-text-tertiary" />
+                                <div className="flex-1 min-w-0">
                                 {isRenaming ? (
                                     <input
                                         autoFocus
@@ -210,10 +212,18 @@ export function PhotoSidebar({ projectId, projectName }: PhotoSidebarProps) {
                                         className="flex-1 min-w-0 bg-bg-tertiary text-[12px] text-text-primary px-1.5 py-0.5 rounded-[var(--radius-sm)] border border-border-focus outline-none"
                                     />
                                 ) : (
-                                    <span className="flex-1 min-w-0 text-[12px] truncate">
-                                        {formatSessionLabel(s, index)}
-                                    </span>
+                                    <>
+                                        <span className="block text-[12px] truncate">
+                                            {formatSessionLabel(s, index)}
+                                        </span>
+                                        {s.user?.name && (
+                                            <span className="block text-[10px] text-text-tertiary truncate">
+                                                {s.user.name}
+                                            </span>
+                                        )}
+                                    </>
                                 )}
+                                </div>
                                 {!isRenaming && (
                                     <>
                                         <span className="text-[10px] text-text-tertiary shrink-0">
