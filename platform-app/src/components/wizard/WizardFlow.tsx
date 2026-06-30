@@ -3,7 +3,7 @@
 import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import type { ArtboardProps } from "@/store/canvas/types";
 import { DEFAULT_ARTBOARD_PROPS } from "@/store/canvas/types";
-import { resolveWizardArtboardProps } from "@/lib/resolveWizardArtboardProps";
+import { buildWizardArtboardPropsByFormatId, applyWizardArtboardPropsToPack } from "@/lib/resolveWizardArtboardProps";
 import { Check, Globe2, LayoutTemplate, Layers3, Search, Star, Users, X } from "lucide-react";
 import { useTemplateStore } from "@/store/templateStore";
 import { useTemplateListSync } from "@/hooks/useTemplateSync";
@@ -273,7 +273,7 @@ export function WizardFlow({
     const [productDescription, setProductDescription] = useState("");
     const [packSearch, setPackSearch] = useState("");
     const [activePreviewFormatId, setActivePreviewFormatId] = useState("");
-    const [wizardArtboardProps, setWizardArtboardProps] = useState<ArtboardProps>(DEFAULT_ARTBOARD_PROPS);
+    const [formatArtboardProps, setFormatArtboardProps] = useState<Record<string, ArtboardProps>>({});
     const loadedTemplateIdRef = useRef<string | null>(initialTemplateId || null);
     const [aiScenariosTools, setAiScenariosTools] = useState<{
         canOpen: boolean;
@@ -418,11 +418,22 @@ export function WizardFlow({
     );
 
     useEffect(() => {
-        const nextArtboardProps = selectedTemplate
-            ? resolveWizardArtboardProps(selectedTemplate)
-            : DEFAULT_ARTBOARD_PROPS;
-        queueMicrotask(() => setWizardArtboardProps(nextArtboardProps));
+        const nextByFormat = selectedTemplate
+            ? buildWizardArtboardPropsByFormatId(selectedTemplate)
+            : {};
+        queueMicrotask(() => setFormatArtboardProps(nextByFormat));
     }, [selectedTemplate]);
+
+    const handleFormatArtboardPropsChange = useCallback((
+        formatId: string,
+        updater: React.SetStateAction<ArtboardProps>,
+    ) => {
+        setFormatArtboardProps((prev) => {
+            const current = prev[formatId] ?? DEFAULT_ARTBOARD_PROPS;
+            const next = typeof updater === "function" ? updater(current) : updater;
+            return { ...prev, [formatId]: next };
+        });
+    }, []);
 
     const handleApplyAndContinue = useCallback(async () => {
         if (catalogScope !== "manual" && !selectedTemplateId) return;
@@ -708,7 +719,7 @@ export function WizardFlow({
             }
         }
 
-        (packToApply as { artboardProps?: ArtboardProps }).artboardProps = wizardArtboardProps;
+        packToApply = applyWizardArtboardPropsToPack(packToApply, formatArtboardProps);
 
         applyTemplatePack(packToApply, {
             contentOverrides: Object.keys(contentOverrides).length > 0 ? contentOverrides : undefined,
@@ -728,7 +739,7 @@ export function WizardFlow({
         selectedFormatIds,
         catalogScope,
         textValues,
-        wizardArtboardProps,
+        formatArtboardProps,
     ]);
 
     const nextDisabled =
@@ -1120,8 +1131,8 @@ export function WizardFlow({
                             <WizardContentWorkspace
                                 selectedTemplate={selectedTemplate}
                                 templateLoadError={templateLoadError}
-                                artboardProps={wizardArtboardProps}
-                                onArtboardPropsChange={setWizardArtboardProps}
+                                formatArtboardProps={formatArtboardProps}
+                                onFormatArtboardPropsChange={handleFormatArtboardPropsChange}
                                 textValues={textValues}
                                 imageValues={imageValues}
                                 imageViewOverrides={imageViewOverrides}
@@ -1147,7 +1158,7 @@ export function WizardFlow({
                                 onClose={onExportClose ?? (() => undefined)}
                                 selectedTemplate={selectedTemplate}
                                 activeFormatId={activePreviewFormatId}
-                                artboardProps={wizardArtboardProps}
+                                formatArtboardProps={formatArtboardProps}
                                 textValues={textValues}
                                 imageValues={imageValues}
                                 imageViewOverrides={imageViewOverrides}

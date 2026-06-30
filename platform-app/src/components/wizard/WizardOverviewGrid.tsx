@@ -23,6 +23,8 @@ export interface WizardOverviewTile {
     layers: Layer[];
     layoutGrids?: LayoutGrid[];
     isMaster?: boolean;
+    /** Per-format artboard appearance for this tile preview. */
+    artboard?: WizardOverviewGridProps["artboard"];
 }
 
 export interface WizardOverviewGridProps {
@@ -30,7 +32,7 @@ export interface WizardOverviewGridProps {
     activeId: string;
     appearance: "light" | "dark";
     gridsVisible?: boolean;
-    /** Shared artboard background (artboardProps) applied to every tile. */
+    /** Default artboard appearance when a tile has no per-format override. */
     artboard: {
         fill?: Paint;
         fillEnabled?: boolean;
@@ -89,6 +91,8 @@ function OverviewTileCard({
         return () => observer.disconnect();
     }, []);
 
+    const tileArtboard = tile.artboard ?? artboard;
+
     return (
         <button
             type="button"
@@ -123,16 +127,16 @@ function OverviewTileCard({
                     containerHeight={PREVIEW_HEIGHT}
                     zoom={1}
                     appearance={appearance}
-                    artboardFill={artboard.fill}
-                    artboardFillEnabled={artboard.fillEnabled !== false}
-                    artboardBackgroundImage={artboard.backgroundImage}
-                    artboardCornerRadius={artboard.cornerRadius}
-                    artboardStroke={artboard.stroke}
-                    artboardStrokeMode={artboard.strokeMode}
-                    artboardStrokeImage={artboard.strokeImage}
-                    artboardStrokeWidth={artboard.strokeWidth}
-                    artboardStrokeAlign={artboard.strokeAlign}
-                    artboardStrokeJoin={artboard.strokeJoin}
+                    artboardFill={tileArtboard.fill}
+                    artboardFillEnabled={tileArtboard.fillEnabled !== false}
+                    artboardBackgroundImage={tileArtboard.backgroundImage}
+                    artboardCornerRadius={tileArtboard.cornerRadius}
+                    artboardStroke={tileArtboard.stroke}
+                    artboardStrokeMode={tileArtboard.strokeMode}
+                    artboardStrokeImage={tileArtboard.strokeImage}
+                    artboardStrokeWidth={tileArtboard.strokeWidth}
+                    artboardStrokeAlign={tileArtboard.strokeAlign}
+                    artboardStrokeJoin={tileArtboard.strokeJoin}
                     layoutGrids={tile.layoutGrids}
                     showLayoutGrids={gridsVisible}
                 />

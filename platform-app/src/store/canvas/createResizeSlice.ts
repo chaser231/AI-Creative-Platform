@@ -18,6 +18,23 @@ import { cloneLayerTree } from "@/utils/cloneLayerTree";
 import { applyCascade, type CascadeContext } from "./bindingCascade";
 import { generateCustomResize } from "@/services/customResizeService";
 import { AdaptationPresets, runAdaptationPipeline } from "@/services/adaptationPipeline";
+import {
+    cloneArtboardProps,
+    selectActiveArtboardProps,
+} from "./artboardProps";
+
+function inheritArtboardPropsForNewFormat(state: CanvasStore, format: ResizeFormat): ResizeFormat {
+    if (format.artboardProps) {
+        return {
+            ...format,
+            artboardProps: cloneArtboardProps(format.artboardProps),
+        };
+    }
+    return {
+        ...format,
+        artboardProps: cloneArtboardProps(selectActiveArtboardProps(state)),
+    };
+}
 
 /**
  * Adapts a whole layer tree to a new artboard size for MANUAL format resize.
@@ -57,7 +74,7 @@ export const createResizeSlice: StateCreator<CanvasStore, [], [], ResizeSlice> =
         // Snapshot formats are independent — no instances needed.
         if (format.layerSnapshot !== undefined) {
             set((s) => ({
-                resizes: [...s.resizes, { ...format }],
+                resizes: [...s.resizes, inheritArtboardPropsForNewFormat(get(), format)],
             }));
             return;
         }
@@ -112,7 +129,7 @@ export const createResizeSlice: StateCreator<CanvasStore, [], [], ResizeSlice> =
                 };
             });
             set((s) => ({
-                resizes: [...s.resizes, format],
+                resizes: [...s.resizes, inheritArtboardPropsForNewFormat(get(), format)],
                 componentInstances: [...s.componentInstances, ...newInstances],
             }));
             return;
@@ -120,7 +137,7 @@ export const createResizeSlice: StateCreator<CanvasStore, [], [], ResizeSlice> =
 
         // ── Fallback: no masters, no snapshot — just add the format ──
         set((s) => ({
-            resizes: [...s.resizes, { ...format, layerSnapshot: [] }],
+            resizes: [...s.resizes, inheritArtboardPropsForNewFormat(get(), { ...format, layerSnapshot: [] })],
         }));
     },
 
@@ -144,8 +161,13 @@ export const createResizeSlice: StateCreator<CanvasStore, [], [], ResizeSlice> =
                 : resize
         );
 
+        const inheritedArtboardProps = cloneArtboardProps(selectActiveArtboardProps(state));
+
         set({
-            resizes: [...updatedResizes, result.resize],
+            resizes: [...updatedResizes, {
+                ...result.resize,
+                artboardProps: inheritedArtboardProps,
+            }],
             activeResizeId: result.resize.id,
             canvasWidth: result.resize.width,
             canvasHeight: result.resize.height,
@@ -232,6 +254,12 @@ export const createResizeSlice: StateCreator<CanvasStore, [], [], ResizeSlice> =
             isMaster: undefined, // never duplicate master status
             layerBindings: undefined, // don't copy bindings
             layerSnapshot: cloneLayerTree(sourceLayers),
+            artboardProps: cloneArtboardProps(
+                selectActiveArtboardProps({
+                    ...state,
+                    activeResizeId: resizeId,
+                }),
+            ),
         };
 
         set((s) => ({

@@ -393,4 +393,64 @@ describe("normalizeCanvasStateForLoad", () => {
         expect(normalized.resizes[0].adaptationDiagnostics).toEqual(diagnostics);
         expect(normalized.resizes[0].adaptedFromResizeId).toBe("master");
     });
+
+    it("copies top-level artboardProps into each format on load", () => {
+        const globalArtboard = {
+            ...DEFAULT_ARTBOARD_PROPS,
+            cornerRadius: 12,
+            fill: "#AABBCC",
+        };
+        const normalized = normalizeCanvasStateForLoad({
+            resizes: [
+                { ...DEFAULT_RESIZE, id: "master" },
+                {
+                    ...DEFAULT_RESIZE,
+                    id: "story",
+                    name: "Story",
+                    label: "1080 × 1920",
+                    width: 1080,
+                    height: 1920,
+                },
+            ],
+            activeResizeId: "master",
+            artboardProps: globalArtboard,
+        });
+
+        expect(normalized.resizes[0].artboardProps?.cornerRadius).toBe(12);
+        expect(normalized.resizes[1].artboardProps?.cornerRadius).toBe(12);
+        expect(normalized.resizes[0].artboardProps).not.toBe(normalized.resizes[1].artboardProps);
+        expect(normalized.artboardProps.cornerRadius).toBe(12);
+    });
+
+    it("persists per-format artboardProps and mirrors master on save", () => {
+        const saved = getCanvasStateForSave({
+            layers: [],
+            masterComponents: [],
+            componentInstances: [],
+            resizes: [
+                {
+                    ...DEFAULT_RESIZE,
+                    id: "master",
+                    artboardProps: { ...DEFAULT_ARTBOARD_PROPS, cornerRadius: 4 },
+                },
+                {
+                    ...DEFAULT_RESIZE,
+                    id: "wide",
+                    name: "Wide",
+                    label: "1200 × 630",
+                    width: 1200,
+                    height: 630,
+                    artboardProps: { ...DEFAULT_ARTBOARD_PROPS, cornerRadius: 24 },
+                },
+            ],
+            activeResizeId: "wide",
+            artboardProps: { ...DEFAULT_ARTBOARD_PROPS, cornerRadius: 4 },
+            canvasWidth: 1200,
+            canvasHeight: 630,
+            palette: { colors: [], backgrounds: [] },
+        });
+
+        expect(saved.resizes.find((r) => r.id === "wide")?.artboardProps?.cornerRadius).toBe(24);
+        expect(saved.artboardProps.cornerRadius).toBe(4);
+    });
 });

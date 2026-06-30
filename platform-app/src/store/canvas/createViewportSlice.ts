@@ -8,6 +8,8 @@ import type Konva from "konva";
 import { DEFAULT_EXPAND_PADDING } from "./types";
 import { getFullEditModeExitPatches } from "./editModeHelpers";
 import { DEFAULT_SNAP_CONFIG } from "@/services/snapService";
+import { pushSnapshot } from "./createHistorySlice";
+import { patchActiveFormatArtboardProps } from "./artboardProps";
 
 export type ViewportSlice = Pick<CanvasStore,
     | "zoom" | "stageX" | "stageY"
@@ -96,17 +98,19 @@ export const createViewportSlice: StateCreator<CanvasStore, [], [], ViewportSlic
     },
 
     updateArtboardProps: (updates: Partial<ArtboardProps>) => {
-        set((state) => ({
-            artboardProps: {
-                ...state.artboardProps,
-                ...updates,
-                fillSwatchRef:
-                    Object.prototype.hasOwnProperty.call(updates, "fill")
-                    && !Object.prototype.hasOwnProperty.call(updates, "fillSwatchRef")
-                        ? undefined
-                        : updates.fillSwatchRef ?? state.artboardProps.fillSwatchRef,
-            },
-        }));
+        pushSnapshot(set, get);
+        set((state) => {
+            const { resizes, topLevelArtboardProps } = patchActiveFormatArtboardProps(
+                state.resizes,
+                state.activeResizeId,
+                updates,
+                state.artboardProps,
+            );
+            return {
+                resizes,
+                artboardProps: topLevelArtboardProps,
+            };
+        });
     },
 
     updateSnapConfig: (updates: Partial<SnapConfig>) => {

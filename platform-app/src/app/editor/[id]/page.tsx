@@ -31,6 +31,7 @@ import { MissingFontsModal } from "@/components/editor/MissingFontsModal";
 import { WizardFlow, type WizardHeaderState } from "@/components/wizard/WizardFlow";
 import { useProjectStore } from "@/store/projectStore";
 import { useCanvasStore } from "@/store/canvasStore";
+import { selectActiveArtboardProps } from "@/store/canvas/artboardProps";
 import { useShallow } from "zustand/react/shallow";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { useCanvasAutoSave, useLoadCanvasState } from "@/hooks/useProjectSync";
@@ -121,7 +122,7 @@ export default function EditorPage({ params }: EditorPageProps) {
     const { editorMode, setEditorMode, undo, redo, history, future, artboardProps, updateArtboardProps } = useCanvasStore(useShallow((s) => ({
         editorMode: s.editorMode, setEditorMode: s.setEditorMode,
         undo: s.undo, redo: s.redo, history: s.history, future: s.future,
-        artboardProps: s.artboardProps, updateArtboardProps: s.updateArtboardProps,
+        artboardProps: selectActiveArtboardProps(s), updateArtboardProps: s.updateArtboardProps,
     })));
 
     // Shift+G toggles the all-formats overview grid. Studio: always; wizard: only

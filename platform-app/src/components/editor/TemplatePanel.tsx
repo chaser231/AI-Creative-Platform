@@ -319,6 +319,7 @@ export function TemplatePanel({ open, onClose, projectId }: TemplatePanelProps) 
     const handleSaveAsTemplate = async () => {
         setSaveError(null);
         const state = useCanvasStore.getState();
+        const savedState = getCanvasStateForSave(state);
         const activeProject = projects.find((p) => p.id === activeProjectId);
         const projectData = activeProject || { name: "Новый шаблон" };
 
@@ -329,10 +330,10 @@ export function TemplatePanel({ open, onClose, projectId }: TemplatePanelProps) 
             [], // No instances
             state.layers,
             {
-                artboardProps: state.artboardProps as unknown as Record<string, unknown>,
-                palette: state.palette,
-                canvasWidth: state.canvasWidth,
-                canvasHeight: state.canvasHeight,
+                artboardProps: savedState.artboardProps as unknown as Record<string, unknown>,
+                palette: savedState.palette,
+                canvasWidth: savedState.canvasWidth,
+                canvasHeight: savedState.canvasHeight,
             },
         );
 
