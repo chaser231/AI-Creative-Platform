@@ -44,6 +44,7 @@ import { loadAllCustomFonts, type WorkspaceFontAsset } from "@/lib/customFonts";
 import { hydrateTemplate } from "@/services/templateService";
 import { extractRequiredFonts, findMissingFonts, applyFontReplacements, getAvailableFontFamilies } from "@/utils/fontUtils";
 import type { RequiredFont } from "@/utils/fontUtils";
+import { ensureFontWeightsLoaded } from "@/lib/fontLoading";
 import Konva from "konva";
 import { useWorkspace } from "@/providers/WorkspaceProvider";
 import { useCreateBannerFromAsset } from "@/hooks/useCreateBannerFromAsset";
@@ -67,7 +68,10 @@ const Canvas = dynamic(
 );
 
 const STUDIO_LEFT_RAIL_WIDTH = 240;
-const STUDIO_RIGHT_RAIL_WIDTH = STUDIO_LEFT_RAIL_WIDTH;
+// Right inspector is wider than the left rail so the sizing SegmentedControls
+// (Fixed / Fill / Hug per axis) and grouped property rows render without
+// cramping their labels.
+const STUDIO_RIGHT_RAIL_WIDTH = 280;
 const STUDIO_PANEL_GAP = 12;
 const STUDIO_AI_CHAT_RIGHT_OFFSET = STUDIO_RIGHT_RAIL_WIDTH + STUDIO_PANEL_GAP * 2;
 
@@ -297,21 +301,12 @@ export default function EditorPage({ params }: EditorPageProps) {
         templateSaveMutation.mutate({ id, data: canvasState });
     }, [isTemplateMode, id, templateSaveMutation]);
 
-    // Text containers are measured against the active font. Before custom
-    // @font-face files finish loading the browser falls back to a wider font;
-    // persisting that geometry makes text wrap onto a 2nd line on reopen. Gate
-    // autosave on font readiness and reflow all auto-sized text once fonts load.
-    const [fontsReady, setFontsReady] = useState(false);
-    useEffect(() => {
-        if (typeof document === "undefined" || !("fonts" in document)) {
-            setFontsReady(true);
-            return;
-        }
-        let cancelled = false;
-        const markReady = () => { if (!cancelled) setFontsReady(true); };
-        document.fonts.ready.then(markReady).catch(markReady);
-        return () => { cancelled = true; };
-    }, []);
+    // Text containers are measured against the active font AND weight. Before the
+    // specific (family, weight) faces resolve the browser falls back to a wider
+    // face; persisting that geometry makes text wrap onto a 2nd line on reopen.
+    // `weightsReady` gates autosave + reflow on the EXACT weights used by the
+    // project's text layers being loaded (not just the generic fonts.ready).
+    const [weightsReady, setWeightsReady] = useState(false);
 
     // ─── Project mode: load & auto-save ───
     // IMPORTANT: Load canvas state FIRST, then enable auto-save AFTER load completes.
@@ -334,23 +329,44 @@ export default function EditorPage({ params }: EditorPageProps) {
     }, [isTemplateMode, id, refetchCanvas]);
     const { isSaving, getUnsavedState, saveNowSync } = useCanvasAutoSave(
         isTemplateMode ? "__skip__" : id,
-        !isTemplateMode && canvasLoaded && fontsReady,
+        !isTemplateMode && canvasLoaded && weightsReady,
         stageRef,
         handleVersionConflict,
         { isLeader: tabLeader.isLeader, broadcastSaved: tabLeader.broadcastSaved },
     );
 
-    // Once the project has hydrated AND fonts are ready, reflow every auto-sized
-    // text container so it sizes to the real font instead of the wider fallback
-    // measured during hydration. Runs once per project load.
+    // After hydration, preload the EXACT (family, weight) faces used by this
+    // project's text before declaring weights ready. This blocks autosave/reflow
+    // until measurement can run against the real faces (not a fallback weight).
+    useEffect(() => {
+        if (isTemplateMode) { setWeightsReady(true); return; }
+        if (!canvasLoaded) { setWeightsReady(false); return; }
+        let cancelled = false;
+        (async () => {
+            try {
+                if (typeof document !== "undefined" && "fonts" in document) {
+                    await document.fonts.ready.catch(() => undefined);
+                }
+                const required = extractRequiredFonts(useCanvasStore.getState().layers);
+                await ensureFontWeightsLoaded(required);
+            } finally {
+                if (!cancelled) setWeightsReady(true);
+            }
+        })();
+        return () => { cancelled = true; };
+    }, [isTemplateMode, canvasLoaded, id]);
+
+    // Once the project has hydrated AND the right weights are ready, reflow every
+    // auto-sized text container so it sizes to the real face instead of the wider
+    // fallback measured during hydration. Runs once per project load.
     const textReflowedForRef = useRef<string | null>(null);
     useEffect(() => {
         if (isTemplateMode) return;
-        if (!canvasLoaded || !fontsReady) return;
+        if (!canvasLoaded || !weightsReady) return;
         if (textReflowedForRef.current === id) return;
         textReflowedForRef.current = id;
         useCanvasStore.getState().remeasureAllTextLayers();
-    }, [isTemplateMode, canvasLoaded, fontsReady, id]);
+    }, [isTemplateMode, canvasLoaded, weightsReady, id]);
 
     // Followers: when the leader broadcasts a `saved`, refetch so we don't
     // sit on stale canvas state.

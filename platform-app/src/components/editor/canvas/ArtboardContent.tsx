@@ -16,7 +16,7 @@ import type {
 import { LayoutGridLayer } from "@/components/editor/canvas/LayoutGridLayer";
 import type { CornerRadiusValue } from "@/utils/strokeGeometry";
 import { computeImageFitProps } from "@/utils/imageFitUtils";
-import { getTextTrimMetrics, isTextTrimActive } from "@/utils/layoutEngine";
+import { getTextRenderOffsetY } from "@/utils/layoutEngine";
 import { getEffectiveTextRenderHeight, shouldUseTextEllipsis } from "@/utils/textContainerLimits";
 import { normalizePaint, paintToKonvaProps } from "@/utils/paint";
 import { subpathsToPathData } from "@/utils/vectorGeometry";
@@ -98,7 +98,7 @@ export function ArtboardLayer({ layer, allLayers, loadedImages, imageStatuses, r
                             height={layer.textAdjust === "auto_width" || layer.textAdjust === "auto_height"
                                 ? undefined
                                 : getEffectiveTextRenderHeight(layer)}
-                            offsetY={isTextTrimActive(layer) ? getTextTrimMetrics(layer).top : 0}
+                            offsetY={getTextRenderOffsetY(layer)}
                             text={layer.textTransform === "uppercase" ? layer.text.toUpperCase() : layer.textTransform === "lowercase" ? layer.text.toLowerCase() : layer.text}
                             fontSize={layer.fontSize}
                             fontFamily={layer.fontFamily}

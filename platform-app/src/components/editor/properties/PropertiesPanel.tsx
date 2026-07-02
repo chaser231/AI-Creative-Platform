@@ -44,6 +44,7 @@ import {
 } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
 import { Select } from "@/components/ui/Select";
+import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import { SmartNumberInput, useNumberScrub } from "@/components/ui/SmartNumberInput";
 import { useCanvasStore } from "@/store/canvasStore";
 import { selectActiveArtboardProps } from "@/store/canvas/artboardProps";
@@ -83,12 +84,18 @@ import {
     type ScreenVAlign,
 } from "@/utils/autoLayoutAlignGrid";
 import { clearTextMeasureCache } from "@/utils/layoutEngine";
+import { ensureFontLoaded } from "@/lib/fontLoading";
 import { weightLabel } from "@/utils/fontWeight";
 import { getAvailableFontFamiliesSync } from "@/utils/fontUtils";
 import { uploadForAI } from "@/utils/imageUpload";
 import { normalizePaint } from "@/utils/paint";
 import { useAssetList, useAssetUpload } from "@/hooks/useAssetUpload";
 import { useWorkspace } from "@/providers/WorkspaceProvider";
+import {
+    getLayerSizeModeConfig,
+    resolveManualSizeUpdate,
+    type LayerSizeModeConfig,
+} from "./layerSizing";
 import { ArtboardBackgroundControls } from "./ArtboardBackgroundControls";
 import { ColorInput } from "./ColorInput";
 import { PaintInput } from "./PaintInput";
@@ -108,12 +115,6 @@ const SYSTEM_FONTS = [
 
 const FIELD_CLASS = "w-full h-8 rounded-[var(--radius-md)] border border-border-primary bg-bg-secondary pl-7 pr-2 text-[11px] text-text-primary text-center focus:outline-none focus:ring-1 focus:ring-border-focus";
 const RESPONSIVE_CONTROLS_STORAGE_KEY = "studio-responsive-controls-open";
-type SizeModeOption = { value: string; label: string };
-type LayerSizeModeConfig = {
-    value: string;
-    options: SizeModeOption[];
-    toUpdates: (value: string) => Partial<Layer>;
-};
 
 export function PropertiesPanel() {
     const {
@@ -447,7 +448,6 @@ function LayerInspector({
                             value={Math.round(layer.width)}
                             min={1}
                             modeConfig={widthModeConfig}
-                            onModeChange={(mode) => widthModeConfig && onChange(widthModeConfig.toUpdates(mode))}
                             onChange={(width) => handleSizeChange("width", width)}
                         />
                         <SizeField
@@ -455,7 +455,6 @@ function LayerInspector({
                             value={Math.round(layer.height)}
                             min={1}
                             modeConfig={heightModeConfig}
-                            onModeChange={(mode) => heightModeConfig && onChange(heightModeConfig.toUpdates(mode))}
                             onChange={(height) => handleSizeChange("height", height)}
                         />
                     </div>
@@ -473,6 +472,20 @@ function LayerInspector({
                         {lockAspectRatio ? <Link size={13} /> : <Unlink size={13} />}
                     </button>
                 </div>
+                {widthModeConfig && (
+                    <SizeModeRow
+                        axis="W"
+                        modeConfig={widthModeConfig}
+                        onChange={(mode) => onChange(widthModeConfig.toUpdates(mode))}
+                    />
+                )}
+                {heightModeConfig && (
+                    <SizeModeRow
+                        axis="H"
+                        modeConfig={heightModeConfig}
+                        onChange={(mode) => onChange(heightModeConfig.toUpdates(mode))}
+                    />
+                )}
                 {activeResizeId !== "master" && layer.masterId && layer.type === "image" && (
                     <IconToggle
                         active={!layer.detachedSizeSync}
@@ -1026,20 +1039,6 @@ function TextInspectorSection({ layer, onChange }: { layer: TextLayer; onChange:
         });
     }, [workspaceFontNames]);
 
-    // Wait for the font (family + weight) to actually load before applying it,
-    // then drop stale fallback measurements so the text box sizes to the real
-    // glyphs on the first click instead of needing a re-select.
-    const ensureFontLoaded = async (family: string, weight?: string | number) => {
-        if (typeof document !== "undefined" && "fonts" in document) {
-            try {
-                await document.fonts.load(`${weight ?? layer.fontWeight ?? 400} 16px "${family}"`);
-            } catch {
-                /* ignore — fall back to whatever is available */
-            }
-        }
-        clearTextMeasureCache();
-    };
-
     return (
         <InspectorSection title="Текст" icon={<Type size={13} />}>
             {isFontMissing && (
@@ -1051,7 +1050,7 @@ function TextInspectorSection({ layer, onChange }: { layer: TextLayer; onChange:
                 size="xs"
                 value={layer.fontFamily}
                 onChange={async (fontFamily) => {
-                    await ensureFontLoaded(fontFamily);
+                    await ensureFontLoaded(fontFamily, layer.fontWeight);
                     onChange({ fontFamily });
                 }}
                 options={availableFonts.map((font) => ({ value: font, label: font }))}
@@ -1601,7 +1600,6 @@ function SizeField({
     label,
     value,
     onChange,
-    onModeChange,
     modeConfig,
     min,
     max,
@@ -1610,19 +1608,21 @@ function SizeField({
     label: string;
     value: number;
     onChange: (value: number) => void;
-    onModeChange?: (value: string) => void;
     modeConfig?: LayerSizeModeConfig;
     min?: number;
     max?: number;
     step?: number;
 }) {
     const scrub = useNumberScrub({ value, onChange, min, max, step });
+    // Plain number field outside auto-layout — the sizing mode (fixed/fill/hug)
+    // only exists for auto-layout children and layout frames, where it is shown
+    // as a dedicated SegmentedControl row (`SizeModeRow`) below the W/H values.
     if (!modeConfig) {
         return <NumberField label={label} value={value} min={min} max={max} step={step} onChange={onChange} />;
     }
 
     return (
-        <div className="grid grid-cols-[28px_minmax(42px,1fr)_62px] overflow-hidden rounded-[var(--radius-md)] border border-border-primary bg-bg-secondary">
+        <div className="grid grid-cols-[28px_minmax(42px,1fr)] overflow-hidden rounded-[var(--radius-md)] border border-border-primary bg-bg-secondary">
             <span
                 {...scrub}
                 className="flex h-8 cursor-ew-resize select-none items-center justify-center border-r border-border-primary text-[11px] font-medium text-text-tertiary hover:text-text-primary"
@@ -1638,15 +1638,39 @@ function SizeField({
                 onChange={onChange}
                 className={cn(
                     "h-8 min-w-0 border-0 bg-transparent px-1 text-center text-[11px] text-text-primary focus:outline-none focus:ring-1 focus:ring-border-focus",
+                    // `fill`/`hug` values are auto-managed — dim them to signal the
+                    // number is derived (editing it forces the axis back to fixed).
                     modeConfig.value !== "fixed" && "text-text-secondary",
                 )}
             />
-            <Select
-                size="xs"
+        </div>
+    );
+}
+
+/**
+ * Full-width sizing-mode picker for one axis (fixed / fill / hug). Replaces the
+ * cramped inline dropdown so every option is visible and selectable in one tap.
+ */
+function SizeModeRow({
+    axis,
+    modeConfig,
+    onChange,
+}: {
+    axis: string;
+    modeConfig: LayerSizeModeConfig;
+    onChange: (value: string) => void;
+}) {
+    return (
+        <div className="flex items-center gap-2">
+            <span className="w-7 shrink-0 text-center text-[11px] font-medium text-text-tertiary">{axis}</span>
+            <SegmentedControl
+                variant="bordered"
+                size="sm"
+                fullWidth
                 value={modeConfig.value}
-                onChange={onModeChange ?? (() => undefined)}
+                onChange={onChange}
                 options={modeConfig.options}
-                triggerClassName="h-8 rounded-none border-0 border-l border-border-primary bg-bg-secondary px-1.5 text-[10px]"
+                className="flex-1"
             />
         </div>
     );
@@ -1664,9 +1688,9 @@ function TextAdjustSwitcher({
     onChange: (value: NonNullable<TextLayer["textAdjust"]>) => void;
 }) {
     const options: Array<{ value: NonNullable<TextLayer["textAdjust"]>; title: string; icon: ReactNode }> = [
-        { value: "auto_width", title: "Автоширина", icon: <UnfoldHorizontal size={13} /> },
-        { value: "auto_height", title: "Автовысота", icon: <UnfoldVertical size={13} /> },
-        { value: "fixed", title: "Фиксированный размер", icon: <Square size={13} /> },
+        { value: "auto_width", title: "Auto width", icon: <UnfoldHorizontal size={13} /> },
+        { value: "auto_height", title: "Auto height", icon: <UnfoldVertical size={13} /> },
+        { value: "fixed", title: "Fixed", icon: <Square size={13} /> },
     ];
 
     return (
@@ -2259,71 +2283,3 @@ function findParentFrame(layers: Layer[], layerId: string) {
     ) as FrameLayer | undefined;
 }
 
-function layoutSizingOptions(layer: Layer) {
-    return [
-        { value: "fixed", label: "Фикс." },
-        { value: "fill", label: "Заполн." },
-        ...(layer.type === "frame" || layer.type === "text" ? [{ value: "hug", label: "По содерж." }] : []),
-    ];
-}
-
-function getLayerSizeModeConfig(layer: Layer, axis: "width" | "height", isInsideAutoLayout: boolean): LayerSizeModeConfig | undefined {
-    if (isInsideAutoLayout) {
-        return {
-            value: axis === "width" ? layer.layoutSizingWidth || "fixed" : layer.layoutSizingHeight || "fixed",
-            options: layoutSizingOptions(layer),
-            toUpdates: (value) => resolveLayoutSizingUpdate(layer, axis, value),
-        };
-    }
-
-    if (layer.type !== "frame" || !layer.layoutMode || layer.layoutMode === "none") {
-        return undefined;
-    }
-
-    const axisUsesPrimarySizing = axis === "width"
-        ? layer.layoutMode === "horizontal"
-        : layer.layoutMode === "vertical";
-    const mode = axisUsesPrimarySizing ? layer.primaryAxisSizingMode : layer.counterAxisSizingMode;
-
-    return {
-        value: mode === "auto" ? "hug" : "fixed",
-        options: [
-            { value: "fixed", label: "Фикс." },
-            { value: "hug", label: "По содерж." },
-        ],
-        toUpdates: (value) => (axisUsesPrimarySizing
-            ? { primaryAxisSizingMode: value === "hug" ? "auto" : "fixed" }
-            : { counterAxisSizingMode: value === "hug" ? "auto" : "fixed" }) as Partial<Layer>,
-    };
-}
-
-function resolveManualSizeUpdate(
-    layer: Layer,
-    axis: "width" | "height",
-    value: number,
-    modeConfig?: LayerSizeModeConfig,
-): Partial<Layer> {
-    const updates: Partial<Layer> = axis === "width" ? { width: value } : { height: value };
-
-    // Text: write raw intent only. `normalizeTextLayer` (in the store's
-    // updateLayer) pins the edited axis to fixed and re-derives textAdjust /
-    // layoutSizing so the two sizing models never drift apart.
-    if (layer.type === "text") {
-        return updates;
-    }
-
-    if (modeConfig && modeConfig.value !== "fixed") {
-        Object.assign(updates, modeConfig.toUpdates("fixed"));
-    }
-
-    return updates;
-}
-
-function resolveLayoutSizingUpdate(layer: Layer, axis: "width" | "height", value: string): Partial<Layer> {
-    // Raw intent for both text and non-text. For text, `normalizeTextLayer`
-    // derives the matching textAdjust from this layout-sizing pair; the UI no
-    // longer second-guesses it here (no hidden textAdjust syncs).
-    return axis === "width"
-        ? { layoutSizingWidth: value as Layer["layoutSizingWidth"] }
-        : { layoutSizingHeight: value as Layer["layoutSizingHeight"] };
-}

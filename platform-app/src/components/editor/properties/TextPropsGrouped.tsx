@@ -13,6 +13,7 @@ import {
 import { Popover, PopoverButton } from "@/components/ui/Popover";
 import { Select } from "@/components/ui/Select";
 import { PREINSTALLED_FONTS, saveUserFont, getUserFonts, normalizeFontFamilyName } from "@/lib/customFonts";
+import { ensureFontLoaded } from "@/lib/fontLoading";
 import { getAvailableFontFamiliesSync } from "@/utils/fontUtils";
 import type { TextLayer } from "@/types";
 import { ColorInput } from "./ColorInput";
@@ -153,7 +154,10 @@ export function TextPropsGrouped({
                         <Select
                             size="md"
                             value={layer.fontFamily}
-                            onChange={(val) => onChange({ fontFamily: val })}
+                            onChange={async (val) => {
+                                await ensureFontLoaded(val, layer.fontWeight);
+                                onChange({ fontFamily: val });
+                            }}
                             options={availableFonts.map(f => ({ value: f, label: f }))}
                             triggerClassName="h-12 text-[15px] rounded-[var(--radius-lg)] bg-bg-primary"
                         />
@@ -162,7 +166,10 @@ export function TextPropsGrouped({
                             <Select
                                 size="md"
                                 value={layer.fontWeight}
-                                onChange={(val) => onChange({ fontWeight: val })}
+                                onChange={async (val) => {
+                                    await ensureFontLoaded(layer.fontFamily, val);
+                                    onChange({ fontWeight: val });
+                                }}
                                 options={[
                                     ...(availableWeights.includes("100") ? [{ value: "100", label: "100 Тонкий" }] : []),
                                     ...(availableWeights.includes("200") ? [{ value: "200", label: "200 Очень светлый" }] : []),
@@ -265,9 +272,9 @@ export function TextPropsGrouped({
                                     onChange(updates);
                                 }}
                                 options={[
-                                    { value: "auto_width", label: "Автоширина" },
-                                    { value: "auto_height", label: "Автовысота" },
-                                    { value: "fixed", label: "Фиксированный" },
+                                    { value: "auto_width", label: "Auto width" },
+                                    { value: "auto_height", label: "Auto height" },
+                                    { value: "fixed", label: "Fixed" },
                                 ]}
                                 triggerClassName="h-10 rounded-[var(--radius-lg)] bg-bg-primary"
                             />

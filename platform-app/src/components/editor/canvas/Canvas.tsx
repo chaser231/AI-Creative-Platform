@@ -62,7 +62,7 @@ import {
     TEXT_LAYER_BOUNDS_NAME,
     TEXT_LAYER_CONTENT_NAME,
 } from "./textTransformUtils";
-import { getTextTrimMetrics, isTextTrimActive } from "@/utils/layoutEngine";
+import { getTextRenderOffsetY } from "@/utils/layoutEngine";
 import { getEffectiveTextRenderHeight, shouldUseTextEllipsis } from "@/utils/textContainerLimits";
 import { computeLayerBoxClientRect } from "@/utils/strokeGeometry";
 /* ─── Constants ───────────────────────────────────── */
@@ -278,7 +278,7 @@ const CanvasLayer = memo(function CanvasLayer({
                             height={layer.textAdjust === "auto_width" || layer.textAdjust === "auto_height"
                                 ? undefined
                                 : getEffectiveTextRenderHeight(layer)}
-                            offsetY={isTextTrimActive(layer) ? getTextTrimMetrics(layer).top : 0}
+                            offsetY={getTextRenderOffsetY(layer)}
                             text={layer.textTransform === "uppercase" ? layer.text.toUpperCase() : layer.textTransform === "lowercase" ? layer.text.toLowerCase() : layer.text}
                             fontSize={layer.fontSize}
                             fontFamily={layer.fontFamily}

@@ -4,7 +4,13 @@ import type { TextLayer } from "@/types";
 export function getMaxLinesCapHeight(text: TextLayer): number | undefined {
     const maxLines = text.responsive?.maxLines;
     if (!maxLines || maxLines < 1) return undefined;
-    return maxLines * text.fontSize * (text.lineHeight || 1.2);
+    // A rendered line never occupies less than ~1em even when line-height < 1:
+    // `applyTightLineHeightFloor` floors the measured box to the glyph ink in
+    // that regime. Floor the per-line height here too (>= 1em), otherwise a
+    // sub-1 line-height drags this cap below the visible glyphs and the
+    // `Math.min(height, cap)` clamp collapses the container into a thin strip.
+    const effectiveLineHeight = Math.max(text.lineHeight || 1.2, 1);
+    return maxLines * text.fontSize * effectiveLineHeight;
 }
 
 function clampDimension(value: number, min?: number, max?: number): number {
