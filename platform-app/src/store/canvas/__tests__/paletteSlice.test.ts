@@ -166,5 +166,126 @@ describe("canvas palette slice", () => {
             focusY: 0.75,
             swatchRef: "bg-1",
         });
+        expect(state.resizes[0].artboardProps?.backgroundImage).toEqual(state.artboardProps.backgroundImage);
+    });
+
+    it("updates artboard swatch cascade only on formats that reference the swatch", () => {
+        useCanvasStore.setState({
+            layers: [],
+            resizes: [
+                {
+                    ...DEFAULT_RESIZE,
+                    id: "master",
+                    artboardProps: {
+                        ...DEFAULT_ARTBOARD_PROPS,
+                        fillSwatchRef: "color-1",
+                        fill: "#111111",
+                    },
+                },
+                {
+                    ...DEFAULT_RESIZE,
+                    id: "other",
+                    name: "Other",
+                    label: "800 × 600",
+                    width: 800,
+                    height: 600,
+                    artboardProps: {
+                        ...DEFAULT_ARTBOARD_PROPS,
+                        fillSwatchRef: "color-2",
+                        fill: "#222222",
+                    },
+                },
+            ],
+            activeResizeId: "master",
+            artboardProps: {
+                ...DEFAULT_ARTBOARD_PROPS,
+                fillSwatchRef: "color-1",
+                fill: "#111111",
+            },
+            palette: {
+                colors: [
+                    { id: "color-1", type: "color", name: "Primary", value: "#111111" },
+                    { id: "color-2", type: "color", name: "Secondary", value: "#222222" },
+                ],
+                backgrounds: [],
+            },
+        });
+
+        useCanvasStore.getState().updateSwatch("color-1", { value: "#333333" });
+
+        const state = useCanvasStore.getState();
+        expect(state.resizes.find((r) => r.id === "master")?.artboardProps?.fill).toBe("#333333");
+        expect(state.resizes.find((r) => r.id === "other")?.artboardProps?.fill).toBe("#222222");
+    });
+
+    it("removeSwatch detaches artboard background swatch only on matching formats", () => {
+        useCanvasStore.setState({
+            layers: [],
+            resizes: [
+                {
+                    ...DEFAULT_RESIZE,
+                    id: "master",
+                    artboardProps: {
+                        ...DEFAULT_ARTBOARD_PROPS,
+                        backgroundImage: {
+                            src: "https://example.com/a.png",
+                            fit: "cover",
+                            swatchRef: "bg-1",
+                        },
+                    },
+                },
+                {
+                    ...DEFAULT_RESIZE,
+                    id: "other",
+                    name: "Other",
+                    label: "800 × 600",
+                    width: 800,
+                    height: 600,
+                    artboardProps: {
+                        ...DEFAULT_ARTBOARD_PROPS,
+                        backgroundImage: {
+                            src: "https://example.com/b.png",
+                            fit: "cover",
+                            swatchRef: "bg-2",
+                        },
+                    },
+                },
+            ],
+            activeResizeId: "master",
+            artboardProps: {
+                ...DEFAULT_ARTBOARD_PROPS,
+                backgroundImage: {
+                    src: "https://example.com/a.png",
+                    fit: "cover",
+                    swatchRef: "bg-1",
+                },
+            },
+            palette: {
+                colors: [],
+                backgrounds: [
+                    {
+                        id: "bg-1",
+                        type: "background",
+                        name: "BG A",
+                        value: { kind: "image", src: "https://example.com/a.png", fit: "cover" },
+                    },
+                    {
+                        id: "bg-2",
+                        type: "background",
+                        name: "BG B",
+                        value: { kind: "image", src: "https://example.com/b.png", fit: "cover" },
+                    },
+                ],
+            },
+            history: [],
+            future: [],
+        });
+
+        useCanvasStore.getState().removeSwatch("bg-1", "detach");
+
+        const state = useCanvasStore.getState();
+        expect(state.resizes.find((r) => r.id === "master")?.artboardProps?.backgroundImage?.swatchRef).toBeUndefined();
+        expect(state.resizes.find((r) => r.id === "master")?.artboardProps?.backgroundImage?.src).toBe("https://example.com/a.png");
+        expect(state.resizes.find((r) => r.id === "other")?.artboardProps?.backgroundImage?.swatchRef).toBe("bg-2");
     });
 });

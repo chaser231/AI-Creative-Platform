@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { Sparkles, Wand2, X, Ratio, Settings2, Maximize2, Sliders, Brush } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { usePhotoStore } from "@/store/photoStore";
@@ -98,6 +98,24 @@ export function PhotoPromptBar({ projectId }: PhotoPromptBarProps) {
     const saveGeneratedAssetMutation = trpc.asset.saveGeneratedImage.useMutation();
     const createSessionMutation = trpc.ai.createSession.useMutation();
     const { registerFile } = useProjectLibrary();
+    const assetInvalidateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+    const scheduleAssetLibraryRefresh = useCallback(() => {
+        if (assetInvalidateTimerRef.current) {
+            clearTimeout(assetInvalidateTimerRef.current);
+        }
+        assetInvalidateTimerRef.current = setTimeout(() => {
+            void utils.asset.listByProject.invalidate({ projectId });
+        }, 800);
+    }, [projectId, utils]);
+
+    useEffect(() => {
+        return () => {
+            if (assetInvalidateTimerRef.current) {
+                clearTimeout(assetInvalidateTimerRef.current);
+            }
+        };
+    }, []);
 
     const isEditMode = !!editContext;
     const activeModelId = isEditMode ? editModelId : selectedModelId;
@@ -388,9 +406,8 @@ export function PhotoPromptBar({ projectId }: PhotoPromptBarProps) {
                     await Promise.all([
                         utils.ai.getMessages.invalidate({ sessionId }),
                         utils.ai.listSessions.invalidate({ projectId }),
-                        utils.asset.listByProject.invalidate({ projectId }),
-                        utils.project.list.invalidate(),
                     ]);
+                    scheduleAssetLibraryRefresh();
 
                     if (snapshotIsEdit) {
                         const currentCtx = usePhotoStore.getState().editContext;

@@ -23,6 +23,8 @@ export interface WizardOverviewTile {
     layers: Layer[];
     layoutGrids?: LayoutGrid[];
     isMaster?: boolean;
+    /** Per-format artboard appearance for this tile preview. */
+    artboard?: WizardOverviewGridProps["artboard"];
 }
 
 export interface WizardOverviewGridProps {
@@ -30,7 +32,7 @@ export interface WizardOverviewGridProps {
     activeId: string;
     appearance: "light" | "dark";
     gridsVisible?: boolean;
-    /** Shared artboard background (artboardProps) applied to every tile. */
+    /** Default artboard appearance when a tile has no per-format override. */
     artboard: {
         fill?: Paint;
         fillEnabled?: boolean;
@@ -73,6 +75,7 @@ function OverviewTileCard({
 }) {
     const previewRef = useRef<HTMLDivElement | null>(null);
     const [previewWidth, setPreviewWidth] = useState<number>(PREVIEW_FALLBACK_WIDTH);
+    const [isVisible, setIsVisible] = useState(false);
 
     useEffect(() => {
         const node = previewRef.current;
@@ -88,6 +91,22 @@ function OverviewTileCard({
         observer.observe(node);
         return () => observer.disconnect();
     }, []);
+
+    // Mount Konva preview only when the tile enters (or nears) the viewport.
+    useEffect(() => {
+        const node = previewRef.current;
+        if (!node) return;
+        const observer = new IntersectionObserver(
+            ([entry]) => {
+                if (entry?.isIntersecting) setIsVisible(true);
+            },
+            { rootMargin: "240px" },
+        );
+        observer.observe(node);
+        return () => observer.disconnect();
+    }, []);
+
+    const tileArtboard = tile.artboard ?? artboard;
 
     return (
         <button
@@ -115,27 +134,34 @@ function OverviewTileCard({
                 className="relative w-full overflow-hidden rounded-[var(--radius-lg)] border border-border-primary bg-bg-canvas"
                 style={{ height: PREVIEW_HEIGHT }}
             >
-                <PreviewCanvas
-                    layers={tile.layers}
-                    artboardWidth={tile.width}
-                    artboardHeight={tile.height}
-                    containerWidth={previewWidth}
-                    containerHeight={PREVIEW_HEIGHT}
-                    zoom={1}
-                    appearance={appearance}
-                    artboardFill={artboard.fill}
-                    artboardFillEnabled={artboard.fillEnabled !== false}
-                    artboardBackgroundImage={artboard.backgroundImage}
-                    artboardCornerRadius={artboard.cornerRadius}
-                    artboardStroke={artboard.stroke}
-                    artboardStrokeMode={artboard.strokeMode}
-                    artboardStrokeImage={artboard.strokeImage}
-                    artboardStrokeWidth={artboard.strokeWidth}
-                    artboardStrokeAlign={artboard.strokeAlign}
-                    artboardStrokeJoin={artboard.strokeJoin}
-                    layoutGrids={tile.layoutGrids}
-                    showLayoutGrids={gridsVisible}
-                />
+                {isVisible ? (
+                    <PreviewCanvas
+                        layers={tile.layers}
+                        artboardWidth={tile.width}
+                        artboardHeight={tile.height}
+                        containerWidth={previewWidth}
+                        containerHeight={PREVIEW_HEIGHT}
+                        zoom={1}
+                        appearance={appearance}
+                        artboardFill={tileArtboard.fill}
+                        artboardFillEnabled={tileArtboard.fillEnabled !== false}
+                        artboardBackgroundImage={tileArtboard.backgroundImage}
+                        artboardCornerRadius={tileArtboard.cornerRadius}
+                        artboardStroke={tileArtboard.stroke}
+                        artboardStrokeMode={tileArtboard.strokeMode}
+                        artboardStrokeImage={tileArtboard.strokeImage}
+                        artboardStrokeWidth={tileArtboard.strokeWidth}
+                        artboardStrokeAlign={tileArtboard.strokeAlign}
+                        artboardStrokeJoin={tileArtboard.strokeJoin}
+                        layoutGrids={tile.layoutGrids}
+                        showLayoutGrids={gridsVisible}
+                    />
+                ) : (
+                    <div
+                        className="h-full w-full animate-pulse bg-bg-secondary"
+                        aria-hidden
+                    />
+                )}
                 {tile.isMaster && (
                     <span className="pointer-events-none absolute left-2 top-2 rounded-full bg-accent-lime px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-accent-lime-text shadow-[var(--shadow-sm)]">
                         Мастер

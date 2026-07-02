@@ -27,6 +27,7 @@ import { RefAutocompleteTextarea, type RefAutocompleteTextareaHandle } from "@/c
 import { ReferenceImageInput, ReferenceImagePreviewTray, getReferenceTrayReserveWidth } from "@/components/ui/ReferenceImageInput";
 import { ImageStylePresetPicker, TextStylePresetPicker } from "@/components/ui/StylePresetPicker";
 import { GeneratedImageStrip, type GeneratedImageVariant } from "@/components/ui/GeneratedImageStrip";
+import { capLayerVariants } from "@/lib/generationVariantUtils";
 import { parseGenerationError } from "@/lib/parseGenerationError";
 import {
     formatProjectQueueBadge,
@@ -46,6 +47,8 @@ import { ArtboardBackgroundControls } from "@/components/editor/properties/Artbo
 import { applyBackgroundSwatchToArtboardProps } from "@/lib/resolveWizardArtboardProps";
 import { paintToCssBackground } from "@/utils/paint";
 import type { ArtboardProps } from "@/store/canvas/types";
+import { DEFAULT_ARTBOARD_PROPS } from "@/store/canvas/types";
+import { resolvePreviewFormatArtboard } from "@/store/canvas/artboardProps";
 import { DEFAULT_PALETTE } from "@/types";
 import type { BackgroundSwatchValue, Paint, Swatch } from "@/types";
 import { trpc } from "@/lib/trpc";
@@ -136,6 +139,7 @@ export interface PreviewFormatSource {
     height: number;
     layerBindings?: LayerBinding[];
     layoutGrids?: LayoutGrid[];
+    artboardProps?: ArtboardProps;
 }
 
 export interface WizardImageViewOverride {
@@ -171,8 +175,11 @@ interface AssetRow {
 interface WizardContentWorkspaceProps {
     selectedTemplate: TemplatePackV2;
     templateLoadError: string | null;
-    artboardProps: ArtboardProps;
-    onArtboardPropsChange: React.Dispatch<React.SetStateAction<ArtboardProps>>;
+    formatArtboardProps: Record<string, ArtboardProps>;
+    onFormatArtboardPropsChange: (
+        formatId: string,
+        updater: React.SetStateAction<ArtboardProps>,
+    ) => void;
     textValues: Record<string, string>;
     imageValues: Record<string, string>;
     imageViewOverrides: Record<string, WizardImageViewOverride>;
@@ -314,8 +321,8 @@ const WIZARD_MAX_FINAL_PIXELS = 8_000_000;
 export function WizardContentWorkspace({
     selectedTemplate,
     templateLoadError,
-    artboardProps,
-    onArtboardPropsChange,
+    formatArtboardProps,
+    onFormatArtboardPropsChange,
     textValues,
     imageValues,
     imageViewOverrides,
@@ -362,6 +369,17 @@ export function WizardContentWorkspace({
     const previewSource = visiblePreviewFormats.find((format) => format.id === activePreviewFormatId)
         ?? visiblePreviewFormats[0]
         ?? masterPreviewSource;
+    const activeSidebarArtboard = formatArtboardProps[activePreviewFormatId] ?? DEFAULT_ARTBOARD_PROPS;
+    const activePreviewArtboard = useMemo(
+        () => formatArtboardProps[previewSource.id]
+            ?? resolvePreviewFormatArtboard(previewSource, DEFAULT_ARTBOARD_PROPS),
+        [previewSource, formatArtboardProps],
+    );
+    const updateActiveFormatArtboard = useCallback((
+        updater: React.SetStateAction<ArtboardProps>,
+    ) => {
+        onFormatArtboardPropsChange(activePreviewFormatId, updater);
+    }, [activePreviewFormatId, onFormatArtboardPropsChange]);
     /**
      * The largest width and tallest height across the pack — these are the
      * target dimensions for the wizard's "expand background" generation.
@@ -538,26 +556,42 @@ export function WizardContentWorkspace({
     // tiles are read-only overview thumbnails, not the active editing surface.
     const overviewTiles = useMemo<WizardOverviewTile[]>(
         () =>
-            visiblePreviewFormats.map((format) => ({
-                id: format.id,
-                name: format.name,
-                label: format.label,
-                width: format.width,
-                height: format.height,
-                isMaster: format.isMaster,
-                layoutGrids: format.layoutGrids,
-                layers: buildDraftPreviewLayers(
-                    format.layers,
-                    entries,
-                    textValues,
-                    imageValues,
-                    imageViewOverrides,
-                    layerStyleOverrides,
-                    undefined,
-                    format.layerBindings,
-                ),
-            })),
-        [visiblePreviewFormats, entries, textValues, imageValues, imageViewOverrides, layerStyleOverrides],
+            visiblePreviewFormats.map((format) => {
+                const resolvedArtboard = formatArtboardProps[format.id]
+                    ?? resolvePreviewFormatArtboard(format, DEFAULT_ARTBOARD_PROPS);
+                return {
+                    id: format.id,
+                    name: format.name,
+                    label: format.label,
+                    width: format.width,
+                    height: format.height,
+                    isMaster: format.isMaster,
+                    layoutGrids: format.layoutGrids,
+                    artboard: {
+                        fill: resolvedArtboard.fill,
+                        fillEnabled: resolvedArtboard.fillEnabled !== false,
+                        backgroundImage: resolvedArtboard.backgroundImage,
+                        cornerRadius: resolvedArtboard.cornerRadius,
+                        stroke: resolvedArtboard.stroke,
+                        strokeMode: resolvedArtboard.strokeMode,
+                        strokeImage: resolvedArtboard.strokeImage,
+                        strokeWidth: resolvedArtboard.strokeWidth,
+                        strokeAlign: resolvedArtboard.strokeAlign,
+                        strokeJoin: resolvedArtboard.strokeJoin,
+                    },
+                    layers: buildDraftPreviewLayers(
+                        format.layers,
+                        entries,
+                        textValues,
+                        imageValues,
+                        imageViewOverrides,
+                        layerStyleOverrides,
+                        undefined,
+                        format.layerBindings,
+                    ),
+                };
+            }),
+        [visiblePreviewFormats, entries, textValues, imageValues, imageViewOverrides, layerStyleOverrides, formatArtboardProps],
     );
 
     const updateTextValue = (id: string, value: string) => {
@@ -766,17 +800,17 @@ export function WizardContentWorkspace({
                             <WizardArtboardSection
                                 collapsed={artboardSectionCollapsed}
                                 onToggle={() => setArtboardSectionCollapsed((value) => !value)}
-                                artboardProps={artboardProps}
+                                artboardProps={activeSidebarArtboard}
                                 palette={templatePalette}
                                 projectId={projectId}
-                                onUpdate={(updates) => onArtboardPropsChange((prev) => ({ ...prev, ...updates }))}
-                                onApplyFill={(fill) => onArtboardPropsChange((prev) => ({
+                                onUpdate={(updates) => updateActiveFormatArtboard((prev) => ({ ...prev, ...updates }))}
+                                onApplyFill={(fill) => updateActiveFormatArtboard((prev) => ({
                                     ...prev,
                                     fill,
                                     fillSwatchRef: undefined,
                                 }))}
                                 onApplyBackgroundSwatch={(swatchId) => {
-                                    onArtboardPropsChange((prev) => applyBackgroundSwatchToArtboardProps(
+                                    updateActiveFormatArtboard((prev) => applyBackgroundSwatchToArtboardProps(
                                         prev,
                                         templatePalette,
                                         swatchId,
@@ -941,16 +975,16 @@ export function WizardContentWorkspace({
                             appearance={canvasAppearance}
                             gridsVisible={gridsVisible}
                             artboard={{
-                                fill: artboardProps.fill,
-                                fillEnabled: artboardProps.fillEnabled !== false,
-                                backgroundImage: artboardProps.backgroundImage,
-                                cornerRadius: artboardProps.cornerRadius,
-                                stroke: artboardProps.stroke,
-                                strokeMode: artboardProps.strokeMode,
-                                strokeImage: artboardProps.strokeImage,
-                                strokeWidth: artboardProps.strokeWidth,
-                                strokeAlign: artboardProps.strokeAlign,
-                                strokeJoin: artboardProps.strokeJoin,
+                                fill: activePreviewArtboard.fill,
+                                fillEnabled: activePreviewArtboard.fillEnabled !== false,
+                                backgroundImage: activePreviewArtboard.backgroundImage,
+                                cornerRadius: activePreviewArtboard.cornerRadius,
+                                stroke: activePreviewArtboard.stroke,
+                                strokeMode: activePreviewArtboard.strokeMode,
+                                strokeImage: activePreviewArtboard.strokeImage,
+                                strokeWidth: activePreviewArtboard.strokeWidth,
+                                strokeAlign: activePreviewArtboard.strokeAlign,
+                                strokeJoin: activePreviewArtboard.strokeJoin,
                             }}
                             onSelect={setActivePreviewFormatId}
                             onOpen={(formatId) => {
@@ -1017,16 +1051,16 @@ export function WizardContentWorkspace({
                                     containerHeight={previewSize.height}
                                     zoom={previewZoom}
                                     appearance={canvasAppearance}
-                                    artboardFill={artboardProps.fill}
-                                    artboardFillEnabled={artboardProps.fillEnabled !== false}
-                                    artboardBackgroundImage={artboardProps.backgroundImage}
-                                    artboardCornerRadius={artboardProps.cornerRadius}
-                                    artboardStroke={artboardProps.stroke}
-                                    artboardStrokeMode={artboardProps.strokeMode}
-                                    artboardStrokeImage={artboardProps.strokeImage}
-                                    artboardStrokeWidth={artboardProps.strokeWidth}
-                                    artboardStrokeAlign={artboardProps.strokeAlign}
-                                    artboardStrokeJoin={artboardProps.strokeJoin}
+                                    artboardFill={activePreviewArtboard.fill}
+                                    artboardFillEnabled={activePreviewArtboard.fillEnabled !== false}
+                                    artboardBackgroundImage={activePreviewArtboard.backgroundImage}
+                                    artboardCornerRadius={activePreviewArtboard.cornerRadius}
+                                    artboardStroke={activePreviewArtboard.stroke}
+                                    artboardStrokeMode={activePreviewArtboard.strokeMode}
+                                    artboardStrokeImage={activePreviewArtboard.strokeImage}
+                                    artboardStrokeWidth={activePreviewArtboard.strokeWidth}
+                                    artboardStrokeAlign={activePreviewArtboard.strokeAlign}
+                                    artboardStrokeJoin={activePreviewArtboard.strokeJoin}
                                     layoutGrids={previewSource.layoutGrids}
                                     showLayoutGrids={gridsVisible}
                                 />
@@ -2089,7 +2123,7 @@ function WizardLayerPromptBar({
                         promptLabel,
                     }))
                     : [{ id: `${batchId}-error`, status: "error" as const, promptLabel }];
-            return { ...prev, [layerKey]: [...kept, ...resolved] };
+            return { ...prev, [layerKey]: capLayerVariants([...kept, ...resolved]) };
         });
     };
 
@@ -3329,6 +3363,7 @@ function resizeToPreviewSource(
         height: resize.height,
         layerBindings: resize.layerBindings,
         layoutGrids: (resize as WizardPreviewResize & { layoutGrids?: LayoutGrid[] }).layoutGrids,
+        artboardProps: resize.artboardProps,
     };
 }
 

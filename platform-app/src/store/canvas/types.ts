@@ -2,7 +2,7 @@
  * Canvas Store — Shared Types & Interfaces
  *
  * Centralizes all type definitions used across canvas store slices.
- * ArtboardProps is the single source of truth (also used by api-types.ts).
+ * ArtboardProps lives in @/types; re-exported here for store consumers.
  */
 
 import type {
@@ -26,6 +26,7 @@ import type {
     ViewMode,
     LayerConstraints,
     ArtboardBackgroundImage,
+    ArtboardProps,
     TemplatePalette,
     Swatch,
     SwatchType,
@@ -69,35 +70,13 @@ export type {
     SlotMapping,
     TemplatePack,
     ArtboardBackgroundImage,
+    ArtboardProps,
     TemplatePalette,
     Swatch,
     SwatchType,
     LayoutGrid,
     LayoutGridType,
 };
-
-// ─── ArtboardProps (single source of truth) ─────────────
-
-export interface ArtboardProps {
-    fill: Paint;
-    fillEnabled?: boolean;
-    /** If the artboard fill was applied from a swatch, keep a backlink for cascade updates. */
-    fillSwatchRef?: string;
-    cornerRadius: number;
-    cornerRadii?: CornerRadii;
-    clipContent: boolean;
-    stroke: Paint;
-    strokeMode?: FillMode;
-    strokeImage?: LayerImageFill;
-    strokeWidth: number;
-    strokeAlign?: StrokeAlign;
-    strokeJoin?: StrokeJoin;
-    /**
-     * Optional background image, shared across all resize formats (MVP).
-     * Rendered between the solid `fill` and the user layers.
-     */
-    backgroundImage?: ArtboardBackgroundImage;
-}
 
 // ─── Expand Padding (Generative Expand) ─────────────
 

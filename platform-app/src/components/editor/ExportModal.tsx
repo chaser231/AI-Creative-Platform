@@ -7,6 +7,7 @@ import { Select } from "@/components/ui/Select";
 import { Download, Layers, Package, Slice } from "lucide-react";
 import Konva from "konva";
 import { useCanvasStore } from "@/store/canvasStore";
+import { selectActiveArtboardProps } from "@/store/canvas/artboardProps";
 import { useShallow } from "zustand/react/shallow";
 import type { FrameLayer, SliceLayer } from "@/types";
 import { cn } from "@/lib/cn";
@@ -67,7 +68,7 @@ export function ExportModal({ open, onClose, stageRef, initialTarget }: ExportMo
     const { canvasWidth, canvasHeight, layers, resizes, setActiveResize, activeResizeId, artboardProps } = useCanvasStore(useShallow((s) => ({
         canvasWidth: s.canvasWidth, canvasHeight: s.canvasHeight, layers: s.layers,
         resizes: s.resizes, setActiveResize: s.setActiveResize,
-        activeResizeId: s.activeResizeId, artboardProps: s.artboardProps,
+        activeResizeId: s.activeResizeId, artboardProps: selectActiveArtboardProps(s),
     })));
 
     // Get all frames for export target selector
@@ -371,6 +372,7 @@ export function ExportModal({ open, onClose, stageRef, initialTarget }: ExportMo
                     await prepareStageForExport(stage);
 
                     const state = useCanvasStore.getState();
+                    const exportArtboardProps = selectActiveArtboardProps(state);
                     const exportLayers = await promoteFigmaVectorImagesForExport(state.layers as Layer[]);
                     const outlinedText = await buildOutlinedTextMap(stage, exportLayers);
                     const embeddedImages = exportFormat === "svg"
@@ -382,8 +384,8 @@ export function ExportModal({ open, onClose, stageRef, initialTarget }: ExportMo
                             layers: exportLayers,
                             width: state.canvasWidth,
                             height: state.canvasHeight,
-                            artboardFill: state.artboardProps.fill,
-                            artboardFillEnabled: !transparentBackground && state.artboardProps.fillEnabled !== false,
+                            artboardFill: exportArtboardProps.fill,
+                            artboardFillEnabled: !transparentBackground && exportArtboardProps.fillEnabled !== false,
                             outlinedText,
                             embeddedImages,
                             stage,
@@ -392,8 +394,8 @@ export function ExportModal({ open, onClose, stageRef, initialTarget }: ExportMo
                             layers: exportLayers,
                             width: state.canvasWidth,
                             height: state.canvasHeight,
-                            artboardFill: state.artboardProps.fill,
-                            artboardFillEnabled: !transparentBackground && state.artboardProps.fillEnabled !== false,
+                            artboardFill: exportArtboardProps.fill,
+                            artboardFillEnabled: !transparentBackground && exportArtboardProps.fillEnabled !== false,
                             outlinedText,
                             stage,
                         });
@@ -582,6 +584,7 @@ export function ExportModal({ open, onClose, stageRef, initialTarget }: ExportMo
                                 import("@/services/templateService").then(({ serializeTemplate }) => {
                                     const state = getCanvasStateForSave(useCanvasStore.getState());
                                     const pack = serializeTemplate({}, state.masterComponents, state.resizes, state.componentInstances, state.layers, {
+                                        // Top-level artboardProps is master mirror; per-format props live on resizes.
                                         artboardProps: state.artboardProps as unknown as Record<string, unknown>,
                                         palette: state.palette,
                                         canvasWidth: state.canvasWidth,

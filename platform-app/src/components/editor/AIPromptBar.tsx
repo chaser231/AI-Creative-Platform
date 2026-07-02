@@ -8,6 +8,7 @@ import { LoraSelectorPicker } from "@/components/ui/LoraSelectorPicker";
 import { LoraTriggerHint } from "@/components/ui/LoraTriggerHint";
 import { ModelSettingsModal, type AdvancedAIParams } from "@/components/ui/ModelSettingsModal";
 import { GeneratedImageStrip, type GeneratedImageVariant } from "@/components/ui/GeneratedImageStrip";
+import { capLayerVariants } from "@/lib/generationVariantUtils";
 import { SelectPill } from "@/components/ui/SelectPill";
 import { useCanvasStore } from "@/store/canvasStore";
 import { useShallow } from "zustand/react/shallow";
@@ -375,7 +376,7 @@ export function AIPromptBar({ open, onClose, onToggleChat, isChatOpen, onResult,
                             promptLabel,
                         }))
                         : [{ id: `${batchId}-error`, status: "error" as const, promptLabel }];
-                return { ...prev, [layerKey]: [...kept, ...resolved] };
+                return { ...prev, [layerKey]: capLayerVariants([...kept, ...resolved]) };
             });
         },
         [],

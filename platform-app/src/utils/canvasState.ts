@@ -1,5 +1,11 @@
-import type { CanvasStore, Layer, ResizeFormat } from "@/store/canvas/types";
+import type { CanvasStore, Layer, ResizeFormat, ArtboardProps } from "@/store/canvas/types";
+import { DEFAULT_ARTBOARD_PROPS } from "@/store/canvas/types";
 import type { LayerResponsiveSettings } from "@/types";
+import {
+    cloneArtboardProps,
+    syncTopLevelArtboardPropsFromMaster,
+} from "@/store/canvas/artboardProps";
+import { getMasterResize } from "@/store/canvas/resizeFormatUtils";
 
 type CanvasStateSource = Pick<
     CanvasStore,
@@ -45,8 +51,24 @@ function cloneResizes(resizes: ResizeFormat[] | undefined): ResizeFormat[] {
                     rowSizes: grid.rowSizes ? [...grid.rowSizes] : grid.rowSizes,
                 }))
                 : resize.layoutGrids,
+            artboardProps: resize.artboardProps
+                ? cloneArtboardProps({ ...DEFAULT_ARTBOARD_PROPS, ...resize.artboardProps })
+                : resize.artboardProps,
         }))
         : [];
+}
+
+function migrateResizesArtboardProps(
+    resizes: ResizeFormat[],
+    globalArtboardProps: ArtboardProps,
+): ResizeFormat[] {
+    const fallback = { ...DEFAULT_ARTBOARD_PROPS, ...globalArtboardProps };
+    return resizes.map((resize) => ({
+        ...resize,
+        artboardProps: resize.artboardProps
+            ? cloneArtboardProps({ ...DEFAULT_ARTBOARD_PROPS, ...resize.artboardProps })
+            : cloneArtboardProps(fallback),
+    }));
 }
 
 function compactResponsiveSettings(settings: LayerResponsiveSettings): LayerResponsiveSettings | undefined {
@@ -79,11 +101,7 @@ export function migrateLayersForLoad(layers: Layer[]): Layer[] {
     return layers.map((layer) => migrateLayerResponsive(layer));
 }
 
-export function getMasterResize(resizes: ResizeFormat[]): ResizeFormat | undefined {
-    return resizes.find((resize) => resize.isMaster)
-        ?? resizes.find((resize) => resize.id === "master")
-        ?? resizes[0];
-}
+export { getMasterResize } from "@/store/canvas/resizeFormatUtils";
 
 function resolveActiveResizeId(
     resizes: ResizeFormat[],
@@ -105,13 +123,19 @@ export function normalizeCanvasStateForLoad(
     state: CanvasStateForLoad,
     fallback: CanvasStateLoadFallback = {},
 ) {
-    const resizes = cloneResizes(state.resizes ?? fallback.resizes);
+    const globalArtboardProps = {
+        ...DEFAULT_ARTBOARD_PROPS,
+        ...(state.artboardProps ?? fallback.artboardProps ?? DEFAULT_ARTBOARD_PROPS),
+    };
+    const clonedResizes = cloneResizes(state.resizes ?? fallback.resizes);
+    const resizes = migrateResizesArtboardProps(clonedResizes, globalArtboardProps);
     const activeResizeId = resolveActiveResizeId(resizes, state.activeResizeId);
     const activeResize = resizes.find((resize) => resize.id === activeResizeId);
     const topLevelLayers = migrateLayersForLoad(cloneLayers(state.layers ?? fallback.layers));
     const layers = activeResize?.layerSnapshot !== undefined
         ? cloneLayers(activeResize.layerSnapshot)
         : topLevelLayers;
+    const artboardProps = syncTopLevelArtboardPropsFromMaster(resizes, globalArtboardProps);
 
     return {
         layers,
@@ -119,7 +143,7 @@ export function normalizeCanvasStateForLoad(
         componentInstances: state.componentInstances ?? fallback.componentInstances ?? [],
         resizes,
         activeResizeId,
-        artboardProps: state.artboardProps ?? fallback.artboardProps,
+        artboardProps,
         canvasWidth: activeResize?.width ?? state.canvasWidth ?? fallback.canvasWidth ?? 1080,
         canvasHeight: activeResize?.height ?? state.canvasHeight ?? fallback.canvasHeight ?? 1080,
         palette: state.palette ?? fallback.palette,
@@ -159,7 +183,7 @@ export function getCanvasStateForSave(store: CanvasStateSource) {
         componentInstances: store.componentInstances,
         resizes: resizesWithSnapshot,
         activeResizeId: store.activeResizeId,
-        artboardProps: store.artboardProps,
+        artboardProps: syncTopLevelArtboardPropsFromMaster(resizesWithSnapshot, store.artboardProps),
         canvasWidth: canonicalResize?.width ?? store.canvasWidth,
         canvasHeight: canonicalResize?.height ?? store.canvasHeight,
         palette: store.palette,

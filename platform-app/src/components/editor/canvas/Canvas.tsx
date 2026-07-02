@@ -4,6 +4,7 @@ import { useRef, useCallback, useEffect, useState, useMemo, memo, Fragment, type
 import { ImageIcon } from "lucide-react";
 import { Stage, Layer, Rect, Text, Image as KonvaImage, Transformer, Group, Line, Circle, Path } from "react-konva";
 import { useCanvasStore } from "@/store/canvasStore";
+import { resolveFormatArtboardProps, selectActiveArtboardProps } from "@/store/canvas/artboardProps";
 import { useShallow } from "zustand/react/shallow";
 import type { CornerRadii, Layer as LayerType, TextLayer, BadgeLayer, FrameLayer, ImageLayer, VectorLayer, VectorAnchor, LayerImageFill, Paint, LayerUpdate } from "@/types";
 import { subpathsToPathData, hasRenderableGeometry, normalizeAbsSubpaths, computeAbsBounds } from "@/utils/vectorGeometry";
@@ -1598,6 +1599,7 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
         startTextEditing,
         stopTextEditing,
         artboardProps,
+        globalArtboardFallback,
         updateArtboardProps,
         setHighlightedFrameId,
         hoveredLayerId,
@@ -1654,7 +1656,8 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
         activeGradientEditorTarget: s.activeGradientEditorTarget,
         startTextEditing: s.startTextEditing,
         stopTextEditing: s.stopTextEditing,
-        artboardProps: s.artboardProps,
+        artboardProps: selectActiveArtboardProps(s),
+        globalArtboardFallback: s.artboardProps,
         updateArtboardProps: s.updateArtboardProps,
         setHighlightedFrameId: s.setHighlightedFrameId,
         hoveredLayerId: s.hoveredLayerId,
@@ -3971,6 +3974,7 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
                         const subLabelText = format.isMaster
                             ? `${sizeLabel}  •  Мастер`
                             : sizeLabel;
+                        const formatArtboard = resolveFormatArtboardProps(format, globalArtboardFallback);
                         return (
                             <Group key={format.id} x={tile.x} y={tile.y}>
                                 <ArtboardGroup
@@ -3981,16 +3985,16 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
                                     offsetY={0}
                                     listening={false}
                                     clip
-                                    fill={artboardProps.fill}
-                                    fillEnabled={artboardProps.fillEnabled}
-                                    backgroundImage={artboardProps.backgroundImage}
-                                    cornerRadius={artboardProps.cornerRadius}
-                                    stroke={artboardProps.stroke}
-                                    strokeMode={artboardProps.strokeMode}
-                                    strokeImage={artboardProps.strokeImage}
-                                    strokeWidth={artboardProps.strokeWidth}
-                                    strokeAlign={artboardProps.strokeAlign}
-                                    strokeJoin={artboardProps.strokeJoin}
+                                    fill={formatArtboard.fill}
+                                    fillEnabled={formatArtboard.fillEnabled}
+                                    backgroundImage={formatArtboard.backgroundImage}
+                                    cornerRadius={formatArtboard.cornerRadius}
+                                    stroke={formatArtboard.stroke}
+                                    strokeMode={formatArtboard.strokeMode}
+                                    strokeImage={formatArtboard.strokeImage}
+                                    strokeWidth={formatArtboard.strokeWidth}
+                                    strokeAlign={formatArtboard.strokeAlign}
+                                    strokeJoin={formatArtboard.strokeJoin}
                                 />
                                 {ringStrokeWidth > 0 && (
                                     <Rect
@@ -4000,7 +4004,7 @@ export function Canvas({ stageRef, projectId }: CanvasProps) {
                                         height={format.height + ringStrokeWidth}
                                         stroke={OVERVIEW_ACCENT_HOVER}
                                         strokeWidth={ringStrokeWidth}
-                                        cornerRadius={Math.max(4, artboardProps.cornerRadius)}
+                                        cornerRadius={Math.max(4, formatArtboard.cornerRadius)}
                                         listening={false}
                                     />
                                 )}

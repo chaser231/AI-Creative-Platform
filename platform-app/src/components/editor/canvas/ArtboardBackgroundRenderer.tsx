@@ -2,6 +2,7 @@
 
 import { Group, Image as KonvaImage } from "react-konva";
 import { useCanvasStore } from "@/store/canvasStore";
+import { selectActiveArtboardProps } from "@/store/canvas/artboardProps";
 import { useShallow } from "zustand/react/shallow";
 import { computeImageFitProps } from "@/utils/imageFitUtils";
 import { useImage } from "./useImage";
@@ -26,14 +27,17 @@ function resolveCornerRadius(cornerRadius = 0, cornerRadii?: CornerRadii): [numb
  */
 export function ArtboardBackgroundRenderer() {
     const { backgroundImage, fillEnabled, canvasWidth, canvasHeight, cornerRadius, cornerRadii } = useCanvasStore(
-        useShallow((s) => ({
-            backgroundImage: s.artboardProps.backgroundImage,
-            fillEnabled: s.artboardProps.fillEnabled !== false,
-            canvasWidth: s.canvasWidth,
-            canvasHeight: s.canvasHeight,
-            cornerRadius: s.artboardProps.cornerRadius || 0,
-            cornerRadii: s.artboardProps.cornerRadii,
-        }))
+        useShallow((s) => {
+            const artboardProps = selectActiveArtboardProps(s);
+            return {
+                backgroundImage: artboardProps.backgroundImage,
+                fillEnabled: artboardProps.fillEnabled !== false,
+                canvasWidth: s.canvasWidth,
+                canvasHeight: s.canvasHeight,
+                cornerRadius: artboardProps.cornerRadius || 0,
+                cornerRadii: artboardProps.cornerRadii,
+            };
+        })
     );
 
     const img = useImage(backgroundImage?.src ?? "");

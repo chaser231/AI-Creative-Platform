@@ -470,8 +470,8 @@ export function useCanvasAutoSave(
   //   - Otherwise arm an idle-flush timer so pauses also get persisted.
   //
   // "Meaningful" = any reference change in a persisted field (layers,
-  // resizes, components, artboardProps, canvas size, palette). Selection,
-  // hover, zoom, pan, and history-stack changes do NOT count — they were
+  // resizes, components, artboardProps master mirror, canvas size, palette).
+  // Selection, hover, zoom, pan, and history-stack changes do NOT count — they were
   // the main source of wasted save trips under the old 1.5s debounce.
   useEffect(() => {
     // Don't subscribe until enabled
